@@ -301,7 +301,11 @@ public sealed class ProductionPathTests
         // and keeps it as ISystemResourceProbe, which is all the session takes. And the interface
         // nobody implemented or consumed - IDeterministicTextProcessor - is gone from the product.
         var production = Path.Combine(FindRepositoryRoot(), "src", "Production");
-        var app = File.ReadAllText(Path.Combine(production, "EnviousWispr.App", "App.xaml.cs"));
+        var app = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.Combine(production, "EnviousWispr.App"), "App*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         Assert.Contains("private readonly ISystemResourceProbe _resourceProbe;", app, StringComparison.Ordinal);
         Assert.Contains("_resourceProbe = new WindowsSystemResourceProbe(", app, StringComparison.Ordinal);
         Assert.DoesNotContain("private readonly WindowsSystemResourceProbe", app, StringComparison.Ordinal);

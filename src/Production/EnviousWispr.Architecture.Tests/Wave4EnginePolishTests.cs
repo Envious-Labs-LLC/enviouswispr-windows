@@ -225,7 +225,7 @@ public sealed class Wave4EnginePolishTests
         var mainWindowCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
         var appCode = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.TrayAndLifecycle.cs"));
 
         Assert.Contains("public void ApplyThemeFromExternal(AppTheme theme)", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("window.ApplyThemeFromExternal(theme);", appCode, StringComparison.Ordinal);

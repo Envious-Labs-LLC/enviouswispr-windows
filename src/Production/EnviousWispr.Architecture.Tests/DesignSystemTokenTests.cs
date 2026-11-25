@@ -1027,7 +1027,8 @@ public sealed partial class DesignSystemTokenTests
     public void EveryFlowThatServesADictationOpensItsScope()
     {
         var root = FindRepositoryRoot();
-        var files = new[] { Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs") }
+        var files = Directory.GetFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "App*.cs")
+            .Order()
             .Concat(Directory.GetFiles(Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline"), "*.cs"))
             .ToArray();
         var trees = files

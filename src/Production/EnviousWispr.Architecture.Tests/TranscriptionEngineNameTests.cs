@@ -664,11 +664,11 @@ public sealed partial class DesignSystemTokenTests
         // bounded stops are the two methods counted; the shell stops nothing itself any more. Both
         // files are still read so a stop that reappeared in the shell would be checked too.
         var root = FindRepositoryRoot();
-        var methods = new[]
-            {
-                Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"),
-                Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline", "SessionBackgroundWork.cs"),
-            }
+        var methods = Directory.EnumerateFiles(
+                Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                "App*.cs")
+            .Order()
+            .Append(Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline", "SessionBackgroundWork.cs"))
             .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
                 .DescendantNodes()
                 .OfType<MethodDeclarationSyntax>());
@@ -744,7 +744,7 @@ public sealed partial class DesignSystemTokenTests
         var composition = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "Composition", "RuntimeComposition.cs"));
         var shell = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.DictationRuntime.cs"));
 
         // THE LENGTH CONTROL IS GONE BECAUSE WHAT IT GUARDED IS GONE. The pattern this replaces
         // ended at the first line reading exactly four spaces and a brace, so it could capture a
@@ -803,9 +803,14 @@ public sealed partial class DesignSystemTokenTests
     public void TheQuickAddBorrowsTheAdapterOnlyUnderAPresentationLease()
     {
         var root = FindRepositoryRoot();
-        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
-        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
-        var methods = tree.DescendantNodes().OfType<MethodDeclarationSyntax>().ToArray();
+        var methods = Directory.EnumerateFiles(
+                Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                "App*.cs")
+            .Order()
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
+            .ToArray();
 
         // THE HANDLER TAKES THE LEASE BEFORE ANYTHING ELSE and runs the borrow inside `using (lease)`.
         var handler = methods.Single(method => method.Identifier.ValueText == "HandleQuickAddAsync");
@@ -869,10 +874,15 @@ public sealed partial class DesignSystemTokenTests
     public void TheLaunchAndAModelDeliveryAreTrackedCancelledAndJoinedByTheLifetime()
     {
         var root = FindRepositoryRoot();
-        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
-        var delivery = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
-        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
-        var methods = tree.DescendantNodes().OfType<MethodDeclarationSyntax>().ToArray();
+        var appDir = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var shell = File.ReadAllText(Path.Combine(appDir, "App.xaml.cs"));
+        var delivery = File.ReadAllText(Path.Combine(appDir, "App.ModelDelivery.cs"));
+        var methods = Directory.EnumerateFiles(appDir, "App*.cs")
+            .Order()
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
+            .ToArray();
 
         // TRACKED: the launch's tail is the _startup task, awaited by OnLaunched; the delivery is the
         // _modelDelivery task, started by the request and cleared when it ends.
@@ -965,9 +975,14 @@ public sealed partial class DesignSystemTokenTests
     public void WhatTheSessionUsesIsHandedToTheLifetimeUnderItsGuardedListsOnly()
     {
         var root = FindRepositoryRoot();
-        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
-        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
-        var parts = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+        var appDir = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var lifecycle = File.ReadAllText(Path.Combine(appDir, "App.TrayAndLifecycle.cs"));
+        var trees = Directory.EnumerateFiles(appDir, "App*.cs")
+            .Order()
+            .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot())
+            .ToArray();
+        var parts = trees
+            .SelectMany(tree => tree.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .Single(method => method.Identifier.ValueText == "LifetimeParts");
         string[] dependencies =
         [
@@ -997,7 +1012,8 @@ public sealed partial class DesignSystemTokenTests
         // none itself, and inside LifetimeParts a disposal sits under DisposeSessionDependencies or
         // DisposeLast and nowhere else. (An engine that failed to start is disposed where it failed,
         // before any session exists; that path is outside both.)
-        var exit = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+        var exit = trees
+            .SelectMany(tree => tree.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .Single(method => method.Identifier.ValueText == "DisposeAsync" && method.Body is not null);
         Assert.DoesNotContain(exit.DescendantNodes().OfType<IdentifierNameSyntax>(), identifier => IsDisposal(identifier, dependencies, disposals));
         var inParts = parts.DescendantNodes().OfType<IdentifierNameSyntax>()
@@ -1018,9 +1034,11 @@ public sealed partial class DesignSystemTokenTests
 
         // THE SHELL LEAVES THROUGH THE LIFETIME: every path out reaches PrepareForExitAsync, which
         // returns the lifetime's one exit task; DisposeAsync awaits the same; nothing else calls it.
-        Assert.Contains("return Lifetime().ExitAsync();", DeclarationTextOf(shell, "PrepareForExitAsync"), StringComparison.Ordinal);
+        Assert.Contains("return Lifetime().ExitAsync();", DeclarationTextOf(lifecycle, "PrepareForExitAsync"), StringComparison.Ordinal);
         Assert.Contains("await PrepareForExitAsync()", exit.ToString(), StringComparison.Ordinal);
-        Assert.Single(tree.DescendantNodes().OfType<InvocationExpressionSyntax>(), call => call.Expression.ToString() == "Lifetime().ExitAsync");
+        Assert.Single(
+            trees.SelectMany(tree => tree.DescendantNodes().OfType<InvocationExpressionSyntax>()),
+            call => call.Expression.ToString() == "Lifetime().ExitAsync");
     }
 
     /// <summary>
@@ -1768,11 +1786,13 @@ public sealed partial class DesignSystemTokenTests
         // as syntax - one expression, the parameter handed on as it arrived, nothing assigned to it -
         // and it is the only call whose argument is a bare parameter, or a status could be rewritten
         // between the composition and the window.
+        var appPartPaths = Directory.EnumerateFiles(app, "App*.cs")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var shellPath = Path.Combine(app, "App.xaml.cs");
         var shell = File.ReadAllText(shellPath);
         Assert.Null(StatusForwarderComplaint(shell));
         var forwarders = calls.Count(entry =>
-            entry.Tree.FilePath == shellPath &&
+            appPartPaths.Contains(entry.Tree.FilePath) &&
             entry.Invocation.ArgumentList.Arguments.Count == 1 &&
             entry.Invocation.ArgumentList.Arguments[0].Expression.ToString() == "status");
         Assert.True(forwarders == 1, $"Expected exactly one bare forwarder of a status to the window, found {forwarders}.");
@@ -2031,9 +2051,10 @@ public sealed partial class DesignSystemTokenTests
     private static IReadOnlyList<string> ShellSessionSources(string root)
     {
         var app = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var appPartials = Directory.EnumerateFiles(app, "App*.cs").Order().ToArray();
         var composition = Directory.EnumerateFiles(Path.Combine(app, "Composition"), "*.cs").Order().ToArray();
         Assert.True(composition.Length >= 3, $"Expected the composition files under App/Composition, found {composition.Length}.");
-        return [Path.Combine(app, "App.xaml.cs"), .. composition];
+        return [.. appPartials, .. composition];
     }
 
     private static IEnumerable<string> ProductionSourceFiles(string directory) =>
