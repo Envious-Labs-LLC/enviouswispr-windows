@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="EnviousWispr.App.LanguagePickerDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    CloseButtonText="Cancel"
+    DefaultButton="Close"
+    Opened="LanguagePickerDialog_Opened">
+    <ContentDialog.Resources>
+        <DataTemplate x:Key="LanguagePickerOptionTemplate">
+            <Grid
+                Padding="4,6"
+                ColumnSpacing="{StaticResource BrandSpacingM}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                    <TextBlock
+                        Style="{StaticResource BrandBodyStyle}"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="{Binding DisplayTitle}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        Style="{StaticResource BrandHelperStyle}"
+                        Text="{Binding Subtitle}"
+                        TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <FontIcon
+                    Grid.Column="1"
+                    FontSize="16"
+                    Foreground="{ThemeResource BrandAccentBrush}"
+                    Glyph="&#xE73E;"
+                    VerticalAlignment="Center"
+                    Visibility="{Binding SelectedVisibility}"
+                    AutomationProperties.AccessibilityView="Raw" />
+            </Grid>
+        </DataTemplate>
+    </ContentDialog.Resources>
+
+    <StackPanel Spacing="{StaticResource BrandSpacingM}" MinWidth="460">
+        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{StaticResource BrandSpacingM}">
+            <Border
+                Grid.Column="0"
+                Width="40"
+                Height="40"
+                VerticalAlignment="Top"
+                Style="{StaticResource BrandIconTileStyle}">
+                <FontIcon
+                    Glyph="&#xE8D2;"
+                    FontSize="18"
+                    Foreground="{ThemeResource BrandAccentBrush}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AccessibilityView="Raw" />
+            </Border>
+            <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                <TextBlock
+                    Text="Choose dictation language"
+                    Style="{StaticResource BrandRowTitleStyle}" />
+                <TextBlock
+                    x:Name="ScopeText"
+                    Style="{StaticResource BrandHelperStyle}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+        </Grid>
+
+        <TextBox
+            x:Name="SearchBox"
+            PlaceholderText="Search language or ISO code (e.g. Spanish, 日本語, ja)"
+            AutomationProperties.Name="Search languages"
+            AutomationProperties.AutomationId="LanguagePickerSearchBox"
+            TextChanged="SearchBox_TextChanged"
+            KeyDown="SearchBox_KeyDown" />
+
+        <Button
+            x:Name="AutomaticOptionButton"
+            Style="{ThemeResource DefaultButtonStyle}"
+            Background="{ThemeResource BrandCardBgBrush}"
+            BorderBrush="{ThemeResource BrandControlBorderBrush}"
+            CornerRadius="{ThemeResource BrandSectionRadius}"
+            HorizontalAlignment="Stretch"
+            HorizontalContentAlignment="Stretch"
+            AutomationProperties.AutomationId="LanguageOptionAutomatic"
+            AutomationProperties.Name="Automatic detection"
+            Click="AutomaticOptionButton_Click">
+            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                    <TextBlock
+                        Style="{StaticResource BrandBodyStyle}"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="Automatic detection" />
+                    <TextBlock
+                        Style="{StaticResource BrandHelperStyle}"
+                        Text="Detect the spoken language automatically"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+                <FontIcon
+                    x:Name="AutomaticCheckIcon"
+                    Grid.Column="1"
+                    FontSize="16"
+                    Foreground="{ThemeResource BrandAccentBrush}"
+                    Glyph="&#xE73E;"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed"
+                    AutomationProperties.AccessibilityView="Raw" />
+            </Grid>
+        </Button>
+
+        <StackPanel
+            x:Name="RecentSectionPanel"
+            Spacing="{StaticResource BrandSpacingXs}"
+            Visibility="Collapsed">
+            <TextBlock
+                Style="{StaticResource BrandSubsectionEyebrowStyle}"
+                Text="Recent" />
+            <Border
+                BorderBrush="{ThemeResource BrandDividerBrush}"
+                BorderThickness="1"
+                CornerRadius="{ThemeResource BrandSectionRadius}"
+                Background="{ThemeResource BrandCardBgBrush}">
+                <ListView
+                    x:Name="RecentListView"
+                    MaxHeight="150"
+                    SelectionMode="None"
+                    IsItemClickEnabled="True"
+                    ItemClick="LanguageListView_ItemClick"
+                    ItemTemplate="{StaticResource LanguagePickerOptionTemplate}"
+                    AutomationProperties.AutomationId="RecentLanguagePickerList"
+                    AutomationProperties.Name="Recent languages">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                </ListView>
+            </Border>
+        </StackPanel>
+
+        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+            <TextBlock
+                x:Name="CatalogHeaderText"
+                Style="{StaticResource BrandSubsectionEyebrowStyle}"
+                Text="All languages" />
+            <Border
+                BorderBrush="{ThemeResource BrandDividerBrush}"
+                BorderThickness="1"
+                CornerRadius="{ThemeResource BrandSectionRadius}"
+                Background="{ThemeResource BrandCardBgBrush}">
+                <Grid Height="260">
+                    <ListView
+                        x:Name="AllLanguagesListView"
+                        SelectionMode="None"
+                        IsItemClickEnabled="True"
+                        ItemClick="LanguageListView_ItemClick"
+                        ItemTemplate="{StaticResource LanguagePickerOptionTemplate}"
+                        AutomationProperties.AutomationId="LanguagePickerList"
+                        AutomationProperties.Name="Available languages">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                    <TextBlock
+                        x:Name="EmptyStateText"
+                        Style="{StaticResource BrandHelperStyle}"
+                        Margin="20"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap"
+                        Visibility="Collapsed" />
+                </Grid>
+            </Border>
+        </StackPanel>
+    </StackPanel>
+</ContentDialog>

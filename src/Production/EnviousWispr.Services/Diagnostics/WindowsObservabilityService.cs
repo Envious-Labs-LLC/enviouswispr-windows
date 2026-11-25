@@ -353,7 +353,7 @@ public sealed class WindowsObservabilityService : IAsyncDisposable
             ["live_preview_engine"] = preferences.LivePreviewEngine.ToString().ToLowerInvariant(),
             ["polish_provider"] = preferences.Polish.Provider.ToString().ToLowerInvariant(),
             ["english_spelling"] = preferences.Dictation.EnglishSpelling.ToString().ToLowerInvariant(),
-            ["whisper_language"] = preferences.Dictation.WhisperLanguage.ToString().ToLowerInvariant(),
+            ["whisper_language"] = LanguageCatalog.NormalizeOrDefault(preferences.Dictation.WhisperLanguage),
             ["history_enabled"] = preferences.History.IsEnabled,
             ["casual_mode_enabled"] = preferences.Dictation.CasualModeEnabled,
             ["escape_recovery_enabled"] = preferences.Dictation.EscapeRecoveryEnabled,

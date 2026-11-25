@@ -3603,17 +3603,15 @@ public sealed partial class DesignSystemTokenTests
             .Select(item => (string?)item.Attribute("Content"))
             .Where(content => !string.IsNullOrEmpty(content))
             .ToHashSet(StringComparer.Ordinal);
-        var comboHeaders = document
-            .Descendants()
-            .Where(item => item.Name.LocalName == "ComboBox")
-            .Select(item => (string?)item.Attribute("Header"))
-            .Where(header => !string.IsNullOrEmpty(header))
-            .ToHashSet(StringComparer.Ordinal);
+        var languageButton = FindNamedElement(document, "WhisperLanguageButton");
 
         Assert.Contains("Dictation Settings", navItems);
-        Assert.Contains("Whisper language", comboHeaders);
+        Assert.Equal(
+            "Dictation language",
+            (string?)languageButton.Attributes().FirstOrDefault(attribute => attribute.Name.LocalName == "AutomationProperties.Name"));
         Assert.Contains("\"Dictation Settings\"", driverSource, StringComparison.Ordinal);
-        Assert.Contains("\"Whisper language\"", driverSource, StringComparison.Ordinal);
+        Assert.Contains("\"Dictation language\"", driverSource, StringComparison.Ordinal);
+        Assert.Contains("\"Search languages\"", driverSource, StringComparison.Ordinal);
         Assert.Contains("WaitForAppliedLanguage", driverSource, StringComparison.Ordinal);
         Assert.Contains("picker.Current.ItemStatus", driverSource, StringComparison.Ordinal);
         Assert.DoesNotContain("\"Transcription\"", driverSource, StringComparison.Ordinal);
@@ -3626,7 +3624,7 @@ public sealed partial class DesignSystemTokenTests
             "EnviousWispr.App",
             "MainWindow.Settings.cs"));
         var publishIndex = mainWindowCode.IndexOf("SettingsChanged?.Invoke(_settings);", StringComparison.Ordinal);
-        var syncStatusIndex = mainWindowCode.IndexOf("SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);", StringComparison.Ordinal);
+        var syncStatusIndex = mainWindowCode.IndexOf("SyncAppliedWhisperLanguageStatus(", StringComparison.Ordinal);
         Assert.True(publishIndex >= 0 && syncStatusIndex > publishIndex);
     }
 

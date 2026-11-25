@@ -596,7 +596,7 @@ else if (languageChange)
                 Dictation = journeyDefaults.Preferences.Dictation with
                 {
                     FinalEngine = FinalAsrEngine.Whisper,
-                    WhisperLanguage = WhisperLanguagePreference.Automatic,
+                    WhisperLanguage = LanguageCatalog.AutomaticCode,
                 },
             },
         });
@@ -1015,7 +1015,7 @@ try
             TranscriptionPageDriver.ChooseWhisperLanguage(app.Id, "French");
             // THE PRECONDITION LANDED, READ FROM WHAT THE APP WROTE: a save that silently kept Automatic
             // would otherwise run the take on the default and report whatever that happened to show.
-            if (!WaitForStoredWhisperLanguage(profileDirectory, WhisperLanguagePreference.French, TimeSpan.FromSeconds(10)))
+            if (!WaitForStoredWhisperLanguage(profileDirectory, "fr", TimeSpan.FromSeconds(10)))
             {
                 var saved = await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json")).LoadAsync();
                 throw JourneyExpectationException.Instrument(
@@ -3181,7 +3181,7 @@ static bool WaitForStoredCustomWord(string profileDirectory, string word, TimeSp
 }
 
 /// <summary>True once the profile's settings file records the chosen Whisper language after auto-save.</summary>
-static bool WaitForStoredWhisperLanguage(string profileDirectory, WhisperLanguagePreference expected, TimeSpan timeout)
+static bool WaitForStoredWhisperLanguage(string profileDirectory, string expectedCode, TimeSpan timeout)
 {
     var clock = Stopwatch.StartNew();
     var store = new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"));
@@ -3190,7 +3190,7 @@ static bool WaitForStoredWhisperLanguage(string profileDirectory, WhisperLanguag
         try
         {
             var loaded = store.LoadAsync().GetAwaiter().GetResult();
-            if (loaded.Settings.Preferences.Dictation.WhisperLanguage == expected)
+            if (string.Equals(loaded.Settings.Preferences.Dictation.WhisperLanguage, expectedCode, StringComparison.Ordinal))
             {
                 return true;
             }

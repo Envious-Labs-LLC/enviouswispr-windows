@@ -232,7 +232,7 @@ public sealed class JsonSettingsStoreTests
 
             Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
             Assert.Equal(5, result.SourceSchemaVersion);
-            Assert.Equal(WhisperLanguagePreference.Automatic, result.Settings.Preferences.Dictation.WhisperLanguage);
+            Assert.Equal(LanguageCatalog.AutomaticCode, result.Settings.Preferences.Dictation.WhisperLanguage);
         });
     }
 
@@ -562,7 +562,7 @@ public sealed class JsonSettingsStoreTests
                 FillerRemovalEnabled: false,
                 EmojiFormatterEnabled: false,
                 SpokenPunctuationEnabled: true,
-                WhisperLanguage: WhisperLanguagePreference.French),
+                WhisperLanguage: "fr"),
             Polish = new PolishPreferences(
                 PolishProvider.Ollama,
                 "qwen3:4b",

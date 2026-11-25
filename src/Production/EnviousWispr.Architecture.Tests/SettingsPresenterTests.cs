@@ -214,7 +214,7 @@ public sealed class SettingsPresenterTests
         FillerRemoval: false,
         EmojiFormatter: true,
         SpokenPunctuation: false,
-        WhisperLanguageIndex: 2,
+        WhisperLanguage: "fr",
         EnglishSpellingIndex: 1,
         RecordingModeIndex: 1,
         EscapeRecovery: true,
@@ -292,7 +292,7 @@ public sealed class SettingsPresenterTests
                         FillerRemovalEnabled: inverted,
                         EmojiFormatterEnabled: !inverted,
                         SpokenPunctuationEnabled: inverted,
-                        (WhisperLanguagePreference)2,
+                        "fr",
                         (DictationRecordingMode)1,
                         "Escape",
                         EscapeRecoveryEnabled: !inverted,
@@ -339,7 +339,7 @@ public sealed class SettingsPresenterTests
             var outcome = await presenter.SaveGeneralAsync(General() with
             {
                 FinalEngineIndex = -1,
-                WhisperLanguageIndex = -1,
+                WhisperLanguage = null,
                 EnglishSpellingIndex = -1,
                 RecordingModeIndex = -1,
                 PolishProviderIndex = -1,
@@ -353,7 +353,7 @@ public sealed class SettingsPresenterTests
             Assert.Equal(AppTheme.System, outcome.Theme);
             var stored = (await store.LoadAsync()).Settings;
             Assert.Equal(FinalAsrEngine.Parakeet, stored.Preferences.Dictation.FinalEngine);
-            Assert.Equal((WhisperLanguagePreference)0, stored.Preferences.Dictation.WhisperLanguage);
+            Assert.Equal(LanguageCatalog.AutomaticCode, stored.Preferences.Dictation.WhisperLanguage);
             Assert.Equal(EnglishSpelling.American, stored.Preferences.Dictation.EnglishSpelling);
             Assert.Equal((DictationRecordingMode)0, stored.Preferences.Dictation.RecordingMode);
             Assert.Equal(PolishProvider.None, stored.Preferences.Polish.Provider);
@@ -449,7 +449,7 @@ public sealed class SettingsPresenterTests
                 HistoryRetentionDays = double.NaN,
                 DiagnosticRetentionDays = 9_999,
                 FinalEngineIndex = 7,
-                WhisperLanguageIndex = -3,
+                WhisperLanguage = "not-a-language",
                 RecordingModeIndex = 9,
                 PolishProviderIndex = 42,
                 ThemeIndex = 5,
@@ -467,7 +467,7 @@ public sealed class SettingsPresenterTests
             Assert.Equal(30, preferences.History.RetentionDays);
             Assert.Equal(RetentionDays.DiagnosticMaximum, stored.Observability!.DiagnosticRetentionDays);
             Assert.Equal(FinalAsrEngine.Whisper, preferences.Dictation.FinalEngine);
-            Assert.Equal((WhisperLanguagePreference)0, preferences.Dictation.WhisperLanguage);
+            Assert.Equal(LanguageCatalog.AutomaticCode, preferences.Dictation.WhisperLanguage);
             Assert.Equal((DictationRecordingMode)1, preferences.Dictation.RecordingMode);
             Assert.Equal(PolishProvider.None, preferences.Polish.Provider);
             Assert.Null(preferences.Polish.ModelId);

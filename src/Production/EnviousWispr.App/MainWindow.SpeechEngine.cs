@@ -12,8 +12,10 @@ namespace EnviousWispr.App;
 /// <summary>Speech recognition engine cards, model/graphics delivery, Live Preview controls, and language-lock offers.</summary>
 public sealed partial class MainWindow
 {
-    /// <summary>The language the pill is currently offering to pin, or null when it offers none.</summary>
-    private WhisperLanguagePreference? _offeredLanguage;
+    /// <summary>The language code the pill is currently offering to pin, or null when it offers none.</summary>
+    private string? _offeredLanguageCode;
+
+    private string _selectedWhisperLanguage = LanguageCatalog.AutomaticCode;
 
     /// <summary>Notices a language being spoken over and over, and offers to pin it.</summary>
     /// <remarks>
@@ -81,7 +83,8 @@ public sealed partial class MainWindow
         var offer = delivered.InvitesLanguageOffer
             ? _languageSuggestions.Observe(
                 detectedLanguage,
-                _settings.Preferences.Dictation.WhisperLanguage)
+                _settings.Preferences.Dictation.WhisperLanguage,
+                _settings.Preferences.Dictation.FinalEngine)
             : null;
         if (offer is null)
         {
@@ -121,7 +124,7 @@ public sealed partial class MainWindow
     private void ShowLanguageLockOffer(LanguageLockOffer offer, DeliveryReport delivered)
     {
         ArgumentNullException.ThrowIfNull(offer);
-        _offeredLanguage = offer.Language;
+        _offeredLanguageCode = offer.LanguageCode;
         var (question, action) = offer.Kind == LanguageOfferKind.AskToLock
             ? ($"You keep speaking {offer.DisplayName}. Pin it so recognition stops guessing?",
                 new PillAction(
@@ -151,8 +154,8 @@ public sealed partial class MainWindow
     /// </remarks>
     private async void LockOfferedLanguage()
     {
-        var language = _offeredLanguage;
-        if (language is null || _lockingLanguage)
+        var languageCode = _offeredLanguageCode;
+        if (string.IsNullOrWhiteSpace(languageCode) || _lockingLanguage)
         {
             return;
         }
@@ -160,7 +163,7 @@ public sealed partial class MainWindow
         _lockingLanguage = true;
         try
         {
-            await LockLanguageAsync(language.Value).ConfigureAwait(true);
+            await LockLanguageAsync(languageCode).ConfigureAwait(true);
         }
         finally
         {
@@ -168,21 +171,23 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task LockLanguageAsync(WhisperLanguagePreference language)
+    private async Task LockLanguageAsync(string languageCode)
     {
+        var displayName = LanguageLockSuggester.DisplayName(languageCode);
         if (await TrySaveAsync(
             current => current with
             {
+                RecentLanguages = LanguageCatalog.RecordRecentLanguage(current.RecentLanguages, languageCode),
                 Preferences = current.Preferences with
                 {
-                    Dictation = current.Preferences.Dictation with { WhisperLanguage = language },
+                    Dictation = current.Preferences.Dictation with { WhisperLanguage = languageCode },
                 },
             },
             "Language pinned",
-            $"Recognition will use {LanguageLockSuggester.DisplayName(language)}.").ConfigureAwait(true))
+            $"Recognition will use {displayName}.").ConfigureAwait(true))
         {
-            _offeredLanguage = null;
-            _languageSuggestions.Accepted(language);
+            _offeredLanguageCode = null;
+            _languageSuggestions.Accepted(languageCode);
             await RememberLanguageOffersAsync().ConfigureAwait(true);
             return;
         }
@@ -191,8 +196,8 @@ public sealed partial class MainWindow
         // the right place for a save somebody started on the settings page; this one started on an
         // overlay over their work, and a button that appears to do nothing is worse than no button.
         SetSessionStatus(DictationStatus.Warning(
-            $"{LanguageLockSuggester.DisplayName(language)} could not be pinned. Open Transcription "
-                + "settings to set it there."));
+            $"{displayName} could not be pinned. Open Dictation Settings "
+                + "to set it there."));
     }
 
     private void LivePreviewToggle_Toggled(object sender, RoutedEventArgs e)
@@ -869,7 +874,112 @@ public sealed partial class MainWindow
                 : Visibility.Collapsed;
         }
 
+        RefreshLanguageControls(engine);
         UpdateSpeechEngineOptionsCardVisibility();
+    }
+
+    private EnglishSpelling SelectedEnglishSpelling() =>
+        EnglishSpellingComboBox?.SelectedIndex == 1
+            ? EnglishSpelling.British
+            : EnglishSpelling.American;
+
+    private async void WhisperLanguageButton_Click(object sender, RoutedEventArgs e) =>
+        await OpenLanguagePickerAsync().ConfigureAwait(true);
+
+    private async void PickParakeetLanguageButton_Click(object sender, RoutedEventArgs e) =>
+        await OpenLanguagePickerAsync(FinalAsrEngine.Parakeet).ConfigureAwait(true);
+
+    private async void ResetLanguageToAutoButton_Click(object sender, RoutedEventArgs e) =>
+        await ApplyPickedLanguageAsync(LanguageCatalog.AutomaticCode).ConfigureAwait(true);
+
+    private async Task OpenLanguagePickerAsync(FinalAsrEngine? engineOverride = null)
+    {
+        if (_session.Closing || Content?.XamlRoot is not { } xamlRoot)
+        {
+            return;
+        }
+
+        var dialog = new LanguagePickerDialog(
+            engineOverride ?? SelectedFinalEngine(),
+            _selectedWhisperLanguage,
+            SelectedEnglishSpelling(),
+            _settings?.RecentLanguages)
+        {
+            XamlRoot = xamlRoot,
+            RequestedTheme = (Content as FrameworkElement)?.RequestedTheme ?? ElementTheme.Default,
+        };
+
+        await dialog.ShowAsync();
+        if (!string.IsNullOrWhiteSpace(dialog.SelectedPickerCode))
+        {
+            await ApplyPickedLanguageAsync(dialog.SelectedPickerCode).ConfigureAwait(true);
+        }
+    }
+
+    private async Task ApplyPickedLanguageAsync(string pickerCode)
+    {
+        if (_session.Closing || _settings is null)
+        {
+            return;
+        }
+
+        var (newLanguage, newSpelling) = LanguageCatalog.ApplyPickerSelection(
+            pickerCode,
+            SelectedEnglishSpelling());
+
+        if (await UpdateSettingsAsync(current => current with
+        {
+            RecentLanguages = LanguageCatalog.RecordRecentLanguage(current.RecentLanguages, pickerCode),
+            Preferences = current.Preferences with
+            {
+                Dictation = current.Preferences.Dictation with
+                {
+                    WhisperLanguage = newLanguage,
+                    EnglishSpelling = newSpelling,
+                },
+            },
+        }).ConfigureAwait(true))
+        {
+            _selectedWhisperLanguage = newLanguage;
+            ApplySettingsToControls();
+        }
+    }
+
+    private void RefreshLanguageControls(FinalAsrEngine? engineOverride = null)
+    {
+        var engine = engineOverride ?? SelectedFinalEngine();
+        var spelling = SelectedEnglishSpelling();
+        var displayName = LanguageCatalog.DisplayNameFor(_selectedWhisperLanguage, spelling);
+
+        if (WhisperLanguageValueText is not null)
+        {
+            WhisperLanguageValueText.Text = displayName;
+        }
+
+        if (WhisperLanguageHelperText is not null)
+        {
+            WhisperLanguageHelperText.Text = engine == FinalAsrEngine.Parakeet
+                ? "Choose Automatic detection, or pick one of Parakeet's 25 European languages to guide script recognition."
+                : "Choose Automatic detection, or pick from 99+ languages to lock recognition to a single language.";
+        }
+
+        var unsupportedOnParakeet = engine == FinalAsrEngine.Parakeet &&
+            !LanguageCatalog.IsSupported(FinalAsrEngine.Parakeet, _selectedWhisperLanguage);
+        if (ParakeetLanguageUnsupportedCard is not null && ParakeetLanguageUnsupportedText is not null)
+        {
+            if (unsupportedOnParakeet)
+            {
+                ParakeetLanguageUnsupportedCard.Visibility = Visibility.Visible;
+                SetLiveText(
+                    ParakeetLanguageUnsupportedText,
+                    $"{displayName} is saved for Whisper. Parakeet supports 25 European languages, so it is detecting automatically right now.");
+            }
+            else
+            {
+                ParakeetLanguageUnsupportedCard.Visibility = Visibility.Collapsed;
+                SetLiveText(ParakeetLanguageUnsupportedText, string.Empty);
+            }
+        }
     }
 
     private void CancelModelDownloadButton_Click(object sender, RoutedEventArgs e) =>
@@ -933,13 +1043,14 @@ public sealed partial class MainWindow
         ObserveModelForOnboarding(presentation);
     }
 
-    private void SyncAppliedWhisperLanguageStatus(WhisperLanguagePreference language)
+    private void SyncAppliedWhisperLanguageStatus(string? languageCode, EnglishSpelling spelling)
     {
-        var index = (int)language;
-        var appliedLabel = index >= 0 && index < WhisperLanguageComboBox.Items.Count &&
-            WhisperLanguageComboBox.Items[index] is string label
-                ? label
-                : language.ToString();
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(WhisperLanguageComboBox, appliedLabel);
+        if (WhisperLanguageButton is null)
+        {
+            return;
+        }
+
+        var appliedLabel = LanguageCatalog.DisplayNameFor(languageCode, spelling);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(WhisperLanguageButton, appliedLabel);
     }
 }

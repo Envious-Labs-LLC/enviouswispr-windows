@@ -340,9 +340,9 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
             samples,
             ParakeetTranscriptionEngine.RequiredSampleRate,
             Channels: 1);
-        // THE TAKE CARRIES ITS LANGUAGE (#241). A request without one keeps the language the engine
-        // loaded with; one the app could not have sent is refused rather than guessed at; an engine that
-        // takes no language (Parakeet) ignores it and reports none.
+        // THE TAKE CARRIES ITS LANGUAGE (#241, #358). A request without one keeps the engine's
+        // load-time setting; an unrecognized code is refused; Whisper runs 99+ languages and
+        // Parakeet pins script selection across its 25 supported European languages.
         string? language = null;
         if (transcription.Language is { } requested &&
             !WhisperLanguageCodes.TryNormalize(requested, out language))

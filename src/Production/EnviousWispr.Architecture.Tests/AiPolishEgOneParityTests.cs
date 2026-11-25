@@ -428,7 +428,7 @@ public sealed class AiPolishEgOneParityTests
         FillerRemoval: false,
         EmojiFormatter: true,
         SpokenPunctuation: false,
-        WhisperLanguageIndex: 0,
+        WhisperLanguage: "auto",
         EnglishSpellingIndex: 0,
         RecordingModeIndex: 0,
         EscapeRecovery: false,

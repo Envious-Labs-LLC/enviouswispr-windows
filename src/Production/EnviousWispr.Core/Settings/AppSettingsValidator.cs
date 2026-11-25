@@ -26,6 +26,7 @@ public static class AppSettingsValidator
             settings.Observability is null ||
             settings.Observability.DiagnosticRetentionDays
                 is < RetentionDays.DiagnosticMinimum or > RetentionDays.DiagnosticMaximum ||
+            !IsValidRecentLanguages(settings.RecentLanguages) ||
             !IsValid(settings.Preferences) ||
             !IsValid(settings.UserData))
         {
@@ -54,7 +55,7 @@ public static class AppSettingsValidator
         preferences.Polish is not null &&
         preferences.History is not null &&
         Enum.IsDefined(preferences.Dictation.FinalEngine) &&
-        Enum.IsDefined(preferences.Dictation.WhisperLanguage) &&
+        LanguageCatalog.IsCanonicalStoredCode(preferences.Dictation.WhisperLanguage) &&
         Enum.IsDefined(preferences.Dictation.EnglishSpelling) &&
         Enum.IsDefined(preferences.Dictation.RecordingMode) &&
         HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
@@ -89,6 +90,30 @@ public static class AppSettingsValidator
         preferences.PillDesignWithWords is RecordingPillDesign.ReadingWell &&
         Enum.IsDefined(preferences.RecordingSoundPairing) &&
         Enum.IsDefined(preferences.LivePreviewEngine);
+
+    private static bool IsValidRecentLanguages(IReadOnlyList<string>? recentLanguages)
+    {
+        if (recentLanguages is null)
+        {
+            return true;
+        }
+
+        if (recentLanguages.Count > LanguageCatalog.MaxRecentLanguages)
+        {
+            return false;
+        }
+
+        var seen = new HashSet<string>(recentLanguages.Count, StringComparer.Ordinal);
+        foreach (var code in recentLanguages)
+        {
+            if (!LanguageCatalog.IsCanonicalPickerCode(code) || !seen.Add(code))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static bool HasDistinctDictationGestures(DictationPreferences preferences)
     {

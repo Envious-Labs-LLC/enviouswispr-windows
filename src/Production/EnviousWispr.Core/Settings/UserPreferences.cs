@@ -213,45 +213,39 @@ public enum EnglishSpelling
     British,
 }
 
-public enum WhisperLanguagePreference
-{
-    Automatic,
-    English,
-    French,
-    German,
-    Spanish,
-}
-
 public static class WhisperLanguageCodes
 {
-    public static string For(WhisperLanguagePreference preference) => preference switch
-    {
-        WhisperLanguagePreference.Automatic => "auto",
-        WhisperLanguagePreference.English => "en",
-        WhisperLanguagePreference.French => "fr",
-        WhisperLanguagePreference.German => "de",
-        WhisperLanguagePreference.Spanish => "es",
-        _ => throw new ArgumentOutOfRangeException(nameof(preference)),
-    };
+    public static string For(string? language) => LanguageCatalog.NormalizeOrDefault(language);
 
     /// <summary>The language a take is recognised in: a valid launch override pins it; otherwise the setting as it stands.</summary>
     /// <remarks>The override (ENVIOUSWISPR_ASR_LANGUAGE) is for tooling and journeys; an invalid one is ignored, as before.</remarks>
-    public static string Current(WhisperLanguagePreference setting, string? environmentOverride) =>
-        TryNormalize(environmentOverride, out var code) ? code : For(setting);
+    public static string Current(string? setting, string? environmentOverride) =>
+        TryNormalize(environmentOverride, out var overrideCode)
+            ? overrideCode
+            : LanguageCatalog.NormalizeOrDefault(setting);
 
     public static bool TryNormalize(string? value, out string code)
     {
-        var normalized = value?.Trim().ToLowerInvariant();
-        code = normalized switch
+        code = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
         {
-            "auto" => "auto",
-            "en" or "en-us" or "en-gb" => "en",
-            "fr" or "fr-fr" => "fr",
-            "de" or "de-de" => "de",
-            "es" or "es-es" => "es",
-            _ => string.Empty,
-        };
-        return code.Length > 0;
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (string.Equals(trimmed, LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase))
+        {
+            code = LanguageCatalog.AutomaticCode;
+            return true;
+        }
+
+        if (LanguageCatalog.TryGetEntry(trimmed, out var entry))
+        {
+            code = entry.LockCode;
+            return true;
+        }
+
+        return false;
     }
 }
 
@@ -262,7 +256,8 @@ public sealed record DictationPreferences(
     bool FillerRemovalEnabled,
     bool EmojiFormatterEnabled,
     bool SpokenPunctuationEnabled,
-    WhisperLanguagePreference WhisperLanguage = WhisperLanguagePreference.Automatic,
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(WhisperLanguageJsonConverter))]
+    string WhisperLanguage = LanguageCatalog.AutomaticCode,
     DictationRecordingMode RecordingMode = DictationRecordingMode.PushToTalk,
     string CancelGesture = "Escape",
     bool EscapeRecoveryEnabled = false,
@@ -324,7 +319,7 @@ public sealed record DictationPreferences(
         FillerRemovalEnabled: true,
         EmojiFormatterEnabled: true,
         SpokenPunctuationEnabled: false,
-        WhisperLanguage: WhisperLanguagePreference.Automatic,
+        WhisperLanguage: LanguageCatalog.AutomaticCode,
         RecordingMode: DictationRecordingMode.PushToTalk,
         // OFF by default, and that is resolved from the founder's priority order rather than
         // chosen: priority one is that dictation works every time it physically can, and a switch

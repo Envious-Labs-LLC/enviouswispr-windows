@@ -189,11 +189,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             transcript.RecognitionLanguage);
     }
 
-    /// <summary>What each take is told: the current language for Whisper (the load-time one when nothing reads it), nothing for Parakeet.</summary>
+    /// <summary>What each take is told: the live language preference, or the load-time fallback.</summary>
     internal static Func<string?> LanguageFor(RuntimeWorkerTranscriptionOptions options) =>
-        options.Engine != FinalAsrEngine.Whisper
-            ? static () => null
-            : options.CurrentLanguage ?? (() => options.Language);
+        options.CurrentLanguage ?? (() => options.Language);
 
     private static string[] CreateWorkerArguments(RuntimeWorkerTranscriptionOptions options)
     {

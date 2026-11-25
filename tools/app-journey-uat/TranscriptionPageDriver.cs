@@ -17,19 +17,19 @@ internal static class TranscriptionPageDriver
     {
         _ = Find(processId, "EnviousWispr navigation", TimeSpan.FromSeconds(30));
         Select(Find(processId, "Dictation Settings", TimeSpan.FromSeconds(10)));
-        var picker = Find(processId, "Whisper language", TimeSpan.FromSeconds(10));
-        if (!picker.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expanderPattern) ||
-            expanderPattern is not ExpandCollapsePattern expander)
+        var picker = Find(processId, "Dictation language", TimeSpan.FromSeconds(10));
+        Activate(picker);
+
+        var searchBox = Find(processId, "Search languages", TimeSpan.FromSeconds(10));
+        if (!searchBox.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObj) ||
+            valuePatternObj is not ValuePattern valuePattern)
         {
-            throw JourneyExpectationException.Instrument("The Whisper language picker offers no expand pattern.");
+            throw JourneyExpectationException.Instrument("The language picker search box offers no value pattern.");
         }
 
-        expander.Expand();
-        Select(Find(processId, languageName, TimeSpan.FromSeconds(10)));
-        if (expander.Current.ExpandCollapseState != ExpandCollapseState.Collapsed)
-        {
-            expander.Collapse();
-        }
+        valuePattern.SetValue(languageName);
+        var match = FindContaining(processId, languageName, TimeSpan.FromSeconds(10));
+        Activate(match);
 
         WaitForAppliedLanguage(picker, languageName, TimeSpan.FromSeconds(10));
     }
@@ -39,7 +39,8 @@ internal static class TranscriptionPageDriver
         var timer = Stopwatch.StartNew();
         while (timer.Elapsed < timeout)
         {
-            if (string.Equals(picker.Current.ItemStatus, languageName, StringComparison.Ordinal))
+            var status = picker.Current.ItemStatus ?? string.Empty;
+            if (status.Contains(languageName, StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
@@ -70,6 +71,52 @@ internal static class TranscriptionPageDriver
 
         throw JourneyExpectationException.Instrument(
             $"No control named \"{name}\" appeared in the app within {timeout.TotalSeconds:0} seconds.");
+    }
+
+    private static AutomationElement FindContaining(int processId, string substring, TimeSpan timeout)
+    {
+        var listCondition = new AndCondition(
+            new PropertyCondition(AutomationElement.ProcessIdProperty, processId),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem));
+        var timer = Stopwatch.StartNew();
+        while (timer.Elapsed < timeout)
+        {
+            var items = AutomationElement.RootElement.FindAll(TreeScope.Descendants, listCondition);
+            for (var index = 0; index < items.Count; index++)
+            {
+                var item = items[index];
+                var name = item.Current.Name ?? string.Empty;
+                if (name.Contains(substring, StringComparison.OrdinalIgnoreCase))
+                {
+                    return item;
+                }
+            }
+
+            Thread.Sleep(250);
+        }
+
+        throw JourneyExpectationException.Instrument(
+            $"No language option matching \"{substring}\" appeared in the picker within {timeout.TotalSeconds:0} seconds.");
+    }
+
+    private static void Activate(AutomationElement element)
+    {
+        if (element.TryGetCurrentPattern(InvokePattern.Pattern, out var invokeObj) &&
+            invokeObj is InvokePattern invokePattern)
+        {
+            invokePattern.Invoke();
+            return;
+        }
+
+        if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selectObj) &&
+            selectObj is SelectionItemPattern selectPattern)
+        {
+            selectPattern.Select();
+            return;
+        }
+
+        throw JourneyExpectationException.Instrument(
+            $"\"{element.Current.Name}\" cannot be activated through UI Automation.");
     }
 
     private static void Select(AutomationElement element)

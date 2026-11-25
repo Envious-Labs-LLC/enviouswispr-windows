@@ -82,7 +82,7 @@ public sealed class SessionCompositionTests
             Assert.True(delivered.InvitesLanguageOffer);
             offer = suggester.Observe(
                 delivered.InvitesLanguageOffer ? language : null,
-                WhisperLanguagePreference.Automatic);
+                LanguageCatalog.AutomaticCode);
         }
 
         Assert.Contains(

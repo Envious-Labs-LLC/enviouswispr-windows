@@ -169,7 +169,7 @@ public static class EnginePolishPresentation
             BadgeText: "Recommended",
             Description: "Fast local speech recognition for 25 languages (640 MB) that runs smoothly on most PCs.",
             IconGlyph: "\uE945",
-            ShowWhisperLanguage: false),
+            ShowWhisperLanguage: true),
     };
 
     public static string DefaultBundleSizeLabel(FinalAsrEngine engine) => engine switch
