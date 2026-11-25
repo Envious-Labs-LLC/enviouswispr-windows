@@ -296,7 +296,7 @@ public sealed record UserPreferences(
     OverlayPillPosition OverlayPosition = OverlayPillPosition.Top,
     RecordingPillDesign PillDesignWithoutWords = RecordingPillDesign.Classic,
     RecordingPillDesign PillDesignWithWords = RecordingPillDesign.ReadingWell,
-    bool PlayRecordingSounds = false,
+    bool PlayRecordingSounds = true,
     RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick,
     bool CopyInsteadOfPaste = false,
     [property: JsonConverter(typeof(LivePreviewEngineChoiceJsonConverter))]
@@ -311,7 +311,7 @@ public sealed record UserPreferences(
         OverlayPosition: OverlayPillPosition.Top,
         PillDesignWithoutWords: RecordingPillDesign.Classic,
         PillDesignWithWords: RecordingPillDesign.ReadingWell,
-        PlayRecordingSounds: false,
+        PlayRecordingSounds: true,
         RecordingSoundPairing: RecordingSoundPairing.WhisperTick,
         CopyInsteadOfPaste: false,
         LivePreviewEngine: LivePreviewEngineChoice.Parakeet);

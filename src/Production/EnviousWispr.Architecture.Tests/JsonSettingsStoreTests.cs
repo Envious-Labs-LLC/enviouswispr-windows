@@ -442,8 +442,37 @@ public sealed class JsonSettingsStoreTests
             Assert.Equal(8, result.SourceSchemaVersion);
             Assert.Equal(RecordingPillDesign.Classic, result.Settings.Preferences.PillDesignWithoutWords);
             Assert.Equal(RecordingPillDesign.ReadingWell, result.Settings.Preferences.PillDesignWithWords);
-            Assert.False(result.Settings.Preferences.PlayRecordingSounds);
+            Assert.True(result.Settings.Preferences.PlayRecordingSounds);
             Assert.Equal(RecordingSoundPairing.WhisperTick, result.Settings.Preferences.RecordingSoundPairing);
+        });
+    }
+
+    [Fact]
+    public async Task PlayRecordingSoundsDefaultsToTrueAndPreservesExplicitFalse()
+    {
+        Assert.True(UserPreferences.Default.PlayRecordingSounds);
+
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var missingKeyPath = Path.Combine(directory, "missing.json");
+            await new JsonSettingsStore(missingKeyPath).SaveAsync(AppSettings.Default);
+            var missingJson = await File.ReadAllTextAsync(missingKeyPath);
+            var missingRoot = JsonNode.Parse(missingJson)!.AsObject();
+            missingRoot["preferences"]!.AsObject().Remove("playRecordingSounds");
+            await File.WriteAllTextAsync(missingKeyPath, missingRoot.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var loadedMissing = await new JsonSettingsStore(missingKeyPath).LoadAsync();
+            Assert.True(loadedMissing.Settings.Preferences.PlayRecordingSounds);
+
+            var explicitFalsePath = Path.Combine(directory, "explicit-false.json");
+            var falseSettings = AppSettings.Default with
+            {
+                Preferences = AppSettings.Default.Preferences with { PlayRecordingSounds = false },
+            };
+            await new JsonSettingsStore(explicitFalsePath).SaveAsync(falseSettings);
+
+            var loadedFalse = await new JsonSettingsStore(explicitFalsePath).LoadAsync();
+            Assert.False(loadedFalse.Settings.Preferences.PlayRecordingSounds);
         });
     }
 

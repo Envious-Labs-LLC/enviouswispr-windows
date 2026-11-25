@@ -39,7 +39,10 @@ public sealed class ProductionPathTests
         {
             await world.Capture.Stopped.Task.WaitAsync(Patience);
             await clock.WhenRegistered(TimeSpan.FromMinutes(3)).WaitAsync(Patience);
-            Assert.Equal("Capture complete. Transcribing locally", world.View.Statuses.Last().Text);
+            Assert.Equal("Transcribing locally...", world.View.Statuses.Last().Text);
+            Assert.Equal(
+                EnviousWispr.Core.Presentation.DictationOverlayState.Processing,
+                world.View.Statuses.Last().State);
             Assert.False(release.IsCompleted);
             Assert.Single(world.Engine.Requests);
             Assert.False(world.Engine.Tokens[0].IsCancellationRequested);

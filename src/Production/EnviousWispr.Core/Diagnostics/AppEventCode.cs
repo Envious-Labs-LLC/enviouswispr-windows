@@ -381,4 +381,7 @@ public enum AppEventCode
 
     /// <summary>Final tail or whole-recording transcription failed after streaming had already committed recognized speech; the committed head start was preserved instead of losing the dictation.</summary>
     StreamingHeadStartPreserved,
+
+    /// <summary>A recording push/release audio cue failed to initialize or play on the output device.</summary>
+    RecordingSoundCueFailed,
 }

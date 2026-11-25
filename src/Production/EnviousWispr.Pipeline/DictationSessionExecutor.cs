@@ -54,6 +54,12 @@ public interface IDictationSessionEffects
 
     void ShowTransitionStatus(SessionTransitionResult result);
 
+    /// <summary>Signals immediate transition to processing UI before capture teardown completes.</summary>
+    void ShowProcessing() { }
+
+    /// <summary>Clears any optimistic recording sound cue state without firing a stop cue.</summary>
+    void CancelRecordingCue() { }
+
     /// <summary>The transition threw for a reason that is not a timeout.</summary>
     void RecordSessionFailure();
 
@@ -793,6 +799,12 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 return new SessionCommandResult(SessionCommandDisposition.Ignored);
             }
 
+            var optimisticRecording = false;
+            var startedConfirmed = false;
+            var optimisticProcessing = false;
+            var recoverCancelledRecording =
+                signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
+
             if (signal == PushToTalkSignal.Pressed)
             {
                 // THE MACHINE IS ASKED, AND THE POLICY IS APPLIED, HERE. Memory too low refuses the
@@ -815,9 +827,25 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 {
                     _effects.ShowDiskLow();
                 }
+
+                if (!Volatile.Read(ref _closed) && _controller.CurrentSession is null)
+                {
+                    optimisticRecording = true;
+                    _effects.ShowTransitionStatus(
+                        new SessionTransitionResult(SessionTransitionKind.Started, IsHandsFree: command.IsHandsFree));
+                }
             }
             else
             {
+                if (signal == PushToTalkSignal.Released &&
+                    !recoverCancelledRecording &&
+                    !Volatile.Read(ref _closed) &&
+                    _controller.CurrentSession?.State == DictationSessionState.Recording)
+                {
+                    optimisticProcessing = true;
+                    _effects.ShowProcessing();
+                }
+
                 _background.CloseStreamingAdmission();
                 _finalization.ResetTranscriptionComplete();
                 var escapeCancel = new CancellationTokenSource();
@@ -826,76 +854,98 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
             }
 
-            var releaseToken = Volatile.Read(ref _escapeCancel)?.Token ?? none;
-            var recoverCancelledRecording =
-                signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
-            var result = signal switch
+            try
             {
-                // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
-                // controller is told rather than asked, so the queue's hop cannot move the words.
-                PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
-                    await _controller.PressAsync(startContext, none).ConfigureAwait(false),
-                PushToTalkSignal.Pressed => await _controller.PressAsync(none).ConfigureAwait(false),
-                PushToTalkSignal.Released => await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
-                PushToTalkSignal.Cancelled when recoverCancelledRecording =>
-                    await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
-                PushToTalkSignal.Cancelled => await _controller.CancelAsync(none).ConfigureAwait(false),
-                _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
-            };
-
-            // FROM HERE THE DICTATION IS KNOWN, AND EVERYTHING BELOW BELONGS TO IT. Above this line
-            // the session either does not exist yet (a press) or is being read off the controller,
-            // and lines written there honestly have no dictation. `Begin` restores rather than
-            // clears, so this nesting inside another scope is safe.
-            transition = result;
-            interrupted = result.Session?.Id.Value;
-            using var dictation = interrupted is { } known
-                ? DictationScope.Begin(known)
-                : NoScope.Instance;
-            RecordTransition(result);
-            if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
-            {
-                result = result with { IsHandsFree = command.IsHandsFree };
-                transition = result;
-                // A NEW RECORDING SUPERSEDES THE WAITING RECOVERY ONLY ONCE IT HAS STARTED. Clearing
-                // before admission or capture opened would destroy the last copy when low memory or
-                // a microphone refusal turns the press away with no replacement recording.
-                if (_persistence.HasPendingRecovery)
+                var releaseToken = Volatile.Read(ref _escapeCancel)?.Token ?? none;
+                var result = signal switch
                 {
-                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
+                    // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
+                    // controller is told rather than asked, so the queue's hop cannot move the words.
+                    PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
+                        await _controller.PressAsync(startContext, none).ConfigureAwait(false),
+                    PushToTalkSignal.Pressed => await _controller.PressAsync(none).ConfigureAwait(false),
+                    PushToTalkSignal.Released => await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
+                    PushToTalkSignal.Cancelled when recoverCancelledRecording =>
+                        await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
+                    PushToTalkSignal.Cancelled => await _controller.CancelAsync(none).ConfigureAwait(false),
+                    _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
+                };
+
+                // FROM HERE THE DICTATION IS KNOWN, AND EVERYTHING BELOW BELONGS TO IT. Above this line
+                // the session either does not exist yet (a press) or is being read off the controller,
+                // and lines written there honestly have no dictation. `Begin` restores rather than
+                // clears, so this nesting inside another scope is safe.
+                transition = result;
+                interrupted = result.Session?.Id.Value;
+                using var dictation = interrupted is { } known
+                    ? DictationScope.Begin(known)
+                    : NoScope.Instance;
+                RecordTransition(result);
+                if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
+                {
+                    result = result with { IsHandsFree = command.IsHandsFree };
+                    transition = result;
+                    // A NEW RECORDING SUPERSEDES THE WAITING RECOVERY ONLY ONCE IT HAS STARTED. Clearing
+                    // before admission or capture opened would destroy the last copy when low memory or
+                    // a microphone refusal turns the press away with no replacement recording.
+                    if (_persistence.HasPendingRecovery)
+                    {
+                        await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
+                    }
+
+                    _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
+                    // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
+                    // that started under one auto-stop preference finishes under it.
+                    await _background.StartAsync(
+                            result.Session.Id,
+                            _effects.RecordingSettings() with { IsHandsFree = command.IsHandsFree })
+                        .ConfigureAwait(false);
+                    startedConfirmed = true;
+                }
+                else if (result.Kind == SessionTransitionKind.FinalizeReady &&
+                    result.Session is not null &&
+                    result.Audio is not null)
+                {
+                    // Useful speech work may still be processing after capture ended. Reuse the
+                    // existing capture-complete status instead of leaving the recording pill active.
+                    if (!recoverCancelledRecording &&
+                        !Volatile.Read(ref _closed) &&
+                        !(optimisticProcessing && result.Error is null))
+                    {
+                        _effects.ShowTransitionStatus(result);
+                    }
+
+                    await FinalizeAsync(result.Session.Id, result.Audio, recoverCancelledRecording, preserving: null)
+                        .ConfigureAwait(false);
+                    return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+                }
+                else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+                {
+                    if (optimisticRecording)
+                    {
+                        _effects.CancelRecordingCue();
+                    }
+
+                    await _background.StopAsync(none).ConfigureAwait(false);
+                    await _controller.ResetAsync(none).ConfigureAwait(false);
+                }
+                else if (optimisticRecording)
+                {
+                    _effects.CancelRecordingCue();
                 }
 
-                _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
-                // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
-                // that started under one auto-stop preference finishes under it.
-                await _background.StartAsync(
-                        result.Session.Id,
-                        _effects.RecordingSettings() with { IsHandsFree = command.IsHandsFree })
-                    .ConfigureAwait(false);
-            }
-            else if (result.Kind == SessionTransitionKind.FinalizeReady &&
-                result.Session is not null &&
-                result.Audio is not null)
-            {
-                // Useful speech work may still be processing after capture ended. Reuse the
-                // existing capture-complete status instead of leaving the recording pill active.
-                if (!recoverCancelledRecording && !Volatile.Read(ref _closed))
+                if (!(optimisticRecording && result.Kind == SessionTransitionKind.Started))
                 {
                     _effects.ShowTransitionStatus(result);
                 }
 
-                await FinalizeAsync(result.Session.Id, result.Audio, recoverCancelledRecording, preserving: null)
-                    .ConfigureAwait(false);
                 return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
             }
-            else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+            catch when (optimisticRecording && !startedConfirmed)
             {
-                await _background.StopAsync(none).ConfigureAwait(false);
-                await _controller.ResetAsync(none).ConfigureAwait(false);
+                _effects.CancelRecordingCue();
+                throw;
             }
-
-            _effects.ShowTransitionStatus(result);
-            return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
         }
         catch (RetainedStopException)
         {

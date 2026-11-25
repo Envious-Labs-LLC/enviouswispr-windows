@@ -101,6 +101,12 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
     public void ShowTransitionStatus(SessionTransitionResult result) =>
         _view.ShowStatus(SessionStatus(result));
 
+    public void ShowProcessing() =>
+        _view.ShowStatus(DictationStatus.Processing("Transcribing locally..."));
+
+    public void CancelRecordingCue() =>
+        _view.CancelRecordingCue();
+
     public void RecordSessionFailure() =>
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
