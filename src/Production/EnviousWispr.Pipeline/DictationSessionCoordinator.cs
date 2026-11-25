@@ -113,7 +113,8 @@ public sealed record SessionCommand(
     SystemLifecycleTransition? Transition = null,
     DictationSessionId? TimedOutSession = null,
     DictationSessionId? ForSession = null,
-    bool IsHandsFree = false)
+    bool IsHandsFree = false,
+    bool PromotionOnly = false)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -121,7 +122,7 @@ public sealed record SessionCommand(
     }
 
     /// <summary>A press takes the gate at admission; nothing else does.</summary>
-    public bool IsPress => Kind == SessionCommandKind.PushToTalk && Signal == PushToTalkSignal.Pressed;
+    public bool IsPress => Kind == SessionCommandKind.PushToTalk && Signal == PushToTalkSignal.Pressed && !PromotionOnly;
 
     /// <summary>The recording a terminal is for - a loop's release or a timeout names one; a key's terminal is for whatever is in flight.</summary>
     public DictationSessionId? TerminalIdentity => ForSession ?? TimedOutSession;
@@ -605,7 +606,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
             var gateReserved = false;
             var startContext = command.StartContext;
-            if (command.IsPress)
+            if (IsHandsFreePromotion(command))
+            {
+                // A modifier recording started immediately at press-down and just completed a
+                // double-tap before (or right after) WASAPI finished opening; queue behind the
+                // active start without holding the gate so it upgrades cleanly to hands-free, and
+                // drop it harmlessly if that start fails.
+                command = command with { PromotionOnly = true };
+            }
+            else if (command.IsPress)
             {
                 // The counter covers commands this queue knows about; the gate covers everybody else.
                 // Both have to be free for a press, and the gate is taken here, now, so that nothing
@@ -1057,12 +1066,20 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             ? _pendingTerminals.Contains(named)
             : _recording is { } recording && _pendingTerminals.Contains(recording));
 
+    private bool IsHandsFreePromotion(SessionCommand command) =>
+        command.Kind == SessionCommandKind.PushToTalk &&
+        command.Signal == PushToTalkSignal.Pressed &&
+        command.IsHandsFree &&
+        _holds == 0 &&
+        _pendingTerminals.Count == 0 &&
+        (_recording is not null || _activeQueued?.Command.IsPress == true);
+
     /// <summary>What a command's result says about the recording in flight, kept for the terminal coalescing above.</summary>
     private void NoteRecording(SessionCommand command, SessionCommandResult result)
     {
         lock (_admission)
         {
-            if (command.IsPress)
+            if (command.IsPress || command.PromotionOnly)
             {
                 if (result.Disposition == SessionCommandDisposition.Applied && result.Session is { } session)
                 {

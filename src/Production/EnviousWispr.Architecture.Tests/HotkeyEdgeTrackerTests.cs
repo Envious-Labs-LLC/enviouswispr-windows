@@ -13,19 +13,8 @@ public sealed class HotkeyEdgeTrackerTests
     private const uint LeftControl = 0xA2;
     private const uint LeftWindows = 0x5B;
 
-    /// <summary>Runs the clock past whatever the tracker is waiting for.</summary>
-    /// <remarks>
-    /// A hold completes on TIME, not on a keystroke, so a test that only sends keys can never see
-    /// one start. Sleeping past the real deadline is the honest way to drive it from here, because
-    /// the tracker owns its own clock.
-    /// </remarks>
-    private static PushToTalkSignal? TickPastDeadline(HotkeyEdgeTracker tracker)
-    {
-        var deadline = tracker.NextDeadline;
-        Assert.True(deadline is not null, "Nothing is pending, so nothing can complete.");
-        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
-        return tracker.Tick();
-    }
+    private static void HoldPastThreshold() =>
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(40));
 
     private static HotkeyEdgeTracker ModifierSetBound() =>
         new(
@@ -50,8 +39,8 @@ public sealed class HotkeyEdgeTrackerTests
         // is bound with no modifiers, so an exact match refused the one key that must always work.
         // Taking the offer on the Keybinds page silently cost the person their cancel key.
         var tracker = ModifierBound();
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+        var started = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Signal);
         tracker.SetRecordingActive(true);
 
         var cancelled = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
@@ -63,8 +52,7 @@ public sealed class HotkeyEdgeTrackerTests
     public void LettingGoAfterACancelDoesNotDeliverWhatWasThrownAway()
     {
         var tracker = ModifierBound();
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        TickPastDeadline(tracker);
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
         tracker.SetRecordingActive(true);
         tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
         tracker.Process(EscapeKey, isKeyDown: false, HotkeyModifiers.Control);
@@ -91,7 +79,8 @@ public sealed class HotkeyEdgeTrackerTests
         var tap = SingleTap(tracker);
 
         Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
-        Assert.Null(tap);
+        // After Escape cleared hands-free, a single brief tap discards cleanly instead of stopping an old take.
+        Assert.Equal(PushToTalkSignal.Discarded, tap);
     }
 
     [Fact]
@@ -131,8 +120,7 @@ public sealed class HotkeyEdgeTrackerTests
             new HotkeyBinding(EscapeKey, HotkeyModifiers.Control),
             new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
             DictationRecordingMode.PushToTalk);
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        TickPastDeadline(tracker);
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
         tracker.SetRecordingActive(true);
 
         var cancelled = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
@@ -140,17 +128,21 @@ public sealed class HotkeyEdgeTrackerTests
         Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
     }
 
-    /// <summary>Taps the bound modifier twice, which starts a hands-free recording.</summary>
+    /// <summary>Taps the bound modifier twice, which locks hands-free after immediate initial start.</summary>
     private static void DoubleTap(HotkeyEdgeTracker tracker)
     {
-        for (var tap = 0; tap < 2; tap++)
-        {
-            tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-            tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
-        }
+        var first = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Pressed, first.Signal);
+        Assert.False(first.IsHandsFree);
+        tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
 
         Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
-        Assert.Equal(PushToTalkSignal.Pressed, tracker.Tick());
+        var locked = tracker.TickDecision();
+        Assert.NotNull(locked);
+        Assert.Equal(PushToTalkSignal.Pressed, locked.Value.Signal);
+        Assert.True(locked.Value.IsHandsFree);
     }
 
     /// <summary>Taps the bound modifier once and lets the tap window close.</summary>
@@ -163,39 +155,38 @@ public sealed class HotkeyEdgeTrackerTests
     }
 
     /// <summary>
-    /// THE CONTROL FOR THE WHOLE MODIFIER BINDING. Holding it must actually start a recording.
+    /// THE CONTROL FOR THE WHOLE MODIFIER BINDING. Pressing it starts recording immediately with no 200ms wait.
     /// </summary>
-    /// <remarks>
-    /// Without this, every refusal test below would pass against a binding that can never fire -
-    /// which is exactly how the hands-free lock reached ten green tests while being unreachable.
-    /// The gesture policy has its own tests; this one proves the WIRING carries them, including the
-    /// tick that lets a hold complete without a keystroke.
-    /// </remarks>
     [Fact]
     public void HoldingABoundModifierStartsARecording()
     {
         var tracker = ModifierBound();
 
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+        var started = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Signal);
+        Assert.False(started.IsHandsFree);
+        Assert.Null(tracker.NextDeadline);
     }
 
     /// <summary>
-    /// Two modifiers together are a binding, and Ctrl+Win is the shape the default will use. The
-    /// tracker sees only that the SET became complete, which is why it works with no key of its own.
+    /// Two modifiers together are a binding (Ctrl+Win), starting immediately as soon as the full set engages.
     /// </summary>
     [Fact]
     public void HoldingABoundModifierSetStartsARecording()
     {
         var tracker = ModifierSetBound();
 
-        // Control alone is not the set, so nothing arms.
-        tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control);
+        // Control alone is not the set, so nothing starts.
+        var partial = tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Null(partial.Signal);
         Assert.Null(tracker.NextDeadline);
 
-        // Windows joins it and the set is complete.
-        tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows);
-        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+        // Windows joins it and the set starts immediately with zero hold threshold delay.
+        var started = tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Signal);
+        Assert.Null(tracker.NextDeadline);
+
+        HoldPastThreshold();
 
         // Letting either one go ends it.
         var released = tracker.Process(LeftWindows, isKeyDown: false, HotkeyModifiers.Control);
@@ -203,34 +194,31 @@ public sealed class HotkeyEdgeTrackerTests
     }
 
     /// <summary>
-    /// Ctrl+Win+D makes a new desktop. Pressing an ordinary key while the set is held is a shortcut
-    /// and must not become a recording.
+    /// Ctrl+Win+D makes a new desktop. Pressing an ordinary key while the set is held cleanly discards
+    /// without committing and leaves the chord unconsumed.
     /// </summary>
     [Fact]
     public void AShortcutBuiltOnTheBoundSetStartsNothing()
     {
         var tracker = ModifierSetBound();
 
-        tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control);
-        tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows);
-        tracker.Process(
+        Assert.Null(tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
+        Assert.Equal(
+            PushToTalkSignal.Pressed,
+            tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows).Signal);
+
+        var chord = tracker.Process(
             LetterC,
             isKeyDown: true,
             HotkeyModifiers.Control | HotkeyModifiers.Windows);
-
-        // THE ORDINARY KEY ABANDONS THE PENDING HOLD OUTRIGHT, so by design there is no deadline
-        // left to run past. This cannot use TickPastDeadline, whose contract is that something IS
-        // pending: asserting on it here failed the test for the reason the feature is correct.
+        Assert.Equal(PushToTalkSignal.Discarded, chord.Signal);
+        Assert.False(chord.Consume);
         Assert.Null(tracker.NextDeadline);
 
-        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
-        Assert.Null(tracker.Tick());
-
-        // And letting go of the shortcut afterwards must not start anything either, which is the
-        // half a "nothing happened yet" assertion would miss.
-        tracker.Process(LetterC, isKeyDown: false, HotkeyModifiers.Control | HotkeyModifiers.Windows);
-        tracker.Process(LeftWindows, isKeyDown: false, HotkeyModifiers.Control);
-        tracker.Process(LeftControl, isKeyDown: false, HotkeyModifiers.None);
+        // Releasing the shortcut afterwards emits no Released or stray hands-free lock.
+        Assert.Null(tracker.Process(LetterC, isKeyDown: false, HotkeyModifiers.Control | HotkeyModifiers.Windows).Signal);
+        Assert.Null(tracker.Process(LeftWindows, isKeyDown: false, HotkeyModifiers.Control).Signal);
+        Assert.Null(tracker.Process(LeftControl, isKeyDown: false, HotkeyModifiers.None).Signal);
 
         Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
         Assert.Null(tracker.Tick());
@@ -238,7 +226,6 @@ public sealed class HotkeyEdgeTrackerTests
 
     /// <summary>
     /// A modifier that does not reach Windows breaks copy, paste, and every shortcut on the machine.
-    /// The failure is total, immediate, and lands on someone who has not opened this app today.
     /// </summary>
     [Theory]
     [InlineData(true)]
@@ -251,40 +238,109 @@ public sealed class HotkeyEdgeTrackerTests
     }
 
     /// <summary>
-    /// The whole reason a modifier binding needs a different gesture. Holding it and pressing a
-    /// letter is a shortcut and must do nothing here.
+    /// Holding the bound modifier and pressing C/V/Tab cancels & discards quietly so shortcuts pass cleanly.
     /// </summary>
     [Fact]
     public void AShortcutOnTheBoundModifierStartsNothing()
     {
         var tracker = ModifierBound();
 
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        tracker.Process(LetterC, isKeyDown: true, HotkeyModifiers.Control);
-        tracker.Process(LetterC, isKeyDown: false, HotkeyModifiers.Control);
+        var press = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Pressed, press.Signal);
+        Assert.False(press.Consume);
+
+        var letter = tracker.Process(LetterC, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Discarded, letter.Signal);
+        Assert.False(letter.Consume);
+
+        Assert.Null(tracker.Process(LetterC, isKeyDown: false, HotkeyModifiers.Control).Signal);
         var release = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
 
         Assert.Null(release.Signal);
         Assert.False(release.Consume);
     }
 
-    /// <summary>Releasing the hold finishes the recording, with nothing left pending.</summary>
-    /// <remarks>
-    /// The property that makes this feature shippable at all: a hold was never a tap, so its release
-    /// finalises immediately rather than waiting to see whether a second press is coming.
-    /// </remarks>
+    /// <summary>Releasing a held modifier past threshold finishes the recording immediately with nothing pending.</summary>
     [Fact]
     public void ReleasingTheHoldFinishesTheRecordingImmediately()
     {
         var tracker = ModifierBound();
 
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
+        HoldPastThreshold();
 
         var released = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
 
         Assert.Equal(PushToTalkSignal.Released, released.Signal);
         Assert.Null(tracker.NextDeadline);
+    }
+
+    [Theory]
+    [InlineData(0x43u)] // Ctrl+C
+    [InlineData(0x56u)] // Ctrl+V
+    public void CommonControlShortcutsDiscardCaptureQuietlyAndPassThrough(uint letterKey)
+    {
+        var tracker = ModifierBound();
+
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
+        var chord = tracker.Process(letterKey, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Discarded, chord.Signal);
+        Assert.False(chord.Consume);
+        Assert.Null(tracker.Process(letterKey, isKeyDown: false, HotkeyModifiers.Control).Signal);
+        Assert.Null(tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None).Signal);
+    }
+
+    [Fact]
+    public void AltTabWhileLeftAltIsBoundDiscardsCaptureAndPassesTabThrough()
+    {
+        const uint leftAlt = 0xA4;
+        const uint tab = 0x09;
+        var tracker = new HotkeyEdgeTracker(leftAlt, HotkeyModifiers.None);
+
+        var altDown = tracker.Process(leftAlt, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, altDown.Signal);
+        Assert.False(altDown.Consume);
+
+        var tabDown = tracker.Process(tab, isKeyDown: true, HotkeyModifiers.Alt);
+        Assert.Equal(PushToTalkSignal.Discarded, tabDown.Signal);
+        Assert.False(tabDown.Consume);
+
+        Assert.Null(tracker.Process(tab, isKeyDown: false, HotkeyModifiers.Alt).Signal);
+        Assert.Null(tracker.Process(leftAlt, isKeyDown: false, HotkeyModifiers.None).Signal);
+    }
+
+    [Fact]
+    public void OrdinaryKeyOrExtraModifierHeldFirstRefusesToStartModifierRecording()
+    {
+        var tracker = ModifierBound();
+
+        // Typing 'A' when RightCtrl arrives -> refused.
+        tracker.Process('A', isKeyDown: true, HotkeyModifiers.None);
+        Assert.Null(tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
+        Assert.Null(tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None).Signal);
+        tracker.Process('A', isKeyDown: false, HotkeyModifiers.None);
+
+        // Shift held before RightCtrl -> Shift+Ctrl shortcut protection, refused.
+        tracker.Process(0xA0, isKeyDown: true, HotkeyModifiers.Shift);
+        Assert.Null(tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Shift | HotkeyModifiers.Control).Signal);
+        Assert.Null(tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.Shift).Signal);
+        tracker.Process(0xA0, isKeyDown: false, HotkeyModifiers.None);
+    }
+
+    [Fact]
+    public void ExtraModifierPressedWhileModifierSetHeldDiscardsQuietly()
+    {
+        const uint leftShift = 0xA0;
+        var tracker = ModifierSetBound();
+
+        tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(
+            PushToTalkSignal.Pressed,
+            tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows).Signal);
+
+        var shift = tracker.Process(leftShift, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows | HotkeyModifiers.Shift);
+        Assert.Equal(PushToTalkSignal.Discarded, shift.Signal);
+        Assert.False(shift.Consume);
     }
 
     /// <summary>
@@ -607,13 +663,16 @@ public sealed class SingleModifierFirstPressTests
         var down = tracker.Process(RightControl, isKeyDown: true, onThePress);
         var up = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
 
-        Assert.NotEqual(PushToTalkSignal.Pressed, down.Signal);
+        Assert.Equal(PushToTalkSignal.Pressed, down.Signal);
         Assert.False(down.Consume);
-        Assert.NotEqual(PushToTalkSignal.Pressed, up.Signal);
+        Assert.Null(up.Signal);
         Assert.False(up.Consume);
+
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        Assert.Equal(PushToTalkSignal.Discarded, tracker.Tick());
     }
 
-    /// <summary>Right Ctrl + C reaches the application as Right Ctrl + C.</summary>
+    /// <summary>Right Ctrl + C discards any instant capture and reaches the application as Right Ctrl + C.</summary>
     [Fact]
     public void AShortcutUnderTheBoundModifierStillReachesTheApplication()
     {
@@ -622,9 +681,65 @@ public sealed class SingleModifierFirstPressTests
         var control = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.None);
         var letter = tracker.Process('C', isKeyDown: true, HotkeyModifiers.Control);
 
+        Assert.Equal(PushToTalkSignal.Pressed, control.Signal);
         Assert.False(control.Consume);
+        Assert.Equal(PushToTalkSignal.Discarded, letter.Signal);
         Assert.False(letter.Consume);
-        Assert.Null(letter.Signal);
+    }
+
+    [Fact]
+    public void EscapeBeforeRecordingIsActiveDiscardsTentativeModifierCapture()
+    {
+        var tracker = new HotkeyEdgeTracker(RightControl, HotkeyModifiers.None);
+        var down = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, down.Signal);
+
+        // Escape before microphone startup marks the session active must discard the tentative
+        // capture rather than falling through ProcessCancel with Consume=false.
+        var escape = tracker.Process(HotkeyEdgeTracker.EscapeVirtualKey, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Discarded, escape.Signal);
+
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(30));
+        Assert.Null(tracker.Tick());
+        var release = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+        Assert.Null(release.Signal);
+    }
+
+    [Fact]
+    public void ReleasingOrdinaryKeyWhileModifierSetIsHeldDoesNotStartRecording()
+    {
+        const uint letterC = 0x43;
+        const uint leftControl = 0xA2;
+        const uint leftWindows = 0x5B;
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(0, HotkeyModifiers.Control | HotkeyModifiers.Windows),
+            new HotkeyBinding(0x1B, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk);
+
+        Assert.Null(tracker.Process(letterC, isKeyDown: true, HotkeyModifiers.None).Signal);
+        Assert.Null(tracker.Process(leftControl, isKeyDown: true, HotkeyModifiers.Control).Signal);
+        Assert.Null(tracker.Process(leftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows).Signal);
+
+        // Releasing 'C' leaves Control+Windows held, but no recording key went down to complete it.
+        var cUp = tracker.Process(letterC, isKeyDown: false, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+        Assert.Null(cUp.Signal);
+        Assert.Null(tracker.NextDeadline);
+    }
+
+    [Fact]
+    public void BriefModifierTapDuringExternalRecordingDoesNotEmitDiscarded()
+    {
+        var tracker = new HotkeyEdgeTracker(RightControl, HotkeyModifiers.None);
+        tracker.SetRecordingActive(true);
+
+        var down = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.None);
+        var up = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+        Assert.Null(down.Signal);
+        Assert.Null(up.Signal);
+
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        Assert.Null(tracker.Tick());
     }
 }
 
@@ -641,16 +756,12 @@ public sealed class SidedAltModifierBindingTests
         var tracker = new HotkeyEdgeTracker(altKey, HotkeyModifiers.None);
 
         var down = tracker.Process(altKey, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, down.Signal);
+        Assert.False(down.IsHandsFree);
         Assert.True(down.MaskMenuKey);
         Assert.False(down.Consume);
 
         Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
-        var started = tracker.TickDecision();
-        Assert.NotNull(started);
-        Assert.Equal(PushToTalkSignal.Pressed, started.Value.Signal);
-        Assert.False(started.Value.IsHandsFree);
-        Assert.True(started.Value.MaskMenuKey);
-
         tracker.SetRecordingActive(true);
         var released = tracker.Process(altKey, isKeyDown: false, HotkeyModifiers.None);
         Assert.Equal(PushToTalkSignal.Released, released.Signal);
@@ -707,19 +818,20 @@ public sealed class SidedAltModifierBindingTests
         // Auto-stop or timeout ends the recording without a key tap.
         tracker.SetRecordingActive(false);
 
-        tracker.Process(RightAlt, isKeyDown: true, HotkeyModifiers.None);
+        var nextDown = tracker.Process(RightAlt, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, nextDown.Signal);
         tracker.Process(RightAlt, isKeyDown: false, HotkeyModifiers.None);
         Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
-        Assert.Null(tracker.Tick());
+        // Hands-free state was cleared, so a lone brief tap discards rather than emitting Released.
+        Assert.Equal(PushToTalkSignal.Discarded, tracker.Tick());
     }
 
     [Fact]
     public void EscapeStillCancelsWhileLeftAltIsHeldAndMasksMenuKey()
     {
         var tracker = new HotkeyEdgeTracker(LeftAlt, HotkeyModifiers.None);
-        tracker.Process(LeftAlt, isKeyDown: true, HotkeyModifiers.None);
-        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
-        Assert.Equal(PushToTalkSignal.Pressed, tracker.Tick());
+        var down = tracker.Process(LeftAlt, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, down.Signal);
         tracker.SetRecordingActive(true);
 
         var cancelled = tracker.Process(HotkeyEdgeTracker.EscapeVirtualKey, isKeyDown: true, HotkeyModifiers.Alt);

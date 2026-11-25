@@ -554,6 +554,70 @@ public sealed class SessionCompositionTests
         Assert.Equal("EnviousWispr is here", world.Delivery.Requests.Single().Text.Text);
     }
 
+    [Fact]
+    public async Task HandsFreePromotionUpgradesRunningUnlockedSessionInPlace()
+    {
+        var clock = new Deterministic.ManualClock();
+        var world = ComposedSessionWorld.Create("hello world", clock);
+        world.Dictation = DictationPreferences.Default with
+        {
+            AutoStopEnabled = true,
+            AutoStopSilenceSeconds = 2,
+        };
+
+        var initial = await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: false);
+        Assert.Equal(SessionCommandDisposition.Applied, initial.Disposition);
+        var sessionId = world.Controller.CurrentSession!.Id;
+        Assert.False(world.Runtime.AutoStop.IsRunning);
+
+        var promoted = await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: true);
+        Assert.Equal(SessionCommandDisposition.Applied, promoted.Disposition);
+        Assert.Equal(sessionId, world.Controller.CurrentSession!.Id);
+        Assert.True(world.Runtime.AutoStop.IsRunning);
+        Assert.DoesNotContain(world.View.Statuses, status => status.State == DictationOverlayState.Hidden);
+        Assert.Contains(world.View.Statuses, status => status.State == DictationOverlayState.Recording && status.IsHandsFree);
+
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal("hello world", Assert.Single(world.Delivery.Requests).Text.Text);
+    }
+
+    [Fact]
+    public async Task DiscardedSignalAbortsQuietlyEvenWithEscapeRecoveryEnabled()
+    {
+        var world = ComposedSessionWorld.Create("accidental chord capture");
+        world.Dictation = DictationPreferences.Default with { EscapeRecoveryEnabled = true };
+
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: false);
+        var discarded = await world.Coordinator.SubmitAsync(PushToTalkSignal.Discarded);
+
+        Assert.Equal(SessionCommandDisposition.Applied, discarded.Disposition);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.Empty(world.Delivery.Requests);
+        Assert.Empty(world.HistoryStore.Added);
+        Assert.Equal(DictationOverlayState.Hidden, world.View.Statuses[^1].State);
+        Assert.DoesNotContain(world.View.Statuses, status => status.State == DictationOverlayState.EscapeRecovery);
+    }
+
+    [Fact]
+    public async Task EscapeRecoveryWithUndoOfferedEmitsFloatingUndoPillStatus()
+    {
+        var world = ComposedSessionWorld.Create("recover these cancelled words");
+        world.Dictation = DictationPreferences.Default with { EscapeRecoveryEnabled = true };
+
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: true);
+        var cancelled = await world.Coordinator.SubmitAsync(PushToTalkSignal.Cancelled);
+
+        Assert.Equal(SessionCommandDisposition.Applied, cancelled.Disposition);
+        Assert.Empty(world.Delivery.Requests);
+        Assert.Single(world.HistoryStore.Added);
+        var finalStatus = world.View.Statuses[^1];
+        Assert.Equal(DictationOverlayState.EscapeRecovery, finalStatus.State);
+        Assert.Equal("Dictation cancelled", finalStatus.Text);
+        Assert.NotNull(finalStatus.Action);
+        Assert.Equal("Undo", finalStatus.Action!.Label);
+        Assert.Equal(PillActionKind.UndoEscapeRecovery, finalStatus.Action.Kind);
+    }
+
     /// <summary>Waits, briefly, for something a fire-and-forget route will have done.</summary>
     private static async Task Eventually(Func<bool> condition, string what)
     {

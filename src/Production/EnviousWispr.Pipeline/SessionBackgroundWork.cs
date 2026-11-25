@@ -29,6 +29,11 @@ public interface ISessionBackgroundWork
     /// <summary>The recording has started: arm the watchdog, start the preview, the auto-stop and the streaming head start.</summary>
     Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings);
 
+    /// <summary>Promotes an already-running unlocked recording to hands-free auto-stop monitoring.</summary>
+    void EnableHandsFree(DictationSessionId sessionId, RecordingBackgroundSettings settings)
+    {
+    }
+
     /// <summary>Closes streaming segment admission immediately at release/cancel entry before capture stop.</summary>
     void CloseStreamingAdmission()
     {
@@ -114,6 +119,13 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         await _preview.StartAsync(sessionId).ConfigureAwait(false);
         _autoStop.Start(sessionId, settings.Dictation(), settings.IsHandsFree);
         _streaming.Start(sessionId);
+    }
+
+    public void EnableHandsFree(DictationSessionId sessionId, RecordingBackgroundSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        _autoStop.Start(sessionId, settings.Dictation(), isHandsFree: true);
     }
 
     public Task<BackgroundStopReport> StopAsync() => StopAsync(CancellationToken.None);

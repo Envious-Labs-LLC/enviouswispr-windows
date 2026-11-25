@@ -2351,9 +2351,9 @@
                                         <RadioButton x:Name="CapsulePillButton" Grid.Column="0" Checked="PillStyleCardChecked" AutomationProperties.Name="Capsule. A compact pill with the rainbow mark and timer." GroupName="RecordingPillStyle" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
                                             <StackPanel Margin="0,12,0,0" Spacing="{StaticResource BrandSpacingS}">
                                                 <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" Height="44">
-                                                    <Border Width="185" Height="44" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="22">
+                                                    <Border Height="44" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="22">
                                                         <Grid>
-                                                            <Border Height="1" Margin="36,0,36,2" VerticalAlignment="Bottom" CornerRadius="0.5">
+                                                            <Border Height="1" Margin="18,0,18,2" VerticalAlignment="Bottom" CornerRadius="0.5">
                                                                 <Border.Background>
                                                                     <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
                                                                         <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumRedColor}" />
@@ -2368,7 +2368,7 @@
                                                                     </LinearGradientBrush>
                                                                 </Border.Background>
                                                             </Border>
-                                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
+                                                            <StackPanel Margin="14,0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
                                                                 <Image Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
                                                                 <TextBlock Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="0:12" VerticalAlignment="Center" />
                                                             </StackPanel>
@@ -2382,9 +2382,9 @@
                                         <RadioButton x:Name="LevelRailPillButton" Grid.Column="1" Checked="PillStyleCardChecked" AutomationProperties.Name="Level Rail. A wider capsule with a live rainbow meter beside the timer." GroupName="RecordingPillStyle" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
                                             <StackPanel Margin="0,12,0,0" Spacing="{StaticResource BrandSpacingS}">
                                                 <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" Height="44">
-                                                    <Border Width="288" Height="44" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="22">
+                                                    <Border Height="44" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="22">
                                                         <Grid>
-                                                            <Border Height="1" Margin="40,0,40,2" VerticalAlignment="Bottom" CornerRadius="0.5">
+                                                            <Border Height="1" Margin="20,0,20,2" VerticalAlignment="Bottom" CornerRadius="0.5">
                                                                 <Border.Background>
                                                                     <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
                                                                         <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumRedColor}" />
@@ -2399,7 +2399,7 @@
                                                                     </LinearGradientBrush>
                                                                 </Border.Background>
                                                             </Border>
-                                                            <Grid Margin="18,0" ColumnSpacing="{StaticResource BrandSpacingM}" VerticalAlignment="Center">
+                                                            <Grid Margin="14,0" ColumnSpacing="{StaticResource BrandSpacingM}" VerticalAlignment="Center">
                                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                                 <TextBlock Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="0:12" VerticalAlignment="Center" />
                                                                 <StackPanel Grid.Column="1" HorizontalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">

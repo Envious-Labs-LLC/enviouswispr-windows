@@ -115,10 +115,14 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>
         _view.ReportDelivery(DeliveryReport.For(delivery), language);
 
+    /// <summary>True once <see cref="ShowEscapeRecoveryFinished"/> observed a saved Undo offer for this finalization.</summary>
+    private int _escapeRecoveryUndoOffered;
+
     // IN macOS's WORDS WHERE IT OFFERS UNDO: the pill's title and the announcement that names both doors
     // back, Undo and History. Without the offer (the History write failed) Home can only offer Copy.
     public void ShowEscapeRecoveryFinished(bool undoOffered)
     {
+        Volatile.Write(ref _escapeRecoveryUndoOffered, undoOffered ? 1 : 0);
         if (undoOffered)
         {
             _view.ShowNotice("Dictation cancelled", "Press Undo to get it back, or find it in History.");
@@ -131,8 +135,8 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     }
 
     /// <remarks>
-    /// THE STATUS LINE ONLY, NO PILL. These sentences describe how a take was processed, and macOS
-    /// shows no completion card for them; the person reads them on the status line and the tray.
+    /// THE STATUS LINE ONLY, NO PILL - except Escape Recovery with Undo offered, which surfaces the
+    /// floating Undo pill directly above the user's app matching macOS.
     /// </remarks>
     public void ShowHeldStatus(FinalizationReport report)
     {
@@ -140,9 +144,12 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
         var polishResult = report.Finalized?.Polish;
         var transcript = report.Transcript;
         var recoveryOnly = report.Outcome == FinalizationOutcome.EscapeRecovery;
+        var undoOffered = Interlocked.Exchange(ref _escapeRecoveryUndoOffered, 0) == 1 && recoveryOnly;
         var cloudProvider = parts.Shell.CloudPolishProviderName();
         DictationStatus status = processed is null || string.IsNullOrWhiteSpace(processed.Output.Text)
                 ? DictationStatus.Quiet("No speech detected")
+                : undoOffered
+                    ? DictationStatus.EscapeRecovery("Dictation cancelled", StatusActions.UndoEscapeRecovery)
                 : recoveryOnly
                     ? DictationStatus.Quiet("Escape Recovery finished. Text is ready to copy")
                 : processed.IsDegraded
@@ -198,4 +205,8 @@ public static class StatusActions
     /// <summary>The button an advisory about the speech engine carries.</summary>
     public static readonly PillAction OpenTranscription =
         new("Open settings", PillActionKind.OpenTranscriptionSettings, "Open transcription settings");
+
+    /// <summary>The one-shot Undo button shown on the floating Escape Recovery pill.</summary>
+    public static readonly PillAction UndoEscapeRecovery =
+        new("Undo", PillActionKind.UndoEscapeRecovery, "Undo cancelled dictation");
 }

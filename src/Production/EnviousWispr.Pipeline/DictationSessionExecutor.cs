@@ -805,6 +805,23 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             var recoverCancelledRecording =
                 signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
 
+            if (signal == PushToTalkSignal.Pressed &&
+                command.IsHandsFree &&
+                _controller.CurrentSession is { State: DictationSessionState.Recording } activeSession)
+            {
+                _background.EnableHandsFree(
+                    activeSession.Id,
+                    _effects.RecordingSettings() with { IsHandsFree = true });
+                _effects.ShowTransitionStatus(
+                    new SessionTransitionResult(SessionTransitionKind.Started, activeSession, IsHandsFree: true));
+                return new SessionCommandResult(SessionCommandDisposition.Applied, activeSession);
+            }
+
+            if (command.PromotionOnly)
+            {
+                return new SessionCommandResult(SessionCommandDisposition.Ignored);
+            }
+
             if (signal == PushToTalkSignal.Pressed)
             {
                 // THE MACHINE IS ASKED, AND THE POLICY IS APPLIED, HERE. Memory too low refuses the
@@ -868,6 +885,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     PushToTalkSignal.Cancelled when recoverCancelledRecording =>
                         await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Cancelled => await _controller.CancelAsync(none).ConfigureAwait(false),
+                    PushToTalkSignal.Discarded => await _controller.CancelAsync(none).ConfigureAwait(false),
                     _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
                 };
 

@@ -20,6 +20,9 @@ public enum HotkeyGestureOutcome
 
     /// <summary>Three taps. Throw the recording away.</summary>
     Cancelled,
+
+    /// <summary>Shortcut chord interference or lone brief tap expired: abort quietly without recovery.</summary>
+    Discarded,
 }
 
 /// <summary>
@@ -106,6 +109,8 @@ public sealed class HotkeyGesturePolicy
     private TimeSpan? _pressedAt;
     private bool _pressDisqualified;
     private bool _holding;
+    private bool _holdConfirmed;
+    private bool _tentativeRecording;
     private int _tapCount;
     private TimeSpan? _lastTapAt;
     private bool _toggleRecording;
@@ -127,6 +132,9 @@ public sealed class HotkeyGesturePolicy
     /// <summary>True while the bound key is being held down as a recording.</summary>
     public bool IsHolding => _holding;
 
+    /// <summary>True while a modifier recording started immediately on press and has not yet settled as a confirmed hold or hands-free lock.</summary>
+    public bool HasTentativeRecording => _tentativeRecording;
+
     /// <summary>Throws away everything, including a hands-free recording that is running.</summary>
     /// <remarks>
     /// FOR A CANCEL, WHICH IS THE ONE CASE Reset IS WRONG FOR. Reset deliberately leaves hands-free
@@ -145,20 +153,21 @@ public sealed class HotkeyGesturePolicy
 
     /// <summary>When the caller should next call <see cref="Elapsed"/>, or null if never.</summary>
     /// <remarks>
-    /// A HOLD AND A TAP WINDOW BOTH COMPLETE WITHOUT A KEY EVENT, so the caller has to be told when
-    /// to look again. Returning the deadline rather than owning a timer keeps this a pure decision
-    /// that a test can drive by hand, which is the only way the timing is checkable at all.
+    /// A TAP-THEN-HOLD AND A TAP WINDOW BOTH COMPLETE WITHOUT A KEY EVENT, so the caller has to be
+    /// told when to look again. Returning the deadline rather than owning a timer keeps this a pure
+    /// decision that a test can drive by hand.
     /// </remarks>
     public TimeSpan? NextDeadline
     {
         get
         {
-            if (_pressedAt is { } pressed && !_holding && !_pressDisqualified)
+            if (_pressedAt is { } pressed && !_holdConfirmed && !_pressDisqualified &&
+                (_tapCount > 0 || _toggleRecording || !_holding))
             {
                 return pressed + _holdThreshold;
             }
 
-            return _lastTapAt is { } tapped ? tapped + MultiTapWindow : null;
+            return _pressedAt is null && _lastTapAt is { } tapped ? tapped + MultiTapWindow : null;
         }
     }
 
@@ -170,13 +179,30 @@ public sealed class HotkeyGesturePolicy
     {
         if (virtualKey != _boundKey)
         {
-            // Any other key going down during the press means this was a shortcut. Key-UP is
-            // ignored: releasing a key that went down BEFORE ours says nothing about what ours is
-            // for, and treating it as a disqualifier would make the gesture depend on the order a
-            // user happens to lift their fingers.
-            if (isKeyDown && _pressedAt is not null && !_holding)
+            // Any other key going down during an unconfirmed modifier hold or tentative single-tap
+            // window means this was a shortcut chord or typing after a stray brush. Once the hold
+            // threshold has passed, accidental key presses do not discard the active dictation.
+            // Key-UP is ignored so lift order never affects shortcut safety.
+            if (isKeyDown)
             {
-                _pressDisqualified = true;
+                var holdConfirmed = _holdConfirmed ||
+                    (_pressedAt is { } heldSince && now - heldSince >= _holdThreshold);
+                if (_holdThreshold > TimeSpan.Zero && !_toggleRecording && !holdConfirmed &&
+                    (_holding || _tentativeRecording))
+                {
+                    _pressDisqualified = _pressedAt is not null;
+                    _holding = false;
+                    _holdConfirmed = false;
+                    _tentativeRecording = false;
+                    _tapCount = 0;
+                    _lastTapAt = null;
+                    return HotkeyGestureOutcome.Discarded;
+                }
+
+                if (_pressedAt is not null && !holdConfirmed)
+                {
+                    _pressDisqualified = true;
+                }
             }
 
             return HotkeyGestureOutcome.Nothing;
@@ -188,21 +214,30 @@ public sealed class HotkeyGesturePolicy
     /// <summary>Call when <see cref="NextDeadline"/> has passed.</summary>
     /// <remarks>
     /// Two different deadlines land here and they cannot both be pending: a press either becomes a
-    /// hold or it does not, and the tap window only opens once the key is up. Handling the hold
-    /// first is what stops a stale tap window swallowing a hold that started in the meantime.
+    /// confirmed hold or it does not, and the tap window only opens once the key is up.
     /// </remarks>
     public HotkeyGestureOutcome Elapsed(TimeSpan now)
     {
-        if (_pressedAt is { } pressed && !_holding && !_pressDisqualified &&
-            now - pressed >= _holdThreshold)
+        if (_pressedAt is { } pressed)
         {
-            _holding = true;
+            if (!_holdConfirmed && !_pressDisqualified && now - pressed >= _holdThreshold)
+            {
+                _holdConfirmed = true;
+                _tapCount = 0;
+                _lastTapAt = null;
+                if (_toggleRecording)
+                {
+                    _holding = true;
+                    return HotkeyGestureOutcome.Nothing;
+                }
 
-            // A hold cancels any taps counted before it. Tapping twice and then holding is one
-            // person changing their mind, not a double-tap followed by a hold.
-            _tapCount = 0;
-            _lastTapAt = null;
-            return HotkeyGestureOutcome.HoldStarted;
+                var wasTentative = _tentativeRecording;
+                _tentativeRecording = false;
+                _holding = true;
+                return wasTentative ? HotkeyGestureOutcome.Nothing : HotkeyGestureOutcome.HoldStarted;
+            }
+
+            return HotkeyGestureOutcome.Nothing;
         }
 
         if (_lastTapAt is not { } tapped || now - tapped < MultiTapWindow)
@@ -231,6 +266,8 @@ public sealed class HotkeyGesturePolicy
         _pressedAt = null;
         _pressDisqualified = false;
         _holding = false;
+        _holdConfirmed = false;
+        _tentativeRecording = false;
         _tapCount = 0;
         _lastTapAt = null;
     }
@@ -249,10 +286,30 @@ public sealed class HotkeyGesturePolicy
 
         // An ordinary key has no shortcut to be confused with, so it holds immediately and the
         // common path pays nothing for a feature it does not use.
-        if (_holdThreshold == TimeSpan.Zero && _tapCount == 0)
+        if (_holdThreshold == TimeSpan.Zero)
+        {
+            _holdConfirmed = true;
+            if (_tapCount == 0)
+            {
+                _holding = true;
+                return HotkeyGestureOutcome.HoldStarted;
+            }
+
+            return HotkeyGestureOutcome.Nothing;
+        }
+
+        // Instant start on bare modifier / modifier-set key-down without waiting 200ms. Quick
+        // releases (< ModifierHoldThreshold) stay inside the multi-tap window so double-tap keeps
+        // early words or a lone stray tap cleanly discards without committing.
+        _holdConfirmed = false;
+        if (!_toggleRecording)
         {
             _holding = true;
-            return HotkeyGestureOutcome.HoldStarted;
+            if (_tapCount == 0 && !_tentativeRecording)
+            {
+                _tentativeRecording = true;
+                return HotkeyGestureOutcome.HoldStarted;
+            }
         }
 
         return HotkeyGestureOutcome.Nothing;
@@ -260,7 +317,7 @@ public sealed class HotkeyGesturePolicy
 
     private HotkeyGestureOutcome PressUp(TimeSpan now)
     {
-        if (_pressedAt is null)
+        if (_pressedAt is not { } pressed)
         {
             // A release with no press: the app started with the key down, or the press went to
             // another window first.
@@ -269,20 +326,30 @@ public sealed class HotkeyGesturePolicy
 
         var wasHolding = _holding;
         var disqualified = _pressDisqualified;
+        var wasHoldConfirmed = _holdConfirmed || now - pressed >= _holdThreshold;
         _pressedAt = null;
         _pressDisqualified = false;
         _holding = false;
-
-        if (wasHolding)
-        {
-            // A hold is not a tap, so it opens no window and finalises immediately. This is the
-            // line that keeps push-to-talk exactly as fast as it is today.
-            return HotkeyGestureOutcome.HoldEnded;
-        }
+        _holdConfirmed = false;
 
         if (disqualified)
         {
             return HotkeyGestureOutcome.Nothing;
+        }
+
+        if (wasHoldConfirmed)
+        {
+            // A hold is not a tap, so it opens no window and finalises immediately.
+            _tentativeRecording = false;
+            _tapCount = 0;
+            _lastTapAt = null;
+            if (_toggleRecording)
+            {
+                _toggleRecording = false;
+                return HotkeyGestureOutcome.ToggleStopped;
+            }
+
+            return wasHolding ? HotkeyGestureOutcome.HoldEnded : HotkeyGestureOutcome.Nothing;
         }
 
         _tapCount++;
@@ -294,15 +361,20 @@ public sealed class HotkeyGesturePolicy
     {
         if (taps >= 3)
         {
-            // Three taps throws away whatever is running. With nothing running it does nothing,
-            // rather than being treated as a stop.
-            if (!_toggleRecording)
+            if (_toggleRecording)
             {
-                return HotkeyGestureOutcome.Nothing;
+                _toggleRecording = false;
+                _tentativeRecording = false;
+                return HotkeyGestureOutcome.Cancelled;
             }
 
-            _toggleRecording = false;
-            return HotkeyGestureOutcome.Cancelled;
+            if (_tentativeRecording)
+            {
+                _tentativeRecording = false;
+                return HotkeyGestureOutcome.Discarded;
+            }
+
+            return HotkeyGestureOutcome.Nothing;
         }
 
         if (taps == 2)
@@ -315,6 +387,7 @@ public sealed class HotkeyGesturePolicy
             }
 
             _toggleRecording = true;
+            _tentativeRecording = false;
             return HotkeyGestureOutcome.ToggleStarted;
         }
 
@@ -324,8 +397,14 @@ public sealed class HotkeyGesturePolicy
             return HotkeyGestureOutcome.ToggleStopped;
         }
 
-        // A single tap with nothing running. Not a gesture - and deliberately not a start, because
-        // a stray brush against the key should never begin a recording.
+        if (taps == 1 && _tentativeRecording)
+        {
+            // A single super-brief tap (< ModifierHoldThreshold) with no second tap: abort quietly
+            // without transcription or recovery so stray modifier presses never commit text.
+            _tentativeRecording = false;
+            return HotkeyGestureOutcome.Discarded;
+        }
+
         return HotkeyGestureOutcome.Nothing;
     }
 }

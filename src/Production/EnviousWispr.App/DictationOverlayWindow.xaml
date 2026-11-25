@@ -265,6 +265,7 @@
                             <TextBlock x:Name="WellHandsFreeText" FontSize="11" FontWeight="SemiBold" Style="{StaticResource PillWellBadgeTextStyle}" Text="HANDS-FREE" />
                         </StackPanel>
                     </Border>
+                    <Button x:Name="InlineActionButton" Grid.Column="2" Click="ActionButton_Click" FontSize="14" Style="{StaticResource PillInlineActionButtonStyle}" VerticalAlignment="Center" Visibility="Collapsed" />
                 </Grid>
 
                 <!--
