@@ -176,6 +176,29 @@ public sealed class HistoryPresenterTests
         Assert.Contains("ContentDialogResult.Primary", handler[..asked], StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TheRecoveryCopyHandlerClearsAndNotifiesOnlyWhenTheCopyIsGone()
+    {
+        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var start = window.IndexOf("private async void CopyRecoveryButton_Click(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "The recovery copy handler is gone.");
+        var end = window.IndexOf("\n    }\n", start, StringComparison.Ordinal);
+        var handler = window[start..end];
+
+        var asked = handler.IndexOf("var recoveryDeleted = await _session.History.DeleteRecoveryAsync()", StringComparison.Ordinal);
+        var gone = handler.IndexOf("if (recoveryDeleted)", StringComparison.Ordinal);
+        var refused = handler.IndexOf("else", gone, StringComparison.Ordinal);
+        var clearedUi = handler.IndexOf("ClearRecoveredText();", StringComparison.Ordinal);
+        var notified = handler.IndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal);
+        Assert.True(asked >= 0, "The handler does not ask the presenter to delete the copy.");
+        Assert.True(gone > asked, "The handler has no branch for a copy that is gone.");
+        Assert.Contains("if (_session.Closing)", handler[asked..gone], StringComparison.Ordinal);
+        Assert.True(refused > gone, "The handler has no branch for a copy Windows left untouched.");
+        Assert.True(clearedUi > gone && clearedUi < refused, "The recovery card is cleared outside the deletion-succeeded branch.");
+        Assert.True(notified > gone && notified < refused, "The app is not told inside the branch where the copy is gone.");
+        Assert.Equal(notified, handler.LastIndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal));
+    }
+
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

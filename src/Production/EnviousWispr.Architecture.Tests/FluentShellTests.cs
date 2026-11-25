@@ -119,13 +119,14 @@ public sealed class FluentShellTests
             Assert.Equal("Auto", columns[^1]);
         }
 
+        // Every multi-row settings card separates its rows with hairlines. Sounds and Live Preview are not
+        // listed: since the sections stopped being one card each, their cards hold a single toggle row and the
+        // chime tiles and preview-engine cards sit on the page beside them, so there is no row to divide.
         foreach (var sectionName in new[]
                  {
                      "KeybindsSection",
                      "DeterministicCleanupSection",
-                     "SoundSection",
                      "AppearanceSection",
-                     "LivePreviewSection",
                      "ClipboardSection",
                      "HistorySettingsSection",
                      "DiagnosticsSection",

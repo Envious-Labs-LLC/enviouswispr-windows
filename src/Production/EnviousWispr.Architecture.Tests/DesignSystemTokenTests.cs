@@ -1649,7 +1649,7 @@ public sealed partial class DesignSystemTokenTests
                  })
         {
             var page = FindNamedElement(document, name);
-            var rootStack = page.Elements().First(element => element.Name.LocalName == "StackPanel");
+            var rootStack = page.Descendants().First(element => element.Name.LocalName == "StackPanel");
             var header = rootStack.Elements().First();
             Assert.NotEqual("{StaticResource BrandHeaderCardStyle}", (string?)header.Attribute("Style"));
             Assert.Contains(
@@ -3628,13 +3628,14 @@ public sealed partial class DesignSystemTokenTests
             element => element.Name.LocalName == "TextBlock"
                 && string.Equals((string?)element.Attribute("Text"), "LISTENING", StringComparison.Ordinal));
 
+        // Each preview ends in the overlay's 1px red-to-violet hairline, inset along the bottom edge.
         foreach (var cardName in new[] { "CapsulePillButton", "LevelRailPillButton", "ReadingWellPillButton" })
         {
             var card = FindNamedElement(window, cardName);
             Assert.Contains(
                 card.Descendants(),
                 element => element.Name.LocalName == "Border"
-                    && string.Equals((string?)element.Attribute("Height"), "2", StringComparison.Ordinal)
+                    && string.Equals((string?)element.Attribute("Height"), "1", StringComparison.Ordinal)
                     && string.Equals((string?)element.Attribute("VerticalAlignment"), "Bottom", StringComparison.Ordinal));
         }
 

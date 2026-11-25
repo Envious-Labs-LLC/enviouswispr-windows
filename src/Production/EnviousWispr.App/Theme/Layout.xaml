@@ -36,8 +36,24 @@
     <!-- One measure for every settings page. Pages that each pick their own cap change width as the
          user navigates, which reads as the frame twitching rather than as a deliberate layout. -->
     <x:Double x:Key="BrandPageContentMaxWidth">1040</x:Double>
-    <!-- Centered responsive measure for redesigned Fluent content pages (Settings, Dictionary, Snippets, Help, What's New). -->
-    <x:Double x:Key="BrandFluentPageMaxWidth">860</x:Double>
+    <!--
+        THE MEASURE FOR THE FLUENT CONTENT PAGES (Settings, Dictionary, Snippets, Help, What's New), PINNED TO
+        THE LEFT. It was 860 and centred, which left a narrow column floating in the middle of a maximised
+        window with a wide empty band on each side. The pages now start at the content padding beside the
+        sidebar and grow up to this width, which still keeps a setting's label and its control within reach
+        of each other on an ultrawide display.
+    -->
+    <x:Double x:Key="BrandFluentPageMaxWidth">1160</x:Double>
+    <!--
+        THE SIDEBAR IS RESIZABLE BETWEEN THESE TWO WIDTHS. Its starting width is the navigation view's own
+        OpenPaneLength in MainWindow.xaml; the handle on its edge drags it between the floor, where the longest
+        row label still fits, and the ceiling, past which the sidebar starts taking room the page needs.
+    -->
+    <x:Double x:Key="BrandSidebarMinWidth">200</x:Double>
+    <x:Double x:Key="BrandSidebarMaxWidth">340</x:Double>
+    <x:Double x:Key="BrandSidebarResizeHandleWidth">8</x:Double>
+    <!-- The dot inside a status chip ("Allowed", "Ready"): macOS draws it at 6 points. -->
+    <x:Double x:Key="BrandStatusDotSize">6</x:Double>
     <!-- Cap for content nested INSIDE a page card (a centred column within a section). -->
     <x:Double x:Key="BrandInlineContentMaxWidth">440</x:Double>
     <!-- Leading icon column on a setting row, and the inset that lines the glyph up with the row's

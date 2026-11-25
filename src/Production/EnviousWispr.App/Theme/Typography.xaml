@@ -34,15 +34,37 @@
 
     <Style x:Key="BrandSectionEyebrowStyle" TargetType="TextBlock">
         <!--
-            A WINDOWS SECTION HEADING, NOT A WEB EYEBROW. Accent colour, letter-spacing and literal
-            uppercase together are an editorial pattern; Windows 11 Settings uses body-strong weight
-            in the ordinary text colour, sentence case, no tracking. Accent on a heading also spends
-            the accent colour on something that is not interactive, which is the one job accent has.
+            THE macOS SECTION HEADING: ACCENT, TRACKED, UPPER CASE, SITTING ON THE PAGE ABOVE ITS CARD.
+            This was body-strong text in the ordinary colour inside the card, which is the Windows 11
+            Settings pattern; the founder's direction is to match the macOS panes, where the heading is
+            the accent eyebrow that labels the card below it (hand-window-dictation in the macOS atlas).
+            The words stay in sentence case in the markup and are shown in upper case by the window
+            (MainWindow.UppercaseSectionEyebrows), so a search or a comparison never has to guess the case.
         -->
         <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
         <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
+        <Setter Property="CharacterSpacing" Value="40" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
+    <!--
+        A HEADING INSIDE A SECTION ("MODEL", "EG-1 · CHOOSE A SIZE"): the same accent eyebrow without a mark,
+        written in upper case in the markup because it is never compared with a page title.
+    -->
+    <Style x:Key="BrandSubsectionEyebrowStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CharacterSpacing" Value="40" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <!-- The word in a status chip; its colour comes from the chip's family (BrandStatusChipStyle). -->
+    <Style x:Key="BrandStatusChipTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style x:Key="BrandNavGroupLabelStyle" TargetType="TextBlock">
         <!--

@@ -352,6 +352,8 @@ public sealed partial class MainWindow : Window, IDisposable
         // item happens to be listed first is the same coupling this feature just removed, wearing
         // the word "default" as a coincidence rather than as a choice.
         ResetMatchStrictness();
+        UppercaseSectionEyebrows();
+        PlaceSidebarResizeHandle();
 
         EngineComboBox.ItemsSource = FinalEngineChoices;
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
@@ -3790,21 +3792,63 @@ public sealed partial class MainWindow : Window, IDisposable
         ShowMessage("Copied", "The selected dictation is on your clipboard.", InfoBarSeverity.Success);
     }
 
-    private void CopyRecoveryButton_Click(object sender, RoutedEventArgs e)
+    private bool _copyingRecovery;
+
+    /// <remarks>
+    /// COPYING IS DEALING WITH IT. Once the recovered words are on the clipboard and the encrypted
+    /// copy has been removed, the card closes and the app forgets the pending recovery so no stale
+    /// banner stays behind. If deletion fails, keep the card visible and pending so the user can
+    /// review or retry removing it.
+    /// </remarks>
+    private async void CopyRecoveryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(RecoveryTextBox.Text))
+        if (_copyingRecovery)
         {
             return;
         }
 
-        var package = new DataPackage();
-        package.SetText(RecoveryTextBox.Text);
-        Clipboard.SetContent(package);
-        Clipboard.Flush();
-        ShowMessage(
-            "Recovered text copied",
-            "The private recovery text is on your clipboard. Delete the recovery copy when you no longer need it.",
-            InfoBarSeverity.Success);
+        var recovered = RecoveryTextBox.Text;
+        if (string.IsNullOrWhiteSpace(recovered))
+        {
+            return;
+        }
+
+        _copyingRecovery = true;
+        try
+        {
+            var package = new DataPackage();
+            package.SetText(recovered);
+            Clipboard.SetContent(package);
+            Clipboard.Flush();
+
+            var recoveryDeleted = await _session.History.DeleteRecoveryAsync().ConfigureAwait(true);
+            if (_session.Closing)
+            {
+                return;
+            }
+
+            if (recoveryDeleted)
+            {
+                ClearRecoveredText();
+                OnboardingReliabilityInfoBar.IsOpen = false;
+                RecoveryCleared?.Invoke();
+                ShowMessage(
+                    "Recovered text copied",
+                    "The recovered dictation is on your clipboard, and its private recovery copy was removed from this PC.",
+                    InfoBarSeverity.Success);
+            }
+            else
+            {
+                ShowMessage(
+                    "Recovered text copied",
+                    "The recovered dictation is on your clipboard. Its private recovery copy could not be removed, so delete it when you no longer need it.",
+                    InfoBarSeverity.Warning);
+            }
+        }
+        finally
+        {
+            _copyingRecovery = false;
+        }
     }
 
     private async void DeleteRecoveryButton_Click(object sender, RoutedEventArgs e)
