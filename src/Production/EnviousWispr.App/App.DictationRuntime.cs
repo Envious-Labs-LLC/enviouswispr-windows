@@ -265,7 +265,8 @@ public partial class App
             },
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
-                : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
+                : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId),
+            resolveAudioDevice: ResolveCaptureAudioDeviceAsync);
         // THE COORDINATOR OWNS THE SESSION. The watchdog's timeout and Windows locking or suspending
         // are commands on its queue; the update check holds the session through it; shutdown stops it
         // and needs no gate of its own. Built beside the controller so a press captures its target and
@@ -334,6 +335,36 @@ public partial class App
             var copyShortcut = _pushToTalkHook.CopyLastGesture?.ToString();
             PostToLiveWindow(_ => _trayIcon?.SetRecordingShortcut(recordingShortcut));
             PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
+        }
+    }
+
+    private async Task<AudioDeviceId?> ResolveCaptureAudioDeviceAsync(CancellationToken cancellationToken)
+    {
+        var preferredId = _settings.PreferredMicrophoneId;
+        var fallback = string.IsNullOrWhiteSpace(preferredId)
+            ? (AudioDeviceId?)null
+            : new AudioDeviceId(preferredId);
+
+        if (_presentation is not { } presentation || presentation.Closing)
+        {
+            return fallback;
+        }
+
+        try
+        {
+            var devices = await presentation.DeviceCatalog()
+                .GetCaptureDevicesAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var resolution = InputDeviceResolver.Resolve(devices, preferredId);
+            return resolution.SelectedDeviceId ?? fallback;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return fallback;
         }
     }
 

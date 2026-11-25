@@ -52,6 +52,33 @@ public sealed class FluentShellTests
         var whatsNewButton = FindNamed(document, "WhatsNewToolbarButton");
         var icon = whatsNewButton.Descendants(XName.Get("FontIcon", PresentationNamespace)).Single();
         Assert.Equal("\uE789", (string?)icon.Attribute("Glyph"));
+
+        var titleBar = FindNamed(document, "AppTitleBar");
+        Assert.Contains(
+            titleBar.Descendants(XName.Get("Image", PresentationNamespace)),
+            image => string.Equals((string?)image.Attribute("Source"), "Assets/Brand/EnviousWisprMark.svg", StringComparison.Ordinal));
+        Assert.Contains(
+            titleBar.Descendants(XName.Get("TextBlock", PresentationNamespace)),
+            text => string.Equals((string?)text.Attribute("Text"), "EnviousWispr", StringComparison.Ordinal));
+
+        var feedbackButton = FindNamed(document, "FeedbackToolbarButton");
+        Assert.Contains(titleBar, feedbackButton.Ancestors());
+        var feedbackIcon = feedbackButton.Descendants(XName.Get("FontIcon", PresentationNamespace)).Single();
+        Assert.Equal("\uED15", (string?)feedbackIcon.Attribute("Glyph"));
+        Assert.Empty(feedbackButton.Descendants(XName.Get("TextBlock", PresentationNamespace)));
+
+        var paneHeader = navigation.Element(XName.Get("NavigationView.PaneHeader", PresentationNamespace));
+        Assert.NotNull(paneHeader);
+        Assert.Contains(paneHeader!.Descendants(), e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "SidebarSearchBox");
+        Assert.DoesNotContain(
+            paneHeader.Descendants(XName.Get("Image", PresentationNamespace)),
+            image => string.Equals((string?)image.Attribute("Source"), "Assets/Brand/EnviousWisprMark.svg", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            paneHeader.Descendants(XName.Get("TextBlock", PresentationNamespace)),
+            text => string.Equals((string?)text.Attribute("Text"), "EnviousWispr", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            paneHeader.Descendants(),
+            e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) is "SidebarVersionText" or "TitleBarVersionText");
     }
 
     [Fact]
@@ -69,11 +96,61 @@ public sealed class FluentShellTests
         Assert.DoesNotContain("v2.6.0", codeBehind, StringComparison.Ordinal);
 
         var document = XDocument.Parse(markup);
-        var badgeText = FindNamed(document, "SidebarVersionText");
+        var titleBar = FindNamed(document, "AppTitleBar");
+        var versionBadge = FindNamed(document, "TitleBarVersionBadge");
+        Assert.Contains(titleBar, versionBadge.Ancestors());
+        Assert.Equal("{StaticResource BrandAccentChipStyle}", (string?)versionBadge.Attribute("Style"));
+
+        var badgeText = FindNamed(document, "TitleBarVersionText");
         Assert.Equal("TextBlock", badgeText.Name.LocalName);
         Assert.Equal(string.Empty, (string?)badgeText.Attribute("Text") ?? string.Empty);
+        Assert.Contains(titleBar, badgeText.Ancestors());
 
-        Assert.Contains("SidebarVersionText.Text = FormatSidebarVersion(", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("TitleBarVersionText.Text = FormatTitleBarVersion(", codeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SettingsRowsAndHistoryProvideContextualHelpFlyouts()
+    {
+        var document = LoadMainWindow();
+
+        foreach (var sectionName in new[]
+                 {
+                     "HistoryPage",
+                     "MicrophoneSection",
+                     "TranscriptionEngineSection",
+                     "KeybindsSection",
+                     "SoundSection",
+                     "DeterministicCleanupSection",
+                     "AiPolishSection",
+                     "HistorySettingsSection",
+                     "RecordingPillSection",
+                     "AppearanceSection",
+                     "LivePreviewSection",
+                     "ClipboardSection",
+                     "DiagnosticsSection",
+                     "YourDataSection",
+                     "PermissionsSection",
+                 })
+        {
+            var section = FindNamed(document, sectionName);
+            var helpButtons = section.Descendants(XName.Get("Button", PresentationNamespace))
+                .Where(button => string.Equals((string?)button.Attribute("Style"), "{StaticResource BrandHelpButtonStyle}", StringComparison.Ordinal))
+                .ToArray();
+            Assert.NotEmpty(helpButtons);
+
+            foreach (var button in helpButtons)
+            {
+                var name = (string?)button.Attribute("AutomationProperties.Name");
+                Assert.False(string.IsNullOrWhiteSpace(name));
+                var glyph = button.Descendants(XName.Get("FontIcon", PresentationNamespace)).Single();
+                Assert.Equal("\uE9CE", (string?)glyph.Attribute("Glyph"));
+                var flyout = button.Descendants(XName.Get("Flyout", PresentationNamespace)).Single();
+                Assert.Equal("{StaticResource BrandHelpFlyoutPresenterStyle}", (string?)flyout.Attribute("FlyoutPresenterStyle"));
+                var helpText = flyout.Descendants(XName.Get("TextBlock", PresentationNamespace)).Single();
+                Assert.False(string.IsNullOrWhiteSpace((string?)helpText.Attribute("Text")));
+            }
+        }
     }
 
     [Fact]

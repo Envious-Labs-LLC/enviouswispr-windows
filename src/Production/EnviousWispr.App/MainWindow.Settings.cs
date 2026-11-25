@@ -17,7 +17,7 @@ public sealed partial class MainWindow
     /// <summary>Auto-saves settings changes quietly whenever a control is updated.</summary>
     private async Task TriggerAutoSaveAsync()
     {
-        if (_isApplyingSettings || _keybindCaptureSession is not null)
+        if (_isApplyingSettings || _isRefreshingMicrophones || _keybindCaptureSession is not null)
         {
             return;
         }
@@ -596,7 +596,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (IsDescendantOf(e.OriginalSource as DependencyObject, toggle))
+        if (IsDescendantOf(e.OriginalSource as DependencyObject, toggle) ||
+            IsDescendantOfButtonWithinRow(e.OriginalSource as DependencyObject, row))
         {
             return;
         }
@@ -622,6 +623,19 @@ public sealed partial class MainWindow
         for (var current = source; current is not null; current = VisualTreeHelper.GetParent(current))
         {
             if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsDescendantOfButtonWithinRow(DependencyObject? source, DependencyObject row)
+    {
+        for (var current = source; current is not null && !ReferenceEquals(current, row); current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase)
             {
                 return true;
             }

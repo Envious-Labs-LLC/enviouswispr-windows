@@ -18,7 +18,9 @@ public sealed partial class MainWindow
     private readonly RecordingSoundCueCoordinator _recordingSoundCoordinator;
     private long _recordingSoundAttempt;
 
-    private IReadOnlyList<MicrophoneChoice> _microphones = [];
+    private MicrophoneChoice[] _microphones = [];
+    private IReadOnlyList<AudioDeviceInfo> _activeMicrophones = [];
+    private bool _isRefreshingMicrophones;
     /// <summary>The session's catalogue, once the microphone list has asked for it; the window subscribes and unsubscribes, the session owns and disposes.</summary>
     private IAudioDeviceCatalog? _deviceCatalog;
 
@@ -424,9 +426,12 @@ public sealed partial class MainWindow
         // THE DEVICE IS READ HERE, ON THE UI THREAD, and the test is told whether a recording holds
         // the microphone - the pair that, with the cancel from the other side, keeps a test and a
         // dictation from both opening it.
-        AudioDeviceId? device = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id is { } id
-            ? new AudioDeviceId(id)
-            : null;
+        var selectedId = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id;
+        AudioDeviceId? device = _activeMicrophones.Count > 0
+            ? InputDeviceResolver.Resolve(_activeMicrophones, selectedId).SelectedDeviceId
+            : selectedId is null
+                ? null
+                : new AudioDeviceId(selectedId);
         var recording = _currentOverlayState == DictationOverlayState.Recording;
         if (recording)
         {
@@ -569,29 +574,67 @@ public sealed partial class MainWindow
             // reported the symptom instead of the cause.
             consent = WindowsMicrophoneConsent.Read();
             var devices = await _deviceCatalog.GetCaptureDevicesAsync().ConfigureAwait(true);
-            _microphones = (MicrophoneChoice[])[
-                new MicrophoneChoice(null, "Use the Windows default microphone"),
-                .. devices.Select(device => new MicrophoneChoice(
-                    device.Id.Value,
-                    device.IsDefault ? $"{device.DisplayName} (Windows default)" : device.DisplayName)),
-            ];
-            MicrophoneComboBox.ItemsSource = _microphones;
-            var selected = _microphones.FirstOrDefault(choice =>
-                string.Equals(choice.Id, _settings.PreferredMicrophoneId, StringComparison.Ordinal)) ?? _microphones[0];
-            MicrophoneComboBox.SelectedItem = selected;
-            var defaultDevice = devices.FirstOrDefault(device => device.IsDefault) ??
-                (devices.Count == 0 ? null : devices[0]);
+            _activeMicrophones = devices;
+            var autoResolution = InputDeviceResolver.Resolve(devices, preferredDeviceId: null);
+            var effectiveResolution = InputDeviceResolver.Resolve(devices, _settings.PreferredMicrophoneId);
+            var choices = new List<MicrophoneChoice>
+            {
+                new(null, InputDeviceResolver.FormatAutoSelectionLabel(autoResolution)),
+            };
+            choices.AddRange(devices.Select(device =>
+                new MicrophoneChoice(device.Id.Value, InputDeviceResolver.FormatDeviceDisplayName(device))));
+
+            var preferredId = _settings.PreferredMicrophoneId;
+            MicrophoneChoice? selected = null;
+            if (!string.IsNullOrWhiteSpace(preferredId))
+            {
+                selected = choices.FirstOrDefault(choice =>
+                    string.Equals(choice.Id, preferredId, StringComparison.Ordinal));
+                if (selected is null)
+                {
+                    var fallbackSuffix = effectiveResolution.SelectedDevice is { } fallbackDevice
+                        ? $"Auto using {fallbackDevice.DisplayName}"
+                        : "no active microphone";
+                    selected = new MicrophoneChoice(
+                        preferredId,
+                        $"Saved microphone (unavailable · {fallbackSuffix})");
+                    choices.Add(selected);
+                }
+            }
+
+            _isRefreshingMicrophones = true;
+            try
+            {
+                _microphones = choices.ToArray();
+                MicrophoneComboBox.ItemsSource = _microphones;
+                MicrophoneComboBox.SelectedItem = selected ?? _microphones[0];
+            }
+            finally
+            {
+                _isRefreshingMicrophones = false;
+            }
+
             ApplyMicrophoneReadiness(
                 MicrophoneReadinessReport.For(
                     consent,
-                    defaultDevice?.DisplayName),
+                    effectiveResolution.SelectedDevice?.DisplayName),
                 consent);
         }
         catch
         {
-            _microphones = (MicrophoneChoice[])[new MicrophoneChoice(null, "Use the Windows default microphone")];
-            MicrophoneComboBox.ItemsSource = _microphones;
-            MicrophoneComboBox.SelectedIndex = 0;
+            _activeMicrophones = [];
+            _isRefreshingMicrophones = true;
+            try
+            {
+                _microphones = (MicrophoneChoice[])[new MicrophoneChoice(null, "Auto")];
+                MicrophoneComboBox.ItemsSource = _microphones;
+                MicrophoneComboBox.SelectedIndex = 0;
+            }
+            finally
+            {
+                _isRefreshingMicrophones = false;
+            }
+
             ApplyMicrophoneReadiness(
                 MicrophoneReadinessReport.For(
                     consent,
@@ -635,9 +678,15 @@ public sealed partial class MainWindow
             try
             {
                 await LoadMicrophonesAsync().ConfigureAwait(true);
+                var resolution = InputDeviceResolver.Resolve(_activeMicrophones, _settings.PreferredMicrophoneId);
+                var noticeDetail = resolution.FallbackFromPinned && resolution.SelectedDevice is { } fallback
+                    ? $"Your pinned microphone is unavailable; falling back to {fallback.DisplayName}."
+                    : resolution.BypassedDefaultDevice is not null && resolution.SelectedDevice is { } physical
+                        ? $"EnviousWispr refreshed active microphones and selected {physical.DisplayName} instead of virtual default."
+                        : "EnviousWispr refreshed the active recording-device list. A missing preferred microphone falls back to the resolved device.";
                 ShowMessage(
                     "Microphone devices updated",
-                    "EnviousWispr refreshed the active recording-device list. A missing preferred microphone falls back to the Windows default.",
+                    noticeDetail,
                     InfoBarSeverity.Informational);
             }
             catch (Exception)

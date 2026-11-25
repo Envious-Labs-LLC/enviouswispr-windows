@@ -5,11 +5,25 @@ namespace EnviousWispr.Core.Audio;
 
 public readonly record struct AudioDeviceId(string Value);
 
+public enum AudioDeviceTransport
+{
+    Unknown,
+    Usb,
+    Bluetooth,
+    BuiltIn,
+    DockOrLine,
+    Virtual,
+}
+
 public sealed record AudioDeviceInfo(
     AudioDeviceId Id,
     string DisplayName,
     bool IsDefault,
-    bool IsActive);
+    bool IsActive,
+    AudioDeviceTransport Transport = AudioDeviceTransport.Unknown)
+{
+    public bool IsVirtualOrLoopback => Transport == AudioDeviceTransport.Virtual;
+}
 
 public enum AudioDeviceChangeKind
 {
