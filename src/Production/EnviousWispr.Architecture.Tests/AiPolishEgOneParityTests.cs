@@ -17,40 +17,40 @@ public sealed class AiPolishEgOneParityTests
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
     [Fact]
-    public async Task LoadMigratesV21EgOneModelIdAndLeavesNonEgOneNull()
+    public async Task LoadMigratesV22EgOneModelIdAndPortableProfileV16AndLeavesNonEgOneNull()
     {
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
         {
-            var egOnePath = Path.Combine(directory, "egone-v21.json");
-            var v21EgOne = AppSettings.Default with
+            var egOnePath = Path.Combine(directory, "egone-v22.json");
+            var v22EgOne = AppSettings.Default with
             {
-                SchemaVersion = 21,
+                SchemaVersion = 22,
                 Preferences = AppSettings.Default.Preferences with
                 {
                     Polish = new PolishPreferences(PolishProvider.EgOne, "EG-1-MINI", null),
                 },
             };
-            var egOneNode = JsonNode.Parse(JsonSerializer.Serialize(v21EgOne, JsonSettingsStore.SerializerOptions))!.AsObject();
+            var egOneNode = JsonNode.Parse(JsonSerializer.Serialize(v22EgOne, JsonSettingsStore.SerializerOptions))!.AsObject();
             egOneNode["preferences"]!["polish"]!.AsObject().Remove("egOneModelId");
             await File.WriteAllTextAsync(egOnePath, egOneNode.ToJsonString(JsonSettingsStore.SerializerOptions));
 
             var egOneLoaded = await new JsonSettingsStore(egOnePath).LoadAsync();
 
             Assert.Equal(SettingsLoadStatus.Migrated, egOneLoaded.Status);
-            Assert.Equal(21, egOneLoaded.SourceSchemaVersion);
+            Assert.Equal(22, egOneLoaded.SourceSchemaVersion);
             Assert.Equal(AppSettings.CurrentSchemaVersion, egOneLoaded.Settings.SchemaVersion);
             Assert.Equal("eg-1-mini", egOneLoaded.Settings.Preferences.Polish.EgOneModelId);
 
-            var openAiPath = Path.Combine(directory, "openai-v21.json");
-            var v21OpenAi = AppSettings.Default with
+            var openAiPath = Path.Combine(directory, "openai-v22.json");
+            var v22OpenAi = AppSettings.Default with
             {
-                SchemaVersion = 21,
+                SchemaVersion = 22,
                 Preferences = AppSettings.Default.Preferences with
                 {
                     Polish = new PolishPreferences(PolishProvider.OpenAI, "gpt-4o-mini", null),
                 },
             };
-            var openAiNode = JsonNode.Parse(JsonSerializer.Serialize(v21OpenAi, JsonSettingsStore.SerializerOptions))!.AsObject();
+            var openAiNode = JsonNode.Parse(JsonSerializer.Serialize(v22OpenAi, JsonSettingsStore.SerializerOptions))!.AsObject();
             openAiNode["preferences"]!["polish"]!.AsObject().Remove("egOneModelId");
             await File.WriteAllTextAsync(openAiPath, openAiNode.ToJsonString(JsonSettingsStore.SerializerOptions));
 
@@ -59,6 +59,24 @@ public sealed class AiPolishEgOneParityTests
             Assert.Equal(SettingsLoadStatus.Migrated, openAiLoaded.Status);
             Assert.Null(openAiLoaded.Settings.Preferences.Polish.EgOneModelId);
             Assert.Equal("gpt-4o-mini", openAiLoaded.Settings.Preferences.Polish.ModelId);
+
+            var profilePath = Path.Combine(directory, "profile-v16.enviouswispr.json");
+            var v16Profile = AppSettings.Default.ToPortableProfile() with
+            {
+                SchemaVersion = 16,
+                Preferences = AppSettings.Default.Preferences with
+                {
+                    Polish = new PolishPreferences(PolishProvider.EgOne, "EG-1-MICRO", null),
+                },
+            };
+            var profileNode = JsonNode.Parse(JsonSerializer.Serialize(v16Profile, JsonSettingsStore.SerializerOptions))!.AsObject();
+            profileNode["preferences"]!["polish"]!.AsObject().Remove("egOneModelId");
+            await File.WriteAllTextAsync(profilePath, profileNode.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var importedProfile = await new JsonPortableProfileService().ImportAsync(profilePath);
+            Assert.Equal(PortableProfileImportStatus.Imported, importedProfile.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, importedProfile.Profile?.SchemaVersion);
+            Assert.Equal("eg-1-micro", importedProfile.Profile?.Preferences.Polish.EgOneModelId);
         });
     }
 
