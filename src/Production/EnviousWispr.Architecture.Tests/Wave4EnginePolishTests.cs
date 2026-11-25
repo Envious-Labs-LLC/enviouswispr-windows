@@ -230,6 +230,19 @@ public sealed class Wave4EnginePolishTests
         Assert.Contains("window.ApplyThemeFromExternal(theme);", appCode, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void EngineAndPolishCardHandlersSyncSelectionCollapseChooserAndPersist()
+    {
+        var root = FindRepositoryRoot();
+        var mainWindowCode = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("SelectChoice(FinalEngineChoices, (int)selectedEngine);", mainWindowCode, StringComparison.Ordinal);
+        Assert.Contains("SelectChoice(PolishProviderChoices, selectedIndex);", mainWindowCode, StringComparison.Ordinal);
+        Assert.Contains("PolishProviderChooserPanel.Visibility = Visibility.Collapsed;", mainWindowCode, StringComparison.Ordinal);
+        Assert.Contains("PolishProvider.EgOne => \"EG-1\",", mainWindowCode, StringComparison.Ordinal);
+    }
+
     private static XElement FindNamedElement(XDocument document, string name)
     {
         var element = document.Descendants()

@@ -84,6 +84,30 @@ public sealed class WindowsKeybindCaptureSession : IDisposable
         }
     }
 
+    internal static bool ShouldProcessHookKey(uint virtualKey, uint flags, bool isAppForeground)
+    {
+        const uint maskMenuKey = 0xE8;
+        if (virtualKey == maskMenuKey)
+        {
+            return false;
+        }
+
+        var isInjected = (flags & LlkHfInjected) != 0;
+        return !isInjected || isAppForeground;
+    }
+
+    private static bool IsCurrentProcessForeground()
+    {
+        var foregroundWindow = GetForegroundWindow();
+        if (foregroundWindow == 0)
+        {
+            return false;
+        }
+
+        _ = GetWindowThreadProcessId(foregroundWindow, out var processId);
+        return processId == (uint)Environment.ProcessId;
+    }
+
     private nint HookCallback(int code, nint message, nint data)
     {
         if (code < 0 || !IsKeyboardEdge(message))
@@ -92,7 +116,7 @@ public sealed class WindowsKeybindCaptureSession : IDisposable
         }
 
         var keyboard = Marshal.PtrToStructure<LowLevelKeyboardData>(data);
-        if ((keyboard.Flags & LlkHfInjected) != 0)
+        if (!ShouldProcessHookKey(keyboard.VirtualKey, keyboard.Flags, IsCurrentProcessForeground()))
         {
             return CallNextHookEx(_hook, code, message, data);
         }
@@ -169,6 +193,12 @@ public sealed class WindowsKeybindCaptureSession : IDisposable
 
     [DllImport("user32.dll")]
     private static extern nint CallNextHookEx(nint hook, int code, nint message, nint data);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint windowHandle, out uint processId);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern nint GetModuleHandle(string? moduleName);

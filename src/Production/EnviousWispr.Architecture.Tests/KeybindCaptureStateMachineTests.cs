@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Input;
+using EnviousWispr.Services.Input;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -158,5 +159,24 @@ public sealed class KeybindCaptureStateMachineTests
 
         Assert.Equal(KeybindCaptureStatus.Committed, result.Status);
         Assert.Equal(string.Empty, result.GestureText);
+    }
+
+    [Theory]
+    [InlineData(VkLControl, 0x00u, false, true)]
+    [InlineData(VkLControl, 0x00u, true, true)]
+    [InlineData(VkRControl, 0x10u, true, true)]
+    [InlineData(VkLAlt, 0x10u, true, true)]
+    [InlineData(VkRControl, 0x10u, false, false)]
+    [InlineData(0xE8u, 0x00u, true, false)]
+    [InlineData(0xE8u, 0x10u, true, false)]
+    public void HookPolicyAcceptsForegroundInjectedKeysAndRejectsBackgroundOrMaskKeys(
+        uint virtualKey,
+        uint flags,
+        bool isAppForeground,
+        bool expected)
+    {
+        var accepted = WindowsKeybindCaptureSession.ShouldProcessHookKey(virtualKey, flags, isAppForeground);
+
+        Assert.Equal(expected, accepted);
     }
 }
