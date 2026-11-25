@@ -433,8 +433,25 @@ public sealed class LivePreviewTwoEngineParityTests
             canRemoveWhisperModel: true);
         Assert.Equal(LivePreviewReadinessKind.Ready, whisperReady.ReadinessKind);
         Assert.Equal("Ready", whisperReady.StatusBadgeText);
+        Assert.Equal("Installed · Active", whisperReady.WhisperCard.StatusHeadline);
+        Assert.Equal("99+ languages", whisperReady.WhisperCard.BadgeText);
+        Assert.Equal("190 MB", whisperReady.WhisperCard.DownloadSizeText);
+        Assert.Equal(WhisperModelIds.Preview, whisperReady.WhisperCard.ModelName);
         Assert.True(whisperReady.WhisperCard.CanRemove);
         Assert.False(whisperReady.WhisperCard.CanDownload);
+
+        var removal = LivePreviewSettingsPresentation.DescribeWhisperRemovalDialog(
+            whisperSelected: true,
+            livePreviewEnabled: true);
+        Assert.Equal("Remove Whisper model", removal.ConfirmButtonText);
+        Assert.Contains("Parakeet", removal.Message, StringComparison.Ordinal);
+
+        var removalWithoutFallback = LivePreviewSettingsPresentation.DescribeWhisperRemovalDialog(
+            whisperSelected: true,
+            livePreviewEnabled: true,
+            parakeetInstalled: false);
+        Assert.DoesNotContain("falls back to Parakeet", removalWithoutFallback.Message, StringComparison.Ordinal);
+        Assert.Contains("unavailable", removalWithoutFallback.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -449,16 +466,34 @@ public sealed class LivePreviewTwoEngineParityTests
             "MainWindow.xaml"));
 
         var section = FindNamed(document, "LivePreviewSection");
+        var cardsGrid = FindNamed(section, "LivePreviewEngineCardsPanel");
+        Assert.Equal("Grid", cardsGrid.Name.LocalName);
+        Assert.Equal("LivePreviewEngineCardsPanel_SizeChanged", (string?)cardsGrid.Attribute("SizeChanged"));
+        var columns = cardsGrid.Elements()
+            .FirstOrDefault(e => e.Name.LocalName == "Grid.ColumnDefinitions")?
+            .Elements()
+            .ToList();
+        Assert.NotNull(columns);
+        Assert.Equal(2, columns!.Count);
+
+        var parakeetContainer = FindNamed(section, "LivePreviewParakeetCardContainer");
+        var whisperContainer = FindNamed(section, "LivePreviewWhisperCardContainer");
+        Assert.Equal("0", (string?)parakeetContainer.Attribute("Grid.Column"));
+        Assert.Equal("1", (string?)whisperContainer.Attribute("Grid.Column"));
+
         var parakeetCard = FindNamed(section, "LivePreviewParakeetEngineCard");
         var whisperCard = FindNamed(section, "LivePreviewWhisperEngineCard");
-
         Assert.Equal("RadioButton", parakeetCard.Name.LocalName);
         Assert.Equal("RadioButton", whisperCard.Name.LocalName);
-        Assert.Equal("{StaticResource BrandSelectableCardStyle}", (string?)parakeetCard.Attribute("Style"));
-        Assert.Equal("{StaticResource BrandSelectableCardStyle}", (string?)whisperCard.Attribute("Style"));
         Assert.Equal("LivePreviewEngine", (string?)parakeetCard.Attribute("GroupName"));
         Assert.Equal("LivePreviewEngine", (string?)whisperCard.Attribute("GroupName"));
-        Assert.Equal((string?)parakeetCard.Attribute("MinHeight"), (string?)whisperCard.Attribute("MinHeight"));
+
+        var parakeetBadge = FindNamed(section, "LivePreviewParakeetEngineBadge");
+        var whisperBadge = FindNamed(section, "LivePreviewWhisperEngineBadge");
+        Assert.Equal("{StaticResource BrandAccentChipStyle}", (string?)parakeetBadge.Attribute("Style"));
+        Assert.Equal("{StaticResource BrandAccentChipStyle}", (string?)whisperBadge.Attribute("Style"));
+        Assert.Null(parakeetBadge.Attribute("CornerRadius"));
+        Assert.Null(whisperBadge.Attribute("CornerRadius"));
 
         var parakeetName = (string?)parakeetCard.Attribute("AutomationProperties.Name");
         var whisperName = (string?)whisperCard.Attribute("AutomationProperties.Name");
@@ -477,7 +512,10 @@ public sealed class LivePreviewTwoEngineParityTests
         Assert.NotNull(FindNamed(section, "LivePreviewPrivacyText"));
         Assert.NotNull(FindNamed(section, "DownloadLivePreviewWhisperButton"));
         Assert.NotNull(FindNamed(section, "CancelLivePreviewWhisperDownloadButton"));
-        Assert.NotNull(FindNamed(section, "RemoveLivePreviewWhisperButton"));
+
+        var removeButton = FindNamed(section, "RemoveLivePreviewWhisperButton");
+        Assert.Equal("Remove Whisper model", (string?)removeButton.Attribute("Content"));
+        Assert.Equal("{StaticResource BrandDestructiveButtonStyle}", (string?)removeButton.Attribute("Style"));
     }
 
     private static XElement FindNamed(XContainer container, string name) =>

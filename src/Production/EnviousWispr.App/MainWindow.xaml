@@ -1657,15 +1657,13 @@
                                             <TextBlock x:Name="SpeechEngineNoticeText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
                                         </Border>
                                     </StackPanel>
-                                    <Border Style="{StaticResource BrandSettingsCardStyle}">
+                                    <Border x:Name="SpeechEngineOptionsCard" Style="{StaticResource BrandSettingsCardStyle}" Visibility="Collapsed">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                             <StackPanel x:Name="WhisperLanguageRow" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed">
                                                 <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" /><ComboBox x:Name="WhisperLanguageComboBox" ItemTemplate="{StaticResource BrandTrimmedChoiceTemplate}" x:Uid="WhisperLanguageComboBox" Grid.Column="1" AutomationProperties.HelpText="Automatic detects the spoken language. A fixed language can improve recognition when automatic detection is unreliable." Header="Whisper language" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch"><x:String>Automatic detection</x:String><x:String>English</x:String><x:String>French</x:String><x:String>German</x:String><x:String>Spanish</x:String></ComboBox></Grid>
                                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Choose Automatic detection, or pick a language to improve recognition for English, Spanish, French, or German." TextWrapping="Wrap" />
                                             </StackPanel>
-                                            <Grid x:Name="ModelDeliveryRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE896;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Speech model" /><TextBlock x:Name="ModelDeliveryStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" Text="Checking installed model packs…" TextWrapping="Wrap" /><ProgressBar x:Name="ModelDeliveryProgress" AutomationProperties.Name="Speech model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="DownloadModelButton" AutomationProperties.HelpText="Downloads the speech model this build pins, checks every file against its published SHA-256, and activates it. An interrupted download resumes where it stopped." Click="DownloadModelButton_Click" Content="Download speech model" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" /><Button x:Name="CancelModelDownloadButton" AutomationProperties.HelpText="Stops the download. Files already verified are kept, so trying again resumes rather than restarts." Click="CancelModelDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" /></StackPanel></StackPanel></Grid>
                                             <Grid x:Name="GraphicsRuntimeRow" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE945;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="NVIDIA graphics card" /><TextBlock x:Name="GraphicsRuntimeStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /><ProgressBar x:Name="GraphicsRuntimeProgress" AutomationProperties.Name="Graphics support download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="DownloadGraphicsRuntimeButton" AutomationProperties.HelpText="Downloads the NVIDIA libraries that let dictation run on your graphics card, checks every file against its published SHA-256, and switches dictation to the card when nothing is being dictated. An interrupted download resumes where it stopped." Click="DownloadGraphicsRuntimeButton_Click" Content="Download graphics support" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" /><Button x:Name="CancelGraphicsRuntimeDownloadButton" AutomationProperties.HelpText="Stops the download. Dictation keeps running on the processor, and files already verified are kept, so trying again resumes rather than restarts." Click="CancelGraphicsRuntimeDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" /></StackPanel></StackPanel></Grid>
-                                            <TextBlock x:Name="ModelInventoryText" Style="{StaticResource BrandHelperStyle}" Text="Speech models are verified once on download and run completely offline on this PC." TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
@@ -2169,6 +2167,7 @@
                                                             <Button x:Name="EgOneFullDownloadButton" AutomationProperties.Name="Download EG-1 model" Click="EgOneDownloadButton_Click" Tag="eg-1" Content="Download" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                                             <Button x:Name="EgOneFullCancelButton" AutomationProperties.Name="Cancel EG-1 download" Click="CancelEgOneDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
                                                             <Button x:Name="EgOneFullRemoveButton" AutomationProperties.Name="Remove EG-1 model" Click="EgOneRemoveButton_Click" Tag="eg-1" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneFullChooseProviderButton" AutomationProperties.Name="Choose another AI Polish provider" Click="EgOneChooseProviderButton_Click" Content="Choose another provider" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>
@@ -2201,6 +2200,7 @@
                                                             <Button x:Name="EgOneMiniDownloadButton" AutomationProperties.Name="Download EG-1 Mini model" Click="EgOneDownloadButton_Click" Tag="eg-1-mini" Content="Download" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                                             <Button x:Name="EgOneMiniCancelButton" AutomationProperties.Name="Cancel EG-1 Mini download" Click="CancelEgOneDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
                                                             <Button x:Name="EgOneMiniRemoveButton" AutomationProperties.Name="Remove EG-1 Mini model" Click="EgOneRemoveButton_Click" Tag="eg-1-mini" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneMiniChooseProviderButton" AutomationProperties.Name="Choose another AI Polish provider" Click="EgOneChooseProviderButton_Click" Content="Choose another provider" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>
@@ -2233,6 +2233,7 @@
                                                             <Button x:Name="EgOneMicroDownloadButton" AutomationProperties.Name="Download EG-1 Micro model" Click="EgOneDownloadButton_Click" Tag="eg-1-micro" Content="Download" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                                             <Button x:Name="EgOneMicroCancelButton" AutomationProperties.Name="Cancel EG-1 Micro download" Click="CancelEgOneDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
                                                             <Button x:Name="EgOneMicroRemoveButton" AutomationProperties.Name="Remove EG-1 Micro model" Click="EgOneRemoveButton_Click" Tag="eg-1-micro" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneMicroChooseProviderButton" AutomationProperties.Name="Choose another AI Polish provider" Click="EgOneChooseProviderButton_Click" Content="Choose another provider" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>
@@ -2581,30 +2582,124 @@
                                         <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}">
                                             <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="PREVIEW ENGINE" TextWrapping="Wrap" />
                                             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Choose which local engine drives on-screen preview words while you speak." TextWrapping="Wrap" />
-                                            <StackPanel x:Name="LivePreviewEngineCardsPanel" Spacing="{StaticResource BrandSpacingM}">
-                                                <RadioButton x:Name="LivePreviewParakeetEngineCard" AutomationProperties.Name="Parakeet (Fast - Default). Fast everyday live preview in 25 languages. Reuses the default speech model (no extra download) and runs smoothly even without a graphics card." Checked="LivePreviewEngineCard_Checked" GroupName="LivePreviewEngine" HorizontalAlignment="Stretch" MinHeight="112" Style="{StaticResource BrandSelectableCardStyle}">
-                                                    <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Parakeet (Fast - Default)" TextWrapping="Wrap" />
-                                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Fast everyday live preview in 25 languages. Reuses the default speech model (no extra download) and runs smoothly even without a graphics card." TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="LivePreviewParakeetStatusText" Style="{StaticResource BrandHelperStyle}" Text="Included with the default speech model (0 MB extra download)." TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </RadioButton>
-                                                <RadioButton x:Name="LivePreviewWhisperEngineCard" AutomationProperties.Name="Whisper (Full Multilingual). Covers 99 languages with automatic language detection. Needs one optional 190 MB download; best with an NVIDIA graphics card (slower on processor-only PCs)." Checked="LivePreviewEngineCard_Checked" GroupName="LivePreviewEngine" HorizontalAlignment="Stretch" MinHeight="112" Style="{StaticResource BrandSelectableCardStyle}">
-                                                    <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Whisper (Full Multilingual)" TextWrapping="Wrap" />
-                                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Covers 99 languages with automatic language detection. Needs one optional 190 MB download; best with an NVIDIA graphics card (slower on processor-only PCs)." TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="LivePreviewWhisperStatusText" Style="{StaticResource BrandHelperStyle}" Text="Not downloaded yet (190 MB optional download)." TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </RadioButton>
-                                                <StackPanel x:Name="LivePreviewWhisperDeliveryControls" Spacing="{StaticResource BrandSpacingS}">
-                                                    <ProgressBar x:Name="LivePreviewWhisperDownloadProgress" AutomationProperties.Name="Whisper preview model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                        <Button x:Name="DownloadLivePreviewWhisperButton" AutomationProperties.Name="Download Whisper preview model (190 MB)" AutomationProperties.HelpText="Downloads the 190 MB multilingual Whisper preview model, verifies its SHA-256 checksum, and activates it for Live Preview." Click="DownloadLivePreviewWhisperButton_Click" Content="Download (190 MB)" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
-                                                        <Button x:Name="CancelLivePreviewWhisperDownloadButton" AutomationProperties.Name="Cancel Whisper preview model download" AutomationProperties.HelpText="Stops the Whisper preview model download. Verified files are kept so resuming picks up where it stopped." Click="CancelLivePreviewWhisperDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
-                                                        <Button x:Name="RemoveLivePreviewWhisperButton" AutomationProperties.Name="Remove Whisper preview model" AutomationProperties.HelpText="Removes the downloaded 190 MB Whisper preview model from this PC. Parakeet remains available for Live Preview." Click="RemoveLivePreviewWhisperButton_Click" Content="Remove model" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
-                                                    </StackPanel>
-                                                </StackPanel>
-                                            </StackPanel>
+                                            <Grid x:Name="LivePreviewEngineCardsPanel" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingM}" SizeChanged="LivePreviewEngineCardsPanel_SizeChanged">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition x:Name="LivePreviewParakeetCardColumn" Width="*" />
+                                                    <ColumnDefinition x:Name="LivePreviewWhisperCardColumn" Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <Border x:Name="LivePreviewParakeetCardContainer" Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandAccentBrush}" BorderThickness="2" Padding="16,14" VerticalAlignment="Stretch" Tapped="LivePreviewParakeetCardContainer_Tapped">
+                                                    <Grid RowSpacing="{StaticResource BrandSpacingS}" VerticalAlignment="Stretch">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="*" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid Grid.Row="0" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <RadioButton x:Name="LivePreviewParakeetEngineCard" Grid.Column="0" GroupName="LivePreviewEngine" Checked="LivePreviewEngineCard_Checked" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Padding="4,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Parakeet (Fast - Default). Fast everyday live preview in 25 languages. Reuses the default speech model (no extra download) and runs smoothly even without a graphics card.">
+                                                                <TextBlock Text="Parakeet (Fast - Default)" TextWrapping="Wrap" />
+                                                            </RadioButton>
+                                                            <Border x:Name="LivePreviewParakeetEngineBadge" Grid.Column="1" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                                <TextBlock x:Name="LivePreviewParakeetEngineBadgeText" Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
+                                                            </Border>
+                                                        </Grid>
+                                                        <StackPanel Grid.Row="1" Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock x:Name="LivePreviewParakeetTaglineText" Style="{StaticResource BrandHelperStyle}" Text="Fast everyday live preview" TextWrapping="Wrap" />
+                                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto" />
+                                                                    <RowDefinition Height="Auto" />
+                                                                    <RowDefinition Height="Auto" />
+                                                                    <RowDefinition Height="Auto" />
+                                                                </Grid.RowDefinitions>
+                                                                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Model" />
+                                                                <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="parakeet-tdt-0.6b-v3" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Languages" />
+                                                                <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="25 languages" />
+                                                                <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Download size" />
+                                                                <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="0 MB extra" />
+                                                                <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Hardware" />
+                                                                <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Runs fast on CPU" TextWrapping="Wrap" />
+                                                            </Grid>
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Row="2" Spacing="{StaticResource BrandSpacingS}">
+                                                            <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                <TextBlock x:Name="LivePreviewParakeetHeadlineText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowLabelStyle}" Text="Included" TextWrapping="Wrap" />
+                                                                <TextBlock x:Name="LivePreviewParakeetStatusText" Style="{StaticResource BrandHelperStyle}" Text="Included with the default speech model (0 MB extra download)." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                                <Border x:Name="LivePreviewWhisperCardContainer" Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="16,14" VerticalAlignment="Stretch" Tapped="LivePreviewWhisperCardContainer_Tapped">
+                                                    <Grid RowSpacing="{StaticResource BrandSpacingS}" VerticalAlignment="Stretch">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="*" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid Grid.Row="0" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <RadioButton x:Name="LivePreviewWhisperEngineCard" Grid.Column="0" GroupName="LivePreviewEngine" Checked="LivePreviewEngineCard_Checked" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Padding="4,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Whisper (Full Multilingual). Covers 99 languages with automatic language detection. Needs one optional 190 MB download; best with an NVIDIA graphics card (slower on processor-only PCs).">
+                                                                <TextBlock Text="Whisper (Full Multilingual)" TextWrapping="Wrap" />
+                                                            </RadioButton>
+                                                            <Border x:Name="LivePreviewWhisperEngineBadge" Grid.Column="1" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                                <TextBlock x:Name="LivePreviewWhisperEngineBadgeText" Style="{StaticResource BrandAccentChipTextStyle}" Text="99+ languages" />
+                                                            </Border>
+                                                        </Grid>
+                                                        <StackPanel Grid.Row="1" Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock x:Name="LivePreviewWhisperTaglineText" Style="{StaticResource BrandHelperStyle}" Text="Multilingual live preview" TextWrapping="Wrap" />
+                                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto" />
+                                                                    <RowDefinition Height="Auto" />
+                                                                    <RowDefinition Height="Auto" />
+                                                                    <RowDefinition Height="Auto" />
+                                                                </Grid.RowDefinitions>
+                                                                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Model" />
+                                                                <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="whisper-small" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Languages" />
+                                                                <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="99+ languages" />
+                                                                <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Download size" />
+                                                                <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="190 MB" />
+                                                                <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Hardware" />
+                                                                <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Best with NVIDIA GPU" TextWrapping="Wrap" />
+                                                            </Grid>
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Row="2" Spacing="{StaticResource BrandSpacingS}">
+                                                            <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                <TextBlock x:Name="LivePreviewWhisperHeadlineText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowLabelStyle}" Text="Not installed" TextWrapping="Wrap" />
+                                                                <TextBlock x:Name="LivePreviewWhisperStatusText" Style="{StaticResource BrandHelperStyle}" Text="Not downloaded yet (190 MB optional download)." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                            <ProgressBar x:Name="LivePreviewWhisperDownloadProgress" AutomationProperties.Name="Whisper preview model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
+                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                                <Button x:Name="DownloadLivePreviewWhisperButton" AutomationProperties.Name="Download Whisper preview model (190 MB)" AutomationProperties.HelpText="Downloads the 190 MB multilingual Whisper preview model, verifies its SHA-256 checksum, and activates it for Live Preview." Click="DownloadLivePreviewWhisperButton_Click" Content="Download (190 MB)" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                                                <Button x:Name="CancelLivePreviewWhisperDownloadButton" AutomationProperties.Name="Cancel Whisper preview model download" AutomationProperties.HelpText="Stops the Whisper preview model download. Verified files are kept so resuming picks up where it stopped." Click="CancelLivePreviewWhisperDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                                                                <Button x:Name="RemoveLivePreviewWhisperButton" AutomationProperties.Name="Remove Whisper preview model" AutomationProperties.HelpText="Removes the downloaded 190 MB Whisper preview model from this PC. Parakeet remains available for Live Preview." Click="RemoveLivePreviewWhisperButton_Click" Content="Remove Whisper model" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </Grid>
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>

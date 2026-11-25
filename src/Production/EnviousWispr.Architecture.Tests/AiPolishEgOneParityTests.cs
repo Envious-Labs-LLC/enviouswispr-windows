@@ -171,9 +171,9 @@ public sealed class AiPolishEgOneParityTests
     }
 
     [Fact]
-    public void DescribeEgOneCardCapturesHardwareBadgeSpecsStatesAndUnpublishedNotice()
+    public void DescribeEgOneCardCapturesHardwareBadgeSpecsAndUnavailableState()
     {
-        var notInstalled = EnginePolishPresentation.DescribeEgOneCard(
+        var selectedUnavailable = EnginePolishPresentation.DescribeEgOneCard(
             EgOneModelCatalog.MiniId,
             selectedModelId: EgOneModelCatalog.MiniId,
             recommendedModelId: EgOneModelCatalog.MiniId,
@@ -181,16 +181,52 @@ public sealed class AiPolishEgOneParityTests
             otherDownloadInFlight: false,
             serverExecutableExists: true);
 
-        Assert.True(notInstalled.IsRecommended);
-        Assert.True(notInstalled.IsSelected);
-        Assert.Equal("Fast all-rounder", notInstalled.Tagline);
-        Assert.Contains("~2.9 GB memory", notInstalled.SpecsSummary, StringComparison.Ordinal);
-        Assert.Contains("~2.1 GB disk", notInstalled.SpecsSummary, StringComparison.Ordinal);
-        Assert.True(notInstalled.ShowDownloadButton);
-        Assert.False(notInstalled.ShowRemoveButton);
-        Assert.Contains("not published in this build yet", notInstalled.StatusDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.True(selectedUnavailable.IsRecommended);
+        Assert.True(selectedUnavailable.IsSelected);
+        Assert.True(selectedUnavailable.CanSelect);
+        Assert.Equal("Fast all-rounder", selectedUnavailable.Tagline);
+        Assert.Contains("~2.9 GB memory", selectedUnavailable.SpecsSummary, StringComparison.Ordinal);
+        Assert.Contains("~2.1 GB disk", selectedUnavailable.SpecsSummary, StringComparison.Ordinal);
+        Assert.Equal("Not available yet", selectedUnavailable.StatusText);
+        Assert.False(selectedUnavailable.ShowDownloadButton);
+        Assert.False(selectedUnavailable.ShowRemoveButton);
+        Assert.True(selectedUnavailable.ShowChooseProviderButton);
+        Assert.Contains("not available to download", selectedUnavailable.StatusDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("published", selectedUnavailable.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("published", selectedUnavailable.StatusDetail, StringComparison.OrdinalIgnoreCase);
 
-        var unpublishedAttempted = EnginePolishPresentation.DescribeEgOneCard(
+        var unselectedUnavailable = EnginePolishPresentation.DescribeEgOneCard(
+            EgOneModelCatalog.MicroId,
+            selectedModelId: EgOneModelCatalog.MiniId,
+            recommendedModelId: EgOneModelCatalog.FullId,
+            state: new EgOneModelState(EgOneModelCatalog.MicroId, IsInstalled: false, CanRemove: false, HasBundledManifest: false),
+            otherDownloadInFlight: false,
+            serverExecutableExists: true);
+
+        Assert.False(unselectedUnavailable.CanSelect);
+        Assert.False(unselectedUnavailable.ShowDownloadButton);
+        Assert.False(unselectedUnavailable.ShowChooseProviderButton);
+        Assert.Equal("Not available yet", unselectedUnavailable.StatusText);
+
+        var downloadableMissing = EnginePolishPresentation.DescribeEgOneCard(
+            EgOneModelCatalog.FullId,
+            selectedModelId: EgOneModelCatalog.FullId,
+            recommendedModelId: EgOneModelCatalog.FullId,
+            state: new EgOneModelState(
+                EgOneModelCatalog.FullId,
+                IsInstalled: false,
+                CanRemove: false,
+                HasBundledManifest: true,
+                DeliveryStage: SpeechModelDelivery.Missing),
+            otherDownloadInFlight: false,
+            serverExecutableExists: true);
+
+        Assert.True(downloadableMissing.CanSelect);
+        Assert.True(downloadableMissing.ShowDownloadButton);
+        Assert.False(downloadableMissing.ShowChooseProviderButton);
+        Assert.Equal("Not installed", downloadableMissing.StatusText);
+
+        var cannotDownloadAttempted = EnginePolishPresentation.DescribeEgOneCard(
             EgOneModelCatalog.MiniId,
             selectedModelId: EgOneModelCatalog.MiniId,
             recommendedModelId: EgOneModelCatalog.FullId,
@@ -200,16 +236,17 @@ public sealed class AiPolishEgOneParityTests
                 CanRemove: false,
                 HasBundledManifest: false,
                 DeliveryStage: SpeechModelDelivery.CannotDownload,
-                StatusDetail: EnginePolishPresentation.DescribeEgOneNotPublishedNotice(EgOneModelCatalog.MiniId)),
+                StatusDetail: EnginePolishPresentation.DescribeEgOneUnavailableNotice(EgOneModelCatalog.MiniId)),
             otherDownloadInFlight: false,
             serverExecutableExists: true);
 
-        Assert.False(unpublishedAttempted.ShowDownloadButton);
-        Assert.False(unpublishedAttempted.ShowProgress);
-        Assert.Equal("Package not published", unpublishedAttempted.StatusText);
+        Assert.False(cannotDownloadAttempted.ShowDownloadButton);
+        Assert.False(cannotDownloadAttempted.ShowProgress);
+        Assert.True(cannotDownloadAttempted.ShowChooseProviderButton);
+        Assert.Equal("Not available yet", cannotDownloadAttempted.StatusText);
         Assert.Equal(
-            "The Windows download package for EG-1 Mini is not published in this build yet.",
-            unpublishedAttempted.StatusDetail);
+            EnginePolishPresentation.DescribeEgOneUnavailableNotice(EgOneModelCatalog.MiniId),
+            cannotDownloadAttempted.StatusDetail);
         Assert.Null(BundledModelManifests.TryRead(EgOneModelCatalog.FullId));
 
         var installed = EnginePolishPresentation.DescribeEgOneCard(
@@ -223,6 +260,29 @@ public sealed class AiPolishEgOneParityTests
         Assert.Equal("Installed · Ready", installed.StatusText);
         Assert.False(installed.ShowDownloadButton);
         Assert.True(installed.ShowRemoveButton);
+        Assert.False(installed.ShowChooseProviderButton);
+
+        var missingBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+            PolishProvider.EgOne,
+            selectedEgOneState: new EgOneModelState(EgOneModelCatalog.MiniId, IsInstalled: false, CanRemove: false, HasBundledManifest: false),
+            egOneServerExists: true,
+            isOllamaHosted: false);
+        Assert.Equal("Not installed", missingBadge.BadgeText);
+        Assert.NotEqual("On this PC", missingBadge.BadgeText);
+
+        var missingRuntimeBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+            PolishProvider.EgOne,
+            selectedEgOneState: new EgOneModelState(EgOneModelCatalog.FullId, IsInstalled: true, CanRemove: true, HasBundledManifest: false),
+            egOneServerExists: false,
+            isOllamaHosted: false);
+        Assert.Equal("Needs setup", missingRuntimeBadge.BadgeText);
+
+        var readyBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+            PolishProvider.EgOne,
+            selectedEgOneState: new EgOneModelState(EgOneModelCatalog.FullId, IsInstalled: true, CanRemove: true, HasBundledManifest: false),
+            egOneServerExists: true,
+            isOllamaHosted: false);
+        Assert.Equal("On this PC", readyBadge.BadgeText);
     }
 
     [Fact]

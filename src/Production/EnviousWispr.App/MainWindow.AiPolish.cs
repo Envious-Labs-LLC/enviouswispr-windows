@@ -112,6 +112,7 @@ public sealed partial class MainWindow
 
     private string _selectedPolishModelId = string.Empty;
     private string? _selectedEgOneModelId;
+    private PolishProvider? _cloudKeyRejectedProvider;
     private bool _isUpdatingPolishModelPicker;
     private bool _isUpdatingEgOneCards;
     private HardwareProfile? _hardwareProfile;
@@ -206,6 +207,16 @@ public sealed partial class MainWindow
         }
     }
 
+    private void EgOneChooseProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PolishProviderChooserPanel is not null)
+        {
+            PolishProviderChooserPanel.Visibility = Visibility.Visible;
+        }
+
+        PolishProviderComboBox?.Focus(FocusState.Programmatic);
+    }
+
     private void UpdateActivePolishProviderDisplay()
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
@@ -229,16 +240,16 @@ public sealed partial class MainWindow
             ActivePolishProviderNameText.Text = ProviderDisplayName(provider);
         }
 
-        var isCloud = IsCloudProvider(provider);
+        var selectedEgOneState = provider == PolishProvider.EgOne
+            ? ResolveEgOneDisplayState(ResolveSelectedEgOneModelId())
+            : null;
         var isOllamaHosted = provider == PolishProvider.Ollama && IsSelectedOllamaModelHosted();
-        if (ActivePolishProviderBadgeText is not null)
-        {
-            ActivePolishProviderBadgeText.Text = isCloud
-                ? "Cloud"
-                : isOllamaHosted
-                    ? "Runs on Ollama's servers"
-                    : "On this PC";
-        }
+        var summaryBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+            provider,
+            selectedEgOneState,
+            _egOneServerExecutableExists,
+            isOllamaHosted);
+        ApplyActivePolishProviderBadge(summaryBadge);
 
         if (ActivePolishProviderIcon is not null)
         {
@@ -247,19 +258,6 @@ public sealed partial class MainWindow
                 PolishProvider.EgOne => "\uE70F",
                 PolishProvider.Ollama => "\uE968",
                 _ => "\uE753",
-            };
-        }
-
-        if (ActivePolishProviderStatusText is not null)
-        {
-            ActivePolishProviderStatusText.Text = provider switch
-            {
-                PolishProvider.EgOne => "Our model for cleaning up dictation on this PC.",
-                PolishProvider.Ollama => "Local models on this PC or hosted models on Ollama's servers.",
-                PolishProvider.OpenAI => "OpenAI GPT models (requires your API key).",
-                PolishProvider.Anthropic => "Anthropic Claude models (requires your API key).",
-                PolishProvider.Gemini => "Google Gemini models (requires your API key).",
-                _ => "AI Polish is disabled.",
             };
         }
 
@@ -314,6 +312,7 @@ public sealed partial class MainWindow
         _activeEgOneDownloadModelId = downloadingModelId;
         _hasEgOneInventorySnapshot = true;
         UpdateEgOneCards();
+        UpdateActivePolishProviderBadgeIfEgOneSelected();
     }
 
     public void SetEgOneDelivery(string modelId, ModelDeliveryPresentation presentation)
@@ -334,6 +333,58 @@ public sealed partial class MainWindow
             : null;
         _hasEgOneInventorySnapshot = true;
         UpdateEgOneCards();
+        UpdateActivePolishProviderBadgeIfEgOneSelected();
+    }
+
+    private string ResolveSelectedEgOneModelId()
+    {
+        var rawModelId = _selectedEgOneModelId;
+        if (string.IsNullOrWhiteSpace(rawModelId) &&
+            _settings?.Preferences.Polish.Provider == PolishProvider.EgOne)
+        {
+            rawModelId = _settings.Preferences.Polish.ModelId;
+        }
+
+        return EnginePolishPresentation.NormalizeEgOneModelId(rawModelId);
+    }
+
+    private void UpdateActivePolishProviderBadgeIfEgOneSelected()
+    {
+        if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != PolishProvider.EgOne)
+        {
+            return;
+        }
+
+        var selectedState = ResolveEgOneDisplayState(ResolveSelectedEgOneModelId());
+        var summaryBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+            PolishProvider.EgOne,
+            selectedState,
+            _egOneServerExecutableExists,
+            isOllamaHosted: false);
+        ApplyActivePolishProviderBadge(summaryBadge);
+    }
+
+    private void ApplyActivePolishProviderBadge(ActivePolishProviderBadgePresentation summaryBadge)
+    {
+        if (ActivePolishProviderBadge is not null &&
+            Application.Current.Resources[summaryBadge.ChipStyleKey] is Style chipStyle)
+        {
+            ActivePolishProviderBadge.Style = chipStyle;
+        }
+
+        if (ActivePolishProviderBadgeText is not null)
+        {
+            ActivePolishProviderBadgeText.Text = summaryBadge.BadgeText;
+            if (Application.Current.Resources[summaryBadge.ChipTextStyleKey] is Style textStyle)
+            {
+                ActivePolishProviderBadgeText.Style = textStyle;
+            }
+        }
+
+        if (ActivePolishProviderStatusText is not null)
+        {
+            ActivePolishProviderStatusText.Text = summaryBadge.StatusText;
+        }
     }
 
     public void ShowEgOneNotice(string message)
@@ -428,7 +479,8 @@ public sealed partial class MainWindow
                 EgOneFullProgress,
                 EgOneFullDownloadButton,
                 EgOneFullCancelButton,
-                EgOneFullRemoveButton
+                EgOneFullRemoveButton,
+                EgOneFullChooseProviderButton
             ),
             (
                 EnginePolishPresentation.EgOneMiniModelId,
@@ -443,7 +495,8 @@ public sealed partial class MainWindow
                 EgOneMiniProgress,
                 EgOneMiniDownloadButton,
                 EgOneMiniCancelButton,
-                EgOneMiniRemoveButton
+                EgOneMiniRemoveButton,
+                EgOneMiniChooseProviderButton
             ),
             (
                 EnginePolishPresentation.EgOneMicroModelId,
@@ -458,7 +511,8 @@ public sealed partial class MainWindow
                 EgOneMicroProgress,
                 EgOneMicroDownloadButton,
                 EgOneMicroCancelButton,
-                EgOneMicroRemoveButton
+                EgOneMicroRemoveButton,
+                EgOneMicroChooseProviderButton
             ),
         };
 
@@ -487,7 +541,8 @@ public sealed partial class MainWindow
                 slot.Item10,
                 slot.Item11,
                 slot.Item12,
-                slot.Item13);
+                slot.Item13,
+                slot.Item14);
         }
 
         if (EgOneInstallStatusText is not null)
@@ -511,11 +566,13 @@ public sealed partial class MainWindow
         ProgressBar? progressBar,
         Button? downloadButton,
         Button? cancelButton,
-        Button? removeButton)
+        Button? removeButton,
+        Button? chooseProviderButton = null)
     {
         if (cardButton is not null)
         {
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(cardButton, card.AutomationName);
+            cardButton.IsEnabled = card.CanSelect;
         }
 
         if (recommendedBadge is not null)
@@ -592,6 +649,11 @@ public sealed partial class MainWindow
         {
             removeButton.IsEnabled = card.RemoveButtonEnabled;
             removeButton.Visibility = card.ShowRemoveButton ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (chooseProviderButton is not null)
+        {
+            chooseProviderButton.Visibility = card.ShowChooseProviderButton ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 
@@ -723,6 +785,7 @@ public sealed partial class MainWindow
         _selectedPolishModelId = _polishModelSetByApp = normalized;
 
         UpdateEgOneCards();
+        UpdateActivePolishProviderBadgeIfEgOneSelected();
         _ = TriggerAutoSaveAsync();
     }
 
@@ -753,6 +816,7 @@ public sealed partial class MainWindow
         }
 
         ApiKeyPasswordBox.Password = string.Empty;
+        _cloudKeyRejectedProvider = null;
         RefreshApiKeyStatus();
         var chooseDefault = allowDefaultModel && provider != PolishProvider.EgOne;
         await RefreshPolishModelChoicesAsync(
@@ -862,6 +926,7 @@ public sealed partial class MainWindow
                 return;
             case ApiKeySaveOutcome.Saved:
                 ApiKeyPasswordBox.Password = string.Empty;
+                _cloudKeyRejectedProvider = null;
                 RefreshApiKeyStatus();
                 ShowMessage(
                     $"{ProviderDisplayName(provider)} key saved",
@@ -1087,6 +1152,9 @@ public sealed partial class MainWindow
 
         if (choices.Discovery is { } discovery)
         {
+            _cloudKeyRejectedProvider = discovery.Status == PolishModelDiscoveryStatus.KeyRejected
+                ? provider
+                : null;
             SetLiveText(ApiKeyStatusText, ModelDiscoveryNotice(provider, discovery));
         }
     }

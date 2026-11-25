@@ -221,8 +221,112 @@ public sealed partial class MainWindow
     private void CancelLivePreviewWhisperDownloadButton_Click(object sender, RoutedEventArgs e) =>
         ModelDownloadCancelRequested?.Invoke();
 
-    private void RemoveLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e) =>
+    private async void RemoveLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session.Closing)
+        {
+            return;
+        }
+
+        if (IsSpeechEngineBusy?.Invoke() == true)
+        {
+            ShowMessage(
+                "Finish dictation first",
+                EnginePolishPresentation.RemovalBlockedBusyNotice,
+                InfoBarSeverity.Warning);
+            return;
+        }
+
+        if (Content?.XamlRoot is not { } xamlRoot)
+        {
+            return;
+        }
+
+        var confirmation = LivePreviewSettingsPresentation.DescribeWhisperRemovalDialog(
+            whisperSelected: LivePreviewWhisperEngineCard?.IsChecked == true,
+            livePreviewEnabled: LivePreviewToggle?.IsOn == true,
+            parakeetInstalled: _livePreviewParakeetInstalled);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = xamlRoot,
+            RequestedTheme = (Content as FrameworkElement)?.RequestedTheme ?? ElementTheme.Default,
+            Title = confirmation.Title,
+            Content = new TextBlock
+            {
+                Text = confirmation.Message,
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = confirmation.ConfirmButtonText,
+            PrimaryButtonStyle = Application.Current.Resources["BrandDestructiveButtonStyle"] as Style,
+            CloseButtonText = confirmation.CancelButtonText,
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || _session.Closing)
+        {
+            return;
+        }
+
+        if (IsSpeechEngineBusy?.Invoke() == true)
+        {
+            ShowMessage(
+                "Finish dictation first",
+                EnginePolishPresentation.RemovalBlockedBusyNotice,
+                InfoBarSeverity.Warning);
+            return;
+        }
+
         PreviewModelRemoveRequested?.Invoke();
+    }
+
+    private void LivePreviewParakeetCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
+        {
+            return;
+        }
+
+        if (LivePreviewParakeetEngineCard is not null && LivePreviewParakeetEngineCard.IsChecked != true)
+        {
+            LivePreviewParakeetEngineCard.IsChecked = true;
+        }
+    }
+
+    private void LivePreviewWhisperCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
+        {
+            return;
+        }
+
+        if (LivePreviewWhisperEngineCard is not null && LivePreviewWhisperEngineCard.IsChecked != true)
+        {
+            LivePreviewWhisperEngineCard.IsChecked = true;
+        }
+    }
+
+    private void LivePreviewEngineCardsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (LivePreviewEngineCardsPanel is null || LivePreviewParakeetCardContainer is null || LivePreviewWhisperCardContainer is null ||
+            LivePreviewParakeetCardColumn is null || LivePreviewWhisperCardColumn is null)
+        {
+            return;
+        }
+
+        var stacked = e.NewSize.Width < 540;
+        if (stacked)
+        {
+            LivePreviewWhisperCardColumn.Width = new GridLength(0);
+            Grid.SetRow(LivePreviewWhisperCardContainer, 1);
+            Grid.SetColumn(LivePreviewWhisperCardContainer, 0);
+        }
+        else
+        {
+            LivePreviewWhisperCardColumn.Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetRow(LivePreviewWhisperCardContainer, 0);
+            Grid.SetColumn(LivePreviewWhisperCardContainer, 1);
+        }
+    }
 
     private int SelectedLivePreviewEngineIndex() =>
         LivePreviewWhisperEngineCard?.IsChecked == true
@@ -293,6 +397,30 @@ public sealed partial class MainWindow
         LivePreviewWarningBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Warning ? Visibility.Visible : Visibility.Collapsed;
         LivePreviewErrorBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Error ? Visibility.Visible : Visibility.Collapsed;
         LivePreviewOffBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Off ? Visibility.Visible : Visibility.Collapsed;
+
+        var accentBrush = Application.Current.Resources["BrandAccentBrush"] as Brush;
+        var dividerBrush = Application.Current.Resources["BrandDividerBrush"] as Brush;
+        if (LivePreviewParakeetCardContainer is not null)
+        {
+            LivePreviewParakeetCardContainer.BorderBrush = presentation.ParakeetCard.IsSelected ? accentBrush : dividerBrush;
+            LivePreviewParakeetCardContainer.BorderThickness = new Thickness(presentation.ParakeetCard.IsSelected ? 2 : 1);
+        }
+
+        if (LivePreviewWhisperCardContainer is not null)
+        {
+            LivePreviewWhisperCardContainer.BorderBrush = presentation.WhisperCard.IsSelected ? accentBrush : dividerBrush;
+            LivePreviewWhisperCardContainer.BorderThickness = new Thickness(presentation.WhisperCard.IsSelected ? 2 : 1);
+        }
+
+        if (LivePreviewParakeetHeadlineText is not null)
+        {
+            SetLiveText(LivePreviewParakeetHeadlineText, presentation.ParakeetCard.StatusHeadline);
+        }
+
+        if (LivePreviewWhisperHeadlineText is not null)
+        {
+            SetLiveText(LivePreviewWhisperHeadlineText, presentation.WhisperCard.StatusHeadline);
+        }
 
         SetLiveText(LivePreviewStatusDetailText, presentation.StatusDetailText);
         LivePreviewPrivacyText.Text = presentation.PrivacyReassuranceText;
@@ -740,10 +868,9 @@ public sealed partial class MainWindow
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
-    }
 
-    private void DownloadModelButton_Click(object sender, RoutedEventArgs e) =>
-        ModelDownloadRequested?.Invoke();
+        UpdateSpeechEngineOptionsCardVisibility();
+    }
 
     private void CancelModelDownloadButton_Click(object sender, RoutedEventArgs e) =>
         ModelDownloadCancelRequested?.Invoke();
@@ -766,6 +893,7 @@ public sealed partial class MainWindow
         if (presentation is null)
         {
             GraphicsRuntimeRow.Visibility = Visibility.Collapsed;
+            UpdateSpeechEngineOptionsCardVisibility();
             return;
         }
 
@@ -775,24 +903,33 @@ public sealed partial class MainWindow
         GraphicsRuntimeProgress.Value = presentation.Percent ?? 0;
         DownloadGraphicsRuntimeButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
         CancelGraphicsRuntimeDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSpeechEngineOptionsCardVisibility();
+    }
+
+    private void UpdateSpeechEngineOptionsCardVisibility()
+    {
+        if (SpeechEngineOptionsCard is null)
+        {
+            return;
+        }
+
+        var showWhisperLanguage = WhisperLanguageRow?.Visibility == Visibility.Visible;
+        var showGraphicsRuntime = GraphicsRuntimeRow?.Visibility == Visibility.Visible;
+        SpeechEngineOptionsCard.Visibility = showWhisperLanguage || showGraphicsRuntime
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     /// <summary>
-    /// Shows the speech-model situation on the Transcription card and the onboarding card together.
+    /// Forwards active speech-model delivery state to the onboarding flow (#92, #357).
     /// </summary>
     /// <remarks>
-    /// ONE PRESENTATION, TWO SURFACES. Onboarding is where a new install first meets "model is not
-    /// installed", and Transcription is where the pill sends them; a person must be able to act
-    /// from either without the two disagreeing about what is happening. Ref: #92.
+    /// Per-engine download progress and actions live inside each Engine card in EngineCardsGrid;
+    /// forwarding the active presentation here keeps first-run onboarding tracking in sync.
     /// </remarks>
     public void SetModelDelivery(ModelDeliveryPresentation presentation)
     {
         ArgumentNullException.ThrowIfNull(presentation);
-        SetLiveText(ModelDeliveryStatusText, presentation.Text);
-        ModelDeliveryProgress.Visibility = presentation.Percent is null ? Visibility.Collapsed : Visibility.Visible;
-        ModelDeliveryProgress.Value = presentation.Percent ?? 0;
-        DownloadModelButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
-        CancelModelDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
         ObserveModelForOnboarding(presentation);
     }
 

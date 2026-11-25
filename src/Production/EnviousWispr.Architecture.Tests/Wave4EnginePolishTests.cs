@@ -187,10 +187,6 @@ public sealed class Wave4EnginePolishTests
             "Applies to English dictation. Keep American if you dictate other languages with Parakeet.",
             xamlText,
             StringComparison.Ordinal);
-        Assert.Contains(
-            "Speech models are verified once on download and run completely offline on this PC.",
-            xamlText,
-            StringComparison.Ordinal);
 
         var chooserPanel = FindNamedElement(document, "EngineChooserPanel");
         Assert.NotEqual("Collapsed", (string?)chooserPanel.Attribute("Visibility"));
@@ -198,7 +194,13 @@ public sealed class Wave4EnginePolishTests
         Assert.NotNull(FindNamedElement(document, "EngineCardsGrid"));
         Assert.NotNull(FindNamedElement(document, "ParakeetEngineCard"));
         Assert.NotNull(FindNamedElement(document, "WhisperEngineCard"));
+        Assert.NotNull(FindNamedElement(document, "SpeechEngineOptionsCard"));
         Assert.NotNull(FindNamedElement(document, "WhisperLanguageRow"));
+        Assert.NotNull(FindNamedElement(document, "GraphicsRuntimeRow"));
+        Assert.Null(document.Descendants().FirstOrDefault(e =>
+            (string?)e.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml")) == "ModelDeliveryRow"));
+        Assert.Null(document.Descendants().FirstOrDefault(e =>
+            (string?)e.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml")) == "ModelInventoryText"));
 
         var whisperCombo = FindNamedElement(document, "WhisperLanguageComboBox");
         var whisperItems = whisperCombo.Elements().Where(e => e.Name.LocalName == "String").Select(e => e.Value).ToArray();
