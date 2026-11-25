@@ -1842,30 +1842,30 @@
                                                                 <TextBlock Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="0:12" VerticalAlignment="Center" />
                                                                 <StackPanel Grid.Column="1" HorizontalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
                                                                     <StackPanel Height="24" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                                                        <Border Width="3" Height="6" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="8" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="11" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="17" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="19" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="6" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="8" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="11" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="17" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="19" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
                                                                         <Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="22" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="20" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="17" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="11" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="9" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="10" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="13" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="16" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="19" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="22" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="24" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="17" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="13" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="22" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="20" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="17" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="11" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
                                                                         <Border Width="3" Height="9" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
-                                                                        <Border Width="3" Height="6" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="10" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="13" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="16" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="19" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="22" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="24" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="17" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="13" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="9" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
+                                                                        <Border Width="3" Height="6" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
                                                                     </StackPanel>
                                                                     <Border Width="2" Height="22" Background="{ThemeResource BrandAccentBrush}" CornerRadius="1" VerticalAlignment="Center" />
                                                                 </StackPanel>

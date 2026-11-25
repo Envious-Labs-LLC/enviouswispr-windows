@@ -728,12 +728,44 @@ public sealed partial class DesignSystemTokenTests
                 Name = (string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed TextBlock",
                 FontSize = (double?)element.Attribute("FontSize"),
             })
-            .Where(text => text.FontSize is null or < 14)
+            .Where(text => text.FontSize is null
+                || (text.FontSize < 14
+                    && !(OverlayMacSizedText.TryGetValue(text.Name, out var allowed) && text.FontSize == allowed)))
             .ToArray();
         Assert.True(
             undersizedText.Length == 0,
             $"Overlay text must be at least 14px: {string.Join(", ", undersizedText.Select(text => $"{text.Name}={text.FontSize}"))}");
+
+        // AN EXCEPTION THAT NAMES NOTHING EXCUSES NOTHING, so every entry must still exist.
+        var overlayTextNames = overlay.Descendants()
+            .Where(element => element.Name.LocalName == "TextBlock")
+            .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)))
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.All(OverlayMacSizedText.Keys, name => Assert.Contains(name, overlayTextNames));
     }
+
+    /// <summary>
+    /// The overlay texts that render below the 14px floor, each at exactly the size macOS draws it.
+    /// </summary>
+    /// <remarks>
+    /// THE ONE PLACE THE FLOOR GIVES WAY, AND ONLY BY NAME AND ONLY TO THE macOS SIZE. The recording
+    /// pill is a 44-tall capsule and a 34-tall header copied from the shipping macOS overlay, and its
+    /// clock, state word and processing line are sized for that box: at 14 the Level Rail no longer
+    /// fits its row and the Reading Well's header crowds its own meter. Founder-directed parity call
+    /// (wave 5, issue #334). Sources, all under macos-source/Sources/EnviousWisprAppKit/App/Overlay/Views:
+    /// RecordingOverlayView.swift:431 and :495 (13pt monospaced clock, Reading Well and Level Rail),
+    /// :548 (13pt clock, Capsule), :449, :457 and :530 (11pt state word and hands-free badge),
+    /// PolishingOverlayView.swift:26 (13pt processing label). A new small text is not excused by
+    /// being added here without a macOS line to cite.
+    /// </remarks>
+    private static readonly Dictionary<string, double> OverlayMacSizedText = new(StringComparer.Ordinal)
+    {
+        ["ElapsedText"] = 13,
+        ["ProcessingLabel"] = 13,
+        ["ModeLabel"] = 11,
+        ["RailHandsFreeText"] = 11,
+        ["WellHandsFreeText"] = 11,
+    };
 
     /// <summary>
     /// Every state the pill can be in has a look, and every look it names exists.
