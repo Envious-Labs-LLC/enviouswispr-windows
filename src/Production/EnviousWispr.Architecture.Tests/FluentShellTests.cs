@@ -114,9 +114,13 @@ public sealed class FluentShellTests
     {
         var document = LoadMainWindow();
 
+        var historyPage = FindNamed(document, "HistoryPage");
+        var historyHelpButton = FindNamed(historyPage, "HistoryHelpButton");
+        Assert.Equal("How History works", (string?)historyHelpButton.Attribute("AutomationProperties.Name"));
+        Assert.NotNull(FindNamed(historyHelpButton, "HistoryHelpFlyout"));
+
         foreach (var sectionName in new[]
                  {
-                     "HistoryPage",
                      "MicrophoneSection",
                      "TranscriptionEngineSection",
                      "KeybindsSection",

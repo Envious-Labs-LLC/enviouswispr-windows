@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.History;
@@ -255,35 +256,271 @@ public sealed partial class MainWindow
         RecoveryUndoRequested?.Invoke();
     }
 
-    private void PasteHistoryButton_Click(object sender, RoutedEventArgs e)
+    private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
+        if (InlineClearHistorySearchButton is not null)
         {
-            ShowMessage("Select a dictation first", "Choose the history entry you want to paste.", InfoBarSeverity.Informational);
-            return;
+            InlineClearHistorySearchButton.Visibility = string.IsNullOrEmpty(HistorySearchBox.Text)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
 
-        HistoryPasteRequested?.Invoke(selected.Id);
+        RefreshHistoryView();
     }
-
-    private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistoryView();
 
     private void ClearHistorySearchButton_Click(object sender, RoutedEventArgs e) =>
         HistorySearchBox.Text = string.Empty;
 
-    private void CopyHistoryButton_Click(object sender, RoutedEventArgs e)
+    private void ClearHistoryFiltersButton_Click(object sender, RoutedEventArgs e)
     {
-        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        HistorySearchBox.Text = string.Empty;
+        _historyKindFilter = HistoryKindFilter.All;
+        _historyDateRangeFilter = HistoryDateRangeFilter.AnyTime;
+        _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
+        if (HistoryDateFilterText is not null)
         {
-            ShowMessage("Select a dictation first", "Choose the history entry you want to copy.", InfoBarSeverity.Informational);
+            HistoryDateFilterText.Text = HistoryDiaryPresentation.DateRangeLabel(_historyDateRangeFilter);
+        }
+
+        UpdateHistoryFilterSegmentButtons();
+        RefreshHistoryView();
+    }
+
+    private void HistoryDateFilterItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem item || item.Tag is not string tag)
+        {
+            return;
+        }
+
+        _historyDateRangeFilter = tag switch
+        {
+            "Today" => HistoryDateRangeFilter.Today,
+            "Yesterday" => HistoryDateRangeFilter.Yesterday,
+            "Last7Days" => HistoryDateRangeFilter.Last7Days,
+            "Last30Days" => HistoryDateRangeFilter.Last30Days,
+            _ => HistoryDateRangeFilter.AnyTime,
+        };
+        _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
+        if (HistoryDateFilterText is not null)
+        {
+            HistoryDateFilterText.Text = HistoryDiaryPresentation.DateRangeLabel(_historyDateRangeFilter);
+        }
+
+        UpdateHistoryFilterSegmentButtons();
+        RefreshHistoryView();
+    }
+
+    private void HistorySelectToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetHistorySelectionMode(!_isHistorySelectionMode);
+        UpdateHistoryFilterSegmentButtons();
+        RefreshCardSelectionVisuals();
+        UpdateHistorySelectionDependentButtons();
+    }
+
+    private void SetHistorySelectionMode(bool isSelectionMode)
+    {
+        _isHistorySelectionMode = isSelectionMode;
+        if (!isSelectionMode)
+        {
+            _selectedHistoryIds.Clear();
+            _lastBulkDeletionSummary = null;
+        }
+
+        if (HistorySelectionToolbar is not null)
+        {
+            HistorySelectionToolbar.Visibility = isSelectionMode ? Visibility.Visible : Visibility.Collapsed;
+        }
+        if (HistorySelectToggleText is not null)
+        {
+            HistorySelectToggleText.Text = isSelectionMode ? "Done" : "Select";
+        }
+        if (HistorySelectToggleButton is not null)
+        {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                HistorySelectToggleButton,
+                isSelectionMode ? "Done selecting dictations" : "Select dictations");
+        }
+    }
+
+    private void HistoryHelpButton_Click(object sender, RoutedEventArgs e) => PopulateHistoryHelpItems();
+
+    private void PopulateHistoryHelpItems()
+    {
+        if (HistoryHelpItemsControl is null)
+        {
+            return;
+        }
+
+        var retentionDays = _settings?.Preferences.History.RetentionDays ?? UserPreferences.Default.History.RetentionDays;
+        HistoryHelpItemsControl.ItemsSource = HistoryDiaryPresentation.HelpItems(retentionDays);
+    }
+
+    private void SelectAllMatchingButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastMatchingHistoryEntries.Count == 0 || _isRepolishing || _isBulkDeletingHistory)
+        {
+            return;
+        }
+
+        var allSelected = _lastMatchingHistoryEntries.All(entry => _selectedHistoryIds.Contains(entry.Id));
+        _lastBulkDeletionSummary = null;
+        if (allSelected)
+        {
+            foreach (var entry in _lastMatchingHistoryEntries)
+            {
+                _selectedHistoryIds.Remove(entry.Id);
+            }
+        }
+        else
+        {
+            foreach (var entry in _lastMatchingHistoryEntries)
+            {
+                _selectedHistoryIds.Add(entry.Id);
+            }
+        }
+
+        RefreshCardSelectionVisuals();
+        UpdateHistorySelectionDependentButtons();
+    }
+
+    private void LoadMoreHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        _historyVisibleLimit += HistoryDiaryPresentation.DefaultPageSize;
+        RefreshHistoryView();
+    }
+
+    private void CardSelectCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox || checkBox.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        _lastBulkDeletionSummary = null;
+        if (!_selectedHistoryIds.Remove(card.Id))
+        {
+            _selectedHistoryIds.Add(card.Id);
+        }
+
+        card.SetSelectionState(_isHistorySelectionMode, _selectedHistoryIds.Contains(card.Id));
+        UpdateHistorySelectionDependentButtons();
+    }
+
+    private void CardShowEditsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        if (!_showingEditsIds.Remove(card.Id))
+        {
+            _showingEditsIds.Add(card.Id);
+        }
+
+        card.SetShowingEdits(_showingEditsIds.Contains(card.Id));
+    }
+
+    private void CardShowPolished_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        _showingOriginalIds.Remove(card.Id);
+        card.SetShowingOriginal(false);
+    }
+
+    private void CardShowOriginal_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        _showingOriginalIds.Add(card.Id);
+        card.SetShowingOriginal(true);
+    }
+
+    private void CardShowMoreToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        if (!_expandedTranscriptIds.Remove(card.Id))
+        {
+            _expandedTranscriptIds.Add(card.Id);
+        }
+
+        card.SetTranscriptExpanded(_expandedTranscriptIds.Contains(card.Id));
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Performance",
+        "CA1822:Mark members as static",
+        Justification = "WinUI XAML generated event connector attaches this handler via an instance reference.")]
+    private void CardTranscriptText_IsTextTrimmedChanged(TextBlock sender, IsTextTrimmedChangedEventArgs args)
+    {
+        if (sender.IsTextTrimmed && sender.DataContext is HistoryItemViewModel card)
+        {
+            card.MarkHasOverflow();
+        }
+    }
+
+    private void CardPasteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRepolishing || _isBulkDeletingHistory
+            || sender is not FrameworkElement element
+            || element.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        HistoryPasteRequested?.Invoke(card.Id);
+    }
+
+    private void CardCopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRepolishing || _isBulkDeletingHistory
+            || sender is not FrameworkElement element
+            || element.DataContext is not HistoryItemViewModel card)
+        {
             return;
         }
 
         var package = new DataPackage();
-        package.SetText(selected.Text);
+        package.SetText(card.Text);
         Clipboard.SetContent(package);
         Clipboard.Flush();
-        ShowMessage("Copied", "The selected dictation is on your clipboard.", InfoBarSeverity.Success);
+        ShowMessage("Copied", "The saved dictation is on your clipboard.", InfoBarSeverity.Success);
+    }
+
+    private void CardCopyAlternateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRepolishing || _isBulkDeletingHistory
+            || sender is not FrameworkElement element
+            || element.DataContext is not HistoryItemViewModel card
+            || string.IsNullOrWhiteSpace(card.ComparisonOtherText))
+        {
+            return;
+        }
+
+        var package = new DataPackage();
+        package.SetText(card.ComparisonOtherText);
+        Clipboard.SetContent(package);
+        Clipboard.Flush();
+        ShowMessage(
+            "Copied",
+            card.IsShowingOriginalView
+                ? "The AI-polished version is on your clipboard."
+                : "The original unpolished words are on your clipboard.",
+            InfoBarSeverity.Success);
     }
 
     private bool _copyingRecovery;
@@ -391,16 +628,15 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void RepolishHistoryButton_Click(object sender, RoutedEventArgs e)
+    private async void CardRepolishButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isRepolishing)
+        if (_isRepolishing || _isBulkDeletingHistory)
         {
             return;
         }
 
-        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel selected)
         {
-            ShowMessage("Select a dictation first", "Choose the history entry you want to re-polish.", InfoBarSeverity.Informational);
             return;
         }
 
@@ -417,12 +653,8 @@ public sealed partial class MainWindow
         }
 
         _isRepolishing = true;
-        if (RepolishHistoryProgress is not null)
-        {
-            RepolishHistoryProgress.IsActive = true;
-            RepolishHistoryProgress.Visibility = Visibility.Visible;
-        }
-        UpdateSelectionDependentButtons();
+        _repolishingHistoryEntryId = selected.Id;
+        UpdateHistorySelectionDependentButtons();
 
         try
         {
@@ -434,21 +666,15 @@ public sealed partial class MainWindow
 
             if (result.Succeeded)
             {
+                _showingOriginalIds.Remove(selected.Id);
                 if (result.View is not null)
                 {
                     ShowHistory(result.View);
-                    if (HistoryList.ItemsSource is HistoryItemViewModel[] items)
+                    var refreshed = _renderedHistoryItems.FirstOrDefault(i => i.Id == selected.Id);
+                    if (refreshed is not null)
                     {
-                        var reselected = items.FirstOrDefault(i => i.Id == selected.Id);
-                        if (reselected is not null)
-                        {
-                            HistoryList.SelectedItem = reselected;
-                        }
+                        HistoryList.SelectedItem = refreshed;
                     }
-                }
-                if (result.Entry is not null)
-                {
-                    HistoryDetailTextBox.Text = result.Entry.Text;
                 }
                 ShowMessage("Re-polished dictation", "Transcript updated with active polish model.", InfoBarSeverity.Success);
             }
@@ -469,20 +695,17 @@ public sealed partial class MainWindow
         finally
         {
             _isRepolishing = false;
-            if (RepolishHistoryProgress is not null)
-            {
-                RepolishHistoryProgress.IsActive = false;
-                RepolishHistoryProgress.Visibility = Visibility.Collapsed;
-            }
-            UpdateSelectionDependentButtons();
+            _repolishingHistoryEntryId = null;
+            UpdateHistorySelectionDependentButtons();
         }
     }
 
-    private async void DeleteHistoryButton_Click(object sender, RoutedEventArgs e)
+    private async void CardDeleteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        if (_isRepolishing || _isBulkDeletingHistory
+            || sender is not FrameworkElement element
+            || element.DataContext is not HistoryItemViewModel selected)
         {
-            ShowMessage("Select a dictation first", "Choose the history entry you want to delete.", InfoBarSeverity.Informational);
             return;
         }
 
@@ -494,6 +717,10 @@ public sealed partial class MainWindow
 
         if (result.Succeeded)
         {
+            _selectedHistoryIds.Remove(selected.Id);
+            _expandedTranscriptIds.Remove(selected.Id);
+            _showingEditsIds.Remove(selected.Id);
+            _showingOriginalIds.Remove(selected.Id);
             BeginHistoryReload();
             ShowHistory(result.View!);
             ShowMessage("History entry deleted", "The local copy was removed.", InfoBarSeverity.Success);
@@ -504,11 +731,12 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void KeepHistoryButton_Click(object sender, RoutedEventArgs e)
+    private async void CardKeepButton_Click(object sender, RoutedEventArgs e)
     {
-        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        if (_isRepolishing || _isBulkDeletingHistory
+            || sender is not FrameworkElement element
+            || element.DataContext is not HistoryItemViewModel selected)
         {
-            ShowMessage("Select a dictation first", "Choose the temporary recovery entry you want to keep.", InfoBarSeverity.Informational);
             return;
         }
 
@@ -530,8 +758,96 @@ public sealed partial class MainWindow
         }
     }
 
+    private async void DeleteSelectedHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRepolishing || _isBulkDeletingHistory || _selectedHistoryIds.Count == 0)
+        {
+            return;
+        }
+
+        var idsToDelete = _selectedHistoryIds.ToArray();
+        var count = idsToDelete.Length;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = WindowRoot.XamlRoot,
+            Title = count == 1 ? "Delete 1 selected dictation?" : $"Delete {count} selected dictations?",
+            Content = "This permanently removes the selected transcripts from local history. Settings, dictionary entries, and snippets are not affected.",
+            PrimaryButtonText = count == 1 ? "Delete dictation" : $"Delete {count} dictations",
+            PrimaryButtonStyle = Application.Current.Resources["BrandDestructiveButtonStyle"] as Style,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        _isBulkDeletingHistory = true;
+        if (BulkDeleteHistoryProgress is not null)
+        {
+            BulkDeleteHistoryProgress.IsActive = true;
+            BulkDeleteHistoryProgress.Visibility = Visibility.Visible;
+        }
+        UpdateHistorySelectionDependentButtons();
+
+        try
+        {
+            var result = await _session.History.DeleteManyAsync(idsToDelete).ConfigureAwait(true);
+            if (result.Closing || _session.Closing)
+            {
+                return;
+            }
+
+            if (result.Succeeded && result.View is not null)
+            {
+                var remaining = HistoryDiaryPresentation.ReconcileSelectionAfterDelete(idsToDelete, result.View.Entries);
+                var deletedCount = idsToDelete.Length - remaining.Count;
+                _selectedHistoryIds.Clear();
+                foreach (var remainingId in remaining)
+                {
+                    _selectedHistoryIds.Add(remainingId);
+                }
+                foreach (var id in idsToDelete.Where(id => !remaining.Contains(id)))
+                {
+                    _expandedTranscriptIds.Remove(id);
+                    _showingEditsIds.Remove(id);
+                    _showingOriginalIds.Remove(id);
+                }
+
+                _lastBulkDeletionSummary = remaining.Count > 0
+                    ? $"{remaining.Count} item{(remaining.Count == 1 ? string.Empty : "s")} could not be deleted and stayed selected."
+                    : deletedCount == 1 ? "1 dictation deleted." : $"{deletedCount} dictations deleted.";
+                BeginHistoryReload();
+                ShowHistory(result.View);
+                ShowMessage(
+                    deletedCount == 1 ? "1 dictation deleted" : $"{deletedCount} dictations deleted",
+                    "The selected local history copies were removed.",
+                    InfoBarSeverity.Success);
+            }
+            else
+            {
+                ShowMessage("History could not be changed", "The private history file was left untouched.", InfoBarSeverity.Error);
+            }
+        }
+        finally
+        {
+            _isBulkDeletingHistory = false;
+            if (BulkDeleteHistoryProgress is not null)
+            {
+                BulkDeleteHistoryProgress.IsActive = false;
+                BulkDeleteHistoryProgress.Visibility = Visibility.Collapsed;
+            }
+            UpdateHistorySelectionDependentButtons();
+        }
+    }
+
     private async void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isRepolishing || _isBulkDeletingHistory)
+        {
+            return;
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot,
@@ -555,6 +871,11 @@ public sealed partial class MainWindow
 
         if (result.Succeeded)
         {
+            _expandedTranscriptIds.Clear();
+            _showingEditsIds.Clear();
+            _showingOriginalIds.Clear();
+            SetHistorySelectionMode(false);
+            UpdateHistoryFilterSegmentButtons();
             BeginHistoryReload();
             ShowHistory(result.View!);
             ShowMessage("History cleared", "All locally saved dictations were removed.", InfoBarSeverity.Success);
@@ -600,11 +921,30 @@ public sealed partial class MainWindow
         _historyLoadStatus = view.Status;
         _history.Clear();
         _history.AddRange(view.Entries);
+        var reconciled = HistoryDiaryPresentation.ReconcileSelectionAfterDelete(_selectedHistoryIds, _history);
+        _selectedHistoryIds.Clear();
+        foreach (var id in reconciled)
+        {
+            _selectedHistoryIds.Add(id);
+        }
+
         _isHistoryLoading = false;
         RefreshHistoryView();
     }
 
     private HistoryKindFilter _historyKindFilter = HistoryKindFilter.All;
+    private HistoryDateRangeFilter _historyDateRangeFilter = HistoryDateRangeFilter.AnyTime;
+    private bool _isHistorySelectionMode;
+    private bool _isBulkDeletingHistory;
+    private int _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
+    private Guid? _repolishingHistoryEntryId;
+    private string? _lastBulkDeletionSummary;
+    private readonly HashSet<Guid> _selectedHistoryIds = [];
+    private readonly HashSet<Guid> _expandedTranscriptIds = [];
+    private readonly HashSet<Guid> _showingEditsIds = [];
+    private readonly HashSet<Guid> _showingOriginalIds = [];
+    private List<DictationHistoryEntry> _lastMatchingHistoryEntries = [];
+    private List<HistoryItemViewModel> _renderedHistoryItems = [];
 
     private void HistoryFilterButton_Click(object sender, RoutedEventArgs e)
     {
@@ -619,6 +959,7 @@ public sealed partial class MainWindow
             "TranscribeFile" => HistoryKindFilter.TranscribeFile,
             _ => HistoryKindFilter.All,
         };
+        _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
 
         UpdateHistoryFilterSegmentButtons();
         RefreshHistoryView();
@@ -626,31 +967,149 @@ public sealed partial class MainWindow
 
     private void UpdateHistoryFilterSegmentButtons()
     {
-        ApplySegmentButtonState(HistoryFilterAllButton, _historyKindFilter == HistoryKindFilter.All);
-        ApplySegmentButtonState(HistoryFilterDictationButton, _historyKindFilter == HistoryKindFilter.Dictation);
-        ApplySegmentButtonState(HistoryFilterTranscribeButton, _historyKindFilter == HistoryKindFilter.TranscribeFile);
+        var activeTab = Application.Current.Resources["BrandTabStripActiveButtonStyle"] as Style;
+        var normalTab = Application.Current.Resources["BrandTabStripButtonStyle"] as Style;
+        if (activeTab is not null && normalTab is not null)
+        {
+            HistoryFilterAllButton.Style = _historyKindFilter == HistoryKindFilter.All ? activeTab : normalTab;
+            HistoryFilterDictationButton.Style = _historyKindFilter == HistoryKindFilter.Dictation ? activeTab : normalTab;
+            HistoryFilterTranscribeButton.Style = _historyKindFilter == HistoryKindFilter.TranscribeFile ? activeTab : normalTab;
+        }
+
+        var activeQuiet = Application.Current.Resources["BrandQuietActiveButtonStyle"] as Style;
+        var normalQuiet = Application.Current.Resources["BrandQuietButtonStyle"] as Style;
+        if (activeQuiet is not null && normalQuiet is not null)
+        {
+            if (HistoryDateFilterButton is not null)
+            {
+                HistoryDateFilterButton.Style = _historyDateRangeFilter != HistoryDateRangeFilter.AnyTime ? activeQuiet : normalQuiet;
+            }
+            if (HistorySelectToggleButton is not null)
+            {
+                HistorySelectToggleButton.Style = _isHistorySelectionMode ? activeQuiet : normalQuiet;
+            }
+        }
     }
 
     private void RefreshHistoryView()
     {
         var previousSelectedId = (HistoryList.SelectedItem as HistoryItemViewModel)?.Id;
         var query = HistorySearchBox.Text.Trim();
-        var visibleHistory = HistoryPresenter.Filter(_history, query, _historyKindFilter)
-            .Select(entry => new HistoryItemViewModel(entry))
-            .ToArray();
-        HistoryList.ItemsSource = visibleHistory;
+        var now = DateTimeOffset.Now;
+        var matching = HistoryPresenter.Filter(_history, query, _historyKindFilter, _historyDateRangeFilter, now);
+        _lastMatchingHistoryEntries = matching.ToList();
+
+        var fullDayCounts = HistoryDiaryPresentation.CountByDay(matching);
+        var paged = HistoryDiaryPresentation.TakePage(matching, _historyVisibleLimit);
+        var dayGroups = HistoryDiaryPresentation.GroupByDay(paged.Items, now);
+        var rendered = new List<HistoryItemViewModel>(paged.Items.Count);
+        var busy = _isRepolishing || _isBulkDeletingHistory;
+        foreach (var group in dayGroups)
+        {
+            var totalDayCount = fullDayCounts.TryGetValue(group.Header.Day, out var dayCount)
+                ? dayCount
+                : group.Entries.Count;
+            var isFirstInDay = true;
+            foreach (var entry in group.Entries)
+            {
+                var vm = new HistoryItemViewModel(
+                    entry,
+                    dayHeader: isFirstInDay ? group.Header : null,
+                    dayEntryCount: totalDayCount,
+                    isSelectionMode: _isHistorySelectionMode,
+                    isSelected: _selectedHistoryIds.Contains(entry.Id),
+                    isTranscriptExpanded: _expandedTranscriptIds.Contains(entry.Id),
+                    isShowingEdits: _showingEditsIds.Contains(entry.Id),
+                    isShowingOriginal: _showingOriginalIds.Contains(entry.Id),
+                    isGlobalBusy: busy,
+                    isRepolishingThisCard: _repolishingHistoryEntryId == entry.Id,
+                    isPrimaryPasteTarget: false);
+                rendered.Add(vm);
+                isFirstInDay = false;
+            }
+        }
+
+        _renderedHistoryItems = rendered;
+        HistoryList.ItemsSource = rendered;
         if (HistoryCountText is not null)
         {
-            HistoryCountText.Text = visibleHistory.Length.ToString("N0", CultureInfo.CurrentCulture);
+            HistoryCountText.Text = HistoryDiaryPresentation.FormatItemCount(matching.Count);
+        }
+        if (HistoryLoadMoreContainer is not null && LoadMoreHistoryButton is not null)
+        {
+            HistoryLoadMoreContainer.Visibility = paged.HasMore ? Visibility.Visible : Visibility.Collapsed;
+            if (paged.HasMore)
+            {
+                LoadMoreHistoryButton.Content = $"Show older dictations ({paged.RemainingCount} more)";
+            }
+        }
+        if (ResetHistoryFiltersBarButton is not null)
+        {
+            var hasAnyFilter = !string.IsNullOrWhiteSpace(query)
+                || _historyKindFilter != HistoryKindFilter.All
+                || _historyDateRangeFilter != HistoryDateRangeFilter.AnyTime;
+            ResetHistoryFiltersBarButton.Visibility = hasAnyFilter ? Visibility.Visible : Visibility.Collapsed;
         }
         if (previousSelectedId is { } id)
         {
-            HistoryList.SelectedItem = visibleHistory.FirstOrDefault(item => item.Id == id);
+            HistoryList.SelectedItem = rendered.FirstOrDefault(item => item.Id == id);
         }
 
-        UpdateHistoryListVisibility(query, visibleHistory.Length);
-        UpdateSelectionDependentButtons();
+        PopulateHistoryHelpItems();
+        UpdateHistoryListVisibility(query, rendered.Count);
+        UpdateHistorySelectionDependentButtons();
         UpdateHistoryStatusCards();
+    }
+
+    private void RefreshCardSelectionVisuals()
+    {
+        foreach (var item in _renderedHistoryItems)
+        {
+            item.SetSelectionState(_isHistorySelectionMode, _selectedHistoryIds.Contains(item.Id));
+        }
+    }
+
+    private void UpdateHistorySelectionDependentButtons()
+    {
+        if (HistoryList is null || ClearHistoryButton is null)
+        {
+            return;
+        }
+
+        var busy = _isRepolishing || _isBulkDeletingHistory;
+        var activePasteId = (HistoryList.SelectedItem as HistoryItemViewModel)?.Id
+            ?? _renderedHistoryItems.FirstOrDefault()?.Id;
+        foreach (var item in _renderedHistoryItems)
+        {
+            item.SetOperationState(busy, _repolishingHistoryEntryId == item.Id, item.Id == activePasteId);
+        }
+
+        ClearHistoryButton.IsEnabled = _history.Count > 0 && !busy;
+        if (HistoryMoreDeleteAllItem is not null)
+        {
+            HistoryMoreDeleteAllItem.IsEnabled = _history.Count > 0 && !busy;
+        }
+        if (DeleteSelectedHistoryButton is not null)
+        {
+            DeleteSelectedHistoryButton.IsEnabled = _selectedHistoryIds.Count > 0 && !busy;
+        }
+        if (HistorySelectAllButton is not null)
+        {
+            var allSelected = _lastMatchingHistoryEntries.Count > 0
+                && _lastMatchingHistoryEntries.All(entry => _selectedHistoryIds.Contains(entry.Id));
+            HistorySelectAllButton.IsEnabled = _lastMatchingHistoryEntries.Count > 0 && !busy;
+            HistorySelectAllButton.Content = allSelected ? "Deselect all matching" : "Select all matching";
+        }
+        if (HistorySelectionCountText is not null)
+        {
+            HistorySelectionCountText.Text = HistoryDiaryPresentation.FormatSelectionCount(_selectedHistoryIds.Count);
+        }
+        if (HistorySelectionDetailText is not null)
+        {
+            HistorySelectionDetailText.Text = !string.IsNullOrWhiteSpace(_lastBulkDeletionSummary)
+                ? _lastBulkDeletionSummary
+                : "Tick cards below, or use Select all matching.";
+        }
     }
 
     private void UpdateHistoryStatusCards()
@@ -672,34 +1131,37 @@ public sealed partial class MainWindow
         {
             HistoryDetailReadyHotkeyText.Text = $"Keybind: {_settings.Preferences.Dictation.PushToTalkGesture}";
         }
+        PopulateHistoryHelpItems();
     }
 
     private void UpdateHistoryListVisibility(string query, int itemCount)
     {
         var hasItems = itemCount > 0;
         var hasQuery = !string.IsNullOrWhiteSpace(query);
+        var hasFilters = hasQuery
+            || _historyKindFilter != HistoryKindFilter.All
+            || _historyDateRangeFilter != HistoryDateRangeFilter.AnyTime;
+        var showFilteredEmpty = !hasItems && (_history.Count > 0 && hasFilters || hasQuery);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
         ShowCard(HistoryLoadingState, _isHistoryLoading);
         ShowCard(HistoryList, !_isHistoryLoading && hasItems);
-        ShowCard(HistoryEmptyState, !_isHistoryLoading && !hasItems && !hasQuery && !historyUnavailable);
-        ShowCard(HistorySearchEmptyState, !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable);
+        ShowCard(HistoryEmptyState, !_isHistoryLoading && !hasItems && !showFilteredEmpty && !historyUnavailable);
+        ShowCard(HistorySearchEmptyState, !_isHistoryLoading && showFilteredEmpty && !historyUnavailable);
 
         ShowCard(HistoryUnavailableState, !_isHistoryLoading && !hasItems && historyUnavailable);
 
-        // ANNOUNCED AFTER EVERY CARD HAS ITS VISIBILITY, NOT BEFORE. A collapsed element is not in
-        // the layout, so raising while the unavailable card was still hidden was refused by the very
-        // ancestor check that stops announcements from pages nobody is looking at - and the one
-        // state a person most needs told about was the one that stayed silent.
-        //
-        // AND ONLY WHEN THE ANSWER CHANGED. This runs on every refresh and every search keystroke,
-        // and the card titles are fixed text, so nothing else stops "No matching dictations" being
-        // spoken again on each letter typed. The key carries the count too, because a list that grew
-        // is news even though it is still a loaded list.
-        // THE CARDS GET THEIR WORDS BEFORE ANYTHING IS ANNOUNCED, because the announcement reads what
-        // is on screen and a card still carrying the previous search's text would be read out.
-        if (!hasItems && hasQuery && !historyUnavailable)
+        if (!_isHistoryLoading && showFilteredEmpty && !historyUnavailable)
         {
-            HistorySearchEmptyDescription.Text = $"No saved dictations match “{query}”. Try another search or clear it.";
+            if (HistorySearchEmptyDescription is not null)
+            {
+                HistorySearchEmptyDescription.Text = hasQuery
+                    ? $"No saved dictations match “{query}” under the active filters."
+                    : "No saved dictations match the active tab or date filter.";
+            }
+            if (HistoryEmptyClearSearchButton is not null)
+            {
+                HistoryEmptyClearSearchButton.Visibility = hasQuery ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
 
         if (!hasItems && historyUnavailable)
@@ -709,21 +1171,15 @@ public sealed partial class MainWindow
                 : "Windows could not open the private history file. It was left untouched.";
         }
 
-        // THE QUERY IS PART OF THE ANSWER. "No matching dictations" for one search and for a
-        // different search are two different facts, and a key without the query announced only the
-        // first of them. The same is true of a count that happens to repeat under a new search.
         var normalisedQuery = query.Trim().ToLowerInvariant();
+        var filterKey = $"{(int)_historyKindFilter}:{(int)_historyDateRangeFilter}";
         var terminal = _isHistoryLoading
             ? null
             : historyUnavailable ? "unavailable"
-            : hasItems ? $"loaded:{itemCount}:{normalisedQuery}"
-            : hasQuery ? $"no-matches:{normalisedQuery}"
+            : hasItems ? $"loaded:{itemCount}:{normalisedQuery}:{filterKey}"
+            : showFilteredEmpty ? $"no-matches:{normalisedQuery}:{filterKey}"
             : "empty";
 
-        // A SEARCH ANNOUNCES WHEN THE TYPING STOPS, NOT PER LETTER. Putting the query in the key
-        // makes every keystroke a new answer, which without this would restore exactly the
-        // every-keystroke repetition the key was added to remove. A result the user did not type
-        // their way to - a finished load, a cleared search - is not delayed.
         _pendingHistoryAnnouncement = terminal;
         if (hasQuery && terminal is not null)
         {
@@ -733,7 +1189,7 @@ public sealed partial class MainWindow
         }
 
         _historyAnnounceDebounce.Stop();
-        AnnounceHistoryStateIfChanged(terminal, historyUnavailable, hasItems, hasQuery, itemCount);
+        AnnounceHistoryStateIfChanged(terminal, historyUnavailable, hasItems, showFilteredEmpty, itemCount);
     }
 
     /// <summary>Announces the history outcome, if it is one nobody has been told yet.</summary>
@@ -746,8 +1202,6 @@ public sealed partial class MainWindow
     {
         if (terminal is null)
         {
-            // CLEARED WHILE LOADING, so an explicit refresh that lands on the same answer still says
-            // so. Without this, pressing Refresh and getting the same twelve dictations is silent.
             _lastAnnouncedHistoryState = null;
         }
         else if (!string.Equals(terminal, _lastAnnouncedHistoryState, StringComparison.Ordinal))
@@ -760,8 +1214,6 @@ public sealed partial class MainWindow
                         ? AnnounceLiveRegion(HistorySearchEmptyTitle)
                         : AnnounceLiveRegion(HistoryEmptyTitle);
 
-            // RECORDED ONLY IF IT WAS ACTUALLY SPOKEN. Remembering a state the ancestor check
-            // refused would swallow the announcement for good once the page is opened.
             if (announced)
             {
                 _lastAnnouncedHistoryState = terminal;
@@ -770,12 +1222,6 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Announces the history outcome when the page becomes visible.</summary>
-    /// <remarks>
-    /// A RESULT THAT ARRIVED WHILE YOU WERE ELSEWHERE IS STILL NEWS WHEN YOU GET HERE. History loads
-    /// at startup, so on any other page the announcement is refused by the ancestor check and, with
-    /// nothing to re-run it, never happened at all - the page that most needed a spoken result was
-    /// the one that never gave one.
-    /// </remarks>
     private void OnHistoryAnnounceDue(object? sender, object e)
     {
         _historyAnnounceDebounce.Stop();
@@ -787,22 +1233,17 @@ public sealed partial class MainWindow
 
     private void AnnounceHistoryOnPageShown()
     {
-        // A HIDDEN WINDOW IS NOT A VISIBLE PAGE, AND THE XAML TREE CANNOT SEE THE DIFFERENCE. Closing
-        // this window hides it to the notification area without collapsing anything inside it, so the
-        // ancestor check still reports every parent as showing and a debounce landing afterwards
-        // would announce from a window nobody can see. The pending announcement is KEPT, so it
-        // arrives when the window is opened again rather than being lost.
         if (_isHistoryLoading || _pendingHistoryAnnouncement is null || !AppWindow.IsVisible)
         {
             return;
         }
 
-        var query = HistorySearchBox.Text.Trim();
+        var hasFilteredEmpty = HistorySearchEmptyState.Visibility == Visibility.Visible;
         AnnounceHistoryStateIfChanged(
             _pendingHistoryAnnouncement,
             _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable,
             HistoryList.Visibility == Visibility.Visible,
-            !string.IsNullOrWhiteSpace(query),
+            hasFilteredEmpty,
             HistoryList.Items.Count);
     }
 
@@ -819,10 +1260,6 @@ public sealed partial class MainWindow
     };
 
     /// <summary>Announces how many dictations the list is showing.</summary>
-    /// <remarks>
-    /// THE COUNT GOES ON THE NAME BEFORE THE RAISE, because a live region announces what it is
-    /// called, and a list's own contents are not a sentence anybody wants read out on every refresh.
-    /// </remarks>
     private bool AnnounceHistoryCount(int itemCount)
     {
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
@@ -831,25 +1268,70 @@ public sealed partial class MainWindow
         return AnnounceLiveRegion(HistoryList);
     }
 
-    private sealed class HistoryItemViewModel
+    public sealed class HistoryItemViewModel : INotifyPropertyChanged
     {
-        public HistoryItemViewModel(DictationHistoryEntry entry)
+        private readonly DictationHistoryEntry _entry;
+        private bool _isSelectionMode;
+        private bool _isSelected;
+        private bool _isTranscriptExpanded;
+        private bool _isShowingEdits;
+        private bool _isShowingOriginal;
+        private bool _hasOverflow;
+        private bool _isGlobalBusy;
+        private bool _isRepolishingThisCard;
+        private bool _isPrimaryPasteTarget;
+
+        public HistoryItemViewModel(
+            DictationHistoryEntry entry,
+            HistoryDayHeader? dayHeader,
+            int dayEntryCount,
+            bool isSelectionMode,
+            bool isSelected,
+            bool isTranscriptExpanded,
+            bool isShowingEdits,
+            bool isShowingOriginal,
+            bool isGlobalBusy,
+            bool isRepolishingThisCard,
+            bool isPrimaryPasteTarget)
         {
+            _entry = entry;
+            _isSelectionMode = isSelectionMode;
+            _isSelected = isSelected;
+            _isTranscriptExpanded = isTranscriptExpanded;
+            _isShowingEdits = isShowingEdits;
+            _isShowingOriginal = isShowingOriginal;
+            _isGlobalBusy = isGlobalBusy;
+            _isRepolishingThisCard = isRepolishingThisCard;
+            _isPrimaryPasteTarget = isPrimaryPasteTarget;
+
             Id = entry.Id;
             Text = entry.Text;
-            CreatedDisplay = entry.CreatedAt.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
+            var localCreated = entry.CreatedAt.ToLocalTime();
+            CreatedDisplay = localCreated.ToString("f", CultureInfo.CurrentCulture);
+            TimeDisplay = localCreated.ToString("t", CultureInfo.CurrentCulture);
             IsTemporary = entry.ExpiresAt is not null;
-            TagText = IsTemporary
-                ? "Recovery"
-                : HistoryPresenter.IsFileTranscription(entry)
-                    ? "File"
-                    : string.Empty;
-            TagVisibility = string.IsNullOrEmpty(TagText) ? Visibility.Collapsed : Visibility.Visible;
-            var retention = entry.ExpiresAt is null
-                ? string.Empty
-                : $" · Escape Recovery expires {entry.ExpiresAt.Value.ToLocalTime():g} unless kept";
-            Details = $"{TranscriptionEngineNames.DisplayName(entry.EngineId)} · {(entry.WasPolished ? "AI polished" : "deterministic cleanup")} · {(entry.WasDelivered ? "delivered" : "held safely")}{retention}";
+            HasPolishEdits = HistoryDiaryPresentation.HasPolishEdits(entry);
+
+            DayHeaderTitle = dayHeader?.PrimaryTitle ?? string.Empty;
+            DayHeaderSubtitle = dayHeader?.SecondaryDateLabel ?? string.Empty;
+            DayCountText = HistoryDiaryPresentation.FormatItemCount(dayEntryCount);
+            DayHeaderVisibility = dayHeader is not null ? Visibility.Visible : Visibility.Collapsed;
+            DayHeaderSubtitleVisibility = !string.IsNullOrEmpty(DayHeaderSubtitle)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            FileChipVisibility = HistoryPresenter.IsFileTranscription(entry) ? Visibility.Visible : Visibility.Collapsed;
+            RecoveryChipVisibility = IsTemporary ? Visibility.Visible : Visibility.Collapsed;
+            RecoveryChipText = entry.ExpiresAt is { } expires
+                ? FormatRecoveryExpiryChip(expires, localCreated)
+                : string.Empty;
+            HeldSafelyChipVisibility = !entry.WasDelivered ? Visibility.Visible : Visibility.Collapsed;
+
+            ProvenanceText = BuildProvenanceText(entry);
+            _hasOverflow = ShouldOfferShowMore(DisplayText);
         }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         public Guid Id { get; }
 
@@ -857,28 +1339,261 @@ public sealed partial class MainWindow
 
         public string CreatedDisplay { get; }
 
-        public string Details { get; }
-
-        public string TagText { get; }
-
-        public Visibility TagVisibility { get; }
+        public string TimeDisplay { get; }
 
         public bool IsTemporary { get; }
+
+        public bool HasPolishEdits { get; }
+
+        public string DayHeaderTitle { get; }
+
+        public string DayHeaderSubtitle { get; }
+
+        public string DayCountText { get; }
+
+        public Visibility DayHeaderVisibility { get; }
+
+        public Visibility DayHeaderSubtitleVisibility { get; }
+
+        public Visibility FileChipVisibility { get; }
+
+        public Visibility RecoveryChipVisibility { get; }
+
+        public string RecoveryChipText { get; }
+
+        public Visibility HeldSafelyChipVisibility { get; }
+
+        public string ProvenanceText { get; }
+
+        public Visibility KeepButtonVisibility => IsTemporary ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility HasPolishEditsVisibility => HasPolishEdits ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility SelectionCheckBoxVisibility => _isSelectionMode ? Visibility.Visible : Visibility.Collapsed;
+
+        public bool IsSelected => _isSelected;
+
+        public string SelectionCheckBoxLabel => $"Select dictation from {TimeDisplay}";
+
+        public Visibility SelectedAccentVisibility =>
+            _isSelectionMode && _isSelected ? Visibility.Visible : Visibility.Collapsed;
+
+        public string ShowEditsButtonText => _isShowingEdits ? "Hide edits" : "Show edits";
+
+        public Visibility ShowEditsPanelVisibility =>
+            HasPolishEdits && _isShowingEdits ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility PolishedActiveVisibility => !_isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility PolishedInactiveVisibility => _isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility OriginalActiveVisibility => _isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility OriginalInactiveVisibility => !_isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+
+        public bool IsShowingOriginalView => _isShowingOriginal;
+
+        public string ComparisonStatusText =>
+            _isShowingOriginal ? "Speech engine words before AI Polish" : "AI-polished transcript";
+
+        public string ComparisonOtherHeader =>
+            _isShowingOriginal ? "AI-polished version" : "Before AI Polish (speech engine output)";
+
+        public string CopyAlternateButtonLabel =>
+            _isShowingOriginal ? "Copy polished" : "Copy original";
+
+        public string ComparisonOtherText =>
+            (_isShowingOriginal ? _entry.Text : _entry.OriginalText) ?? string.Empty;
+
+        public string DisplayText =>
+            HasPolishEdits && _isShowingEdits && _isShowingOriginal && !string.IsNullOrWhiteSpace(_entry.OriginalText)
+                ? _entry.OriginalText
+                : _entry.Text;
+
+        public int TranscriptMaxLines => _isTranscriptExpanded || (_isShowingEdits && HasPolishEdits) ? 0 : 4;
+
+        public Visibility ShowMoreToggleVisibility =>
+            _hasOverflow && !(_isShowingEdits && HasPolishEdits) ? Visibility.Visible : Visibility.Collapsed;
+
+        public string ShowMoreButtonText => _isTranscriptExpanded ? "Show less" : "Show more";
+
+        public bool IsRepolishing => _isRepolishingThisCard;
+
+        public Visibility RepolishingVisibility => _isRepolishingThisCard ? Visibility.Visible : Visibility.Collapsed;
+
+        public bool CanRunCardActions => !_isGlobalBusy;
+
+        public bool CanRepolish => !_isGlobalBusy && !IsTemporary;
+
+        public string PasteButtonAutomationId => _isPrimaryPasteTarget ? "PasteHistoryButton" : string.Empty;
+
+        public void SetSelectionState(bool isSelectionMode, bool isSelected)
+        {
+            if (_isSelectionMode == isSelectionMode && _isSelected == isSelected)
+            {
+                return;
+            }
+
+            _isSelectionMode = isSelectionMode;
+            _isSelected = isSelected;
+            Notify(
+                nameof(SelectionCheckBoxVisibility),
+                nameof(IsSelected),
+                nameof(SelectedAccentVisibility));
+        }
+
+        public void SetShowingEdits(bool isShowingEdits)
+        {
+            if (_isShowingEdits == isShowingEdits)
+            {
+                return;
+            }
+
+            _isShowingEdits = isShowingEdits;
+            _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayText);
+            Notify(
+                nameof(ShowEditsButtonText),
+                nameof(ShowEditsPanelVisibility),
+                nameof(DisplayText),
+                nameof(TranscriptMaxLines),
+                nameof(ShowMoreToggleVisibility));
+        }
+
+        public void SetShowingOriginal(bool isShowingOriginal)
+        {
+            if (_isShowingOriginal == isShowingOriginal)
+            {
+                return;
+            }
+
+            _isShowingOriginal = isShowingOriginal;
+            _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayText);
+            Notify(
+                nameof(PolishedActiveVisibility),
+                nameof(PolishedInactiveVisibility),
+                nameof(OriginalActiveVisibility),
+                nameof(OriginalInactiveVisibility),
+                nameof(ComparisonStatusText),
+                nameof(ComparisonOtherHeader),
+                nameof(CopyAlternateButtonLabel),
+                nameof(ComparisonOtherText),
+                nameof(DisplayText),
+                nameof(ShowMoreToggleVisibility));
+        }
+
+        public void SetTranscriptExpanded(bool isExpanded)
+        {
+            if (_isTranscriptExpanded == isExpanded)
+            {
+                return;
+            }
+
+            _isTranscriptExpanded = isExpanded;
+            Notify(nameof(TranscriptMaxLines), nameof(ShowMoreButtonText));
+        }
+
+        public void MarkHasOverflow()
+        {
+            if (_hasOverflow)
+            {
+                return;
+            }
+
+            _hasOverflow = true;
+            Notify(nameof(ShowMoreToggleVisibility));
+        }
+
+        public void SetOperationState(bool isGlobalBusy, bool isRepolishingThisCard, bool isPrimaryPasteTarget)
+        {
+            if (_isGlobalBusy == isGlobalBusy
+                && _isRepolishingThisCard == isRepolishingThisCard
+                && _isPrimaryPasteTarget == isPrimaryPasteTarget)
+            {
+                return;
+            }
+
+            _isGlobalBusy = isGlobalBusy;
+            _isRepolishingThisCard = isRepolishingThisCard;
+            _isPrimaryPasteTarget = isPrimaryPasteTarget;
+            Notify(
+                nameof(IsRepolishing),
+                nameof(RepolishingVisibility),
+                nameof(CanRunCardActions),
+                nameof(CanRepolish),
+                nameof(PasteButtonAutomationId));
+        }
+
+        private void Notify(params string[] propertyNames)
+        {
+            if (PropertyChanged is null)
+            {
+                return;
+            }
+
+            foreach (var name in propertyNames)
+            {
+                PropertyChanged(this, new PropertyChangedEventArgs(name));
+            }
+        }
+
+        private static string FormatRecoveryExpiryChip(DateTimeOffset expiresAt, DateTimeOffset createdLocal)
+        {
+            var localExpiry = expiresAt.ToLocalTime();
+            var pattern = DateOnly.FromDateTime(localExpiry.DateTime) == DateOnly.FromDateTime(DateTime.Now)
+                ? "t"
+                : "g";
+            return $"Recovery · expires {localExpiry.ToString(pattern, CultureInfo.CurrentCulture)}";
+        }
+
+        private static string BuildProvenanceText(DictationHistoryEntry entry)
+        {
+            var engineName = HistoryDiaryPresentation.FormatEngineDisplayName(entry.EngineId);
+            var parts = new List<string>(3)
+            {
+                engineName,
+            };
+
+            if (entry.WasPolished)
+            {
+                var polishName = HistoryDiaryPresentation.FormatPolishModelLabel(entry.PolishModelId)
+                    ?? HistoryDiaryPresentation.FormatPolishProviderLabel(entry.PolishProviderId);
+                parts.Add(string.IsNullOrWhiteSpace(polishName) ? "AI Polish" : polishName);
+            }
+            else
+            {
+                parts.Add("Deterministic cleanup");
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.LanguageCode))
+            {
+                parts.Add(LanguageCatalog.DisplayNameFor(entry.LanguageCode));
+            }
+
+            return string.Join(" · ", parts);
+        }
+
+        private static bool ShouldOfferShowMore(string text)
+        {
+            if (text.Length > 240)
+            {
+                return true;
+            }
+
+            var lineBreaks = 0;
+            foreach (var ch in text)
+            {
+                if (ch == '\n' && ++lineBreaks >= 3)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// What a screen reader announces for this row.
         /// </summary>
-        /// <remarks>
-        /// Reads as a sentence rather than a field dump: the point is what a person HEARS, so a
-        /// visual separator like a middle dot is not good enough - a screen reader either
-        /// announces it literally or drops it, and neither is a word.
-        ///
-        /// Without this a list row falls back to ToString on the bound item, and a plain class
-        /// returns its fully-qualified type name - so the row would announce
-        /// "EnviousWispr.App.MainWindow+HistoryItemViewModel" before reaching the dictation. The
-        /// two other list types had the record version of the same defect, measured on the running
-        /// app; this one is fixed from the same reading rather than waiting for history to exist.
-        /// </remarks>
         public override string ToString() => $"{Text}, dictated {CreatedDisplay}";
     }
 }

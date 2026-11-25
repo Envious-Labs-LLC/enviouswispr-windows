@@ -316,12 +316,7 @@ public sealed partial class MainWindow
         // Every button is named, not just the last-declared ones. Guarding three and then
         // dereferencing six would be correct only because of the order they happen to sit in the
         // markup, which is a premise nothing states and any reorder silently breaks.
-        if (CopyHistoryButton is null
-            || PasteHistoryButton is null
-            || KeepHistoryButton is null
-            || DeleteHistoryButton is null
-            || ClearHistoryButton is null
-            || RemoveWordButton is null
+        if (RemoveWordButton is null
             || SelectAllWordsButton is null
             || WordSelectionCountText is null
             || RemoveSnippetButton is null
@@ -330,40 +325,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var historySelected = HistoryList.SelectedItem is not null;
-        var activeHistoryItem = HistoryList.SelectedItem as HistoryItemViewModel;
-        CopyHistoryButton.IsEnabled = historySelected && !_isRepolishing;
-        PasteHistoryButton.IsEnabled = historySelected && !_isRepolishing;
-        KeepHistoryButton.IsEnabled = historySelected && !_isRepolishing;
-        DeleteHistoryButton.IsEnabled = historySelected && !_isRepolishing;
-        ClearHistoryButton.IsEnabled = _history.Count > 0 && !_isRepolishing;
-        if (RepolishHistoryButton is not null)
-        {
-            RepolishHistoryButton.IsEnabled = historySelected && !_isRepolishing && (activeHistoryItem is null || !activeHistoryItem.IsTemporary);
-        }
-
-        if (HistoryList.SelectedItem is HistoryItemViewModel selectedHistory)
-        {
-            HistoryDetailEmptyState.Visibility = Visibility.Collapsed;
-            HistoryDetailContent.Visibility = Visibility.Visible;
-            HistoryDetailTimestampText.Text = selectedHistory.CreatedDisplay;
-            HistoryDetailMetadataText.Text = selectedHistory.Details;
-            HistoryDetailTextBox.Text = selectedHistory.Text;
-            KeepHistoryButton.Visibility = selectedHistory.IsTemporary ? Visibility.Visible : Visibility.Collapsed;
-        }
-        else
-        {
-            HistoryDetailEmptyState.Visibility = Visibility.Visible;
-            HistoryDetailContent.Visibility = Visibility.Collapsed;
-            HistoryDetailTimestampText.Text = string.Empty;
-            HistoryDetailMetadataText.Text = string.Empty;
-            HistoryDetailTextBox.Text = string.Empty;
-            KeepHistoryButton.Visibility = Visibility.Collapsed;
-            if (_settings is not null)
-            {
-                HistoryDetailReadyHotkeyText.Text = $"Keybind: {_settings.Preferences.Dictation.PushToTalkGesture}";
-            }
-        }
+        UpdateHistorySelectionDependentButtons();
 
         var selectedWords = DictionaryList.SelectionMode == ListViewSelectionMode.None
             ? 0
