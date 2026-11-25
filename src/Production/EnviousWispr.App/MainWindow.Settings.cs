@@ -3,6 +3,7 @@ using EnviousWispr.Presentation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 
 namespace EnviousWispr.App;
 
@@ -48,7 +49,7 @@ public sealed partial class MainWindow
             selectedPolishModelForSave,
             OllamaEndpointTextBox.Text,
             HistoryEnabledToggle.IsOn,
-            RetentionDaysBox.Value,
+            SelectedRetentionDays(),
             _selectedThemeIndex,
             LivePreviewToggle.IsOn,
             _selectedOverlayPositionIndex,
@@ -98,9 +99,11 @@ public sealed partial class MainWindow
         }
     }
 
+    private bool _isSyncingWordCorrectionToggles;
+
     private void WireSettingsAutoSave()
     {
-        WordCorrectionToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        WordCorrectionToggle.Toggled += (_, _) => HandleWordCorrectionToggleChanged(WordCorrectionToggle);
         FillerRemovalToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         EmojiFormatterToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         SpokenPunctuationToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -126,7 +129,7 @@ public sealed partial class MainWindow
         MicrophoneComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
 
         AutoStopSecondsBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
-        RetentionDaysBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        RetentionDaysComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
         DiagnosticRetentionDaysBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
 
         foreach (var choice in PolishProviderChoices)
@@ -517,7 +520,7 @@ public sealed partial class MainWindow
             UpdateActivePolishProviderDisplay();
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
-            RetentionDaysBox.Value = preferences.History.RetentionDays;
+            ApplyHistoryRetentionChoice(preferences.History.RetentionDays);
             SetThemeSelection(ThemeIndex(preferences.Theme), triggerSave: false);
             LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
             LivePreviewParakeetEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet;
@@ -586,6 +589,11 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (IsDescendantOf(e.OriginalSource as DependencyObject, toggle))
+        {
+            return;
+        }
+
         // THE SWITCH OWNS ITS SWITCH AND NOTHING MORE, AND THE SWITCH IS NOW ALL IT IS. Every one of
         // these toggles carries no Header: its label is a sibling TextBlock in the same row, so the
         // control's own rectangle covers the switch and nothing a person would aim at expecting the
@@ -601,6 +609,59 @@ public sealed partial class MainWindow
 
         toggle.IsOn = !toggle.IsOn;
     }
+
+    private static bool IsDescendantOf(DependencyObject? source, DependencyObject ancestor)
+    {
+        for (var current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void HandleWordCorrectionToggleChanged(ToggleSwitch source)
+    {
+        if (_isApplyingSettings || _isSyncingWordCorrectionToggles || _settings is null)
+        {
+            return;
+        }
+
+        var mirror = ReferenceEquals(source, WordCorrectionToggle)
+            ? DictionaryEnabledToggle
+            : WordCorrectionToggle;
+        var isEnabled = source.IsOn;
+
+        _isSyncingWordCorrectionToggles = true;
+        try
+        {
+            if (mirror is not null && mirror.IsOn != isEnabled)
+            {
+                mirror.IsOn = isEnabled;
+            }
+        }
+        finally
+        {
+            _isSyncingWordCorrectionToggles = false;
+        }
+
+        _ = TriggerAutoSaveAsync();
+    }
+
+    private void ApplyHistoryRetentionChoice(int retentionDays)
+    {
+        var choiceState = HistoryRetentionChoices.Resolve(retentionDays);
+        RetentionDaysComboBox.ItemsSource = choiceState.Options;
+        RetentionDaysComboBox.SelectedIndex = choiceState.SelectedIndex;
+    }
+
+    private double SelectedRetentionDays() =>
+        HistoryRetentionChoices.SelectedDaysOrFallback(
+            RetentionDaysComboBox.SelectedItem,
+            _settings.Preferences.History.RetentionDays);
 
     /// <summary>Applies a theme to everything the app draws, not only this window.</summary>
     /// <remarks>

@@ -11,125 +11,384 @@
     </Window.SystemBackdrop>
     <Grid x:Name="WindowRoot" Background="{ThemeResource BrandWindowBgBrush}">
         <Grid.Resources>
-            <!-- Keep WinUI's native control templates, but feed their documented visual-state resources from the brand palette. -->
-            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
-            <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
-                 dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
-            <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+            <!-- Theme-scoped WinUI control brushes: placing SolidColorBrush overrides inside ThemeDictionaries ensures
+                 WinUI swaps Light/Dark/HighContrast instances on theme switches instead of freezing at OS startup theme. -->
+            <ResourceDictionary>
+                <ResourceDictionary.ThemeDictionaries>
+                    <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
+                    <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
+                         dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
+                    <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
 
-            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
-            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
-            <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
-            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
-            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
-            <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
-            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
-            <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
-            <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
-            <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
-            <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
-            <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
-            <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
 
-            <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
-            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
-            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
-            <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
-            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
-            <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
-            <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
-            <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
-            <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
-            <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
 
-            <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
-            <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
-            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
-            <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
-            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
-            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
-            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
-            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
-            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
-            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
-            <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
 
-            <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
-            <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
-            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
-            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
-            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
+                    <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
 
-            <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
-            <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
-            <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
-            <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
-            <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
-            <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
-            <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
-            <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
-            <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
-            <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
+                    <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
+                    <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
+                    <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
+                    <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
 
-            <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
-            <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
-            <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
-            <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
-            <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
-            <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
-            <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
+                    <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
+                         dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
+                    <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+
+                    <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+
+                    <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+
+                    <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
+
+                    <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
+                    <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
+                    <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
+                    <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
+                    <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
+                    <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
+                         dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
+                    <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
+                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+
+                    <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="TextControlButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+
+                    <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
+                    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+                    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+
+                    <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
+
+                    <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
+                    <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
+                    <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
+                    <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
+                    <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
+                    <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+
+                    </ResourceDictionary>
+                </ResourceDictionary.ThemeDictionaries>
+            </ResourceDictionary>
         </Grid.Resources>
         <!--
             A ZERO-SIZE SWATCH WHOSE ONLY JOB IS TO RESOLVE A THEME COLOUR TO A NUMBER. The window's
@@ -493,7 +752,7 @@
                             </Grid.ColumnDefinitions>
                             <Image Width="28" Height="28" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" Style="{StaticResource BrandRowTitleStyle}" Text="EnviousWispr" VerticalAlignment="Center" />
-                            <Border Grid.Column="2" Background="{ThemeResource BrandAccentLightBrush}" CornerRadius="{StaticResource BrandSectionRadius}" Padding="6,2,6,2" VerticalAlignment="Center">
+                            <Border Grid.Column="2" Style="{StaticResource BrandAccentChipStyle}" Padding="6,2">
                                 <TextBlock x:Name="SidebarVersionText" Text="" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" />
                             </Border>
                         </Grid>
@@ -553,8 +812,8 @@
                                 <StackPanel Spacing="{StaticResource BrandSpacingS}">
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
                                         <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Version 0.19.0" VerticalAlignment="Center" />
-                                        <Border Padding="10,2" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" VerticalAlignment="Center">
-                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" FontWeight="SemiBold" Text="Windows 11 Fluent" />
+                                        <Border Style="{StaticResource BrandAccentChipStyle}">
+                                            <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Windows 11 Fluent" />
                                         </Border>
                                     </StackPanel>
                                     <TextBlock Style="{StaticResource BrandBodyStyle}" Text="A major Windows 11 native Fluent refresh bringing desktop parity, streamlined vocabulary tools, and hands-free dictation controls." TextWrapping="Wrap" />
@@ -819,7 +1078,7 @@
                                     <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Your Words" />
                                     <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Custom terms and vocabulary the app uses to recognize what you say." TextWrapping="Wrap" />
                                 </StackPanel>
-                                <Grid Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped" VerticalAlignment="Center">
+                                <Grid Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped" VerticalAlignment="Center">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
@@ -1046,7 +1305,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
                                                         <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Current shortcut" VerticalAlignment="Center" />
-                                                        <Border Padding="10,4" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" VerticalAlignment="Center">
+                                                        <Border Style="{StaticResource BrandAccentChipStyle}">
                                                             <TextBlock x:Name="QuickAddCurrentShortcutText" Style="{StaticResource BrandRowLabelStyle}" Text="Ctrl+Alt+W" />
                                                         </Border>
                                                     </StackPanel>
@@ -1118,7 +1377,7 @@
                                 their snippets in. The search box shows only once there is something to search.
                             -->
                             <Grid ColumnSpacing="{StaticResource BrandSpacingS}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="SnippetSearchBox" AutomationProperties.Name="Search snippets" PlaceholderText="Search snippets" TextChanged="SnippetSearchBox_TextChanged" /><TextBlock x:Name="SnippetCountText" Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource BrandHelperStyle}" /><Button Grid.Column="2" Content="Import" AutomationProperties.Name="Import snippets" AutomationProperties.HelpText="Bring your snippets in from anywhere. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}"><Button.Flyout><MenuFlyout><MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" AutomationProperties.HelpText="Paste a list from anywhere: plain lines, CSV, or exported JSON." /><MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" AutomationProperties.HelpText="Pick the EnviousWispr Snippets.json you exported, a CSV, or a plain list. Snippets you already have are left as they are." /><MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" AutomationProperties.HelpText="Bring your snippets over from another dictation app." /></MenuFlyout></Button.Flyout></Button><Button x:Name="ExportSnippetsButton" Grid.Column="3" Click="ExportSnippetsButton_Click" Content="Export" AutomationProperties.Name="Export snippets" AutomationProperties.HelpText="Saves your snippets and your keyword to a file you can import on another PC or Mac." Style="{StaticResource BrandQuietButtonStyle}" /></Grid>
-                            <ListView x:Name="SnippetList" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Saved snippets" SelectionMode="Single"><ListView.ItemContainerTransitions><TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection></ListView.ItemContainerTransitions><ListView.ItemTemplate><DataTemplate><Grid Padding="6" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center"><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextAlignment="DetectFromContent" /><Border Padding="8,0,8,1" VerticalAlignment="Center" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandPillRadius}" Visibility="{Binding ExampleVisibility}"><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Example" /></Border></StackPanel><TextBlock MaxLines="4" Text="{Binding Body}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Click="EditSnippetRowButton_Click" Content="Edit" Tag="{Binding}" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" AutomationProperties.HelpText="Edit this snippet" /></Grid></DataTemplate></ListView.ItemTemplate></ListView>
+                            <ListView x:Name="SnippetList" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Saved snippets" SelectionMode="Single"><ListView.ItemContainerTransitions><TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection></ListView.ItemContainerTransitions><ListView.ItemTemplate><DataTemplate><Grid Padding="6" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center"><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextAlignment="DetectFromContent" /><Border Style="{StaticResource BrandNeutralChipStyle}" Padding="8,2" Visibility="{Binding ExampleVisibility}"><TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Example" /></Border></StackPanel><TextBlock MaxLines="4" Text="{Binding Body}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Click="EditSnippetRowButton_Click" Content="Edit" Tag="{Binding}" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" AutomationProperties.HelpText="Edit this snippet" /></Grid></DataTemplate></ListView.ItemTemplate></ListView>
                             <Border x:Name="SnippetNoMatchState" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed"><StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}"><TextBlock x:Name="SnippetNoMatchText" Style="{StaticResource BrandRowLabelStyle}" TextAlignment="Center" TextWrapping="Wrap" /><Button HorizontalAlignment="Center" Click="ClearSnippetSearchButton_Click" Content="Clear search" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></Border>
                             <Border x:Name="SnippetEmptyState" AutomationProperties.Name="No snippets yet" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
                                 <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
@@ -1261,14 +1520,14 @@
                                             <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
                                                 <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
                                                     <TextBlock x:Name="ActiveEngineNameText" Style="{StaticResource BrandRowTitleStyle}" Text="Parakeet" />
-                                                    <Border x:Name="ActiveEngineBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" VerticalAlignment="Center">
-                                                        <TextBlock x:Name="ActiveEngineBadgeText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Recommended" />
+                                                    <Border x:Name="ActiveEngineBadge" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                        <TextBlock x:Name="ActiveEngineBadgeText" Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
                                                     </Border>
                                                 </StackPanel>
                                                 <TextBlock x:Name="ActiveEngineDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="Fast local speech recognition for 25 languages (640 MB) that runs smoothly on most PCs." TextWrapping="Wrap" />
                                             </StackPanel>
-                                            <Border Grid.Column="2" x:Name="ActiveEngineStatusBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="10,4,10,4" VerticalAlignment="Center">
-                                                <TextBlock x:Name="ActiveEngineStatusText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Checking..." />
+                                            <Border Grid.Column="2" x:Name="ActiveEngineStatusBadge" Style="{StaticResource BrandAccentChipStyle}">
+                                                <TextBlock x:Name="ActiveEngineStatusText" Style="{StaticResource BrandAccentChipTextStyle}" Text="Checking..." />
                                             </Border>
                                         </Grid>
                                     </Border>
@@ -1296,8 +1555,8 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <RadioButton x:Name="ParakeetEngineCard" Grid.Column="0" GroupName="FinalTranscriptionEngine" Checked="EngineCardChecked" Click="EngineCardClicked" Content="Parakeet" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Padding="4,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Parakeet speech engine" AutomationProperties.HelpText="Fast local speech recognition for 25 languages, 640 MB." />
-                                                        <Border x:Name="ParakeetEngineBadge" Grid.Column="1" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" VerticalAlignment="Center">
-                                                            <TextBlock x:Name="ParakeetEngineBadgeText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Recommended" />
+                                                        <Border x:Name="ParakeetEngineBadge" Grid.Column="1" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                            <TextBlock x:Name="ParakeetEngineBadgeText" Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
                                                         </Border>
                                                     </Grid>
                                                     <StackPanel Grid.Row="1" Spacing="{StaticResource BrandSpacingS}">
@@ -1351,8 +1610,8 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <RadioButton x:Name="WhisperEngineCard" Grid.Column="0" GroupName="FinalTranscriptionEngine" Checked="EngineCardChecked" Click="EngineCardClicked" Content="Whisper" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Padding="4,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Whisper speech engine" AutomationProperties.HelpText="Multilingual speech recognition for 99+ languages, 548 MB." />
-                                                        <Border x:Name="WhisperEngineBadge" Grid.Column="1" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" VerticalAlignment="Center">
-                                                            <TextBlock x:Name="WhisperEngineBadgeText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="99+ languages" />
+                                                        <Border x:Name="WhisperEngineBadge" Grid.Column="1" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                            <TextBlock x:Name="WhisperEngineBadgeText" Style="{StaticResource BrandAccentChipTextStyle}" Text="99+ languages" />
                                                         </Border>
                                                     </Grid>
                                                     <StackPanel Grid.Row="1" Spacing="{StaticResource BrandSpacingS}">
@@ -1440,7 +1699,7 @@
                                                 </Grid>
                                                 <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
                                                 <!-- Stop recording on silence -->
-                                                <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                                <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto" />
                                                         <ColumnDefinition Width="*" />
@@ -1457,7 +1716,7 @@
                                                 <Grid x:Name="AutoStopSecondsRow" ColumnSpacing="{StaticResource BrandSpacingM}">
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                     <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" />
-                                                    <NumberBox x:Name="AutoStopSecondsBox" Grid.Column="1" AutomationProperties.HelpText="How long a pause has to last before the recording ends. Shorter than 1.5 seconds is treated as 1.5, because ordinary speech contains longer pauses than that." Header="Seconds of silence before stopping" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" LargeChange="1" Maximum="30" Minimum="1.5" SmallChange="0.5" SpinButtonPlacementMode="Inline" ValidationMode="InvalidInputOverwritten" />
+                                                    <NumberBox x:Name="AutoStopSecondsBox" Grid.Column="1" Style="{StaticResource BrandNumberBoxStyle}" AutomationProperties.HelpText="How long a pause has to last before the recording ends. Shorter than 1.5 seconds is treated as 1.5, because ordinary speech contains longer pauses than that." Header="Seconds of silence before stopping" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" LargeChange="1" Maximum="30" Minimum="1.5" SmallChange="0.5" SpinButtonPlacementMode="Inline" ValidationMode="InvalidInputOverwritten" />
                                                 </Grid>
                                                 <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
                                                 <!-- Start / stop recording shortcut -->
@@ -1499,7 +1758,7 @@
                                                 </Grid>
                                                 <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
                                                 <!-- Escape Recovery toggle -->
-                                                <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                                <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto" />
                                                         <ColumnDefinition Width="*" />
@@ -1581,7 +1840,7 @@
                                     <Border Style="{StaticResource BrandSettingsCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                             <!-- Play recording sounds toggle row -->
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="*" />
@@ -1619,7 +1878,7 @@
                                     <StackPanel x:Name="DeterministiccleanupEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="DeterministiccleanupEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsAiPolishNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Text cleanup" /></StackPanel>
                                     <Border Style="{StaticResource BrandSettingsCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -1629,7 +1888,7 @@
                                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind WordCorrectionToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="WordCorrectionToggle" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE74D;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -1639,7 +1898,7 @@
                                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind FillerRemovalToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="FillerRemovalToggle" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE76E;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -1649,7 +1908,7 @@
                                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind EmojiFormatterToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="EmojiFormatterToggle" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -1661,7 +1920,7 @@
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
                                             <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><ComboBox x:Name="EnglishSpellingComboBox" ItemTemplate="{StaticResource BrandTrimmedChoiceTemplate}" AutomationProperties.HelpText="Applies to English dictation. Keep American if you dictate other languages with Parakeet." Header="English spelling" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch"><x:String>American (color, organize)</x:String><x:String>British (colour, organise)</x:String></ComboBox><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Applies to English dictation. Keep American if you dictate other languages with Parakeet." TextWrapping="Wrap" /></StackPanel></Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -1720,12 +1979,12 @@
                                                     <TextBlock Text="or drag and drop here" Style="{StaticResource BrandHelperStyle}" HorizontalAlignment="Center" />
                                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" HorizontalAlignment="Center" Margin="0,4,0,0">
                                                         <TextBlock Text="Supported formats" Style="{StaticResource BrandHelperStyle}" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                                        <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="WAV" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
-                                                        <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="MP3" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
-                                                        <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="M4A" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
-                                                        <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="AAC" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
-                                                        <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="WMA" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
-                                                        <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="FLAC" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="6,2"><TextBlock Text="WAV" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="6,2"><TextBlock Text="MP3" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="6,2"><TextBlock Text="M4A" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="6,2"><TextBlock Text="AAC" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="6,2"><TextBlock Text="WMA" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="6,2"><TextBlock Text="FLAC" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
                                                     </StackPanel>
                                                     <ProgressBar x:Name="TranscribeFileProgress" Maximum="1" Visibility="Collapsed" Width="260" Margin="0,8,0,0" HorizontalAlignment="Center" />
                                                     <TextBlock x:Name="TranscribeFileStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" HorizontalAlignment="Center" Visibility="Collapsed" />
@@ -1827,7 +2086,7 @@
                                     </StackPanel>
                                     <!-- Top Enable AI Polish toggle card -->
                                     <Border Style="{StaticResource BrandSettingsCardStyle}">
-                                        <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                        <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                             <StackPanel Spacing="{StaticResource BrandSpacingXs}">
                                                 <TextBlock x:Name="EnableAiPolishToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowTitleStyle}" Text="Enable AI Polish" />
@@ -1858,8 +2117,8 @@
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
                                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
                                                         <TextBlock x:Name="ActivePolishProviderNameText" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" />
-                                                        <Border x:Name="ActivePolishProviderBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" VerticalAlignment="Center">
-                                                            <TextBlock x:Name="ActivePolishProviderBadgeText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="On this PC" />
+                                                        <Border x:Name="ActivePolishProviderBadge" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                            <TextBlock x:Name="ActivePolishProviderBadgeText" Style="{StaticResource BrandAccentChipTextStyle}" Text="On this PC" />
                                                         </Border>
                                                     </StackPanel>
                                                     <TextBlock x:Name="ActivePolishProviderStatusText" Style="{StaticResource BrandHelperStyle}" Text="Our model for cleaning up dictation on this PC." TextWrapping="Wrap" />
@@ -1890,8 +2149,8 @@
                                                             <Border x:Name="EgOneFullRecommendedBadge" Style="{StaticResource BrandAccentChipStyle}" Visibility="Collapsed">
                                                                 <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
                                                             </Border>
-                                                            <Border x:Name="EgOneFullStatusBadge" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="10,2,10,2">
-                                                                <TextBlock x:Name="EgOneFullStatusBadgeText" Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Checking..." />
+                                                            <Border x:Name="EgOneFullStatusBadge" Style="{StaticResource BrandNeutralChipStyle}">
+                                                                <TextBlock x:Name="EgOneFullStatusBadgeText" Style="{StaticResource BrandNeutralChipTextStyle}" Text="Checking..." />
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock x:Name="EgOneFullTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Best quality" Foreground="{ThemeResource BrandAccentBrush}" />
@@ -1922,8 +2181,8 @@
                                                             <Border x:Name="EgOneMiniRecommendedBadge" Style="{StaticResource BrandAccentChipStyle}" Visibility="Collapsed">
                                                                 <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
                                                             </Border>
-                                                            <Border x:Name="EgOneMiniStatusBadge" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="10,2,10,2">
-                                                                <TextBlock x:Name="EgOneMiniStatusBadgeText" Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Checking..." />
+                                                            <Border x:Name="EgOneMiniStatusBadge" Style="{StaticResource BrandNeutralChipStyle}">
+                                                                <TextBlock x:Name="EgOneMiniStatusBadgeText" Style="{StaticResource BrandNeutralChipTextStyle}" Text="Checking..." />
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock x:Name="EgOneMiniTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Fast all-rounder" Foreground="{ThemeResource BrandAccentBrush}" />
@@ -1954,8 +2213,8 @@
                                                             <Border x:Name="EgOneMicroRecommendedBadge" Style="{StaticResource BrandAccentChipStyle}" Visibility="Collapsed">
                                                                 <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
                                                             </Border>
-                                                            <Border x:Name="EgOneMicroStatusBadge" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="10,2,10,2">
-                                                                <TextBlock x:Name="EgOneMicroStatusBadgeText" Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Checking..." />
+                                                            <Border x:Name="EgOneMicroStatusBadge" Style="{StaticResource BrandNeutralChipStyle}">
+                                                                <TextBlock x:Name="EgOneMicroStatusBadgeText" Style="{StaticResource BrandNeutralChipTextStyle}" Text="Checking..." />
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock x:Name="EgOneMicroTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Smallest and fastest" Foreground="{ThemeResource BrandAccentBrush}" />
@@ -2033,7 +2292,7 @@
                                     <StackPanel x:Name="HistoryEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="HistoryEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsHistoryNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="History" /></StackPanel>
                                     <Border Style="{StaticResource BrandSettingsCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE81C;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -2043,7 +2302,7 @@
                                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind HistoryEnabledToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="HistoryEnabledToggle" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="RetentionDaysBox" Grid.Column="1" Header="Delete history after this many days (0 keeps it until you delete it)" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="0" Maximum="3650" SpinButtonPlacementMode="Inline" /></Grid>
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><ComboBox x:Name="RetentionDaysComboBox" Grid.Column="1" AutomationProperties.HelpText="Choose how long dictation history is kept on this PC before older entries are deleted automatically." Header="Automatically delete history" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" ItemTemplate="{StaticResource BrandTrimmedDisplayNameTemplate}" /></Grid>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
@@ -2260,7 +2519,7 @@
                                                 </Border>
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="*" />
@@ -2290,7 +2549,7 @@
                                     <StackPanel x:Name="LivepreviewEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="LivepreviewEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsLivePreviewNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Live preview" /></StackPanel>
                                     <Border Style="{StaticResource BrandSettingsCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="*" />
@@ -2357,7 +2616,7 @@
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                             <TextBlock Text="EnviousWispr preserves the existing Windows clipboard before paste and restores it only if no person or other app changed it in the meantime. Unsafe and elevated targets receive a copy-only fallback instead of a blind paste." TextWrapping="Wrap" />
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8C8;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -2381,7 +2640,7 @@
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
                                             <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72C;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="First-run setup" /><TextBlock Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" Text="Runs the first-run setup again, practice dictation included, without wiping anything. Unavailable while dictating." /><Button x:Name="RunSetupAgainButton" AutomationProperties.HelpText="Walks through first-run setup again from the welcome screen. Nothing you have saved is changed." Click="RunSetupAgainButton_Click" Content="Run setup again" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE9D9;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -2391,9 +2650,9 @@
                                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind LocalDiagnosticsToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="LocalDiagnosticsToggle" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="DiagnosticRetentionDaysBox" Grid.Column="1" Header="Delete local diagnostics after this many days" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="1" Maximum="90" SpinButtonPlacementMode="Inline" /></Grid>
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="DiagnosticRetentionDaysBox" Grid.Column="1" Style="{StaticResource BrandNumberBoxStyle}" Header="Delete local diagnostics after this many days" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="1" Maximum="90" SpinButtonPlacementMode="Inline" /></Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE968;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -2403,7 +2662,7 @@
                                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind ShareUsageMetricsToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="ShareUsageMetricsToggle" AutomationProperties.HelpText="Anonymous usage, settings, performance, and error data to help us catch broken updates." OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                                             </Grid>
                                             <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE7BA;" />
                                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">

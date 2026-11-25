@@ -31,6 +31,7 @@ public sealed partial class XamlResourceResolutionTests
             ["ButtonBase"] = "ContentControl",
             ["ContentControl"] = "Control",
             ["Control"] = "FrameworkElement",
+            ["NumberBox"] = "Control",
             ["Border"] = "FrameworkElement",
             ["TextBlock"] = "FrameworkElement",
         };

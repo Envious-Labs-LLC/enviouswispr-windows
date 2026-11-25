@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Presentation;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -97,5 +98,40 @@ public sealed class RetentionDaysTests
 
         Assert.InRange(history, RetentionDays.HistoryMinimum, RetentionDays.HistoryMaximum);
         Assert.InRange(diagnostics, RetentionDays.DiagnosticMinimum, RetentionDays.DiagnosticMaximum);
+    }
+
+    [Theory]
+    [InlineData(0, "Keep until you delete it", 0, 5)]
+    [InlineData(7, "After 7 days", 1, 5)]
+    [InlineData(30, "After 30 days", 2, 5)]
+    [InlineData(90, "After 90 days", 3, 5)]
+    [InlineData(365, "After 1 year", 4, 5)]
+    [InlineData(14, "After 14 days (custom)", 2, 6)]
+    [InlineData(1, "After 1 day (custom)", 1, 6)]
+    [InlineData(730, "After 730 days (custom)", 5, 6)]
+    public void HistoryRetentionChoicesIncludePresetsAndPreserveCustomValues(
+        int storedDays,
+        string expectedLabel,
+        int expectedIndex,
+        int expectedCount)
+    {
+        var state = HistoryRetentionChoices.Resolve(storedDays);
+
+        Assert.Equal(expectedCount, state.Options.Count);
+        Assert.Equal(expectedIndex, state.SelectedIndex);
+        Assert.Equal(expectedLabel, state.Options[state.SelectedIndex].DisplayName);
+        Assert.Equal(expectedLabel, state.Options[state.SelectedIndex].ToString());
+        Assert.Equal(storedDays, HistoryRetentionChoices.SelectedDaysOrFallback(state.Options[state.SelectedIndex], fallbackDays: 30));
+    }
+
+    [Fact]
+    public void HistoryRetentionChoicesClampOutOfBoundsStoredAndFallbackValues()
+    {
+        var negativeState = HistoryRetentionChoices.Resolve(-12);
+        Assert.Equal(0, negativeState.Options[negativeState.SelectedIndex].Days);
+
+        var oversizedState = HistoryRetentionChoices.Resolve(99_999);
+        Assert.Equal(RetentionDays.HistoryMaximum, oversizedState.Options[oversizedState.SelectedIndex].Days);
+        Assert.Equal(RetentionDays.HistoryMaximum, HistoryRetentionChoices.SelectedDaysOrFallback(null, 99_999));
     }
 }

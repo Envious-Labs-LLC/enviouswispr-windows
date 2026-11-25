@@ -523,30 +523,30 @@ public sealed partial class MainWindow
             recommendedBadge.Visibility = card.IsRecommended ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        if (statusBadgeText is not null)
+        if (statusBadge is not null)
         {
-            statusBadgeText.Text = card.StatusText;
-            var foregroundKey = card.IsInstalled
-                ? "BrandSuccessBrush"
+            var chipStyleKey = card.IsInstalled
+                ? "BrandSuccessChipStyle"
                 : card.ShowProgress
-                    ? "BrandAccentBrush"
-                    : "BrandTextSecondaryBrush";
-            if (Application.Current.Resources[foregroundKey] is Brush brush)
+                    ? "BrandAccentChipStyle"
+                    : "BrandNeutralChipStyle";
+            if (Application.Current.Resources[chipStyleKey] is Style chipStyle)
             {
-                statusBadgeText.Foreground = brush;
+                statusBadge.Style = chipStyle;
             }
         }
 
-        if (statusBadge is not null)
+        if (statusBadgeText is not null)
         {
-            var backgroundKey = card.IsInstalled
-                ? "BrandSuccessSoftBrush"
+            statusBadgeText.Text = card.StatusText;
+            var textStyleKey = card.IsInstalled
+                ? "BrandSuccessChipTextStyle"
                 : card.ShowProgress
-                    ? "BrandAccentLightBrush"
-                    : "BrandPageBgBrush";
-            if (Application.Current.Resources[backgroundKey] is Brush backgroundBrush)
+                    ? "BrandAccentChipTextStyle"
+                    : "BrandNeutralChipTextStyle";
+            if (Application.Current.Resources[textStyleKey] is Style textStyle)
             {
-                statusBadge.Background = backgroundBrush;
+                statusBadgeText.Style = textStyle;
             }
         }
 

@@ -53,10 +53,6 @@ public sealed partial class MainWindow
             }
 
             ResetRecoveryCardWords();
-            ShowMessage(
-                "Interrupted dictation recovered",
-                "Review or copy the private recovery text on History. It was not pasted automatically.",
-                InfoBarSeverity.Warning);
             SetOnboardingReliabilityNotice(
                 "Interrupted dictation recovered",
                 "Finish setup, then review or copy the private recovery text on History. It will not be pasted automatically.");

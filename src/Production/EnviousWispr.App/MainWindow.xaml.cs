@@ -188,20 +188,17 @@ public sealed partial class MainWindow : Window, IDisposable
         // survived both the display and the value unchanged - it compiled, it was attached, and
         // it did nothing. Vendor documentation for NumberBox pairs a NumberRounder with the
         // formatter for exactly this reason.
-        foreach (var box in new[] { RetentionDaysBox, DiagnosticRetentionDaysBox })
+        DiagnosticRetentionDaysBox.NumberFormatter = new DecimalFormatter
         {
-            box.NumberFormatter = new DecimalFormatter
+            FractionDigits = 0,
+            IsDecimalPointAlwaysDisplayed = false,
+            IsGrouped = false,
+            NumberRounder = new IncrementNumberRounder
             {
-                FractionDigits = 0,
-                IsDecimalPointAlwaysDisplayed = false,
-                IsGrouped = false,
-                NumberRounder = new IncrementNumberRounder
-                {
-                    Increment = 1,
-                    RoundingAlgorithm = RoundingAlgorithm.RoundHalfUp,
-                },
-            };
-        }
+                Increment = 1,
+                RoundingAlgorithm = RoundingAlgorithm.RoundHalfUp,
+            },
+        };
 
         // A keybind field waiting for a keystroke must not let the system-wide hook act on it.
         // Focus is what the hook needs to know, so focus is what is reported - see
