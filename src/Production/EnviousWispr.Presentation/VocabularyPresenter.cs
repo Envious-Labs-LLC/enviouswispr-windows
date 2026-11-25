@@ -3,7 +3,17 @@ using EnviousWispr.Core.Settings;
 namespace EnviousWispr.Presentation;
 
 /// <summary>How a snippet save went: refused and why, with the snippet it clashed with, or stored.</summary>
-public readonly record struct SnippetSaveOutcome(SnippetRefusal? Refusal, SnippetEntry? Clash);
+public readonly record struct SnippetSaveOutcome(SnippetRefusal? Refusal, SnippetEntry? Clash, bool TargetMissing = false);
+
+/// <summary>Why a word edit was refused, if it could not be applied.</summary>
+public enum WordEditRefusal
+{
+    TargetMissing,
+    DuplicateSpokenForm,
+}
+
+/// <summary>How a word edit went: refused (missing target or spoken-form clash) or stored.</summary>
+public readonly record struct WordEditOutcome(WordEditRefusal? Refusal, CustomWordEntry? Clash);
 
 /// <summary>How a keyword save went: refused and why, or the word now stored.</summary>
 public readonly record struct SnippetKeywordOutcome(SnippetRefusal? Refusal, string? Keyword);
@@ -42,6 +52,100 @@ public sealed class VocabularyPresenter
                 .Append(word)
                 .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray()));
+    }
+
+    /// <summary>Adds a word from plain inputs, replacing any word spoken the same way.</summary>
+    public Task<SettingsSaveResult> AddWordAsync(
+        string spokenForm,
+        string replacement,
+        MatchStrictness strictness = MatchStrictness.Default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(spokenForm);
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacement);
+        return AddWordAsync(new CustomWordEntry(spokenForm.Trim(), replacement.Trim(), strictness));
+    }
+
+    /// <summary>Replaces <paramref name="original"/> in place with updated values while preserving all other words.</summary>
+    public Task<SettingsSaveResult<WordEditOutcome>> UpdateWordAsync(
+        CustomWordEntry original,
+        string spokenForm,
+        string replacement,
+        MatchStrictness strictness)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentException.ThrowIfNullOrWhiteSpace(spokenForm);
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacement);
+
+        var updated = new CustomWordEntry(spokenForm.Trim(), replacement.Trim(), strictness);
+        return ChangeAsync(data =>
+        {
+            var originalIndex = FindWordIndex(data.CustomWords, original);
+            if (originalIndex < 0)
+            {
+                return (data, new WordEditOutcome(WordEditRefusal.TargetMissing, null));
+            }
+
+            if (!string.Equals(original.SpokenForm, updated.SpokenForm, StringComparison.OrdinalIgnoreCase))
+            {
+                for (var i = 0; i < data.CustomWords.Count; i++)
+                {
+                    if (i != originalIndex &&
+                        string.Equals(data.CustomWords[i].SpokenForm, updated.SpokenForm, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (data, new WordEditOutcome(WordEditRefusal.DuplicateSpokenForm, data.CustomWords[i]));
+                    }
+                }
+            }
+
+            return (
+                data.WithCustomWords(ReplaceWord(data.CustomWords, original, updated)),
+                new WordEditOutcome(null, null));
+        });
+    }
+
+    /// <summary>Replaces <paramref name="original"/> with <paramref name="updated"/> and keeps the word list sorted.</summary>
+    public static IReadOnlyList<CustomWordEntry> ReplaceWord(
+        IReadOnlyList<CustomWordEntry> existing,
+        CustomWordEntry original,
+        CustomWordEntry updated)
+    {
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(updated);
+
+        var index = FindWordIndex(existing, original);
+        if (index < 0)
+        {
+            return existing;
+        }
+
+        var list = existing.ToList();
+        list.RemoveAt(index);
+        return list
+            .Append(updated)
+            .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+    }
+
+    private static int FindWordIndex(IReadOnlyList<CustomWordEntry> words, CustomWordEntry target)
+    {
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (ReferenceEquals(words[i], target))
+            {
+                return i;
+            }
+        }
+
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (words[i] == target)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>Removes the selected rows and says how many really went.</summary>
@@ -94,6 +198,120 @@ public sealed class VocabularyPresenter
     {
         ArgumentNullException.ThrowIfNull(snippet);
         return ChangeAsync(data => data.WithSnippets(data.Snippets.Where(entry => entry != snippet).ToArray()));
+    }
+
+    /// <summary>Validates an edited snippet against <paramref name="existing"/>, ignoring <paramref name="original"/>.</summary>
+    public static SnippetRefusal? ValidateSnippetEdit(
+        SnippetEntry original,
+        string trigger,
+        string body,
+        IReadOnlyList<SnippetEntry> existing,
+        out SnippetEntry? clash)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(existing);
+        clash = null;
+
+        var trimmedTrigger = (trigger ?? string.Empty).Trim();
+        var key = SnippetText.CollisionKey(trimmedTrigger);
+        if (key is null)
+        {
+            return SnippetRefusal.TriggerEmpty;
+        }
+
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return SnippetRefusal.ExpansionEmpty;
+        }
+
+        var originalIndex = FindSnippetIndex(existing, original);
+        for (var i = 0; i < existing.Count; i++)
+        {
+            if (i == originalIndex)
+            {
+                continue;
+            }
+
+            if (string.Equals(SnippetText.CollisionKey(existing[i].Name), key, StringComparison.Ordinal))
+            {
+                clash = existing[i];
+                return SnippetRefusal.DuplicateTrigger;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Replaces <paramref name="original"/> with <paramref name="updated"/> while preserving list order.</summary>
+    public static IReadOnlyList<SnippetEntry> ReplaceSnippet(
+        IReadOnlyList<SnippetEntry> existing,
+        SnippetEntry original,
+        SnippetEntry updated)
+    {
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(updated);
+
+        var list = existing.ToList();
+        var index = FindSnippetIndex(list, original);
+        if (index < 0)
+        {
+            return existing;
+        }
+
+        list[index] = updated;
+        return list.ToArray();
+    }
+
+    /// <summary>Atomically validates and replaces <paramref name="original"/> while preserving snippet order.</summary>
+    public Task<SettingsSaveResult<SnippetSaveOutcome>> UpdateSnippetAsync(
+        SnippetEntry original,
+        string trigger,
+        string body)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(trigger);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var updated = new SnippetEntry(trigger.Trim(), body);
+        return ChangeAsync(data =>
+        {
+            if (FindSnippetIndex(data.Snippets, original) < 0)
+            {
+                return (data, new SnippetSaveOutcome(null, null, TargetMissing: true));
+            }
+
+            var refusal = ValidateSnippetEdit(original, updated.Name, updated.Body, data.Snippets, out var clash);
+            if (refusal is not null)
+            {
+                return (data, new SnippetSaveOutcome(refusal, clash));
+            }
+
+            return (
+                data.WithSnippets(ReplaceSnippet(data.Snippets, original, updated)),
+                new SnippetSaveOutcome(null, null));
+        });
+    }
+
+    private static int FindSnippetIndex(IReadOnlyList<SnippetEntry> snippets, SnippetEntry target)
+    {
+        for (var i = 0; i < snippets.Count; i++)
+        {
+            if (ReferenceEquals(snippets[i], target))
+            {
+                return i;
+            }
+        }
+
+        for (var i = 0; i < snippets.Count; i++)
+        {
+            if (snippets[i] == target)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>Stores the word said before a snippet, and answers with the word actually stored.</summary>

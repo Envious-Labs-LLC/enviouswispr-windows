@@ -3141,9 +3141,9 @@ public sealed partial class DesignSystemTokenTests
         Assert.Equal(
             new[]
             {
-                (nameof(MatchStrictness.Default), "Default: the balance every word had before"),
-                (nameof(MatchStrictness.Loose), "Loose: correct it even when what I said was some way off"),
-                (nameof(MatchStrictness.Strict), "Strict: correct it only when I said it almost exactly"),
+                (nameof(MatchStrictness.Default), "Balanced (recommended)"),
+                (nameof(MatchStrictness.Loose), "Loose (match similar-sounding words)"),
+                (nameof(MatchStrictness.Strict), "Strict (exact match only)"),
             }.OrderBy(pair => pair.Item1, StringComparer.Ordinal),
             offered.Select(pair => (pair.Value, pair.Label)).OrderBy(pair => pair.Item1, StringComparer.Ordinal));
     }

@@ -101,7 +101,7 @@ public sealed partial class MainWindow
         TranscribeFileProgress.Value = 0;
         TranscribeFileProgress.IsIndeterminate = true;
         TranscribeFileProgress.Visibility = Visibility.Visible;
-        SetTranscribeFileStep(2);
+        SetTranscribeFileStep(FileTranscriptionStepState.StartStep);
         ShowTranscribeFileStatus("Reading the file...");
         try
         {
@@ -121,7 +121,7 @@ public sealed partial class MainWindow
     private void TranscribeFileCancelButton_Click(object sender, RoutedEventArgs e)
     {
         _transcribeFileRun?.Cancel();
-        SetTranscribeFileStep(1);
+        SetTranscribeFileStep(FileTranscriptionStepState.ChooseFileStep);
         ShowTranscribeFileStatus("Stopping after the piece in progress...");
     }
 
@@ -129,6 +129,7 @@ public sealed partial class MainWindow
     {
         // THE JOB HAS THE SESSION: the last file's words go now, and not before - a refused start keeps them.
         TranscribeFileResultPanel.Visibility = Visibility.Collapsed;
+        SetTranscribeFileStep(FileTranscriptionStepState.StepForProgress(progress));
         if (progress.PiecesDone == 0)
         {
             return;
@@ -139,18 +140,6 @@ public sealed partial class MainWindow
             var fraction = Math.Clamp(progress.AudioDone / total, 0, 1);
             TranscribeFileProgress.IsIndeterminate = false;
             TranscribeFileProgress.Value = fraction;
-            if (fraction >= 0.9)
-            {
-                SetTranscribeFileStep(5);
-            }
-            else if (fraction >= 0.5)
-            {
-                SetTranscribeFileStep(3);
-            }
-            else
-            {
-                SetTranscribeFileStep(2);
-            }
             ShowTranscribeFileStatus($"Transcribed {Minutes(progress.AudioDone)} of {Minutes(total)}");
         }
         else
@@ -164,19 +153,12 @@ public sealed partial class MainWindow
         // A START THAT WAS REFUSED CHANGES NOTHING ELSE ON THE PAGE: the words from the last file stay where they were.
         if (result.Outcome == FileTranscriptionOutcome.Refused)
         {
-            SetTranscribeFileStep(1);
+            SetTranscribeFileStep(FileTranscriptionStepState.StepForOutcome(result.Outcome));
             ShowTranscribeFileStatus(RefusalSentence(result.Refusal));
             return;
         }
 
-        if (result.Outcome == FileTranscriptionOutcome.Completed)
-        {
-            SetTranscribeFileStep(6);
-        }
-        else
-        {
-            SetTranscribeFileStep(1);
-        }
+        SetTranscribeFileStep(FileTranscriptionStepState.StepForOutcome(result.Outcome));
 
         var (status, showText) = result.Outcome switch
         {
@@ -208,14 +190,12 @@ public sealed partial class MainWindow
         var successBrush = (Brush)Application.Current.Resources["BrandSuccessBrush"];
         var secondaryBrush = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
 
+        var activeStep = FileTranscriptionStepState.ClampStep(step);
         var steps = new (Border? Badge, TextBlock? Num, TextBlock? Label)[]
         {
             (TranscribeStep1Badge, TranscribeStep1Num, TranscribeStep1Label),
             (TranscribeStep2Badge, TranscribeStep2Num, TranscribeStep2Label),
             (TranscribeStep3Badge, TranscribeStep3Num, TranscribeStep3Label),
-            (TranscribeStep4Badge, TranscribeStep4Num, TranscribeStep4Label),
-            (TranscribeStep5Badge, TranscribeStep5Num, TranscribeStep5Label),
-            (TranscribeStep6Badge, TranscribeStep6Num, TranscribeStep6Label),
         };
 
         for (var i = 0; i < steps.Length; i++)
@@ -227,14 +207,14 @@ public sealed partial class MainWindow
             }
 
             var stepNum = i + 1;
-            if (stepNum == step)
+            if (stepNum == activeStep)
             {
                 badge.Background = accentSolidBrush;
                 num.Foreground = onAccentBrush;
                 label.Foreground = accentBrush;
                 label.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
             }
-            else if (stepNum < step)
+            else if (stepNum < activeStep)
             {
                 badge.Background = successBrush;
                 num.Foreground = onAccentBrush;
