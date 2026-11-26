@@ -1,8 +1,10 @@
 using System.Text.Json;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing.Learning;
 using EnviousWispr.Presentation;
 using EnviousWispr.Presentation.Learning;
@@ -612,6 +614,97 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         Assert.True(disabledSave.Saved);
         Assert.Equal(LearnedSaveStatus.NoLongerWanted, disabledSave.Value.Status);
         Assert.DoesNotContain(store.Current.UserData.CustomWords, w => w.Replacement == "SaurabhNew");
+    }
+
+    [Fact]
+    public async Task ContextAwareDeliveryExposesRepairedDeliveredTextSoTrackerAvoidsTrailingSpaceAnchorAmbiguity()
+    {
+        var targetWindow = new TargetWindowId(42, 7, "notepad");
+        var context = new CaretContext(
+            targetWindow,
+            "edit-1",
+            TextTargetKind.StandardEdit,
+            Left: string.Empty,
+            Selection: string.Empty,
+            Right: string.Empty,
+            LeftReachedDocumentStart: true,
+            RightReachedDocumentEnd: true,
+            HasTextContext: true,
+            SupportsDirectValueWrite: true,
+            DirectValueWriteAtEnd: true);
+        var adapter = new RecordingTargetAdapter(context);
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var sessionId = new DictationSessionId(Guid.NewGuid());
+        var raw = new ProcessedText(sessionId, "Check with my partner please.");
+        var result = await delivery.DeliverAsync(
+            new TextDeliveryRequest(raw, targetWindow, "en", TextDeliveryOptions.Default, SnippetExpanded: false));
+
+        Assert.True(result.Delivered);
+        Assert.Equal("Check with my partner please. ", result.DeliveredText);
+
+        // Using DeliveredText leaves empty anchors so spaces inside the sentence don't trip AnchorAmbiguous.
+        Assert.True(PastedRegionTracker.TryCaptureTarget(
+            result.DeliveredText!,
+            result.DeliveredText!,
+            42,
+            7,
+            "notepad",
+            out var regionTarget,
+            out _));
+        Assert.Equal(string.Empty, regionTarget!.Anchors.Before);
+        Assert.Equal(string.Empty, regionTarget.Anchors.After);
+
+        var tracker = new PastedRegionTracker(regionTarget, startedAtMs: 0);
+        var changed = tracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(
+                Readable: true,
+                FieldText: "Check with my Partnero please. ",
+                CaretOffset: 0,
+                SameApplicationFocus: true,
+                SameElementFocus: true,
+                ElementAlive: true),
+            nowMs: 750);
+        Assert.IsType<PastedRegionEvent.Changed>(Assert.Single(changed));
+
+        var settled = tracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(
+                Readable: true,
+                FieldText: "Check with my Partnero please. ",
+                CaretOffset: 0,
+                SameApplicationFocus: true,
+                SameElementFocus: true,
+                ElementAlive: true),
+            nowMs: 2500);
+        var settledEv = Assert.IsType<PastedRegionEvent.Settled>(Assert.Single(settled));
+        Assert.Equal(SettleEvidence.Strong, settledEv.Evidence);
+    }
+
+    private sealed class RecordingTargetAdapter(CaretContext context) : ITextTargetAdapter
+    {
+        public Task<TargetContextResult> CaptureContextAsync(
+            TargetWindowId target,
+            TextDeliveryOptions options,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TargetContextResult(TargetContextStatus.Available, context));
+
+        public Task<TextCommitResult> CommitAsync(
+            TextCommitRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TextCommitResult(
+                TextDeliveryRoute.UiAutomationValue,
+                Delivered: true,
+                ClipboardFallback: false,
+                ClipboardRestored: false));
+
+        public Task<TextCommitResult> CopyOnlyAsync(
+            ProcessedText text,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TextCommitResult(
+                TextDeliveryRoute.ClipboardOnly,
+                Delivered: true,
+                ClipboardFallback: false,
+                ClipboardRestored: false));
     }
 
     private sealed class InMemorySettingsStore : ISettingsStore

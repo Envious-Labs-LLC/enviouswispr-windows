@@ -432,7 +432,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                         !string.IsNullOrWhiteSpace(processed.Output.Text))
                     {
                         _effects.NotifyPasteCompleted(new PasteCompletedEvent(
-                            processed.Output.Text,
+                            result.DeliveredText ?? processed.Output.Text,
                             pendingSession.Target,
                             language,
                             _clock.GetUtcNow()));

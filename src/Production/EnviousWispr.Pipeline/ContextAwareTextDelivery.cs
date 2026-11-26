@@ -148,7 +148,8 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             commit.ClipboardRestored,
             ClipboardUncertain: commit.ClipboardUncertain,
             ArrivalStatus: commit.ArrivalStatus,
-            ArrivalElapsedMilliseconds: commit.ArrivalElapsedMilliseconds);
+            ArrivalElapsedMilliseconds: commit.ArrivalElapsedMilliseconds,
+            DeliveredText: commit.Delivered ? repair.Insertion.Text : null);
     }
 
     private static TextDeliveryRefusalReason RefusalFor(TargetContextResult capture) =>
