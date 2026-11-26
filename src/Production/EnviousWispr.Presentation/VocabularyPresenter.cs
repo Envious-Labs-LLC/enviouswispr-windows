@@ -29,6 +29,28 @@ public readonly record struct SnippetKeywordOutcome(SnippetRefusal? Refusal, str
 /// the list stays sorted, a removal matches rows by identity, and the answer says what actually
 /// happened.
 /// </remarks>
+public enum LearnedSaveStatus
+{
+    Saved,
+    AlreadyCovered,
+    TargetGone,
+    AliasOwnedElsewhere,
+    NoLongerWanted,
+    Refused,
+}
+
+public readonly record struct LearnedSaveOutcome(
+    LearnedSaveStatus Status,
+    CustomWordEntry? Before,
+    CustomWordEntry? After);
+
+public enum LearnedUndoWriteStatus
+{
+    Applied,
+    NotApplied,
+    Refused,
+}
+
 public sealed class VocabularyPresenter
 {
     private readonly SettingsPresenter _settings;
@@ -174,12 +196,20 @@ public sealed class VocabularyPresenter
 
         var normalizedAliases = CustomWordEntry.NormalizeAliases(aliases);
         var trimmedReplacement = replacement.Trim();
+        var preservedLearned = string.Equals(original.Replacement, trimmedReplacement, StringComparison.OrdinalIgnoreCase)
+            ? original.LearnedAliases
+                .Where(alias => normalizedAliases.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                .ToArray()
+            : [];
+        var preservedLearnedAt = preservedLearned.Length > 0 ? original.LearnedAt : null;
         var updated = new CustomWordEntry(
             normalizedAliases,
             trimmedReplacement,
             strictness,
             category,
-            original.Id);
+            original.Id,
+            preservedLearned,
+            preservedLearnedAt);
         return ChangeAsync(data =>
         {
             var originalIndex = FindWordIndex(data.CustomWords, original);
@@ -368,6 +398,176 @@ public sealed class VocabularyPresenter
         {
             var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
             return (data.WithCustomWords(remaining), data.CustomWords.Count - remaining.Count);
+        });
+    }
+
+    /// <summary>Removes the selected rows and returns the exact entries removed by reference identity.</summary>
+    public Task<SettingsSaveResult<IReadOnlyList<CustomWordEntry>>> RemoveWordsAndReportAsync(IReadOnlyList<CustomWordEntry> selected)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        return ChangeAsync<IReadOnlyList<CustomWordEntry>>(data =>
+        {
+            var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
+            var remainingSet = new HashSet<CustomWordEntry>(remaining, ReferenceEqualityComparer.Instance);
+            var removed = data.CustomWords.Where(entry => !remainingSet.Contains(entry)).ToArray();
+            return (data.WithCustomWords(remaining), removed);
+        });
+    }
+
+    /// <summary>
+    /// Atomically saves a learned correction (<paramref name="original"/> -> <paramref name="corrected"/>)
+    /// inside the serialized settings gate, verifying target identity and alias ownership against live words.
+    /// </summary>
+    public Task<SettingsSaveResult<LearnedSaveOutcome>> SaveLearnedWordAsync(
+        string original,
+        string corrected,
+        Core.Learning.LearnTargetState expectedTarget,
+        IReadOnlyList<CustomWordEntry> packTerms,
+        DateTimeOffset learnedAt,
+        Func<bool>? stillWanted = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(original);
+        ArgumentException.ThrowIfNullOrWhiteSpace(corrected);
+        ArgumentNullException.ThrowIfNull(expectedTarget);
+        ArgumentNullException.ThrowIfNull(packTerms);
+
+        var trimmedOriginal = original.Trim();
+        var trimmedCorrected = corrected.Trim();
+        var originalKey = Core.Learning.CorrectionPairKey.Normalise(trimmedOriginal);
+        var correctedKey = Core.Learning.CorrectionPairKey.Normalise(trimmedCorrected);
+
+        return _settings.SaveAsync(current =>
+        {
+            if (!current.Preferences.Dictation.LearnFromEditsEnabled ||
+                (stillWanted is not null && !stillWanted()))
+            {
+                return (current, new LearnedSaveOutcome(LearnedSaveStatus.NoLongerWanted, null, null));
+            }
+
+            var data = current.UserData;
+            var liveWords = data.CustomWords;
+            var userTarget = liveWords.FirstOrDefault(w =>
+                string.Equals(Core.Learning.CorrectionPairKey.Normalise(w.Replacement), correctedKey, StringComparison.Ordinal));
+            var packTarget = userTarget is null
+                ? packTerms.FirstOrDefault(w =>
+                    string.Equals(Core.Learning.CorrectionPairKey.Normalise(w.Replacement), correctedKey, StringComparison.Ordinal))
+                : null;
+            var target = userTarget ?? packTarget;
+
+            if (expectedTarget is Core.Learning.LearnTargetState.ExistingWord expected)
+            {
+                if (target is null || !string.Equals(target.Id, expected.WordId, StringComparison.Ordinal))
+                {
+                    return (current, new LearnedSaveOutcome(LearnedSaveStatus.TargetGone, null, null));
+                }
+            }
+
+            if (target is not null &&
+                (string.Equals(Core.Learning.CorrectionPairKey.Normalise(target.Replacement), originalKey, StringComparison.Ordinal) ||
+                 target.Aliases.Any(a => string.Equals(Core.Learning.CorrectionPairKey.Normalise(a), originalKey, StringComparison.Ordinal))))
+            {
+                return (current, new LearnedSaveOutcome(LearnedSaveStatus.AlreadyCovered, target, target));
+            }
+
+            // Verify neither the original trigger nor corrected replacement is owned by another entry.
+            foreach (var entry in liveWords.Concat(packTerms))
+            {
+                if (target is not null && string.Equals(entry.Id, target.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (entry.Aliases.Any(a =>
+                    string.Equals(Core.Learning.CorrectionPairKey.Normalise(a), originalKey, StringComparison.Ordinal) ||
+                    string.Equals(Core.Learning.CorrectionPairKey.Normalise(a), correctedKey, StringComparison.Ordinal)))
+                {
+                    return (current, new LearnedSaveOutcome(LearnedSaveStatus.AliasOwnedElsewhere, null, null));
+                }
+
+                var entryCanonKey = Core.Learning.CorrectionPairKey.Normalise(entry.Replacement);
+                if ((!entryCanonKey.Contains(' ', StringComparison.Ordinal) || entry.Aliases.Count == 0) &&
+                    (string.Equals(entryCanonKey, originalKey, StringComparison.Ordinal) ||
+                     string.Equals(entryCanonKey, correctedKey, StringComparison.Ordinal)))
+                {
+                    return (current, new LearnedSaveOutcome(LearnedSaveStatus.AliasOwnedElsewhere, null, null));
+                }
+            }
+
+            if (userTarget is not null)
+            {
+                var nextAliases = CustomWordEntry.NormalizeAliases(userTarget.Aliases.Append(trimmedOriginal));
+                var nextLearned = CustomWordEntry.NormalizeLearnedAliases(
+                    userTarget.LearnedAliases.Append(trimmedOriginal),
+                    nextAliases);
+                var updated = userTarget with
+                {
+                    Aliases = nextAliases,
+                    LearnedAliases = nextLearned,
+                    LearnedAt = userTarget.LearnedAt ?? learnedAt,
+                };
+                var nextList = ReplaceWord(liveWords, userTarget, updated);
+                return (current with { UserData = data.WithCustomWords(nextList) }, new LearnedSaveOutcome(LearnedSaveStatus.Saved, userTarget, updated));
+            }
+
+            var category = packTarget?.Category ?? WordCategoryFormatting.Classify(trimmedCorrected);
+            CustomWordEntry created;
+            if (packTarget is not null)
+            {
+                var baseAliases = CustomWordEntry.NormalizeAliases(packTarget.Aliases.Append(trimmedOriginal));
+                created = new CustomWordEntry(
+                    baseAliases,
+                    packTarget.Replacement,
+                    packTarget.Strictness,
+                    category,
+                    id: packTarget.Id,
+                    learnedAliases: [trimmedOriginal],
+                    learnedAt: learnedAt);
+            }
+            else
+            {
+                created = new CustomWordEntry(
+                    aliases: [trimmedOriginal],
+                    replacement: trimmedCorrected,
+                    strictness: MatchStrictness.Default,
+                    category: category,
+                    id: Guid.NewGuid().ToString("D"),
+                    learnedAliases: [trimmedOriginal],
+                    learnedAt: learnedAt);
+            }
+
+            var addedList = liveWords
+                .Append(created)
+                .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
+            return (current with { UserData = data.WithCustomWords(addedList) }, new LearnedSaveOutcome(LearnedSaveStatus.Saved, null, created));
+        });
+    }
+
+    /// <summary>
+    /// Atomically reverts a previously learned change ONLY if the live word still equals <paramref name="expectedPostSave"/>.
+    /// </summary>
+    public Task<SettingsSaveResult<LearnedUndoWriteStatus>> UndoLearnedWordAsync(
+        CustomWordEntry expectedPostSave,
+        CustomWordEntry? restorePreSave)
+    {
+        ArgumentNullException.ThrowIfNull(expectedPostSave);
+
+        return ChangeAsync(data =>
+        {
+            var live = data.CustomWords.FirstOrDefault(w => string.Equals(w.Id, expectedPostSave.Id, StringComparison.Ordinal));
+            if (live is null || !live.Equals(expectedPostSave))
+            {
+                return (data, LearnedUndoWriteStatus.NotApplied);
+            }
+
+            if (restorePreSave is null)
+            {
+                var remaining = CustomWordRemoval.Without(data.CustomWords, [live]);
+                return (data.WithCustomWords(remaining), LearnedUndoWriteStatus.Applied);
+            }
+
+            var restored = ReplaceWord(data.CustomWords, live, restorePreSave);
+            return (data.WithCustomWords(restored), LearnedUndoWriteStatus.Applied);
         });
     }
 

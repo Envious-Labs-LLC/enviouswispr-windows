@@ -2,6 +2,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Pipeline;
 
@@ -131,6 +132,9 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>
         _view.ReportDelivery(DeliveryReport.For(delivery), language);
+
+    public void NotifyPasteCompleted(PasteCompletedEvent paste) =>
+        parts.Shell.OnPasteCompleted?.Invoke(paste);
 
     /// <summary>True once <see cref="ShowEscapeRecoveryFinished"/> observed a saved Undo offer for this finalization.</summary>
     private int _escapeRecoveryUndoOffered;

@@ -69,6 +69,55 @@ internal static class TextSimilarity
         return result.ToString();
     }
 
+    public static double DiceSimilarity(string left, string right)
+    {
+        if (string.Equals(left, right, StringComparison.Ordinal))
+        {
+            return 1.0;
+        }
+
+        var a = left.EnumerateRunes().ToArray();
+        var b = right.EnumerateRunes().ToArray();
+        if (a.Length < 2 || b.Length < 2)
+        {
+            return 0.0;
+        }
+
+        var bigramsA = new Dictionary<(int, int), int>(a.Length - 1);
+        for (var i = 0; i < a.Length - 1; i++)
+        {
+            var pair = (a[i].Value, a[i + 1].Value);
+            bigramsA[pair] = bigramsA.TryGetValue(pair, out var count) ? count + 1 : 1;
+        }
+
+        var intersection = 0;
+        for (var i = 0; i < b.Length - 1; i++)
+        {
+            var pair = (b[i].Value, b[i + 1].Value);
+            if (bigramsA.TryGetValue(pair, out var remaining) && remaining > 0)
+            {
+                intersection++;
+                bigramsA[pair] = remaining - 1;
+            }
+        }
+
+        return (2.0 * intersection) / ((a.Length - 1) + (b.Length - 1));
+    }
+
+    /// <summary>Composite 0.40 Levenshtein + 0.40 bigram Dice + 0.20 Soundex score matching macOS WordCorrector.score.</summary>
+    public static double CompositeWordScore(string left, string right)
+    {
+        if (left.Length == 0 || right.Length == 0)
+        {
+            return 0.0;
+        }
+
+        var lev = LevenshteinSimilarity(left, right);
+        var dice = DiceSimilarity(left, right);
+        var soundexMatch = string.Equals(Soundex(left), Soundex(right), StringComparison.Ordinal) ? 1.0 : 0.0;
+        return (0.40 * lev) + (0.40 * dice) + (0.20 * soundexMatch);
+    }
+
     private static char SoundexDigit(char value) => value switch
     {
         'b' or 'f' or 'p' or 'v' => '1',

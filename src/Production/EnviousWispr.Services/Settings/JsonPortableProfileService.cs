@@ -92,6 +92,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 16 => MigrateFromV16(json),
                 17 => MigrateFromV17(json),
                 18 => MigrateFromV18(json),
+                19 => MigrateFromV19(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -389,7 +390,38 @@ public sealed class JsonPortableProfileService : IPortableProfileService
             JsonSettingsStore.SerializerOptions);
         return legacy is null
             ? null
-            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        LearnFromEditsEnabled = true,
+                    },
+                },
+            };
+    }
+
+    /// <summary>Takes a portable profile written before Self-Learning Dictionary existed (v20).</summary>
+    private static PortableProfile? MigrateFromV19(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        LearnFromEditsEnabled = true,
+                    },
+                },
+            };
     }
 
     private static PortableProfile? MigrateFromV7(string json)

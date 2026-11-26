@@ -260,6 +260,7 @@ public sealed record TextCommitResult(
 
 /// <param name="Fault">The defect that stopped the delivery, for <see cref="TextDeliveryRefusalReason.DeliveryFaulted"/> and <see cref="TextDeliveryRefusalReason.DeliveryDisposed"/>; null otherwise.</param>
 /// <param name="ClipboardUncertain">Carried from <see cref="TextCommitResult.ClipboardUncertain"/>: the clipboard could not be given back, and the person is told.</param>
+/// <param name="DeliveredText">The actual text delivered into the target (after seam repair), when delivered; never logged.</param>
 public sealed record DeliveryResult(
     DictationSessionId SessionId,
     bool Delivered,
@@ -271,7 +272,8 @@ public sealed record DeliveryResult(
     DeliveryFault? Fault = null,
     bool ClipboardUncertain = false,
     PasteArrivalStatus ArrivalStatus = PasteArrivalStatus.NotAttempted,
-    int? ArrivalElapsedMilliseconds = null);
+    int? ArrivalElapsedMilliseconds = null,
+    string? DeliveredText = null);
 
 public interface ITextTargetAdapter
 {

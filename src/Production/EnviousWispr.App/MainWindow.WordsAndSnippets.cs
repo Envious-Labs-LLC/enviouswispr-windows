@@ -38,6 +38,9 @@ public sealed class DictionaryWordRow
     public Visibility NonDefaultStrictnessVisibility =>
         Entry.Strictness == MatchStrictness.Default ? Visibility.Collapsed : Visibility.Visible;
 
+    public Visibility AutoLearnedVisibility =>
+        Entry.IsAutoLearned ? Visibility.Visible : Visibility.Collapsed;
+
     public override string ToString() => Entry.ToString();
 }
 
@@ -482,6 +485,19 @@ public sealed partial class MainWindow
 
                 PublishSettings();
                 ApplySettingsToControls();
+                if (existing is { LearnedAliases.Count: > 0 })
+                {
+                    var remainingAliases = aliases.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var removedLearned = existing.LearnedAliases
+                        .Where(alias => !remainingAliases.Contains(alias) ||
+                                        !string.Equals(existing.Replacement, replacement, StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+                    if (removedLearned.Length > 0)
+                    {
+                        LearnedAliasesRemovedFromDictionary?.Invoke(existing.Replacement, removedLearned);
+                        RefreshLearnMemoryUi();
+                    }
+                }
                 ShowMessage("Dictionary saved", "The change was saved locally.", InfoBarSeverity.Success);
                 RefreshReusableUserDataViews();
             }
@@ -503,10 +519,12 @@ public sealed partial class MainWindow
                         "This removes the word and all its mishearings from Your Words.",
                         "Delete").ConfigureAwait(true))
                 {
-                    var removed = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAsync(new[] { existing }))
+                    var removed = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAndReportAsync(new[] { existing }))
                         .ConfigureAwait(true);
-                    if (removed.Saved && removed.Value > 0)
+                    if (removed.Saved && removed.Value.Count > 0)
                     {
+                        WordsRemovedFromDictionary?.Invoke(removed.Value);
+                        RefreshLearnMemoryUi();
                         ShowMessage("Word deleted", $"\u201C{existing.Replacement}\u201D was removed.", InfoBarSeverity.Informational);
                     }
                 }

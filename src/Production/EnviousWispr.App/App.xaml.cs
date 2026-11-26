@@ -386,6 +386,8 @@ public partial class App : Application, IAsyncDisposable
             _feedbackCoordinator.FlushOutboxAsync(cancellationToken);
         _window.CheckUndeliverableFeedback = cancellationToken =>
             _feedbackCoordinator.HasUndeliverableReportsAsync(cancellationToken);
+        InitializeSelfLearning();
+        AttachSelfLearningToWindow(_window);
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -572,6 +574,7 @@ public partial class App : Application, IAsyncDisposable
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
+            DetachSelfLearningFromWindow(window);
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
@@ -592,6 +595,7 @@ public partial class App : Application, IAsyncDisposable
         var previousPreviewEnabled = _settings.Preferences.LivePreviewEnabled;
         var previousPreviewEngine = _settings.Preferences.LivePreviewEngine;
         var previousPolish = _settings.Preferences.Polish;
+        var previousLearnFromEdits = _settings.Preferences.Dictation.LearnFromEditsEnabled;
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
         _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
@@ -637,6 +641,11 @@ public partial class App : Application, IAsyncDisposable
         {
             _polishReconfigurePending = true;
             TrySchedulePendingModelRefresh();
+        }
+
+        if (previousLearnFromEdits != settings.Preferences.Dictation.LearnFromEditsEnabled)
+        {
+            OnSelfLearningSettingChanged(settings.Preferences.Dictation.LearnFromEditsEnabled);
         }
     }
 

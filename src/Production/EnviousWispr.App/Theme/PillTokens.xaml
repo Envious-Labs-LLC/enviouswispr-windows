@@ -103,6 +103,25 @@
             <SolidColorBrush x:Key="PillWheelBlueBrush" Color="#FF0A84FF" />
             <SolidColorBrush x:Key="PillWheelIndigoBrush" Color="#FF5E5CE6" />
             <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="#FFBF5AF2" />
+
+            <!-- Self-Learning Dictionary Undo pill: Light theme matches macOS atlas notice-correction-learned-light.png -->
+            <Color x:Key="PillLearnedSurfaceColor">#F5FCFAFF</Color>
+            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="#F5FCFAFF" />
+            <Color x:Key="PillLearnedBorderColor">#1F0F0A1A</Color>
+            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="#1F0F0A1A" />
+            <Color x:Key="PillLearnedTextColor">#FF0F0A1A</Color>
+            <SolidColorBrush x:Key="PillLearnedTextBrush" Color="#FF0F0A1A" />
+            <Color x:Key="PillLearnedSecondaryTextColor">#FF4A3D60</Color>
+            <SolidColorBrush x:Key="PillLearnedSecondaryTextBrush" Color="#FF4A3D60" />
+            <Color x:Key="PillLearnedAccentColor">#FF7C3AED</Color>
+            <SolidColorBrush x:Key="PillLearnedAccentBrush" Color="#FF7C3AED" />
+            <Color x:Key="PillLearnedAccentWashColor">#177C3AED</Color>
+            <SolidColorBrush x:Key="PillLearnedAccentWashBrush" Color="#177C3AED" />
+            <Color x:Key="PillLearnedUndoTextColor">#FF7C3AED</Color>
+            <SolidColorBrush x:Key="PillLearnedUndoTextBrush" Color="#FF7C3AED" />
+            <Color x:Key="PillLearnedRailStartColor">#FFCC7000</Color>
+            <Color x:Key="PillLearnedRailMidColor">#FFFF2A40</Color>
+            <Color x:Key="PillLearnedRailEndColor">#FF8A2BE2</Color>
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Dark">
@@ -194,6 +213,25 @@
             <SolidColorBrush x:Key="PillWheelBlueBrush" Color="#FF0A84FF" />
             <SolidColorBrush x:Key="PillWheelIndigoBrush" Color="#FF5E5CE6" />
             <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="#FFBF5AF2" />
+
+            <!-- Self-Learning Dictionary Undo pill: Dark theme matches macOS atlas notice-correction-learned-dark.png -->
+            <Color x:Key="PillLearnedSurfaceColor">#F014111C</Color>
+            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="#F014111C" />
+            <Color x:Key="PillLearnedBorderColor">#26FFFFFF</Color>
+            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="#26FFFFFF" />
+            <Color x:Key="PillLearnedTextColor">#F7FFFFFF</Color>
+            <SolidColorBrush x:Key="PillLearnedTextBrush" Color="#F7FFFFFF" />
+            <Color x:Key="PillLearnedSecondaryTextColor">#FFAAA2BF</Color>
+            <SolidColorBrush x:Key="PillLearnedSecondaryTextBrush" Color="#FFAAA2BF" />
+            <Color x:Key="PillLearnedAccentColor">#FFA78BFA</Color>
+            <SolidColorBrush x:Key="PillLearnedAccentBrush" Color="#FFA78BFA" />
+            <Color x:Key="PillLearnedAccentWashColor">#29A78BFA</Color>
+            <SolidColorBrush x:Key="PillLearnedAccentWashBrush" Color="#29A78BFA" />
+            <Color x:Key="PillLearnedUndoTextColor">#FFA78BFA</Color>
+            <SolidColorBrush x:Key="PillLearnedUndoTextBrush" Color="#FFA78BFA" />
+            <Color x:Key="PillLearnedRailStartColor">#FFE6B766</Color>
+            <Color x:Key="PillLearnedRailMidColor">#FFFF2A40</Color>
+            <Color x:Key="PillLearnedRailEndColor">#FFA78BFA</Color>
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
@@ -283,6 +321,24 @@
             <SolidColorBrush x:Key="PillWheelBlueBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="PillWheelIndigoBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+
+            <StaticResource x:Key="PillLearnedSurfaceColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="PillLearnedBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillLearnedTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillLearnedTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillLearnedSecondaryTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillLearnedSecondaryTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillLearnedAccentColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillLearnedAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillLearnedAccentWashColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillLearnedAccentWashBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillLearnedUndoTextColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillLearnedUndoTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillLearnedRailStartColor" ResourceKey="SystemColorHighlightColor" />
+            <StaticResource x:Key="PillLearnedRailMidColor" ResourceKey="SystemColorHighlightColor" />
+            <StaticResource x:Key="PillLearnedRailEndColor" ResourceKey="SystemColorHighlightColor" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
@@ -307,6 +363,7 @@
     <x:Double x:Key="PillRailBarSpacing">2</x:Double>
     <x:Double x:Key="PillWellMeterSpacing">1.5</x:Double>
     <x:Double x:Key="PillBadgeDotSpacing">6</x:Double>
+    <x:Double x:Key="PillLearnedTextSpacing">1</x:Double>
 
     <!--
         THE RECORDING DESIGNS' LOOKS, AS STYLES FOR THE SAME REASON AS THE SEVERITY SET BELOW. The
@@ -470,5 +527,48 @@
     </Style>
     <Style x:Key="PillDistressWashStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource PillDistressWashBrush}" />
+    </Style>
+
+    <Style x:Key="PillLearnedSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillLearnedSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillLearnedBorderBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedWashStyle" TargetType="Border">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style x:Key="PillLearnedIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillLearnedAccentBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedDiscStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillLearnedAccentWashBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedTitleStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillLearnedTextBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedErrorTitleStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillErrorInkBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedSubtitleStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillLearnedSecondaryTextBrush}" />
+    </Style>
+    <Style x:Key="PillLearnedUndoButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillLearnedAccentWashBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource PillLearnedBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Foreground" Value="{ThemeResource PillLearnedUndoTextBrush}" />
+        <Setter Property="Padding" Value="14,6" />
+    </Style>
+    <Style x:Key="PillLearnedCloseButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Foreground" Value="{ThemeResource PillLearnedSecondaryTextBrush}" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="PillLearnedRailStyle" TargetType="Border">
+        <Setter Property="CornerRadius" Value="1" />
     </Style>
 </ResourceDictionary>

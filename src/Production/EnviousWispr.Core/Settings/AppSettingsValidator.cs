@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Learning;
 
 namespace EnviousWispr.Core.Settings;
 
@@ -7,6 +8,7 @@ public static class AppSettingsValidator
 {
     public const int MaximumCustomWords = 10_000;
     public const int MaximumSnippets = 1_000;
+    public const int MaximumLearnMemoryEntries = 12_000;
     public const int MaximumSnippetKeywordLength = 64;
 
     /// <summary>The longest trigger the store keeps; the page's box and snippet import refuse longer.</summary>
@@ -41,12 +43,40 @@ public static class AppSettingsValidator
         if (profile is null ||
             profile.SchemaVersion != PortableProfile.CurrentSchemaVersion ||
             !IsValid(profile.Preferences) ||
-            !IsValid(profile.UserData))
+            !IsValid(profile.UserData) ||
+            !IsValid(profile.LearnMemory))
         {
             return new AppError(AppErrorCode.InvalidData, stage, CanRetry: false);
         }
 
         return null;
+    }
+
+    private static bool IsValid(IReadOnlyDictionary<string, LearnMemoryEntry>? learnMemory)
+    {
+        if (learnMemory is null)
+        {
+            return true;
+        }
+
+        if (learnMemory.Count > MaximumLearnMemoryEntries)
+        {
+            return false;
+        }
+
+        foreach (var (key, entry) in learnMemory)
+        {
+            if (string.IsNullOrWhiteSpace(key) ||
+                key.Length > 512 ||
+                entry is null ||
+                entry.JudgeRefusals < 0 ||
+                entry.UserNos < 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsValid(UserPreferences? preferences) =>
@@ -156,6 +186,9 @@ public static class AppSettingsValidator
             entry.Aliases is not null &&
             entry.Aliases.Count <= CustomWordEntry.MaximumAliasesPerEntry &&
             entry.Aliases.All(alias => !string.IsNullOrWhiteSpace(alias) && alias.Length <= 256) &&
+            entry.LearnedAliases is not null &&
+            entry.LearnedAliases.Count <= CustomWordEntry.MaximumAliasesPerEntry &&
+            entry.LearnedAliases.All(alias => !string.IsNullOrWhiteSpace(alias) && alias.Length <= 256) &&
             !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
             entry.SpokenForm.Length <= 256 &&
             !string.IsNullOrWhiteSpace(entry.Replacement) &&

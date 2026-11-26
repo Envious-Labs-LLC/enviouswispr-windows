@@ -284,6 +284,48 @@
                 <TextBlock x:Name="StateDetail" AutomationProperties.AccessibilityView="Raw" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
                 <Button x:Name="ActionButton" Click="ActionButton_Click" FontSize="14" HorizontalAlignment="Right" Style="{StaticResource PillActionButtonStyle}" Visibility="Collapsed" />
                 </StackPanel>
+
+                <!-- Self-Learning Dictionary Undo pill (issue 380): matches macOS CorrectionLearnedPillFace -->
+                <Grid x:Name="LearnedPillPanel" Margin="14,9,12,11" VerticalAlignment="Center" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Width="36" Height="36" CornerRadius="18" VerticalAlignment="Center" Style="{StaticResource PillLearnedDiscStyle}">
+                        <FontIcon Glyph="&#xE82D;" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource PillLearnedIconStyle}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource PillLearnedTextSpacing}">
+                        <TextBlock x:Name="LearnedPillTitle" FontSize="15" FontWeight="SemiBold" MaxLines="1" TextTrimming="CharacterEllipsis" MaxWidth="320" AutomationProperties.LiveSetting="Polite" Style="{StaticResource PillLearnedTitleStyle}" />
+                        <TextBlock x:Name="LearnedPillSubtitle" FontSize="14" MaxLines="1" Style="{StaticResource PillLearnedSubtitleStyle}" />
+                    </StackPanel>
+                    <StackPanel x:Name="LearnedPillControls" Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource PillBadgeDotSpacing}" VerticalAlignment="Center" Margin="4,0,0,0">
+                        <Button x:Name="LearnedPillUndoButton" Content="Undo" Click="LearnedUndoButton_Click" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillLearnedUndoButtonStyle}" />
+                        <Button x:Name="LearnedPillCloseButton" Width="28" Height="28" Click="LearnedCloseButton_Click" Style="{StaticResource PillLearnedCloseButtonStyle}" AutomationProperties.Name="Close and keep learned word">
+                            <FontIcon Glyph="&#xE711;" FontSize="12" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <Border
+                    x:Name="LearnedCountdownRail"
+                    Height="2"
+                    Width="0"
+                    Margin="20,0,20,1"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Bottom"
+                    AutomationProperties.AccessibilityView="Raw"
+                    IsHitTestVisible="False"
+                    Style="{StaticResource PillLearnedRailStyle}"
+                    Visibility="Collapsed">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                            <GradientStop Offset="0.0" Color="{ThemeResource PillLearnedRailStartColor}" />
+                            <GradientStop Offset="0.5" Color="{ThemeResource PillLearnedRailMidColor}" />
+                            <GradientStop Offset="1.0" Color="{ThemeResource PillLearnedRailEndColor}" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
             </Grid>
         </Border>
     </Border>

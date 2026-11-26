@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Lifecycle;
@@ -67,6 +68,17 @@ public sealed partial class DictationOverlayWindow : Window
 
     private readonly DispatcherTimer _hideTimer = new();
     private readonly DispatcherTimer _elapsedTimer = new();
+    private readonly DispatcherTimer _learnedTimer = new();
+    private readonly System.Diagnostics.Stopwatch _learnedWatch = new();
+    private LearnedCorrectionPillModel? _learnedModel;
+    private TimeSpan _learnedDuration = TimeSpan.FromSeconds(12);
+    private double _learnedElapsedBaseMs;
+    private const double LearnedCapsuleRadius = 32;
+    private const double LearnedPillHeight = 64;
+    private const double LearnedDwellSeconds = 12.0;
+    private const double LearnedHoverResumeFloorSeconds = 2.0;
+    private const double LearnedUndoneDwellSeconds = 1.5;
+    private const double LearnedErrorDwellSeconds = 3.0;
     private readonly Storyboard _distressPulse = new();
     private readonly Storyboard _spectrumWheelPulse = new();
 
@@ -250,6 +262,8 @@ public sealed partial class DictationOverlayWindow : Window
         _hideTimer.Tick += (_, _) => HideOverlay();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
+        _learnedTimer.Interval = TimeSpan.FromMilliseconds(33);
+        _learnedTimer.Tick += (_, _) => TickLearnedCountdown();
 
         // THE METER IS DRAWN ON ITS OWN SCHEDULE, NOT ON THE MICROPHONE'S. Capture reports a level
         // per audio buffer, roughly two hundred times a second, and posting each one to the UI
@@ -355,6 +369,10 @@ public sealed partial class DictationOverlayWindow : Window
         var state = status.State;
         var detail = status.Text;
         _hideTimer.Stop();
+        StopLearnedCountdown(notifyEnded: _learnedModel is not null && state != DictationOverlayState.CorrectionLearned);
+        LearnedPillPanel.Visibility = Visibility.Collapsed;
+        LearnedCountdownRail.Visibility = Visibility.Collapsed;
+        ContentPanel.Visibility = Visibility.Visible;
         if (state == DictationOverlayState.Hidden)
         {
             _state = state;
@@ -771,6 +789,7 @@ public sealed partial class DictationOverlayWindow : Window
         _hideTimer.Stop();
         _elapsedTimer.Stop();
         _levelTimer.Stop();
+        _learnedTimer.Stop();
         if (_subclassedHandle != nint.Zero && _subclassProc is not null)
         {
             _ = RemoveWindowSubclass(_subclassedHandle, _subclassProc, OverlaySubclassId);
@@ -905,6 +924,263 @@ public sealed partial class DictationOverlayWindow : Window
     /// <summary>Raised when the user presses the pill's button.</summary>
     public event Action<PillActionKind>? ActionInvoked;
 
+    public event Action<Guid>? LearnedUndoRequested;
+
+    public event Action<Guid>? LearnedDismissed;
+
+    public event Action<Guid>? LearnedEnded;
+
+    public bool ShowLearnedCorrection(LearnedCorrectionPillModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        if (_state is DictationOverlayState.Recording or DictationOverlayState.Processing)
+        {
+            return false;
+        }
+
+        _hideTimer.Stop();
+        _elapsedTimer.Stop();
+        _levelTimer.Stop();
+        _spectrumWheelPulse.Stop();
+        SpectrumWheelTransform.Rotation = 0;
+        SpectrumWheelIcon.Visibility = Visibility.Collapsed;
+        ApplyHairline(visible: false, breathes: false);
+        _handsFree = false;
+        _previewText = null;
+        _action = null;
+
+        StopLearnedCountdown(notifyEnded: _learnedModel is not null && _learnedModel.PillId != model.PillId);
+        _learnedModel = model;
+        _state = DictationOverlayState.CorrectionLearned;
+        _preWarmed = true;
+
+        RenderLearnedPill(model, announceNow: false);
+        PositionOnForegroundMonitor();
+        AppWindow.Show(activateWindow: false);
+        AnnounceStateChange(LearnedPillTitle, DictationOverlayState.CorrectionLearned);
+        StartLearnedCountdown(LearnedDwellSeconds);
+        return true;
+    }
+
+    public void UpdateLearnedCorrection(LearnedCorrectionPillModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        if (_state != DictationOverlayState.CorrectionLearned ||
+            _learnedModel?.PillId != model.PillId)
+        {
+            return;
+        }
+
+        _learnedModel = model;
+        RenderLearnedPill(model, announceNow: true);
+        PositionOnForegroundMonitor();
+
+        if (model.Phase == LearnedCorrectionPillPhase.Undone)
+        {
+            StartLearnedCountdown(LearnedUndoneDwellSeconds);
+        }
+        else if (model.Phase == LearnedCorrectionPillPhase.UndoError)
+        {
+            StartLearnedCountdown(LearnedErrorDwellSeconds);
+        }
+    }
+
+    public void CloseLearnedCorrection(Guid pillId)
+    {
+        if (_state != DictationOverlayState.CorrectionLearned ||
+            _learnedModel?.PillId != pillId)
+        {
+            return;
+        }
+
+        HideOverlay();
+    }
+
+    public void ShowLearnedSaveError(string canonical)
+    {
+        if (_state is DictationOverlayState.Recording or DictationOverlayState.Processing)
+        {
+            return;
+        }
+
+        var message = string.IsNullOrWhiteSpace(canonical)
+            ? "Couldn\u2019t save learned word"
+            : $"Couldn\u2019t save \u201C{canonical}\u201D";
+        StopLearnedCountdown(notifyEnded: _learnedModel is not null);
+        _hideTimer.Stop();
+        _learnedModel = new LearnedCorrectionPillModel(
+            Guid.NewGuid(),
+            string.Empty,
+            string.IsNullOrWhiteSpace(canonical) ? "learned word" : canonical,
+            LearnedCorrectionPillKind.Added,
+            LearnedCorrectionPillPhase.UndoError);
+        _state = DictationOverlayState.CorrectionLearned;
+        _preWarmed = true;
+
+        ContentPanel.Visibility = Visibility.Collapsed;
+        LearnedPillPanel.Visibility = Visibility.Visible;
+        ApplySurface("PillLearnedSurfaceStyle", LearnedCapsuleRadius);
+        ApplySeverity(DictationOverlayState.CorrectionLearned);
+
+        LearnedPillTitle.Text = message;
+        LearnedPillTitle.Style = GetPillStyle("PillLearnedErrorTitleStyle");
+        LearnedPillSubtitle.Text = "Your pasted text is safe.";
+        LearnedPillSubtitle.Visibility = Visibility.Visible;
+        LearnedPillControls.Visibility = Visibility.Collapsed;
+        LearnedCountdownRail.Visibility = Visibility.Collapsed;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            LearnedPillTitle,
+            $"{message}. Your pasted text is safe.");
+
+        LearnedPillPanel.InvalidateMeasure();
+        LearnedPillPanel.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var desiredW = LearnedPillPanel.DesiredSize.Width > 0 ? LearnedPillPanel.DesiredSize.Width : 300;
+        var width = Math.Clamp((int)Math.Ceiling(FrameBorderThickness * 2 + desiredW + 24), 240, 520);
+        Resize(width, (int)Math.Ceiling(LearnedPillHeight));
+        PositionOnForegroundMonitor();
+        AppWindow.Show(activateWindow: false);
+        AnnounceStateChange(LearnedPillTitle, DictationOverlayState.CorrectionLearned);
+        StartLearnedCountdown(LearnedErrorDwellSeconds);
+    }
+
+    private void RenderLearnedPill(LearnedCorrectionPillModel model, bool announceNow = true)
+    {
+        ContentPanel.Visibility = Visibility.Collapsed;
+        LearnedPillPanel.Visibility = Visibility.Visible;
+        ApplySurface("PillLearnedSurfaceStyle", LearnedCapsuleRadius);
+        ApplySeverity(DictationOverlayState.CorrectionLearned);
+
+        var titleText = model.Phase switch
+        {
+            LearnedCorrectionPillPhase.Undone => model.Kind == LearnedCorrectionPillKind.Added
+                ? $"\u201C{model.Canonical}\u201D removed"
+                : "Undone",
+            LearnedCorrectionPillPhase.UndoError => "Couldn\u2019t undo",
+            _ => model.Canonical,
+        };
+        var subtitleText = model.Phase is LearnedCorrectionPillPhase.Learned or LearnedCorrectionPillPhase.UndoPending
+            ? (model.Kind == LearnedCorrectionPillKind.Added ? "Added to dictionary" : "Updated in dictionary")
+            : string.Empty;
+
+        LearnedPillTitle.Text = titleText;
+        LearnedPillTitle.Style = model.Phase == LearnedCorrectionPillPhase.UndoError
+            ? GetPillStyle("PillLearnedErrorTitleStyle")
+            : GetPillStyle("PillLearnedTitleStyle");
+        LearnedPillSubtitle.Text = subtitleText;
+        LearnedPillSubtitle.Visibility = string.IsNullOrEmpty(subtitleText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+        var controlsVisible = model.Phase is LearnedCorrectionPillPhase.Learned or LearnedCorrectionPillPhase.UndoPending;
+        var controlsEnabled = model.Phase == LearnedCorrectionPillPhase.Learned;
+        LearnedPillControls.Visibility = controlsVisible ? Visibility.Visible : Visibility.Collapsed;
+        LearnedPillControls.Opacity = controlsEnabled ? 1 : 0;
+        LearnedPillUndoButton.IsEnabled = controlsEnabled;
+        LearnedPillCloseButton.IsEnabled = controlsEnabled;
+
+        var showRail = model.Phase == LearnedCorrectionPillPhase.Learned;
+        LearnedCountdownRail.Visibility = showRail ? Visibility.Visible : Visibility.Collapsed;
+
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            LearnedPillTitle,
+            string.IsNullOrEmpty(subtitleText) ? titleText : $"{titleText}. {subtitleText}. Undo available.");
+        if (announceNow)
+        {
+            AnnounceStateChange(LearnedPillTitle, DictationOverlayState.CorrectionLearned);
+        }
+
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            LearnedPillCloseButton,
+            $"Close and keep \u201C{model.Canonical}\u201D");
+
+        LearnedPillPanel.InvalidateMeasure();
+        LearnedPillPanel.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var desiredW = LearnedPillPanel.DesiredSize.Width > 0 ? LearnedPillPanel.DesiredSize.Width : 300;
+        var width = Math.Clamp((int)Math.Ceiling(FrameBorderThickness * 2 + desiredW + 24), 240, 520);
+        var height = (int)Math.Ceiling(LearnedPillHeight);
+        Resize(width, height);
+        UpdateLearnedRailWidth(0);
+        OverlayRoot.UpdateLayout();
+    }
+
+    private void StartLearnedCountdown(double seconds)
+    {
+        _learnedDuration = TimeSpan.FromSeconds(seconds);
+        _learnedElapsedBaseMs = 0;
+        _learnedWatch.Restart();
+        UpdateLearnedRailWidth(0);
+        _learnedTimer.Start();
+    }
+
+    private void StopLearnedCountdown(bool notifyEnded)
+    {
+        _learnedTimer.Stop();
+        _learnedWatch.Reset();
+        _learnedElapsedBaseMs = 0;
+        var endedModel = _learnedModel;
+        _learnedModel = null;
+        if (notifyEnded && endedModel is not null)
+        {
+            LearnedEnded?.Invoke(endedModel.PillId);
+        }
+    }
+
+    private void TickLearnedCountdown()
+    {
+        if (_state != DictationOverlayState.CorrectionLearned || _learnedModel is null)
+        {
+            _learnedTimer.Stop();
+            return;
+        }
+
+        var totalMs = _learnedDuration.TotalMilliseconds;
+        var elapsedMs = _learnedElapsedBaseMs + _learnedWatch.Elapsed.TotalMilliseconds;
+        var fraction = totalMs > 0 ? Math.Clamp(elapsedMs / totalMs, 0, 1) : 1;
+        UpdateLearnedRailWidth(fraction);
+
+        if (elapsedMs >= totalMs)
+        {
+            if (_learnedModel.Phase == LearnedCorrectionPillPhase.UndoPending)
+            {
+                return;
+            }
+
+            HideOverlay();
+        }
+    }
+
+    private void UpdateLearnedRailWidth(double fraction)
+    {
+        var trackWidth = Math.Max(0, _logicalWidth - 40 - FrameBorderThickness * 2);
+        LearnedCountdownRail.Width = trackWidth * Math.Clamp(fraction, 0, 1);
+    }
+
+    private void LearnedUndoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_learnedModel is not { Phase: LearnedCorrectionPillPhase.Learned } model)
+        {
+            return;
+        }
+
+        _learnedModel = model with { Phase = LearnedCorrectionPillPhase.UndoPending };
+        RenderLearnedPill(_learnedModel);
+        _learnedDuration = TimeSpan.FromSeconds(LearnedErrorDwellSeconds);
+        _learnedElapsedBaseMs = 0;
+        _learnedWatch.Restart();
+        LearnedUndoRequested?.Invoke(model.PillId);
+    }
+
+    private void LearnedCloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_learnedModel is not { } model)
+        {
+            return;
+        }
+
+        LearnedDismissed?.Invoke(model.PillId);
+        HideOverlay();
+    }
+
     /// <summary>Shows the one thing the user can do about this status, or nothing.</summary>
     private void ApplyAction(PillAction? action)
     {
@@ -975,6 +1251,13 @@ public sealed partial class DictationOverlayWindow : Window
     {
         _pointerIsOver = true;
         _hideTimer.Stop();
+        if (_state == DictationOverlayState.CorrectionLearned &&
+            _learnedModel?.Phase == LearnedCorrectionPillPhase.Learned)
+        {
+            _learnedElapsedBaseMs += _learnedWatch.Elapsed.TotalMilliseconds;
+            _learnedWatch.Reset();
+            _learnedTimer.Stop();
+        }
     }
 
     /// <remarks>
@@ -985,6 +1268,20 @@ public sealed partial class DictationOverlayWindow : Window
     private void OverlayRoot_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         _pointerIsOver = false;
+        if (_state == DictationOverlayState.CorrectionLearned &&
+            _learnedModel?.Phase == LearnedCorrectionPillPhase.Learned)
+        {
+            var maxBaseMs = (_learnedDuration.TotalSeconds - LearnedHoverResumeFloorSeconds) * 1000.0;
+            if (maxBaseMs > 0 && _learnedElapsedBaseMs > maxBaseMs)
+            {
+                _learnedElapsedBaseMs = maxBaseMs;
+            }
+
+            _learnedWatch.Restart();
+            _learnedTimer.Start();
+            return;
+        }
+
         ArmDwell();
     }
 
@@ -1071,6 +1368,10 @@ public sealed partial class DictationOverlayWindow : Window
         _levelTimer.Stop();
         _hideTimer.Stop();
         _elapsedTimer.Stop();
+        StopLearnedCountdown(notifyEnded: true);
+        LearnedPillPanel.Visibility = Visibility.Collapsed;
+        LearnedCountdownRail.Visibility = Visibility.Collapsed;
+        ContentPanel.Visibility = Visibility.Visible;
         _spectrumWheelPulse.Stop();
         SpectrumWheelTransform.Rotation = 0;
         SpectrumWheelIcon.Visibility = Visibility.Collapsed;
@@ -1138,6 +1439,8 @@ public sealed partial class DictationOverlayWindow : Window
             DictationOverlayState.Hidden or DictationOverlayState.Recording
                 or DictationOverlayState.Processing or DictationOverlayState.EscapeRecovery =>
                 ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
+            DictationOverlayState.CorrectionLearned =>
+                ("PillLearnedIconStyle", "PillLearnedEdgeStyle", "PillLearnedWashStyle"),
             // An enum can hold a value nobody declared, so this arm has to exist. It takes the
             // neutral look rather than throwing, because a pill is not worth crashing a dictation.
             _ => ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
@@ -1149,6 +1452,7 @@ public sealed partial class DictationOverlayWindow : Window
             DictationOverlayState.Recording => GetPillStyle(
                 _activeDesign == RecordingPillDesign.ReadingWell ? "PillWellEdgeStyle" : "PillCapsuleEdgeStyle"),
             DictationOverlayState.Processing or DictationOverlayState.EscapeRecovery => GetPillStyle("PillCapsuleEdgeStyle"),
+            DictationOverlayState.CorrectionLearned => GetPillStyle("PillLearnedEdgeStyle"),
             _ => GetPillStyle(edge),
         };
         SeverityWash.Style = GetPillStyle(wash);

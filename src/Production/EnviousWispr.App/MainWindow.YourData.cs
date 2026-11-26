@@ -60,7 +60,7 @@ public sealed partial class MainWindow
         }
 
         var result = await export(
-            _settings.ToPortableProfile(),
+            BuildExportablePortableProfile(),
             _settings.Preferences.History.RetentionDays,
             file.Path).ConfigureAwait(true);
         if (_session.Closing)
