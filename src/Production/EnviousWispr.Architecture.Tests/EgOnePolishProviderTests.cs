@@ -322,6 +322,11 @@ public sealed class EgOnePolishProviderTests
 
         var fakeRuntime = new FakeRuntime();
         var provider = new EgOnePolishProvider(fakeRuntime, Options);
+        Assert.Equal(10, fakeRuntime.SleepIdleSeconds);
+        Assert.Equal(10, provider.SleepIdleSeconds);
+        Assert.Null(EgOnePolishProvider.ResolveKeepAwakeInterval(null));
+        Assert.Equal(TimeSpan.FromSeconds(5), EgOnePolishProvider.ResolveKeepAwakeInterval(10));
+        Assert.Equal(TimeSpan.FromSeconds(30), EgOnePolishProvider.ResolveKeepAwakeInterval(600));
         Assert.True(await provider.TryPreWakeAsync());
         Assert.Equal(1, fakeRuntime.PreWakeCalls);
         await provider.DisposeAsync();
@@ -445,6 +450,8 @@ public sealed class EgOnePolishProviderTests
         public bool TerminatedImmediately { get; private set; }
 
         public int? OwnedProcessId => null;
+
+        public int? SleepIdleSeconds { get; set; } = 10;
 
         public Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken)
         {

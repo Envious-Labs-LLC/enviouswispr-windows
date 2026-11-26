@@ -36,6 +36,8 @@ internal interface IEgOneRuntime : IAsyncDisposable
 {
     int? OwnedProcessId { get; }
 
+    int? SleepIdleSeconds { get; }
+
     Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken);
 
     Task<bool> TryPreWakeAsync(CancellationToken cancellationToken);
@@ -77,6 +79,8 @@ public sealed class EgOneServerManager : IEgOneRuntime
     }
 
     public bool IsUsingAccelerator => _isUsingAccelerator;
+
+    public int? SleepIdleSeconds => _options.SleepIdleSeconds is > 0 ? _options.SleepIdleSeconds : null;
 
     public int? OwnedProcessId
     {

@@ -291,21 +291,17 @@ public partial class App
                 Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, _snippetVocabulary, CurrentPolishSetup(), _enabledVocabularyPackIds),
                 CloudPolishProviderName: () => _cloudPolishConsent?.ProviderName,
                 RunId: () => _runId,
-                RecordingActive: active =>
-                {
-                    _pushToTalkHook?.SetRecordingActive(active);
-                    if (active)
-                    {
-                        PreWakePolishRuntime();
-                    }
-                },
+                RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),
                 CancelArmed: armed => _pushToTalkHook?.SetCancelArmed(armed),
                 ArchiveAudio: audio => ArchiveDictationAudio(audio),
                 DetachCaptureObservers: DetachCaptureObservers,
                 ReleaseSession: ReleaseSession,
                 DisposeDeliveryRoute: DisposeDeliveryRoute,
                 DictationActivityChanged: active =>
-                    PostToLiveWindow(window => window.SetDictationActive(active))),
+                {
+                    SetPolishSessionActive(active);
+                    PostToLiveWindow(window => window.SetDictationActive(active));
+                }),
             TimeProvider.System));
         if (_pushToTalkHook is not null)
         {

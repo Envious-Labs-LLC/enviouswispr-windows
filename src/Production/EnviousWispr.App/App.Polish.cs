@@ -24,6 +24,8 @@ public partial class App
     private string? _localPolishNotice;
     private readonly CancellationTokenSource _polishLifetime = new();
     private CancellationTokenSource? _polishWarmupCancellation;
+    private readonly Lock _polishKeepAwakeLock = new();
+    private CancellationTokenSource? _polishKeepAwakeCancellation;
     private Task? _polishWarmup;
     private string? _configuredEgOneModelPath;
     private PolishModelSource? _polishModelSource;
@@ -86,31 +88,74 @@ public partial class App
 
     private void AbortPolishRuntime()
     {
+        StopPolishKeepAwake();
         _polishWarmupCancellation?.Cancel();
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
     }
 
-    private void PreWakePolishRuntime()
+    private void StopPolishKeepAwake()
     {
-        if (Leaving || _polishProvider is not EgOnePolishProvider egOneProvider)
+        CancellationTokenSource? previous;
+        lock (_polishKeepAwakeLock)
+        {
+            previous = _polishKeepAwakeCancellation;
+            _polishKeepAwakeCancellation = null;
+        }
+
+        if (previous is not null)
+        {
+            previous.Cancel();
+            previous.Dispose();
+        }
+    }
+
+    private void SetPolishSessionActive(bool active)
+    {
+        if (!active || Leaving || _polishProvider is not EgOnePolishProvider egOneProvider)
+        {
+            StopPolishKeepAwake();
+            return;
+        }
+
+        if (EgOnePolishProvider.ResolveKeepAwakeInterval(egOneProvider.SleepIdleSeconds) is not { } interval)
         {
             return;
         }
 
-        var token = _polishLifetime.Token;
-        _ = Task.Run(async () =>
+        CancellationTokenSource next;
+        lock (_polishKeepAwakeLock)
         {
-            try
+            _polishKeepAwakeCancellation?.Cancel();
+            _polishKeepAwakeCancellation?.Dispose();
+            next = CancellationTokenSource.CreateLinkedTokenSource(_polishLifetime.Token);
+            _polishKeepAwakeCancellation = next;
+        }
+
+        var token = next.Token;
+        _ = KeepPolishAwakeDuringSessionAsync(egOneProvider, interval, token);
+    }
+
+    private static async Task KeepPolishAwakeDuringSessionAsync(
+        EgOnePolishProvider provider,
+        TimeSpan interval,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Run(() => provider.TryPreWakeAsync(cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+            using var timer = new PeriodicTimer(interval);
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
-                await egOneProvider.TryPreWakeAsync(token).ConfigureAwait(false);
+                await provider.TryPreWakeAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-        });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private void StartPolishWarmup()
