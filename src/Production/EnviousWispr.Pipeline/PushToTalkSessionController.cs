@@ -216,7 +216,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     /// </summary>
     public ReleaseTargetContext? CaptureReleaseTarget()
     {
-        var deliveryOptions = _deliveryOptions();
+        var deliveryOptions = CurrentSession?.DeliveryOptions ?? _deliveryOptions();
         if (deliveryOptions.CopyInsteadOfPaste ||
             deliveryOptions.TargetMode != PasteTargetMode.WhereCursorIsAtRelease)
         {

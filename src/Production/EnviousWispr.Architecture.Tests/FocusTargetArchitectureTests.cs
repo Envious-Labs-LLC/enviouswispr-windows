@@ -1,10 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.Settings;
@@ -358,6 +360,77 @@ public sealed class FocusTargetArchitectureTests
             isExplicitHistoryPaste: true,
             (_, _) => electronRule);
         Assert.Equal(TextDeliveryRefusalReason.ProtectedField, releaseModeElectronPasswordBlocked.Failure?.RefusalReason);
+    }
+
+    [Fact]
+    public async Task CaptureReleaseTargetHonorsFrozenSessionOptionsEvenWhenPreferencesChangeMidRecording()
+    {
+        var liveOptions = TextDeliveryOptions.Default with
+        {
+            TargetMode = PasteTargetMode.WhereCursorIsAtRelease,
+            CopyInsteadOfPaste = false,
+        };
+        var currentTarget = new TargetWindowId(0x1111, 100, FocusedElementId: "win32:10", ProcessName: "notepad");
+        var capture = new StubAudioCapture();
+        var controller = new PushToTalkSessionController(
+            capture,
+            new DelegateTargetProvider(() => currentTarget),
+            deliveryOptions: () => liveOptions,
+            minimumHoldDuration: TimeSpan.Zero);
+
+        var started = await controller.PressAsync();
+        Assert.Equal(SessionTransitionKind.Started, started.Kind);
+
+        // Simulate user flipping BOTH settings back while recording is still active.
+        var releaseWindow = new TargetWindowId(0x2222, 200, FocusedElementId: "win32:20", ProcessName: "notepad");
+        currentTarget = releaseWindow;
+        liveOptions = TextDeliveryOptions.Default with
+        {
+            TargetMode = PasteTargetMode.WhereDictationStarted,
+            CopyInsteadOfPaste = true,
+        };
+
+        var capturedAtRelease = controller.CaptureReleaseTarget();
+
+        Assert.NotNull(capturedAtRelease);
+        Assert.Equal(releaseWindow, capturedAtRelease!.Target);
+        await controller.CancelAsync();
+    }
+
+    private sealed class DelegateTargetProvider(Func<TargetWindowId?> read) : IForegroundTargetProvider
+    {
+        public TargetWindowId? CaptureForegroundTarget() => read();
+    }
+
+    private sealed class StubAudioCapture : IAudioCapture
+    {
+        public event EventHandler<AudioLevel>? LevelChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public bool IsCapturing { get; private set; }
+
+        public Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            IsCapturing = true;
+            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+        }
+
+        public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
+        {
+            IsCapturing = false;
+            return Task.FromResult(new CapturedAudio(new DictationSessionId(Guid.NewGuid()), ReadOnlyMemory<float>.Empty, 16_000, 1));
+        }
+
+        public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
+        {
+            IsCapturing = false;
+            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static GeneralSettingsInput CreateGeneralInput(bool returnToStartWindow) => new(
