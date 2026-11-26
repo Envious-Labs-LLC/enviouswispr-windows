@@ -17,7 +17,8 @@ public sealed record HistoryWriteIntent(
     bool WasPolished,
     bool WasDelivered,
     DateTimeOffset? ExpiresAt = null,
-    bool Force = false)
+    bool Force = false,
+    bool ArchiveAudio = true)
 {
     /// <summary>The ordinary case: the words went where they were meant to go, or the clipboard caught them.</summary>
     public static HistoryWriteIntent Delivered(bool wasPolished, bool wasDelivered) => new(wasPolished, wasDelivered);
@@ -27,10 +28,10 @@ public sealed record HistoryWriteIntent(
 
     /// <summary>
     /// An Escape Recovery: kept for a day whether or not history is on, because the person asked for
-    /// the words to be kept and this is the only place they can be.
+    /// the words to be kept and this is the only place they can be. Audio is released rather than archived.
     /// </summary>
     public static HistoryWriteIntent EscapeRecovery(bool wasPolished, DateTimeOffset expiresAt) =>
-        new(wasPolished, WasDelivered: false, expiresAt, Force: true);
+        new(wasPolished, WasDelivered: false, expiresAt, Force: true, ArchiveAudio: false);
 }
 
 /// <summary>The one-shot Undo an Escape Recovery offers on Home, held in memory for this run only.</summary>
@@ -304,7 +305,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
         // store prunes against are separate samples; collapsing them moves a retention decision that
         // lands exactly on an expiry boundary, and equivalence here means the same decisions.
         var entryId = Guid.NewGuid();
-        var archivedAudio = audio is not null
+        var archivedAudio = audio is not null && intent.ArchiveAudio
             ? _audioArchive?.SaveForEntry(entryId, audio)
             : null;
         var entry = new DictationHistoryEntry(

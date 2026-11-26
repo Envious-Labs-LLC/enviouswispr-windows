@@ -20,6 +20,30 @@ public enum HistoryPlaybackToggleOutcome
     Pause,
 }
 
+/// <summary>Target UI surface for surfacing a saved-dictation paste outcome.</summary>
+public enum HistoryPasteNoticeTarget
+{
+    RecoveryCard,
+    CardInline,
+    StatusBanner,
+}
+
+/// <summary>Visual severity for fallback saved-dictation paste status notices.</summary>
+public enum HistoryPasteNoticeTone
+{
+    Informational,
+    Warning,
+    Error,
+}
+
+/// <summary>Resolved presentation target and copy for a saved-dictation paste outcome.</summary>
+public sealed record HistoryPasteNoticePlan(
+    HistoryPasteNoticeTarget Target,
+    Guid? TargetEntryId,
+    string Title,
+    string Sentence,
+    HistoryPasteNoticeTone Tone);
+
 /// <summary>Result of a seek request against <see cref="SingleActivePlaybackTracker"/>.</summary>
 public sealed record HistorySeekPlan(
     bool StartNewLoad,
@@ -258,6 +282,28 @@ public static class HistoryPlaybackPresentation
 
     public static bool CanTogglePlayback(bool hasAudioRecording, bool isGlobalBusy, bool isPlaying) =>
         hasAudioRecording && (!isGlobalBusy || isPlaying);
+
+    public static HistoryPasteNoticePlan PlanSavedDictationPasteNotice(
+        bool isUndoAction,
+        bool isRecoveryCardVisible,
+        Guid? lastPasteRequestedEntryId,
+        bool isTargetCardRendered,
+        string title,
+        string sentence,
+        HistoryPasteNoticeTone tone)
+    {
+        if (isUndoAction && isRecoveryCardVisible)
+        {
+            return new HistoryPasteNoticePlan(HistoryPasteNoticeTarget.RecoveryCard, null, title, sentence, tone);
+        }
+
+        if (!isUndoAction && lastPasteRequestedEntryId is { } targetId && isTargetCardRendered)
+        {
+            return new HistoryPasteNoticePlan(HistoryPasteNoticeTarget.CardInline, targetId, title, sentence, tone);
+        }
+
+        return new HistoryPasteNoticePlan(HistoryPasteNoticeTarget.StatusBanner, null, title, sentence, tone);
+    }
 
     public static int ComputePlayedBarCount(long positionMs, long durationMs, int barCount)
     {

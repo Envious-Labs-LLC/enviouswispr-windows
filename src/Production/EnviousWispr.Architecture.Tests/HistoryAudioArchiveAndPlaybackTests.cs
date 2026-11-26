@@ -644,6 +644,102 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.Contains("nameof(CanTogglePlayback)", setSnapshotBody, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task EscapeRecoverySkipsAudioArchivalEvenWhenHistoryAndAudioAreEnabled()
+    {
+        using var temp = new TempFolder();
+        var recordingsDir = Path.Combine(temp.Path, "recordings", "dictations");
+        Directory.CreateDirectory(recordingsDir);
+
+        var archive = new LocalDictationAudioArchive(recordingsDir);
+        var fakeStore = new StubHistoryStore();
+        var persistence = new SessionPersistence(
+            new InMemoryRecoveryStore(),
+            fakeStore,
+            new NoOpLogger(),
+            TimeProvider.System,
+            () => new HistoryPreferences(true, 30),
+            new NoOpPersistenceEffects(),
+            archive);
+        var audio = new CapturedAudio(DictationSessionId.Create(), new float[1600], 16_000, 1);
+
+        var recoveryIntent = HistoryWriteIntent.EscapeRecovery(wasPolished: false, Now.AddHours(24));
+        Assert.False(recoveryIntent.ArchiveAudio);
+        Assert.True(HistoryWriteIntent.Held(wasPolished: false).ArchiveAudio);
+        Assert.True(HistoryWriteIntent.Delivered(wasPolished: false, wasDelivered: true).ArchiveAudio);
+
+        var savedId = await persistence.SaveHistoryAsync(
+            new Transcript(DictationSessionId.Create(), "escape recovery text", "parakeet"),
+            "escape recovery text",
+            recoveryIntent,
+            audio: audio);
+
+        Assert.NotNull(savedId);
+        var entry = Assert.Single(fakeStore.Added);
+        Assert.Null(entry.AudioFileName);
+        Assert.Null(entry.AudioDurationMs);
+        Assert.Empty(Directory.GetFiles(recordingsDir, "*.wav"));
+    }
+
+    [Fact]
+    public void SavedDictationPasteNoticeTargetsCardInlineWhenRenderedAndFallsBackToStatusBannerWhenOffScreen()
+    {
+        var cardId = Guid.NewGuid();
+
+        var inlinePlan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
+            isUndoAction: false,
+            isRecoveryCardVisible: false,
+            lastPasteRequestedEntryId: cardId,
+            isTargetCardRendered: true,
+            title: "Paste could not be confirmed",
+            sentence: "Could not confirm the paste.",
+            tone: HistoryPasteNoticeTone.Warning);
+        Assert.Equal(HistoryPasteNoticeTarget.CardInline, inlinePlan.Target);
+        Assert.Equal(cardId, inlinePlan.TargetEntryId);
+
+        foreach (var tone in new[] { HistoryPasteNoticeTone.Warning, HistoryPasteNoticeTone.Error, HistoryPasteNoticeTone.Informational })
+        {
+            var bannerPlan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
+                isUndoAction: false,
+                isRecoveryCardVisible: false,
+                lastPasteRequestedEntryId: cardId,
+                isTargetCardRendered: false,
+                title: "Notice title",
+                sentence: "Notice sentence",
+                tone: tone);
+            Assert.Equal(HistoryPasteNoticeTarget.StatusBanner, bannerPlan.Target);
+            Assert.Equal(tone, bannerPlan.Tone);
+            Assert.Equal("Notice title", bannerPlan.Title);
+            Assert.Equal("Notice sentence", bannerPlan.Sentence);
+        }
+
+        var undoCardPlan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
+            isUndoAction: true,
+            isRecoveryCardVisible: true,
+            lastPasteRequestedEntryId: cardId,
+            isTargetCardRendered: true,
+            title: "Dictation placed on clipboard",
+            sentence: "Words are on the clipboard.",
+            tone: HistoryPasteNoticeTone.Warning);
+        Assert.Equal(HistoryPasteNoticeTarget.RecoveryCard, undoCardPlan.Target);
+
+        var undoCollapsedPlan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
+            isUndoAction: true,
+            isRecoveryCardVisible: false,
+            lastPasteRequestedEntryId: cardId,
+            isTargetCardRendered: true,
+            title: "Dictation placed on clipboard",
+            sentence: "Words are on the clipboard.",
+            tone: HistoryPasteNoticeTone.Warning);
+        Assert.Equal(HistoryPasteNoticeTarget.StatusBanner, undoCollapsedPlan.Target);
+
+        var root = FindRepositoryRoot();
+        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var surfaceBody = ExtractMethodBody(historyCs, "private void SurfacePasteNotice");
+        Assert.Contains("HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(", surfaceBody, StringComparison.Ordinal);
+        Assert.Contains("ShowMessage(plan.Title, plan.Sentence, severity);", surfaceBody, StringComparison.Ordinal);
+    }
+
     private static string ExtractMethodBody(string source, string methodName)
     {
         var start = source.IndexOf(methodName + "(", StringComparison.Ordinal);

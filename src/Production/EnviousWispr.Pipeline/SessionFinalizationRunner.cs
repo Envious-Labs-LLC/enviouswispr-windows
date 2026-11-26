@@ -444,7 +444,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     languageCode: DeliveryLanguagePolicy.For(transcript),
                     polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
                     polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
-                    audio: audio)
+                    audio: recoveryOnly ? null : audio)
                 .ConfigureAwait(false);
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
 

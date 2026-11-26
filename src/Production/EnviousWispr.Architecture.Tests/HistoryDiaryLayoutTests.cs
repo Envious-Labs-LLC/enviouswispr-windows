@@ -207,6 +207,29 @@ public sealed class HistoryDiaryLayoutTests
         Assert.Contains("\"Select dictations\"", historyCode, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void BrandHistoryListItemStyleBindsContentTemplateSelectorAndSelectorHasBothRowTemplates()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var controlsDoc = XDocument.Load(Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+        var itemStyle = controlsDoc
+            .Descendants(XName.Get("Style", PresentationNamespace))
+            .Single(style => string.Equals((string?)style.Attribute(XName.Get("Key", XamlNamespace)), "BrandHistoryListItemStyle", StringComparison.Ordinal));
+        var presenter = itemStyle.Descendants(XName.Get("ContentPresenter", PresentationNamespace)).Single();
+
+        Assert.Equal("{TemplateBinding Content}", (string?)presenter.Attribute("Content"));
+        Assert.Equal("{TemplateBinding ContentTemplate}", (string?)presenter.Attribute("ContentTemplate"));
+        Assert.Equal("{TemplateBinding ContentTemplateSelector}", (string?)presenter.Attribute("ContentTemplateSelector"));
+
+        var mainDoc = LoadMainWindow(repositoryRoot);
+        var historyList = FindNamed(mainDoc, "HistoryList");
+        var selector = historyList
+            .Descendants()
+            .Single(el => el.Name.LocalName == "HistoryDiaryRowTemplateSelector");
+        Assert.Contains(selector.Elements(), el => el.Name.LocalName == "HistoryDiaryRowTemplateSelector.DayHeaderTemplate");
+        Assert.Contains(selector.Elements(), el => el.Name.LocalName == "HistoryDiaryRowTemplateSelector.CardTemplate");
+    }
+
     private static XDocument LoadMainWindow(string repositoryRoot) =>
         XDocument.Load(Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 

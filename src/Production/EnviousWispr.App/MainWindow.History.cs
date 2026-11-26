@@ -167,7 +167,11 @@ public sealed partial class MainWindow
 
         if (refusal is not null)
         {
-            SurfacePasteNotice(action, SavedDictationPasteRefusalSentence(refusal), isError: false);
+            SurfacePasteNotice(
+                action,
+                "Could not paste right now",
+                SavedDictationPasteRefusalSentence(refusal),
+                HistoryPasteNoticeTone.Informational);
             return;
         }
 
@@ -199,66 +203,90 @@ public sealed partial class MainWindow
             case SavedDictationPasteOutcome.KeptOnClipboard:
                 SurfacePasteNotice(
                     action,
+                    "Dictation placed on clipboard",
                     undo
                         ? "Could not return to the previous app, so your words are on the clipboard instead."
                         : "That app refused the paste, so your words are on the clipboard. Paste where you want them.",
-                    isError: false);
+                    HistoryPasteNoticeTone.Warning);
                 break;
             case SavedDictationPasteOutcome.MayHavePasted:
                 SurfacePasteNotice(
                     action,
+                    "Paste could not be confirmed",
                     undo
                         ? "Could not confirm the paste. Check the app before trying again; the copy is still here."
                         : "Could not confirm the paste. Check the app before trying again.",
-                    isError: false);
+                    HistoryPasteNoticeTone.Warning);
                 break;
             case SavedDictationPasteOutcome.NoLongerAvailable:
                 SurfacePasteNotice(
                     action,
+                    "Dictation is no longer available",
                     "This dictation was deleted or expired, so nothing was pasted.",
-                    isError: false);
+                    HistoryPasteNoticeTone.Informational);
                 break;
             case SavedDictationPasteOutcome.DictationInProgress or SavedDictationPasteOutcome.Busy:
                 SurfacePasteNotice(
                     action,
+                    "Could not paste right now",
                     "EnviousWispr is busy with a dictation. Try again in a moment.",
-                    isError: false);
+                    HistoryPasteNoticeTone.Informational);
                 break;
             case SavedDictationPasteOutcome.NoTarget:
                 SurfacePasteNotice(
                     action,
+                    "No active target to paste into",
                     undo
                         ? "The app you were dictating into has closed. Copy the text from here instead."
                         : "Click into the app you want it in, then try Paste again.",
-                    isError: false);
+                    HistoryPasteNoticeTone.Warning);
                 break;
             case SavedDictationPasteOutcome.Failed:
                 SurfacePasteNotice(
                     action,
+                    "Dictation could not be pasted",
                     "Could not paste into that app. Copy the text instead.",
-                    isError: true);
+                    HistoryPasteNoticeTone.Error);
                 break;
         }
     }
 
-    private void SurfacePasteNotice(SavedDictationPasteAction action, string sentence, bool isError)
+    private void SurfacePasteNotice(
+        SavedDictationPasteAction action,
+        string title,
+        string sentence,
+        HistoryPasteNoticeTone tone)
     {
-        if (action == SavedDictationPasteAction.Undo && RecoveryCard.Visibility == Visibility.Visible)
-        {
-            RecoveryBodyText.Text = sentence;
-            return;
-        }
+        var isTargetCardRendered = _lastPasteRequestedEntryId is { } targetId
+            && _renderedHistoryItems.Any(item => item.Id == targetId);
+        var plan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
+            isUndoAction: action == SavedDictationPasteAction.Undo,
+            isRecoveryCardVisible: RecoveryCard.Visibility == Visibility.Visible,
+            lastPasteRequestedEntryId: _lastPasteRequestedEntryId,
+            isTargetCardRendered: isTargetCardRendered,
+            title: title,
+            sentence: sentence,
+            tone: tone);
 
-        if (_lastPasteRequestedEntryId is { } targetId
-            && _renderedHistoryItems.Any(item => item.Id == targetId))
+        switch (plan.Target)
         {
-            SetCardInlineNotice(targetId, sentence);
-            return;
-        }
+            case HistoryPasteNoticeTarget.RecoveryCard:
+                RecoveryBodyText.Text = plan.Sentence;
+                break;
 
-        if (isError)
-        {
-            ShowMessage("Dictation could not be pasted", sentence, InfoBarSeverity.Error);
+            case HistoryPasteNoticeTarget.CardInline when plan.TargetEntryId is { } entryId:
+                SetCardInlineNotice(entryId, plan.Sentence);
+                break;
+
+            default:
+                var severity = plan.Tone switch
+                {
+                    HistoryPasteNoticeTone.Error => InfoBarSeverity.Error,
+                    HistoryPasteNoticeTone.Warning => InfoBarSeverity.Warning,
+                    _ => InfoBarSeverity.Informational,
+                };
+                ShowMessage(plan.Title, plan.Sentence, severity);
+                break;
         }
     }
 

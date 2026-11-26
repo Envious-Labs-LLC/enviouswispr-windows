@@ -1379,6 +1379,7 @@
                         Background="{TemplateBinding Background}"
                         Content="{TemplateBinding Content}"
                         ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTemplateSelector="{TemplateBinding ContentTemplateSelector}"
                         ContentTransitions="{TemplateBinding ContentTransitions}" />
                 </ControlTemplate>
             </Setter.Value>
