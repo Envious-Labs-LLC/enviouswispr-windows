@@ -1,6 +1,7 @@
 using System.Security;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.History;
 
 namespace EnviousWispr.Services.History;
@@ -136,26 +137,36 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
 
     public void ClearAll() => DeleteAllFiles(RecordingsDirectory);
 
-    public static void DeleteAllFiles(string recordingsDirectory)
+    public static void DeleteAllFiles(string recordingsDirectory) =>
+        _ = DeleteAllFilesWithOutcome(recordingsDirectory);
+
+    internal static AppErrorCode? DeleteAllFilesWithOutcome(string recordingsDirectory)
     {
         if (string.IsNullOrWhiteSpace(recordingsDirectory) || !Directory.Exists(recordingsDirectory))
         {
-            return;
+            return null;
         }
 
+        AppErrorCode? firstError = null;
         try
         {
             foreach (var path in Directory.EnumerateFiles(recordingsDirectory, "*.wav"))
             {
-                TryDeletePath(path);
+                firstError ??= TryDeletePathOutcome(path);
             }
 
-            CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow);
+            firstError ??= CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow);
         }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or SecurityException)
+        catch (IOException)
         {
+            firstError ??= AppErrorCode.StorageUnavailable;
         }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or SecurityException)
+        {
+            firstError ??= AppErrorCode.AccessDenied;
+        }
+
+        return firstError;
     }
 
     public void DeleteFile(string? fileName)
@@ -175,8 +186,15 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
 
     public static string BuildFileName(Guid entryId) => $"{entryId:D}.wav";
 
-    private static void CleanupTempFiles(string recordingsDirectory, TimeSpan? maxAge, DateTimeOffset now)
+    internal static AppErrorCode? TryDeleteNamedFileOutcome(string recordingsDirectory, string? fileName)
     {
+        var path = ResolveSafePath(recordingsDirectory, fileName);
+        return path is null ? null : TryDeletePathOutcome(path);
+    }
+
+    private static AppErrorCode? CleanupTempFiles(string recordingsDirectory, TimeSpan? maxAge, DateTimeOffset now)
+    {
+        AppErrorCode? firstError = null;
         foreach (var path in Directory.EnumerateFiles(recordingsDirectory, "*.tmp"))
         {
             if (maxAge is { } threshold)
@@ -196,27 +214,36 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
                 }
             }
 
-            TryDeletePath(path);
+            firstError ??= TryDeletePathOutcome(path);
         }
+
+        return firstError;
     }
 
-    private string? ResolveSafePath(string? fileName)
+    private string? ResolveSafePath(string? fileName) =>
+        ResolveSafePath(RecordingsDirectory, fileName);
+
+    internal static string? ResolveSafePath(string recordingsDirectory, string? fileName)
     {
-        if (string.IsNullOrWhiteSpace(fileName)
+        if (string.IsNullOrWhiteSpace(recordingsDirectory)
+            || string.IsNullOrWhiteSpace(fileName)
             || Path.IsPathRooted(fileName)
             || !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal))
         {
             return null;
         }
 
-        var full = Path.GetFullPath(Path.Combine(RecordingsDirectory, fileName));
-        var rootWithSep = RecordingsDirectory.EndsWith(Path.DirectorySeparatorChar)
-            ? RecordingsDirectory
-            : RecordingsDirectory + Path.DirectorySeparatorChar;
+        var fullRoot = Path.GetFullPath(recordingsDirectory);
+        var full = Path.GetFullPath(Path.Combine(fullRoot, fileName));
+        var rootWithSep = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
         return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 
-    private static void TryDeletePath(string path)
+    private static void TryDeletePath(string path) => _ = TryDeletePathOutcome(path);
+
+    internal static AppErrorCode? TryDeletePathOutcome(string path)
     {
         try
         {
@@ -224,10 +251,16 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
             {
                 File.Delete(path);
             }
+
+            return null;
         }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or SecurityException)
+        catch (IOException)
         {
+            return AppErrorCode.StorageUnavailable;
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or SecurityException)
+        {
+            return AppErrorCode.AccessDenied;
         }
     }
 }

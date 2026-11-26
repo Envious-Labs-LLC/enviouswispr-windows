@@ -137,6 +137,7 @@ public sealed partial class MainWindow
     private bool _hasEgOneInventorySnapshot;
     private string? _cloudPolishNotice;
     private string? _ollamaPolishNotice;
+    private string? _lastOllamaModelsNotice;
 
     public void SetCloudPolishNotice(string? notice)
     {
@@ -147,9 +148,15 @@ public sealed partial class MainWindow
     public void SetOllamaPolishNotice(string? notice)
     {
         _ollamaPolishNotice = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
-        if (OllamaNoticeText is not null && !string.IsNullOrWhiteSpace(_ollamaPolishNotice))
+        if (OllamaNoticeText is not null)
         {
-            SetLiveRegion(OllamaNoticeText, _ollamaPolishNotice, Visibility.Visible);
+            var effectiveNotice = HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(
+                _ollamaPolishNotice,
+                _lastOllamaModelsNotice);
+            SetLiveRegion(
+                OllamaNoticeText,
+                effectiveNotice ?? string.Empty,
+                effectiveNotice is null ? Visibility.Collapsed : Visibility.Visible);
         }
 
         UpdateActivePolishProviderDisplay();

@@ -19,6 +19,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
     private MediaSource? _currentSource;
     private InMemoryRandomAccessStream? _currentStream;
     private long _loadGeneration;
+    private long _mediaGeneration;
     private bool _disposed;
 
     public WindowsAudioPlaybackService(DispatcherQueue dispatcherQueue)
@@ -210,6 +211,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
             stream = null;
             source = null;
 
+            Interlocked.Increment(ref _mediaGeneration);
             player.Source = _currentSource;
             var naturalMs = (long)player.PlaybackSession.NaturalDuration.TotalMilliseconds;
             var durationMs = naturalMs > 0 ? naturalMs : expectedDurationMs;
@@ -264,6 +266,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
 
     private void ReplaceMediaResources(MediaSource nextSource, InMemoryRandomAccessStream nextStream)
     {
+        Interlocked.Increment(ref _mediaGeneration);
         if (_player is not null)
         {
             _player.Pause();
@@ -278,6 +281,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
 
     private void StopMediaCore()
     {
+        Interlocked.Increment(ref _mediaGeneration);
         if (_player is not null)
         {
             _player.Pause();
@@ -307,9 +311,16 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
 
     private void OnMediaEnded(MediaPlayer sender, object args)
     {
+        var callbackGeneration = Volatile.Read(ref _mediaGeneration);
         _dispatcherQueue.TryEnqueue(() =>
         {
-            if (_disposed || _tracker.ActiveEntryId is not { } activeId)
+            if (!HistoryPlaybackPresentation.ShouldAcceptMediaCallback(
+                    _disposed,
+                    callbackGeneration,
+                    Volatile.Read(ref _mediaGeneration),
+                    hasLoadedSource: _player is not null && _currentSource is not null,
+                    _tracker.ActiveEntryId)
+                || _tracker.ActiveEntryId is not { } activeId)
             {
                 return;
             }
@@ -328,9 +339,16 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
 
     private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
     {
+        var callbackGeneration = Volatile.Read(ref _mediaGeneration);
         _dispatcherQueue.TryEnqueue(() =>
         {
-            if (_disposed || _tracker.ActiveEntryId is not { } activeId)
+            if (!HistoryPlaybackPresentation.ShouldAcceptMediaCallback(
+                    _disposed,
+                    callbackGeneration,
+                    Volatile.Read(ref _mediaGeneration),
+                    hasLoadedSource: _player is not null && _currentSource is not null,
+                    _tracker.ActiveEntryId)
+                || _tracker.ActiveEntryId is not { } activeId)
             {
                 return;
             }

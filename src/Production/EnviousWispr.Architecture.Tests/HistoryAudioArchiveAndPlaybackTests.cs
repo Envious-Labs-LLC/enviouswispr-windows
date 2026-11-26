@@ -740,6 +740,130 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.Contains("ShowMessage(plan.Title, plan.Sentence, severity);", surfaceBody, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ExplicitDeleteManyAndClearFailWithoutErasingHistoryWhenAudioCannotBeRemoved()
+    {
+        using var temp = new TempFolder();
+        var historyPath = Path.Combine(temp.Path, "history.json");
+        var recordingsDir = Path.Combine(temp.Path, "recordings", "dictations");
+        Directory.CreateDirectory(recordingsDir);
+
+        using var store = new JsonHistoryStore(historyPath, recordingsDir);
+        var archive = new LocalDictationAudioArchive(recordingsDir);
+        var audio = new CapturedAudio(DictationSessionId.Create(), new float[1600], 16_000, 1);
+
+        var entry1 = DictationHistoryEntry.Create(Now, "Entry one", "parakeet", false, true);
+        var saved1 = archive.SaveForEntry(entry1.Id, audio)!;
+        await store.AddAsync(entry1 with { AudioFileName = saved1.FileName, AudioDurationMs = saved1.DurationMs }, 30, Now);
+
+        var entry2 = DictationHistoryEntry.Create(Now.AddMinutes(1), "Entry two", "parakeet", false, true);
+        var saved2 = archive.SaveForEntry(entry2.Id, audio)!;
+        await store.AddAsync(entry2 with { AudioFileName = saved2.FileName, AudioDurationMs = saved2.DurationMs }, 30, Now.AddMinutes(1));
+
+        var wav1Path = Path.Combine(recordingsDir, saved1.FileName);
+        var wav2Path = Path.Combine(recordingsDir, saved2.FileName);
+
+        // Locking entry1's WAV must fail explicit DeleteAsync and keep entry1 in history.json.
+        using (new FileStream(wav1Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var deleteResult = await store.DeleteAsync(entry1.Id);
+            Assert.False(deleteResult.Succeeded);
+            Assert.Equal(AppErrorCode.StorageUnavailable, deleteResult.Error?.Code);
+
+            var loaded = await store.LoadAsync(30, Now.AddMinutes(2));
+            Assert.Equal(2, loaded.Entries.Count);
+            Assert.Contains(loaded.Entries, e => e.Id == entry1.Id);
+            Assert.True(File.Exists(wav1Path));
+        }
+
+        // Locking entry2's WAV must fail explicit DeleteManyAsync and keep entry2 in history.json.
+        using (new FileStream(wav2Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var deleteManyResult = await store.DeleteManyAsync([entry2.Id]);
+            Assert.False(deleteManyResult.Succeeded);
+            Assert.Equal(AppErrorCode.StorageUnavailable, deleteManyResult.Error?.Code);
+
+            var loaded = await store.LoadAsync(30, Now.AddMinutes(2));
+            Assert.Equal(2, loaded.Entries.Count);
+            Assert.Contains(loaded.Entries, e => e.Id == entry2.Id);
+
+            // ClearAsync must likewise fail when any WAV under recordingsDir remains locked.
+            var clearLockedResult = await store.ClearAsync();
+            Assert.False(clearLockedResult.Succeeded);
+            Assert.Equal(AppErrorCode.StorageUnavailable, clearLockedResult.Error?.Code);
+            Assert.Equal(2, (await store.LoadAsync(30, Now.AddMinutes(2))).Entries.Count);
+        }
+
+        // Releasing all locks allows ClearAsync to succeed and remove both entries and WAVs.
+        var clearResult = await store.ClearAsync();
+        Assert.True(clearResult.Succeeded);
+        Assert.Empty((await store.LoadAsync(30, Now.AddMinutes(2))).Entries);
+        Assert.Empty(Directory.GetFiles(recordingsDir));
+
+        // Passive LoadAsync retention pruning must still remain non-fatal even when an expired entry's WAV is locked.
+        var expired = DictationHistoryEntry.Create(Now.AddDays(-10), "Expired entry", "parakeet", false, true);
+        var savedExpired = archive.SaveForEntry(expired.Id, audio)!;
+        await store.AddAsync(expired with { AudioFileName = savedExpired.FileName, AudioDurationMs = savedExpired.DurationMs }, 30, Now);
+        var expiredWavPath = Path.Combine(recordingsDir, savedExpired.FileName);
+        using (new FileStream(expiredWavPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var passiveLoaded = await store.LoadAsync(1, Now);
+            Assert.Equal(HistoryLoadStatus.Loaded, passiveLoaded.Status);
+            Assert.Empty(passiveLoaded.Entries);
+        }
+    }
+
+    [Fact]
+    public void MediaPlaybackCallbackGuardRejectsStaleDisposedOrUnloadedCallbacks()
+    {
+        var activeId = Guid.NewGuid();
+        Assert.True(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(
+            disposed: false,
+            callbackGeneration: 3,
+            currentGeneration: 3,
+            hasLoadedSource: true,
+            activeEntryId: activeId));
+
+        Assert.False(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(false, 2, 3, true, activeId));
+        Assert.False(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(false, 0, 0, true, activeId));
+        Assert.False(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(true, 3, 3, true, activeId));
+        Assert.False(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(false, 3, 3, false, activeId));
+        Assert.False(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(false, 3, 3, true, null));
+        Assert.False(HistoryPlaybackPresentation.ShouldAcceptMediaCallback(false, 3, 3, true, Guid.Empty));
+
+        var root = FindRepositoryRoot();
+        var playbackCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "Services", "WindowsAudioPlaybackService.cs"));
+        Assert.Contains("Interlocked.Increment(ref _mediaGeneration);", playbackCs, StringComparison.Ordinal);
+
+        foreach (var callbackName in new[] { "OnMediaEnded", "OnMediaFailed" })
+        {
+            var body = ExtractMethodBody(playbackCs, callbackName);
+            Assert.Contains("var callbackGeneration = Volatile.Read(ref _mediaGeneration);", body, StringComparison.Ordinal);
+            Assert.Contains("HistoryPlaybackPresentation.ShouldAcceptMediaCallback(", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void SetOllamaPolishNoticeClearsStaleNoticeAndPreservesActiveCatalogFallback()
+    {
+        Assert.Equal("Model warmup failed", HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay("Model warmup failed", null));
+        Assert.Equal("Model warmup failed", HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay("Model warmup failed", "Ollama warning"));
+        Assert.Equal("Ollama warning", HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(null, "Ollama warning"));
+        Assert.Equal("Ollama warning", HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay("   ", "Ollama warning"));
+        Assert.Null(HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(null, null));
+        Assert.Null(HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay("  ", " "));
+
+        var root = FindRepositoryRoot();
+        var polishCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.AiPolish.cs"));
+        var setOllamaBody = ExtractMethodBody(polishCs, "SetOllamaPolishNotice");
+        Assert.Contains("HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(", setOllamaBody, StringComparison.Ordinal);
+        Assert.Contains("effectiveNotice is null ? Visibility.Collapsed : Visibility.Visible", setOllamaBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("ShowMessage(", setOllamaBody, StringComparison.Ordinal);
+
+        var ollamaCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.OllamaModels.cs"));
+        Assert.Contains("HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(", ollamaCs, StringComparison.Ordinal);
+    }
+
     private static string ExtractMethodBody(string source, string methodName)
     {
         var start = source.IndexOf(methodName + "(", StringComparison.Ordinal);

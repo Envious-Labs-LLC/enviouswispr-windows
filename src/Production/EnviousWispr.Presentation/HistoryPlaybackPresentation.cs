@@ -283,6 +283,31 @@ public static class HistoryPlaybackPresentation
     public static bool CanTogglePlayback(bool hasAudioRecording, bool isGlobalBusy, bool isPlaying) =>
         hasAudioRecording && (!isGlobalBusy || isPlaying);
 
+    public static bool ShouldAcceptMediaCallback(
+        bool disposed,
+        long callbackGeneration,
+        long currentGeneration,
+        bool hasLoadedSource,
+        Guid? activeEntryId) =>
+        !disposed
+        && callbackGeneration > 0
+        && callbackGeneration == currentGeneration
+        && hasLoadedSource
+        && activeEntryId is { } entryId
+        && entryId != Guid.Empty;
+
+    public static string? ResolveOllamaNoticeDisplay(string? localPolishNotice, string? ollamaCatalogNotice)
+    {
+        if (!string.IsNullOrWhiteSpace(localPolishNotice))
+        {
+            return localPolishNotice.Trim();
+        }
+
+        return !string.IsNullOrWhiteSpace(ollamaCatalogNotice)
+            ? ollamaCatalogNotice.Trim()
+            : null;
+    }
+
     public static HistoryPasteNoticePlan PlanSavedDictationPasteNotice(
         bool isUndoAction,
         bool isRecoveryCardVisible,

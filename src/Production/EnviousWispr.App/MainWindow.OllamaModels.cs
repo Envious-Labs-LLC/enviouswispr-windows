@@ -195,7 +195,10 @@ public sealed partial class MainWindow
             OllamaModelSearchBox.Visibility = showsModels ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        var notice = view.Notice ?? string.Empty;
+        _lastOllamaModelsNotice = string.IsNullOrWhiteSpace(view.Notice) ? null : view.Notice.Trim();
+        var notice = HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(
+            _ollamaPolishNotice,
+            _lastOllamaModelsNotice) ?? string.Empty;
         if (OllamaNoticeText.Text != notice)
         {
             SetLiveRegion(OllamaNoticeText, notice, notice.Length == 0 ? Visibility.Collapsed : Visibility.Visible);
