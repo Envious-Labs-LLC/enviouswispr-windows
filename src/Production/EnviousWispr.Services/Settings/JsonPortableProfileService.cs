@@ -130,6 +130,16 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 };
             }
 
+            // Importing a profile adopts the user's explicit snippet list (including empty); it must
+            // never cause one-time starter seeding to inject examples on the next settings load.
+            if (profile?.UserData is { HasSeededStarterSnippets: false } importedUserData)
+            {
+                profile = profile with
+                {
+                    UserData = importedUserData.WithHasSeededStarterSnippets(true),
+                };
+            }
+
             // A PROFILE CANNOT BRING IN A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN: the hook refuses both, and with
             // them the whole hook, so the import would leave dictation dead at the next launch. Refused here, before
             // anything is applied, rather than in the settings-file validator, where a refusal resets every setting. #66.

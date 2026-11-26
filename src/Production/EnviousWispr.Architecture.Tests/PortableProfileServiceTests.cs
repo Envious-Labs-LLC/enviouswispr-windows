@@ -407,6 +407,41 @@ public sealed class PortableProfileServiceTests
         });
     }
 
+    [Fact]
+    public async Task ImportPreservesEmptySnippetsFromOlderProfileAcrossRestart()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var profilePath = Path.Combine(directory, "legacy-empty-snippets.json");
+            var legacy = (AppSettings.Default with
+            {
+                UserData = ReusableUserData.Empty,
+            }).ToPortableProfile() with
+            {
+                SchemaVersion = 21,
+            };
+            var root = JsonNode.Parse(JsonSerializer.Serialize(legacy, JsonSettingsStore.SerializerOptions))!.AsObject();
+            root["userData"]!.AsObject().Remove("hasSeededStarterSnippets");
+            await File.WriteAllTextAsync(profilePath, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var imported = await new JsonPortableProfileService().ImportAsync(profilePath);
+            Assert.Equal(PortableProfileImportStatus.Imported, imported.Status);
+            Assert.NotNull(imported.Profile);
+            Assert.True(imported.Profile!.UserData.HasSeededStarterSnippets);
+            Assert.Empty(imported.Profile.UserData.Snippets);
+
+            var applied = AppSettings.Default.Apply(imported.Profile);
+            var settingsPath = Path.Combine(directory, "settings.json");
+            var store = new JsonSettingsStore(settingsPath);
+            await store.SaveAsync(applied);
+
+            var reloaded = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, reloaded.Status);
+            Assert.True(reloaded.Settings.UserData.HasSeededStarterSnippets);
+            Assert.Empty(reloaded.Settings.UserData.Snippets);
+        });
+    }
+
     private static IEnumerable<string> DescendantPropertyNames(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)

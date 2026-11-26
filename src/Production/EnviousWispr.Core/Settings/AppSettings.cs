@@ -64,6 +64,8 @@ public sealed record AppSettings(
     public AppSettings Apply(PortableProfile profile) => this with
     {
         Preferences = profile.Preferences,
-        UserData = profile.UserData,
+        UserData = profile.UserData.HasSeededStarterSnippets
+            ? profile.UserData
+            : profile.UserData.WithHasSeededStarterSnippets(true),
     };
 }
