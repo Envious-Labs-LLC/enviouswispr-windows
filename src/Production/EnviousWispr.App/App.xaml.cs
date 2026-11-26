@@ -148,7 +148,7 @@ public partial class App : Application, IAsyncDisposable
                 Dictation: () => _settings.Preferences.Dictation),
             TimeProvider.System,
             _dictationAudioArchive,
-            new LearnedWordCheckStep(EnsureLearnedWordChecker)));
+            EnsureLearnedWordCheckStep()));
         _sessionPersistence = _runtime.Persistence;
         _livePreview = _runtime.Preview;
         _streaming = _runtime.Streaming;

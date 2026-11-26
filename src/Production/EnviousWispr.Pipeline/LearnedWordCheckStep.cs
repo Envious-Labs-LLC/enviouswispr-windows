@@ -49,28 +49,46 @@ public sealed class LearnedWordCheckStep
             return new LearnedWordCheckOutcome(text, 0, 0, 0, 0, 0, null, false);
         }
 
+        var timer = Stopwatch.StartNew();
         var learned = LearnedWordCandidates.ExtractLearnedWords(customWords);
         if (learned.Count == 0)
         {
             return new LearnedWordCheckOutcome(text, 0, 0, 0, 0, 0, null, false);
         }
 
-        var questions = LearnedWordCandidates.Search(text, learned);
+        var searchBudget = _answerDeadline - timer.Elapsed;
+        var questions = LearnedWordCandidates.Search(
+            text,
+            learned,
+            searchBudget: searchBudget > TimeSpan.Zero ? searchBudget : TimeSpan.Zero);
         if (questions.Count == 0)
         {
-            return new LearnedWordCheckOutcome(text, 0, 0, 0, 0, 0, null, false);
+            return new LearnedWordCheckOutcome(text, 0, 0, 0, 0, timer.ElapsedMilliseconds, null, false);
         }
 
         var checker = _checkerAccessor();
         if (checker is null)
         {
-            return new LearnedWordCheckOutcome(text, questions.Count, 0, 0, 0, 0, null, false);
+            return new LearnedWordCheckOutcome(text, questions.Count, 0, 0, 0, timer.ElapsedMilliseconds, null, false);
         }
 
-        var timer = Stopwatch.StartNew();
+        var remaining = _answerDeadline - timer.Elapsed;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return new LearnedWordCheckOutcome(
+                text,
+                questions.Count,
+                0,
+                0,
+                0,
+                timer.ElapsedMilliseconds,
+                ProviderId: null,
+                UsedFallback: true);
+        }
+
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var decideTask = checker.DecideAsync(questions, language, deadlineCts.Token);
-        var delayTask = Task.Delay(_answerDeadline, CancellationToken.None);
+        var delayTask = Task.Delay(remaining, CancellationToken.None);
         var finished = await Task.WhenAny(decideTask, delayTask).ConfigureAwait(false);
         if (!ReferenceEquals(finished, decideTask))
         {

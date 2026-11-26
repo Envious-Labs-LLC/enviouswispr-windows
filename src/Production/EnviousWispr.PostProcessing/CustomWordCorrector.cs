@@ -507,13 +507,14 @@ public static partial class CustomWordCorrector
     {
         foreach (var entry in entries)
         {
-            if (excludeLearnedAliases && entry.LearnedAt.HasValue)
+            if (excludeLearnedAliases && entry.IsPureAutoLearned)
             {
                 continue;
             }
 
-            HashSet<string>? learnedAliases = excludeLearnedAliases && entry.LearnedAliases.Count > 0
-                ? entry.LearnedAliases.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            var effectiveLearned = excludeLearnedAliases ? entry.EffectiveLearnedAliases() : [];
+            HashSet<string>? learnedAliases = effectiveLearned.Count > 0
+                ? effectiveLearned.ToHashSet(StringComparer.OrdinalIgnoreCase)
                 : null;
             foreach (var alias in entry.Aliases)
             {
@@ -533,7 +534,7 @@ public static partial class CustomWordCorrector
 
         foreach (var entry in entries)
         {
-            if (excludeLearnedAliases && entry.LearnedAt.HasValue)
+            if (excludeLearnedAliases && entry.IsPureAutoLearned)
             {
                 continue;
             }

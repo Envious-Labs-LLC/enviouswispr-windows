@@ -2,6 +2,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
+using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing.Learning;
 using EnviousWispr.Presentation.Learning;
 using EnviousWispr.Services.Input;
@@ -16,6 +17,7 @@ public partial class App
     private EgOneCorrectionJudge? _egOneCorrectionJudge;
     private FallbackCorrectionJudge? _correctionJudge;
     private ILearnedWordChecker? _learnedWordChecker;
+    private LearnedWordCheckStep? _learnedWordCheckStep;
     private WindowsPastedRegionObserver? _pastedRegionObserver;
     private LearnedCorrectionCoordinator? _learnedCoordinator;
     private ObservedCorrectionWatcher? _correctionWatcher;
@@ -66,6 +68,9 @@ public partial class App
         _learnedPresenter = presenter;
         _correctionWatcher = watcher;
     }
+
+    private LearnedWordCheckStep EnsureLearnedWordCheckStep() =>
+        _learnedWordCheckStep ??= new LearnedWordCheckStep(EnsureLearnedWordChecker);
 
     private ILearnedWordChecker EnsureLearnedWordChecker() =>
         _learnedWordChecker ??= new FallbackLearnedWordChecker(

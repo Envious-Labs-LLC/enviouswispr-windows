@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
@@ -12,6 +13,7 @@ public static class LearnedWordCandidates
 {
     public const int DefaultMaxSpots = 16;
     public const int MaxContextUtf16 = 400;
+    public static readonly TimeSpan DefaultSearchBudget = TimeSpan.FromMilliseconds(200);
 
     private readonly record struct RawCandidate(
         int RangeStart,
@@ -34,9 +36,7 @@ public static class LearnedWordCandidates
                 continue;
             }
 
-            var misspellings = entry.LearnedAt.HasValue
-                ? entry.Aliases
-                : entry.LearnedAliases;
+            var misspellings = entry.EffectiveLearnedAliases();
             var cleaned = misspellings
                 .Select(CustomWordCorrector.CollapseSpaces)
                 .Where(s => !string.IsNullOrEmpty(s))
@@ -54,7 +54,8 @@ public static class LearnedWordCandidates
     public static IReadOnlyList<LearnedWordCheckQuestion> Search(
         string text,
         IReadOnlyList<LearnedWord> learnedWords,
-        int maxSpots = DefaultMaxSpots)
+        int maxSpots = DefaultMaxSpots,
+        TimeSpan? searchBudget = null)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(learnedWords);
@@ -64,11 +65,23 @@ public static class LearnedWordCandidates
             return [];
         }
 
+        var budget = searchBudget ?? DefaultSearchBudget;
+        if (budget <= TimeSpan.Zero)
+        {
+            return [];
+        }
+
+        var budgetTimer = Stopwatch.StartNew();
         var raw = new List<RawCandidate>();
         var seen = new HashSet<(int Start, int Length, string Word)>();
 
         foreach (var word in learnedWords)
         {
+            if (budgetTimer.Elapsed >= budget)
+            {
+                break;
+            }
+
             if (string.IsNullOrWhiteSpace(word.Canonical))
             {
                 continue;
@@ -76,30 +89,48 @@ public static class LearnedWordCandidates
 
             foreach (var misspelling in word.ObservedMisspellings)
             {
+                if (budgetTimer.Elapsed >= budget)
+                {
+                    break;
+                }
+
                 var surface = CustomWordCorrector.CollapseSpaces(misspelling);
-                if (string.IsNullOrEmpty(surface))
+                if (string.IsNullOrEmpty(surface) || !ContainsAllSurfaceTokens(text, surface))
                 {
                     continue;
                 }
 
-                var pattern = CustomWordCorrector.SurfacePattern(surface);
-                foreach (Match match in Regex.Matches(
-                    text,
-                    pattern,
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-                    TimeSpan.FromMilliseconds(250)))
+                var remaining = budget - budgetTimer.Elapsed;
+                if (remaining <= TimeSpan.Zero)
                 {
-                    if (match.Length == 0 ||
-                        string.Equals(match.Value, word.Canonical, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
+                    break;
+                }
 
-                    var key = (match.Index, match.Length, word.Canonical);
-                    if (seen.Add(key))
+                var pattern = CustomWordCorrector.SurfacePattern(surface);
+                try
+                {
+                    foreach (Match match in Regex.Matches(
+                        text,
+                        pattern,
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                        remaining))
                     {
-                        raw.Add(new RawCandidate(match.Index, match.Length, word.Canonical));
+                        if (match.Length == 0 ||
+                            string.Equals(match.Value, word.Canonical, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        var key = (match.Index, match.Length, word.Canonical);
+                        if (seen.Add(key))
+                        {
+                            raw.Add(new RawCandidate(match.Index, match.Length, word.Canonical));
+                        }
                     }
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    break;
                 }
             }
         }
@@ -203,5 +234,29 @@ public static class LearnedWordCandidates
         }
 
         return (start, end - start);
+    }
+
+    private static bool ContainsAllSurfaceTokens(string text, string surface)
+    {
+        var span = surface.AsSpan();
+        while (!span.IsEmpty)
+        {
+            var space = span.IndexOf(' ');
+            var token = space < 0 ? span : span[..space];
+            if (!token.IsEmpty &&
+                text.AsSpan().IndexOf(token, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            if (space < 0)
+            {
+                break;
+            }
+
+            span = span[(space + 1)..];
+        }
+
+        return true;
     }
 }

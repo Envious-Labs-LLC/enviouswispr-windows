@@ -64,6 +64,22 @@ public sealed record CustomWordEntry
     [JsonIgnore]
     public bool IsAutoLearned => LearnedAt.HasValue || LearnedAliases.Count > 0;
 
+    /// <summary>Whether every spoken alias on this entry is auto-learned (no user-authored alias exists).</summary>
+    [JsonIgnore]
+    public bool IsPureAutoLearned =>
+        IsAutoLearned &&
+        (LearnedAliases.Count == 0
+            ? LearnedAt.HasValue
+            : Aliases.All(alias => LearnedAliases.Contains(alias, StringComparer.OrdinalIgnoreCase)));
+
+    /// <summary>Returns only the auto-learned aliases for this entry, preserving any user-added aliases on mixed entries.</summary>
+    public IReadOnlyList<string> EffectiveLearnedAliases() =>
+        LearnedAliases.Count > 0
+            ? LearnedAliases
+            : LearnedAt.HasValue
+                ? Aliases
+                : [];
+
     /// <summary>Primary spoken form for legacy 1-to-1 callers; falls back to <see cref="Replacement"/> when no aliases exist.</summary>
     public string SpokenForm => Aliases.Count > 0 ? Aliases[0] : Replacement;
 

@@ -46,6 +46,8 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 
     public bool WordCorrectionEnabled => shell.Dictation?.Invoke().WordCorrectionEnabled ?? false;
 
+    public bool FixLearnedWordsEnabled => shell.Dictation?.Invoke().FixLearnedWordsEnabled ?? true;
+
     public IReadOnlyList<CustomWordEntry> CustomWords => shell.CustomWords();
 
     public IReadOnlyList<string> EnabledVocabularyPackIds => shell.EnabledVocabularyPackIds?.Invoke() ?? [];

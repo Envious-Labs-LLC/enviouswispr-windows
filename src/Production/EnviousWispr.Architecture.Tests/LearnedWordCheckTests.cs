@@ -56,7 +56,7 @@ public sealed class LearnedWordCheckTests : IDisposable
             aliases: ["manual mix", "learned mix"],
             replacement: "MixedWord",
             learnedAliases: ["learned mix"],
-            learnedAt: null);
+            learnedAt: new DateTimeOffset(2026, 11, 26, 7, 30, 0, TimeSpan.Zero));
         var autoLearned = new CustomWordEntry(
             aliases: ["saurab"],
             replacement: "Saurabh",
@@ -70,6 +70,14 @@ public sealed class LearnedWordCheckTests : IDisposable
 
         var split = CustomWordCorrector.Correct(input, [manualOnly, mixed, autoLearned], packWords: null, excludeLearnedAliases: true);
         Assert.Equal("Use ManualWord, MixedWord, learned mix, and saurab.", split.Text);
+
+        var previewOff = LivePreviewTextFormatter.Format(
+            input,
+            wordCorrectionEnabled: true,
+            [manualOnly, mixed, autoLearned],
+            EnglishSpelling.American,
+            excludeLearnedAliases: true);
+        Assert.Equal("Use ManualWord, MixedWord, learned mix, and saurab.", previewOff);
     }
 
     [Fact]
@@ -80,7 +88,7 @@ public sealed class LearnedWordCheckTests : IDisposable
             aliases: ["handwritten", "learned form"],
             replacement: "Mixed",
             learnedAliases: ["learned form"],
-            learnedAt: null);
+            learnedAt: new DateTimeOffset(2026, 11, 26, 7, 30, 0, TimeSpan.Zero));
         var auto = new CustomWordEntry(
             aliases: ["saurab"],
             replacement: "Saurabh",
@@ -94,6 +102,7 @@ public sealed class LearnedWordCheckTests : IDisposable
 
         var prefix = string.Join(' ', Enumerable.Repeat("filler", 120));
         var longSentence = $"{prefix} please ask saurab about learned form today.";
+        Assert.Empty(LearnedWordCandidates.Search(longSentence, learned, searchBudget: TimeSpan.Zero));
         var questions = LearnedWordCandidates.Search(longSentence, learned);
         Assert.Equal(2, questions.Count);
         Assert.All(questions, q =>
