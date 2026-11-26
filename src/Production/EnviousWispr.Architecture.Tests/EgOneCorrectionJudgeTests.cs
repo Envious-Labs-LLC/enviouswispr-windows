@@ -56,7 +56,7 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         using var handler = new StubHandler(async (request, ct) =>
         {
             capturedBody = await request.Content!.ReadAsStringAsync(ct).ConfigureAwait(false);
-            return JsonReply("""{"decisions":[{"id":1,"vocabularyCorrection":true,"safeAlias":true},{"id":2,"vocabularyCorrection":true,"safeAlias":false},{"id":3,"vocabularyCorrection":false,"safeAlias":false}]}""");
+            return JsonReply("""{"decisions":[{"id":1,"vocabularyCorrection":true},{"id":2,"vocabularyCorrection":true},{"id":3,"vocabularyCorrection":false}]}""");
         });
         await using var provider = new EgOnePolishProvider(runtime, DefaultOptions, handler);
         var judge = new EgOneCorrectionJudge(() => provider);
@@ -81,7 +81,7 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         Assert.Equal(EgOneCorrectionJudge.ProviderId, verdict.ProviderId);
         Assert.Equal(3, verdict.Decisions.Count);
         Assert.Equal(CorrectionJudgeClass.CorrectionAndSafe, verdict.Decisions[0].Verdict);
-        Assert.Equal(CorrectionJudgeClass.CorrectionButUnsafe, verdict.Decisions[1].Verdict);
+        Assert.Equal(CorrectionJudgeClass.CorrectionAndSafe, verdict.Decisions[1].Verdict);
         Assert.Equal(CorrectionJudgeClass.NotCorrection, verdict.Decisions[2].Verdict);
         Assert.Equal(0, runtime.EnsureReadyCalls);
 
@@ -91,8 +91,13 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         Assert.Equal(0, root.GetProperty("temperature").GetInt32());
         Assert.False(root.GetProperty("cache_prompt").GetBoolean());
         Assert.Equal(0, root.GetProperty("id_slot").GetInt32());
-        Assert.Equal("json_schema", root.GetProperty("response_format").GetProperty("type").GetString());
-        Assert.True(root.GetProperty("response_format").GetProperty("json_schema").GetProperty("strict").GetBoolean());
+        var responseFormat = root.GetProperty("response_format");
+        Assert.Equal("json_schema", responseFormat.GetProperty("type").GetString());
+        var jsonSchema = responseFormat.GetProperty("json_schema");
+        Assert.True(jsonSchema.GetProperty("strict").GetBoolean());
+        var itemRequired = jsonSchema.GetProperty("schema").GetProperty("properties").GetProperty("decisions")
+            .GetProperty("items").GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToArray();
+        Assert.Equal(["id", "vocabularyCorrection"], itemRequired);
 
         var userContent = root.GetProperty("messages")[1].GetProperty("content").GetString()!;
         Assert.Contains("<\u200CCONTEXT>", userContent, StringComparison.Ordinal);
@@ -114,15 +119,20 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
 
         var fenced = """
             ```json
-            {"decisions":[{"id":2,"vocabularyCorrection":true,"safeAlias":false},{"id":1,"vocabularyCorrection":true,"safeAlias":true}]}
+            {"decisions":[{"id":2,"vocabularyCorrection":false},{"id":1,"vocabularyCorrection":true}]}
             ```
             """;
         var ok = Assert.IsType<CorrectionJudgeOutcome.Verdict>(EgOneCorrectionJudge.ParseOutcome(fenced, req));
         Assert.Equal([1, 2], ok.Decisions.Select(d => d.Id).ToArray());
         Assert.Equal(CorrectionJudgeClass.CorrectionAndSafe, ok.Decisions[0].Verdict);
-        Assert.Equal(CorrectionJudgeClass.CorrectionButUnsafe, ok.Decisions[1].Verdict);
+        Assert.Equal(CorrectionJudgeClass.NotCorrection, ok.Decisions[1].Verdict);
 
-        // Impossible (false, true) pair is rejected as Malformed, never repaired.
+        // Optional safeAlias still supported; impossible (false, true) pair is rejected as Malformed.
+        var withSafeAlias = """{"decisions":[{"id":1,"vocabularyCorrection":true,"safeAlias":true},{"id":2,"vocabularyCorrection":true,"safeAlias":false}]}""";
+        var withSafeOutcome = Assert.IsType<CorrectionJudgeOutcome.Verdict>(EgOneCorrectionJudge.ParseOutcome(withSafeAlias, req));
+        Assert.Equal(CorrectionJudgeClass.CorrectionAndSafe, withSafeOutcome.Decisions[0].Verdict);
+        Assert.Equal(CorrectionJudgeClass.CorrectionButUnsafe, withSafeOutcome.Decisions[1].Verdict);
+
         var impossible = """{"decisions":[{"id":1,"vocabularyCorrection":false,"safeAlias":true},{"id":2,"vocabularyCorrection":false,"safeAlias":false}]}""";
         Assert.Equal(
             new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Malformed),
@@ -131,13 +141,13 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         // Missing id / extra id / duplicate id / invalid JSON -> Malformed.
         Assert.Equal(
             new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Malformed),
-            EgOneCorrectionJudge.ParseOutcome("""{"decisions":[{"id":1,"vocabularyCorrection":true,"safeAlias":true}]}""", req));
+            EgOneCorrectionJudge.ParseOutcome("""{"decisions":[{"id":1,"vocabularyCorrection":true}]}""", req));
         Assert.Equal(
             new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Malformed),
-            EgOneCorrectionJudge.ParseOutcome("""{"decisions":[{"id":1,"vocabularyCorrection":true,"safeAlias":true},{"id":2,"vocabularyCorrection":false,"safeAlias":false},{"id":3,"vocabularyCorrection":false,"safeAlias":false}]}""", req));
+            EgOneCorrectionJudge.ParseOutcome("""{"decisions":[{"id":1,"vocabularyCorrection":true},{"id":2,"vocabularyCorrection":false},{"id":3,"vocabularyCorrection":false}]}""", req));
         Assert.Equal(
             new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Malformed),
-            EgOneCorrectionJudge.ParseOutcome("""{"decisions":[{"id":1,"vocabularyCorrection":true,"safeAlias":true},{"id":1,"vocabularyCorrection":true,"safeAlias":true}]}""", req));
+            EgOneCorrectionJudge.ParseOutcome("""{"decisions":[{"id":1,"vocabularyCorrection":true},{"id":1,"vocabularyCorrection":true}]}""", req));
         Assert.Equal(
             new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Malformed),
             EgOneCorrectionJudge.ParseOutcome("{not valid json", req));
