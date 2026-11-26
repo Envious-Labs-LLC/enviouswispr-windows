@@ -512,10 +512,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var sentence = status.Text;
         var overlayState = status.State;
-        var suppressNonLiveForPreview =
-            (PillReviewModeToggle?.IsOn == true || _overlayWindow.IsPreviewVisible) &&
-            overlayState is not (DictationOverlayState.Recording or DictationOverlayState.Processing);
-        if (!suppressNonLiveForPreview)
+        if (!PillPreviewCatalog.ShouldSuppressStatusForPreview(_overlayWindow.IsPreviewVisible, overlayState))
         {
             _overlayWindow.ShowState(status);
         }

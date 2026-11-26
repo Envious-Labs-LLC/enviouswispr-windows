@@ -142,6 +142,14 @@ public static class PillPreviewCatalog
         return Entries[0];
     }
 
+    /// <summary>
+    /// Returns true when an incoming non-live status should stay suppressed so an active preview pill stays visible.
+    /// Live dictation transitions (<see cref="DictationOverlayState.Recording"/> and <see cref="DictationOverlayState.Processing"/>)
+    /// always clear preview mode, and when no preview pill is open all states including <see cref="DictationOverlayState.Hidden"/> pass through.
+    /// </summary>
+    public static bool ShouldSuppressStatusForPreview(bool previewVisible, DictationOverlayState incomingState) =>
+        previewVisible && incomingState is not (DictationOverlayState.Recording or DictationOverlayState.Processing);
+
     /// <summary>Resolves the strongly typed overlay status for any preview entry via DictationStatus factories.</summary>
     public static DictationStatus StatusFor(PillPreviewKind kind) => kind switch
     {

@@ -1,5 +1,7 @@
 using System.Xml.Linq;
 using EnviousWispr.Core.Presentation;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -171,6 +173,36 @@ public sealed class PillCatalogParityTests
         var diagnosticsCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.DiagnosticsAndUpdates.cs"));
         Assert.Contains("PillReviewModeToggle.IsOn = false;", diagnosticsCode, StringComparison.Ordinal);
         Assert.Contains("_overlayWindow.IsActiveNonPreview", diagnosticsCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShouldSuppressStatusForPreviewOnlyChecksVisiblePreview()
+    {
+        foreach (var state in Enum.GetValues<DictationOverlayState>())
+        {
+            Assert.False(PillPreviewCatalog.ShouldSuppressStatusForPreview(previewVisible: false, state));
+
+            var expectedWhenPreviewVisible = state is not (DictationOverlayState.Recording or DictationOverlayState.Processing);
+            Assert.Equal(expectedWhenPreviewVisible, PillPreviewCatalog.ShouldSuppressStatusForPreview(previewVisible: true, state));
+        }
+
+        var root = FindRepositoryRoot();
+        var mainWindowSource = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var tree = CSharpSyntaxTree.ParseText(mainWindowSource);
+        var setSessionStatus = tree.GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.Text == "SetSessionStatus");
+
+        var identifiers = setSessionStatus
+            .DescendantNodes()
+            .OfType<IdentifierNameSyntax>()
+            .Select(identifier => identifier.Identifier.Text)
+            .ToArray();
+
+        Assert.Contains(nameof(PillPreviewCatalog.ShouldSuppressStatusForPreview), identifiers);
+        Assert.Contains("IsPreviewVisible", identifiers);
+        Assert.DoesNotContain("PillReviewModeToggle", identifiers);
     }
 
     private static string FindRepositoryRoot()
