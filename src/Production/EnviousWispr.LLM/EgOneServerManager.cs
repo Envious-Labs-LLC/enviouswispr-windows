@@ -49,6 +49,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
     private bool _restartUsed;
     private int _failedStarts;
     private bool _disposed;
+    private volatile bool _isUsingAccelerator;
 
     public EgOneServerManager(EgOneServerOptions options, HttpMessageHandler? healthHandler = null)
     {
@@ -58,10 +59,13 @@ public sealed class EgOneServerManager : IEgOneRuntime
         ArgumentOutOfRangeException.ThrowIfLessThan(options.ContextTokens, 1_024);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(options.EffectiveStartupTimeout, TimeSpan.Zero);
         _options = options;
+        _isUsingAccelerator = options.GpuLayers is > 0;
         _healthClient = healthHandler is null
             ? new HttpClient()
             : new HttpClient(healthHandler, disposeHandler: false);
     }
+
+    public bool IsUsingAccelerator => _isUsingAccelerator;
 
     public int? OwnedProcessId
     {
@@ -220,6 +224,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
             }
 
             _endpoint = endpoint;
+            _isUsingAccelerator = attemptOptions.GpuLayers is > 0;
             _hasReachedReady = true;
             return endpoint;
         }

@@ -65,6 +65,10 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 
     public string ProviderId => "eg-one";
 
+    public int? OwnedProcessId => _runtime.OwnedProcessId;
+
+    public bool? UsesAccelerator => (_runtime as EgOneServerManager)?.IsUsingAccelerator;
+
     public void TerminateRuntimeImmediately() => _runtime.TerminateImmediately();
 
     public async Task<PolishResult> TryPolishAsync(

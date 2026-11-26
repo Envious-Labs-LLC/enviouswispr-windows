@@ -83,6 +83,19 @@ public sealed class EgOnePolishProviderTests
         Assert.Null(await manager.EnsureReadyAsync(CancellationToken.None));
         Assert.Null(await manager.EnsureReadyAsync(CancellationToken.None));
         Assert.Null(manager.OwnedProcessId);
+        Assert.False(manager.IsUsingAccelerator);
+
+        await using var gpuManager = new EgOneServerManager(new EgOneServerOptions(
+            Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".exe"),
+            Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".gguf"),
+            StartupTimeout: TimeSpan.FromMilliseconds(10),
+            GpuLayers: 99,
+            AllowCpuFallback: true));
+        Assert.True(gpuManager.IsUsingAccelerator);
+
+        await using var providerWithManager = new EgOnePolishProvider(gpuManager, Options);
+        Assert.Equal(gpuManager.OwnedProcessId, providerWithManager.OwnedProcessId);
+        Assert.True(providerWithManager.UsesAccelerator);
     }
 
     [Fact]

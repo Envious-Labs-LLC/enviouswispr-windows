@@ -437,8 +437,13 @@ public partial class App
     /// <summary>The polish provider in force, and how it is hosted, or null when there is none.</summary>
     private PolishSetup? CurrentPolishSetup() =>
         _polishProvider is { } provider
-            ? new PolishSetup(provider, _polishUsesLocalRuntime, _polishResource)
+            ? new PolishSetup(provider, _polishUsesLocalRuntime, EffectivePolishResource(provider))
             : null;
+
+    private RuntimeResourceKind EffectivePolishResource(IPolishProvider provider) =>
+        provider is EgOnePolishProvider { UsesAccelerator: { } usesAccelerator }
+            ? (usesAccelerator ? RuntimeResourceKind.Accelerator : RuntimeResourceKind.Cpu)
+            : _polishResource;
 
     /// <summary>The button an advisory about the cleanup provider carries.</summary>
     /// <remarks>

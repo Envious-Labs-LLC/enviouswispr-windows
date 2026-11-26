@@ -52,27 +52,22 @@ await using var provider = new EgOnePolishProvider(new EgOnePolishOptions(
 var totalTimer = Stopwatch.StartNew();
 var health = await provider.ProbeHealthAsync();
 long peakWorkingSetBytes = 0;
-var fullServerPath = Path.GetFullPath(server);
 void SampleServerMemory()
 {
-    foreach (var proc in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(fullServerPath)))
+    if (provider.OwnedProcessId is not { } pid)
     {
-        using (proc)
-        {
-            try
-            {
-                if (proc.MainModule is { FileName: { } exe } &&
-                    string.Equals(Path.GetFullPath(exe), fullServerPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    proc.Refresh();
-                    peakWorkingSetBytes = Math.Max(peakWorkingSetBytes, Math.Max(proc.PeakWorkingSet64, proc.WorkingSet64));
-                }
-            }
-            catch (Exception exception) when (
-                exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-            }
-        }
+        return;
+    }
+
+    try
+    {
+        using var proc = Process.GetProcessById(pid);
+        proc.Refresh();
+        peakWorkingSetBytes = Math.Max(peakWorkingSetBytes, Math.Max(proc.PeakWorkingSet64, proc.WorkingSet64));
+    }
+    catch (Exception exception) when (
+        exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+    {
     }
 }
 SampleServerMemory();
