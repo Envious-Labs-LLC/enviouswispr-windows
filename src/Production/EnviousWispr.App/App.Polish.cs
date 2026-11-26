@@ -90,6 +90,29 @@ public partial class App
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
     }
 
+    private void PreWakePolishRuntime()
+    {
+        if (Leaving || _polishProvider is not EgOnePolishProvider egOneProvider)
+        {
+            return;
+        }
+
+        var token = _polishLifetime.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await egOneProvider.TryPreWakeAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        });
+    }
+
     private void StartPolishWarmup()
     {
         _polishWarmupCancellation?.Cancel();
@@ -363,6 +386,16 @@ public partial class App
             batchThreads = Math.Max(parsedThreads, defaultBatchThreads);
         }
 
+        var sleepIdleSeconds = EgOneIdleSleepPolicy.SleepIdleSeconds(preferences.UnloadPolicy);
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SLEEP_IDLE_SECONDS"),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedSleepSeconds))
+        {
+            sleepIdleSeconds = parsedSleepSeconds > 0 ? parsedSleepSeconds : null;
+        }
+
         _configuredEgOneModelPath = modelFile;
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
             new EgOneServerOptions(
@@ -372,7 +405,8 @@ public partial class App
                 GpuLayers: gpuLayers,
                 Threads: threads,
                 AllowCpuFallback: allowCpuFallback,
-                BatchThreads: batchThreads),
+                BatchThreads: batchThreads,
+                SleepIdleSeconds: sleepIdleSeconds),
             modelId));
         _polishUsesLocalRuntime = true;
     }

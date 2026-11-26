@@ -291,7 +291,14 @@ public partial class App
                 Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, _snippetVocabulary, CurrentPolishSetup(), _enabledVocabularyPackIds),
                 CloudPolishProviderName: () => _cloudPolishConsent?.ProviderName,
                 RunId: () => _runId,
-                RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),
+                RecordingActive: active =>
+                {
+                    _pushToTalkHook?.SetRecordingActive(active);
+                    if (active)
+                    {
+                        PreWakePolishRuntime();
+                    }
+                },
                 CancelArmed: armed => _pushToTalkHook?.SetCancelArmed(armed),
                 ArchiveAudio: audio => ArchiveDictationAudio(audio),
                 DetachCaptureObservers: DetachCaptureObservers,

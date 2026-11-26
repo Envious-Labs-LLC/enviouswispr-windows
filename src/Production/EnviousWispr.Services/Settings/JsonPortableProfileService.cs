@@ -90,6 +90,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 14 => MigrateFromV14(json),
                 15 => MigrateFromV15(json),
                 16 => MigrateFromV16(json),
+                17 => MigrateFromV17(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -359,6 +360,17 @@ public sealed class JsonPortableProfileService : IPortableProfileService
 
     /// <summary>Takes a portable profile written before dedicated EG-1 size persistence existed (v17).</summary>
     private static PortableProfile? MigrateFromV16(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a portable profile written before EG-1 idle memory sleep existed (v18).</summary>
+    private static PortableProfile? MigrateFromV17(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(
             json,

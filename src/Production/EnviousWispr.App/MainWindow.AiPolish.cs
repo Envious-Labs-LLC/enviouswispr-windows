@@ -799,6 +799,31 @@ public sealed partial class MainWindow
         _ = TriggerAutoSaveAsync();
     }
 
+    private void EgOneUnloadPolicyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        UpdateEgOneUnloadImmediatelyNotice();
+        _ = TriggerAutoSaveAsync();
+    }
+
+    private void UpdateEgOneUnloadImmediatelyNotice()
+    {
+        if (EgOneUnloadPolicyComboBox is null || EgOneUnloadImmediatelyNotice is null)
+        {
+            return;
+        }
+
+        var selectedPolicy = SettingsPresenter.PolishUnloadPolicyFromIndex(
+            EgOneUnloadPolicyComboBox.SelectedIndex);
+        EgOneUnloadImmediatelyNotice.Visibility = selectedPolicy == PolishUnloadPolicy.Immediately
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
     private int ResolvePolishProviderIndexFromCard(object sender) =>
         sender is RadioButton { DataContext: SelectableChoiceOption option }
         && Array.IndexOf(PolishProviderChoices, option) is var idx and >= 0

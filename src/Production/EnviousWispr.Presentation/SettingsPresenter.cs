@@ -108,7 +108,8 @@ public sealed record GeneralSettingsInput(
     bool CasualMode = false,
     int LivePreviewEngineIndex = 0,
     bool SendCrashReports = true,
-    string? EgOneModelId = null);
+    string? EgOneModelId = null,
+    int PolishUnloadPolicyIndex = 0);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -350,7 +351,8 @@ public sealed class SettingsPresenter : IDisposable
             polishProvider,
             polishModelId,
             NullIfBlank(input.OllamaEndpoint),
-            normalizedEgOneModelId);
+            normalizedEgOneModelId,
+            PolishUnloadPolicyFromIndex(Chosen(input.PolishUnloadPolicyIndex)));
         var history = new HistoryPreferences(
             input.HistoryEnabled,
             RetentionDays.FromField(input.HistoryRetentionDays, fallback: 30, RetentionDays.HistoryMinimum, RetentionDays.HistoryMaximum));
@@ -462,6 +464,28 @@ public sealed class SettingsPresenter : IDisposable
         PolishProvider.OpenAI => 3,
         PolishProvider.Anthropic => 4,
         PolishProvider.Gemini => 5,
+        _ => 0,
+    };
+
+    public static PolishUnloadPolicy PolishUnloadPolicyFromIndex(int index) => index switch
+    {
+        1 => PolishUnloadPolicy.Immediately,
+        2 => PolishUnloadPolicy.TwoMinutes,
+        3 => PolishUnloadPolicy.FiveMinutes,
+        4 => PolishUnloadPolicy.TenMinutes,
+        5 => PolishUnloadPolicy.FifteenMinutes,
+        6 => PolishUnloadPolicy.SixtyMinutes,
+        _ => PolishUnloadPolicy.Never,
+    };
+
+    public static int PolishUnloadPolicyIndex(PolishUnloadPolicy policy) => policy switch
+    {
+        PolishUnloadPolicy.Immediately => 1,
+        PolishUnloadPolicy.TwoMinutes => 2,
+        PolishUnloadPolicy.FiveMinutes => 3,
+        PolishUnloadPolicy.TenMinutes => 4,
+        PolishUnloadPolicy.FifteenMinutes => 5,
+        PolishUnloadPolicy.SixtyMinutes => 6,
         _ => 0,
     };
 

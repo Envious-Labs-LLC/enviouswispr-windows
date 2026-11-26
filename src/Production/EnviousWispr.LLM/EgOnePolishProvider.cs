@@ -71,6 +71,11 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 
     public void TerminateRuntimeImmediately() => _runtime.TerminateImmediately();
 
+    public Task<bool> TryPreWakeAsync(CancellationToken cancellationToken = default) =>
+        _disposed
+            ? Task.FromResult(false)
+            : _runtime.TryPreWakeAsync(cancellationToken);
+
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
         CancellationToken cancellationToken = default)

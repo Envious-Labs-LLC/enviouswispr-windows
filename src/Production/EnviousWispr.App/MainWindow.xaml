@@ -2411,6 +2411,55 @@
                                             <Border x:Name="EgOneNoticeBanner" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10" Visibility="Collapsed">
                                                 <TextBlock x:Name="EgOneNoticeText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
                                             </Border>
+                                            <!-- EG-1 Idle Memory Sleep Setting -->
+                                            <Border Style="{StaticResource BrandSettingsCardStyle}">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE950;" />
+                                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                                            <Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock x:Name="EgOneUnloadPolicyLabel" Style="{StaticResource BrandRowLabelStyle}" Text="Unload polish model after" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                                <Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About Unload polish model after" ToolTipService.ToolTip="What is this?">
+                                                                    <FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" />
+                                                                    <Button.Flyout>
+                                                                        <Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}">
+                                                                            <TextBlock MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" Text="Frees the polish model's memory after the time you choose. Your next dictation wakes it while you speak; the first one after sleeping may take a moment longer." TextWrapping="Wrap" />
+                                                                        </Flyout>
+                                                                    </Button.Flyout>
+                                                                </Button>
+                                                            </Grid>
+                                                        </StackPanel>
+                                                        <ComboBox Grid.Column="2" x:Name="EgOneUnloadPolicyComboBox" AutomationProperties.LabeledBy="{x:Bind EgOneUnloadPolicyLabel, Mode=OneTime}" ItemTemplate="{StaticResource BrandTrimmedChoiceTemplate}" MinWidth="170" VerticalAlignment="Center" SelectionChanged="EgOneUnloadPolicyComboBox_SelectionChanged">
+                                                            <x:String>Never</x:String>
+                                                            <x:String>Immediately</x:String>
+                                                            <x:String>After 2 minutes</x:String>
+                                                            <x:String>After 5 minutes</x:String>
+                                                            <x:String>After 10 minutes</x:String>
+                                                            <x:String>After 15 minutes</x:String>
+                                                            <x:String>After 1 hour</x:String>
+                                                        </ComboBox>
+                                                    </Grid>
+                                                    <Border x:Name="EgOneUnloadImmediatelyNotice" Background="{ThemeResource BrandWarningSoftBrush}" BorderBrush="{ThemeResource BrandWarningBrush}" BorderThickness="1" CornerRadius="6" Padding="12,8" Visibility="Collapsed">
+                                                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandWarningBrush}" Glyph="&#xE7BA;" />
+                                                            <TextBlock Grid.Column="1" x:Name="EgOneUnloadImmediatelyNoticeText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="The polish model is freed after about 10 seconds without a request. Expect a short wait if you finish speaking before it wakes." TextWrapping="Wrap" />
+                                                        </Grid>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
                                             <!-- WHY USE EG-1 Explainer -->
                                             <Border Style="{StaticResource BrandSettingsCardStyle}">
                                                 <StackPanel Spacing="{StaticResource BrandSpacingXs}">

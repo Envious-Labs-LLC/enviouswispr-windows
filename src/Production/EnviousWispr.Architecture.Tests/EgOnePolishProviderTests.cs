@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 
@@ -61,6 +62,20 @@ public sealed class EgOnePolishProviderTests
         Assert.Contains("8", arguments);
         Assert.Contains("--threads-batch", arguments);
         Assert.Contains("12", arguments);
+        Assert.DoesNotContain("--sleep-idle-seconds", arguments);
+
+        var sleepArguments = EgOneServerManager.CreateArguments(
+            options with { SleepIdleSeconds = 10 },
+            18_082,
+            "secret-token");
+        var sleepIndex = sleepArguments.ToList().IndexOf("--sleep-idle-seconds");
+        Assert.True(sleepIndex >= 0);
+        Assert.Equal("10", sleepArguments[sleepIndex + 1]);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new EgOneServerManager(
+            options with { SleepIdleSeconds = 0 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new EgOneServerManager(
+            options with { SleepIdleSeconds = -5 }));
 
         Assert.Equal(
             TimeSpan.FromSeconds(30),
@@ -246,6 +261,74 @@ public sealed class EgOnePolishProviderTests
         Assert.True(runtime.TerminatedImmediately);
     }
 
+    [Theory]
+    [InlineData(PolishUnloadPolicy.Never, null)]
+    [InlineData(PolishUnloadPolicy.Immediately, 10)]
+    [InlineData(PolishUnloadPolicy.TwoMinutes, 120)]
+    [InlineData(PolishUnloadPolicy.FiveMinutes, 300)]
+    [InlineData(PolishUnloadPolicy.TenMinutes, 600)]
+    [InlineData(PolishUnloadPolicy.FifteenMinutes, 900)]
+    [InlineData(PolishUnloadPolicy.SixtyMinutes, 3_600)]
+    public void IdleSleepPolicyMapsEveryChoiceCleanly(PolishUnloadPolicy policy, int? expectedSeconds) =>
+        Assert.Equal(expectedSeconds, EgOneIdleSleepPolicy.SleepIdleSeconds(policy));
+
+    [Fact]
+    public async Task PreWakeSendsSingleFlightSlotsRequestAndNeverThrows()
+    {
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        Uri? seenUri = null;
+        string? seenAuth = null;
+
+        var handler = new StubHandler(async (request, _) =>
+        {
+            var count = Interlocked.Increment(ref callCount);
+            seenUri = request.RequestUri;
+            seenAuth = request.Headers.Authorization?.ToString();
+            if (count == 1)
+            {
+                firstEntered.TrySetResult();
+                await releaseFirst.Task;
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        await using var disabledManager = new EgOneServerManager(Options.Server, handler);
+        Assert.False(await disabledManager.TryPreWakeAsync(CancellationToken.None));
+        Assert.Equal(0, callCount);
+
+        await using var sleepManager = new EgOneServerManager(
+            Options.Server with { SleepIdleSeconds = 10 },
+            handler);
+        var endpoint = new EgOneEndpoint(18_090, "wake-token", 4_096);
+        var firstWake = sleepManager.SendPreWakeAsync(endpoint, CancellationToken.None);
+        await firstEntered.Task;
+
+        // Second concurrent wake must coalesce as a single-flight no-op.
+        Assert.False(await sleepManager.SendPreWakeAsync(endpoint, CancellationToken.None));
+        releaseFirst.TrySetResult();
+        Assert.True(await firstWake);
+        Assert.Equal(1, callCount);
+        Assert.Equal(new Uri("http://127.0.0.1:18090/slots"), seenUri);
+        Assert.Equal("Bearer wake-token", seenAuth);
+
+        var failingHandler = new StubHandler((_, _) => throw new HttpRequestException("offline"));
+        await using var failingManager = new EgOneServerManager(
+            Options.Server with { SleepIdleSeconds = 10 },
+            failingHandler);
+        Assert.False(await failingManager.SendPreWakeAsync(endpoint, CancellationToken.None));
+
+        var fakeRuntime = new FakeRuntime();
+        var provider = new EgOnePolishProvider(fakeRuntime, Options);
+        Assert.True(await provider.TryPreWakeAsync());
+        Assert.Equal(1, fakeRuntime.PreWakeCalls);
+        await provider.DisposeAsync();
+        Assert.False(await provider.TryPreWakeAsync());
+        Assert.Equal(1, fakeRuntime.PreWakeCalls);
+    }
+
     [Fact]
     public async Task SuggestAsyncDisablesPromptCachingToPreservePolishSlot()
     {
@@ -355,6 +438,8 @@ public sealed class EgOnePolishProviderTests
 
         public int EnsureReadyCalls { get; private set; }
 
+        public int PreWakeCalls { get; private set; }
+
         public bool Disposed { get; private set; }
 
         public bool TerminatedImmediately { get; private set; }
@@ -366,6 +451,13 @@ public sealed class EgOnePolishProviderTests
             cancellationToken.ThrowIfCancellationRequested();
             EnsureReadyCalls++;
             return Task.FromResult(Endpoint);
+        }
+
+        public Task<bool> TryPreWakeAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PreWakeCalls++;
+            return Task.FromResult(Endpoint is not null);
         }
 
         public ValueTask DisposeAsync()

@@ -67,7 +67,8 @@ public sealed partial class MainWindow
             CasualModeToggle?.IsOn == true,
             SelectedLivePreviewEngineIndex(),
             SendCrashReportsToggle.IsOn,
-            EgOneModelId: _selectedEgOneModelId);
+            EgOneModelId: _selectedEgOneModelId,
+            PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex ?? 0);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -486,6 +487,12 @@ public sealed partial class MainWindow
                 : preferences.Polish.ModelId ?? string.Empty;
             _lastActivePolishProvider = preferences.Polish.Provider;
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
+            if (EgOneUnloadPolicyComboBox is not null)
+            {
+                EgOneUnloadPolicyComboBox.SelectedIndex = SettingsPresenter.PolishUnloadPolicyIndex(
+                    preferences.Polish.UnloadPolicy);
+            }
+            UpdateEgOneUnloadImmediatelyNotice();
             UpdateActivePolishProviderDisplay();
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
