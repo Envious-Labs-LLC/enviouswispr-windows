@@ -961,6 +961,7 @@ public sealed partial class MainWindow
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot,
+            RequestedTheme = WindowRoot.ActualTheme,
             Title = "Delete dictation?",
             Content = "This permanently removes this dictation and its saved audio recording from local history.",
             PrimaryButtonText = "Delete dictation",
