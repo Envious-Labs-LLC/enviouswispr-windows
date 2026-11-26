@@ -331,6 +331,11 @@ public sealed class SessionPersistence : ISessionRecoveryState
             return null;
         }
 
+        if (archivedAudio is not null)
+        {
+            _audioArchive?.PruneRetention(archivedAudio.FileName);
+        }
+
         _effects.NotifyHistoryChanged();
         return entry.Id;
     }

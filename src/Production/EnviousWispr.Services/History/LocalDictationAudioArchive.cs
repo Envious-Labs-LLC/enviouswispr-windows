@@ -51,7 +51,6 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
             var bytes = WaveFile.EncodeMono(audio.Samples.Span, audio.SampleRate);
             File.WriteAllBytes(tempPath, bytes);
             File.Move(tempPath, targetPath, overwrite: true);
-            EnforceRetentionExcluding(fileName, bytes.LongLength);
 
             var durationMs = WaveFile.ComputeDurationMs(audio.Samples.Length, audio.SampleRate);
             return new ArchivedDictationAudio(fileName, durationMs);
@@ -64,6 +63,59 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
         finally
         {
             TryDeletePath(tempPath);
+        }
+    }
+
+    public void PruneRetention(string? keepFileName = null, long keepBytes = 0)
+    {
+        if (!Directory.Exists(RecordingsDirectory))
+        {
+            return;
+        }
+
+        if (keepFileName is { Length: > 0 } keptName && keepBytes <= 0)
+        {
+            var keptPath = ResolveSafePath(keptName);
+            if (keptPath is not null && File.Exists(keptPath))
+            {
+                try
+                {
+                    keepBytes = new FileInfo(keptPath).Length;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+
+        var existing = new List<(string Path, DateTimeOffset Written, long Bytes)>();
+        foreach (var path in Directory.EnumerateFiles(RecordingsDirectory, "*.wav"))
+        {
+            var name = Path.GetFileName(path);
+            if (keepFileName is { Length: > 0 } protectedName
+                && string.Equals(name, protectedName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(path);
+                existing.Add((path, info.LastWriteTimeUtc, info.Length));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+
+        var hasProtected = keepFileName is { Length: > 0 };
+        var remainingCount = hasProtected ? _maxRecordings - 1 : _maxRecordings;
+        var remainingBytes = hasProtected
+            ? Math.Max(0L, _maxTotalBytes - Math.Max(0L, keepBytes))
+            : _maxTotalBytes;
+        foreach (var stale in DictationRecordingRetention.ToDelete(existing, remainingCount, remainingBytes))
+        {
+            TryDeletePath(stale);
         }
     }
 
@@ -98,40 +150,6 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
             ? RecordingsDirectory
             : RecordingsDirectory + Path.DirectorySeparatorChar;
         return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
-    }
-
-    private void EnforceRetentionExcluding(string currentFileName, long currentFileBytes)
-    {
-        if (!Directory.Exists(RecordingsDirectory))
-        {
-            return;
-        }
-
-        var existing = new List<(string Path, DateTimeOffset Written, long Bytes)>();
-        foreach (var path in Directory.EnumerateFiles(RecordingsDirectory, "*.wav"))
-        {
-            var name = Path.GetFileName(path);
-            if (string.Equals(name, currentFileName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            try
-            {
-                var info = new FileInfo(path);
-                existing.Add((path, info.LastWriteTimeUtc, info.Length));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
-
-        var remainingCount = _maxRecordings - 1;
-        var remainingBytes = Math.Max(0L, _maxTotalBytes - Math.Max(0L, currentFileBytes));
-        foreach (var stale in DictationRecordingRetention.ToDelete(existing, remainingCount, remainingBytes))
-        {
-            TryDeletePath(stale);
-        }
     }
 
     private static void TryDeletePath(string path)

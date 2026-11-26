@@ -20,18 +20,29 @@ public enum HistoryPlaybackToggleOutcome
     Pause,
 }
 
+/// <summary>Result of a seek request against <see cref="SingleActivePlaybackTracker"/>.</summary>
+public sealed record HistorySeekPlan(
+    bool StartNewLoad,
+    long TargetPositionMs,
+    bool ShouldPlay);
+
 /// <summary>
-/// Tracks single-active playback state across History cards so starting one card stops any previous card.
+/// Tracks single-active playback state across History cards so starting one card stops any previous card,
+/// and scrubbing during an async load preserves intended playback and latest target position.
 /// </summary>
 public sealed class SingleActivePlaybackTracker
 {
     public Guid? ActiveEntryId { get; private set; }
+
+    public Guid? LoadingEntryId { get; private set; }
 
     public bool IsPlaying { get; private set; }
 
     public long PositionMs { get; private set; }
 
     public long DurationMs { get; private set; }
+
+    public long? PendingSeekMs { get; private set; }
 
     public HistoryPlaybackSnapshot Snapshot =>
         new(ActiveEntryId, IsPlaying, PositionMs, DurationMs);
@@ -55,9 +66,13 @@ public sealed class SingleActivePlaybackTracker
             if (safeDuration > 0 && PositionMs >= safeDuration)
             {
                 PositionMs = 0;
+                if (LoadingEntryId == entryId)
+                {
+                    PendingSeekMs = 0;
+                }
             }
 
-            if (safeDuration > 0)
+            if (safeDuration > 0 && DurationMs <= 0)
             {
                 DurationMs = safeDuration;
             }
@@ -67,24 +82,27 @@ public sealed class SingleActivePlaybackTracker
         }
 
         ActiveEntryId = entryId;
+        LoadingEntryId = entryId;
         DurationMs = safeDuration;
         PositionMs = 0;
+        PendingSeekMs = 0;
         IsPlaying = true;
         return HistoryPlaybackToggleOutcome.StartNew;
     }
 
-    public long Seek(Guid entryId, double fraction, long fallbackDurationMs)
+    public HistorySeekPlan Seek(Guid entryId, double fraction, long fallbackDurationMs, bool hasLoadedSource)
     {
         if (entryId == Guid.Empty)
         {
-            return 0;
+            return new HistorySeekPlan(false, 0, false);
         }
 
         var clamped = Math.Clamp(fraction, 0.0, 1.0);
-        if (ActiveEntryId != entryId)
+        var isNewEntry = ActiveEntryId != entryId;
+        if (isNewEntry)
         {
             ActiveEntryId = entryId;
-            IsPlaying = false;
+            IsPlaying = true;
             DurationMs = Math.Max(0L, fallbackDurationMs);
             PositionMs = 0;
         }
@@ -94,6 +112,45 @@ public sealed class SingleActivePlaybackTracker
         }
 
         var targetMs = (long)Math.Round(DurationMs * clamped);
+        PositionMs = Math.Clamp(targetMs, 0L, DurationMs);
+
+        var isCurrentlyLoadingSameEntry = !isNewEntry && LoadingEntryId == entryId;
+        if (isCurrentlyLoadingSameEntry)
+        {
+            PendingSeekMs = PositionMs;
+            return new HistorySeekPlan(StartNewLoad: false, PositionMs, IsPlaying);
+        }
+
+        if (!isNewEntry && hasLoadedSource)
+        {
+            PendingSeekMs = null;
+            return new HistorySeekPlan(StartNewLoad: false, PositionMs, IsPlaying);
+        }
+
+        LoadingEntryId = entryId;
+        PendingSeekMs = PositionMs;
+        return new HistorySeekPlan(StartNewLoad: true, PositionMs, IsPlaying);
+    }
+
+    public long CompleteLoad(Guid entryId, long naturalDurationMs)
+    {
+        if (ActiveEntryId != entryId)
+        {
+            return 0;
+        }
+
+        if (LoadingEntryId == entryId)
+        {
+            LoadingEntryId = null;
+        }
+
+        if (naturalDurationMs > 0)
+        {
+            DurationMs = naturalDurationMs;
+        }
+
+        var targetMs = PendingSeekMs ?? PositionMs;
+        PendingSeekMs = null;
         PositionMs = Math.Clamp(targetMs, 0L, DurationMs);
         return PositionMs;
     }
@@ -110,6 +167,11 @@ public sealed class SingleActivePlaybackTracker
             DurationMs = durationMs;
         }
 
+        if (LoadingEntryId == entryId)
+        {
+            return;
+        }
+
         PositionMs = Math.Clamp(positionMs, 0L, Math.Max(DurationMs, Math.Max(0L, positionMs)));
     }
 
@@ -120,6 +182,8 @@ public sealed class SingleActivePlaybackTracker
             return;
         }
 
+        LoadingEntryId = null;
+        PendingSeekMs = null;
         IsPlaying = false;
         PositionMs = 0;
     }
@@ -132,6 +196,8 @@ public sealed class SingleActivePlaybackTracker
         }
 
         ActiveEntryId = null;
+        LoadingEntryId = null;
+        PendingSeekMs = null;
         IsPlaying = false;
         PositionMs = 0;
         DurationMs = 0;
@@ -304,6 +370,24 @@ public static class HistoryPlaybackPresentation
                 provider, "Gemini", hasCloudCredential, isCloudKeyRejected, hasModel),
             _ => new(provider, "Off", IsEnabled: false, IsReady: false),
         };
+    }
+
+    public static ActivePolishProviderBadgePresentation ApplyPolishNoticeToBadge(
+        ActivePolishProviderBadgePresentation badge,
+        PolishProvider provider,
+        bool isOllamaHosted,
+        string? cloudPolishNotice)
+    {
+        ArgumentNullException.ThrowIfNull(badge);
+        var normalized = string.IsNullOrWhiteSpace(cloudPolishNotice) ? null : cloudPolishNotice.Trim();
+        if (normalized is null)
+        {
+            return badge;
+        }
+
+        var isCloudOrHosted = provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini
+            || (provider == PolishProvider.Ollama && isOllamaHosted);
+        return isCloudOrHosted ? badge with { StatusText = normalized } : badge;
     }
 
     private static HistoryPolishReadiness DescribeCloudReadiness(

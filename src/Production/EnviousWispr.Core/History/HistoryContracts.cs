@@ -75,6 +75,10 @@ public interface IDictationAudioArchive
 {
     ArchivedDictationAudio? SaveForEntry(Guid entryId, CapturedAudio audio);
 
+    void PruneRetention(string? keepFileName = null, long keepBytes = 0)
+    {
+    }
+
     void DeleteFile(string? fileName);
 }
 

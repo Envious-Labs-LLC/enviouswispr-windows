@@ -53,6 +53,13 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
                 break;
 
             case HistoryPlaybackToggleOutcome.Resume:
+                if (_tracker.LoadingEntryId == entryId)
+                {
+                    // Load is already in flight; CompleteLoad will resume at latest requested position.
+                    PublishState();
+                    return;
+                }
+
                 if (_player is not null && _currentSource is not null)
                 {
                     if (_tracker.PositionMs == 0)
@@ -66,13 +73,13 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
                     return;
                 }
 
-                _ = LoadAndStartAsync(entryId, wavFilePath, expectedDurationMs, initialPositionMs: _tracker.PositionMs, autoPlay: true);
+                _ = LoadAndStartAsync(entryId, wavFilePath, expectedDurationMs);
                 break;
 
             case HistoryPlaybackToggleOutcome.StartNew:
                 StopMediaCore();
                 PublishState();
-                _ = LoadAndStartAsync(entryId, wavFilePath, expectedDurationMs, initialPositionMs: 0, autoPlay: true);
+                _ = LoadAndStartAsync(entryId, wavFilePath, expectedDurationMs);
                 break;
         }
     }
@@ -84,20 +91,29 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
             return;
         }
 
-        var wasActive = _tracker.ActiveEntryId == entryId;
-        var targetMs = _tracker.Seek(entryId, fraction, expectedDurationMs);
-        if (wasActive && _player is not null && _currentSource is not null)
+        var hasLoadedSource = _player is not null && _currentSource is not null && _tracker.LoadingEntryId != entryId;
+        var plan = _tracker.Seek(entryId, fraction, expectedDurationMs, hasLoadedSource);
+        if (plan.StartNewLoad)
         {
-            _player.PlaybackSession.Position = TimeSpan.FromMilliseconds(targetMs);
+            StopMediaCore();
+            PublishState();
+            _ = LoadAndStartAsync(entryId, wavFilePath, expectedDurationMs);
+            return;
+        }
+
+        if (_tracker.LoadingEntryId == entryId)
+        {
+            // Preserve IsPlaying and latest PendingSeekMs without toggling or restarting async load.
             PublishState();
             return;
         }
 
-        StopMediaCore();
-        _tracker.Toggle(entryId, expectedDurationMs);
-        targetMs = _tracker.Seek(entryId, fraction, expectedDurationMs);
+        if (_player is not null && _currentSource is not null)
+        {
+            _player.PlaybackSession.Position = TimeSpan.FromMilliseconds(plan.TargetPositionMs);
+        }
+
         PublishState();
-        _ = LoadAndStartAsync(entryId, wavFilePath, expectedDurationMs, initialPositionMs: targetMs, autoPlay: true);
     }
 
     public void Stop(Guid? onlyEntryId = null)
@@ -145,9 +161,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
     private async Task LoadAndStartAsync(
         Guid entryId,
         string wavFilePath,
-        long expectedDurationMs,
-        long initialPositionMs,
-        bool autoPlay)
+        long expectedDurationMs)
     {
         var generation = Interlocked.Increment(ref _loadGeneration);
         byte[] bytes;
@@ -197,18 +211,23 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
             source = null;
 
             player.Source = _currentSource;
-            if (initialPositionMs > 0)
-            {
-                player.PlaybackSession.Position = TimeSpan.FromMilliseconds(initialPositionMs);
-            }
-
             var naturalMs = (long)player.PlaybackSession.NaturalDuration.TotalMilliseconds;
             var durationMs = naturalMs > 0 ? naturalMs : expectedDurationMs;
-            _tracker.UpdateProgress(entryId, initialPositionMs, durationMs);
-            if (autoPlay && _tracker.IsPlaying)
+            var startPositionMs = _tracker.CompleteLoad(entryId, durationMs);
+            if (startPositionMs > 0)
+            {
+                player.PlaybackSession.Position = TimeSpan.FromMilliseconds(startPositionMs);
+            }
+
+            if (_tracker.IsPlaying)
             {
                 player.Play();
                 _positionTimer.Start();
+            }
+            else
+            {
+                player.Pause();
+                _positionTimer.Stop();
             }
 
             PublishState();

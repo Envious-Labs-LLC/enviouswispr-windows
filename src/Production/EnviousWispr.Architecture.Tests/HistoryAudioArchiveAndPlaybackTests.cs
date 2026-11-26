@@ -168,9 +168,13 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         var third = archive.SaveForEntry(id3, new CapturedAudio(DictationSessionId.Create(), samples, 16_000, 1));
         Assert.NotNull(third);
 
+        // SaveForEntry alone defers pruning until explicit post-commit PruneRetention runs.
+        Assert.NotNull(archive.ResolveExistingPath(first.FileName));
+        archive.PruneRetention(third!.FileName);
+
         // Oldest file pruned by count bound 2 while third (newest) is preserved.
         Assert.Null(archive.ResolveExistingPath(first.FileName));
-        Assert.NotNull(archive.ResolveExistingPath(third!.FileName));
+        Assert.NotNull(archive.ResolveExistingPath(third.FileName));
 
         var resolved = archive.ResolveExistingPath(third.FileName)!;
         Assert.True(WaveFile.TryAnalyzeFile(resolved, HistoryPlaybackPresentation.DefaultWaveformBarCount, out var peaks, out var durationMs));
@@ -276,6 +280,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.Equal(cardA, tracker.ActiveEntryId);
         Assert.True(tracker.IsPlaying);
 
+        tracker.CompleteLoad(cardA, 4_000);
         tracker.UpdateProgress(cardA, 1_500, 4_000);
         Assert.Equal(HistoryPlaybackToggleOutcome.Pause, tracker.Toggle(cardA, 4_000));
         Assert.False(tracker.IsPlaying);
@@ -287,13 +292,161 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.True(tracker.IsPlaying);
         Assert.Equal(0, tracker.PositionMs);
 
-        Assert.Equal(4_000, tracker.Seek(cardB, 0.5, 8_000));
+        tracker.CompleteLoad(cardB, 8_000);
+        var plan = tracker.Seek(cardB, 0.5, 8_000, hasLoadedSource: true);
+        Assert.False(plan.StartNewLoad);
+        Assert.True(plan.ShouldPlay);
+        Assert.Equal(4_000, plan.TargetPositionMs);
         Assert.Equal("0:04 / 0:08", HistoryPlaybackPresentation.FormatClockDisplay(tracker.PositionMs, tracker.DurationMs, isActive: true));
 
         tracker.MarkCompleted(cardB);
         Assert.False(tracker.IsPlaying);
         Assert.Equal(0, tracker.PositionMs);
         Assert.Equal("0:08", HistoryPlaybackPresentation.FormatClockDisplay(0, 8_000, isActive: false));
+    }
+
+    [Fact]
+    public void ScrubSeekDuringPendingAsyncLoadPreservesPlayStateAndLatestPosition()
+    {
+        var tracker = new SingleActivePlaybackTracker();
+        var cardA = Guid.NewGuid();
+        var cardB = Guid.NewGuid();
+
+        // Scrubbing an unselected entry starts one async load at the requested offset with play active.
+        var initialSeek = tracker.Seek(cardA, 0.25, 8_000, hasLoadedSource: false);
+        Assert.True(initialSeek.StartNewLoad);
+        Assert.True(initialSeek.ShouldPlay);
+        Assert.Equal(2_000, initialSeek.TargetPositionMs);
+        Assert.Equal(cardA, tracker.LoadingEntryId);
+
+        // Repeated drag events while load is still in flight must NOT pause playback or restart loading.
+        var drag1 = tracker.Seek(cardA, 0.5, 8_000, hasLoadedSource: false);
+        Assert.False(drag1.StartNewLoad);
+        Assert.True(drag1.ShouldPlay);
+        Assert.True(tracker.IsPlaying);
+        Assert.Equal(4_000, drag1.TargetPositionMs);
+
+        var drag2 = tracker.Seek(cardA, 0.75, 8_000, hasLoadedSource: false);
+        Assert.False(drag2.StartNewLoad);
+        Assert.True(drag2.ShouldPlay);
+        Assert.True(tracker.IsPlaying);
+        Assert.Equal(6_000, drag2.TargetPositionMs);
+
+        // Completing async load lands at the latest scrubbed offset and preserves playing intent.
+        Assert.Equal(6_000, tracker.CompleteLoad(cardA, 8_000));
+        Assert.Null(tracker.LoadingEntryId);
+        Assert.True(tracker.IsPlaying);
+
+        // Scrubbing while paused on a loaded card preserves paused state.
+        Assert.Equal(HistoryPlaybackToggleOutcome.Pause, tracker.Toggle(cardA, 8_000));
+        var pausedSeek = tracker.Seek(cardA, 0.25, 8_000, hasLoadedSource: true);
+        Assert.False(pausedSeek.StartNewLoad);
+        Assert.False(pausedSeek.ShouldPlay);
+        Assert.False(tracker.IsPlaying);
+        Assert.Equal(2_000, pausedSeek.TargetPositionMs);
+
+        // Toggle-pause during pending load of cardB leaves IsPlaying false when CompleteLoad runs.
+        Assert.Equal(HistoryPlaybackToggleOutcome.StartNew, tracker.Toggle(cardB, 4_000));
+        Assert.Equal(HistoryPlaybackToggleOutcome.Pause, tracker.Toggle(cardB, 4_000));
+        _ = tracker.Seek(cardB, 0.5, 4_000, hasLoadedSource: false);
+        Assert.False(tracker.IsPlaying);
+        Assert.Equal(2_000, tracker.CompleteLoad(cardB, 4_000));
+        Assert.False(tracker.IsPlaying);
+    }
+
+    [Fact]
+    public async Task RetentionPruneIsSkippedWhenHistoryWriteFailsAndRunsOnlyAfterCommit()
+    {
+        using var temp = new TempFolder();
+        var recordingsDir = Path.Combine(temp.Path, "recordings", "dictations");
+        var archive = new LocalDictationAudioArchive(recordingsDir, maxRecordings: 2, maxTotalBytes: 1_000_000);
+        var fakeStore = new StubHistoryStore();
+        var persistence = new SessionPersistence(
+            new InMemoryRecoveryStore(),
+            fakeStore,
+            new NoOpLogger(),
+            TimeProvider.System,
+            () => new HistoryPreferences(true, 30),
+            new NoOpPersistenceEffects(),
+            archive);
+
+        var session1 = DictationSessionId.Create();
+        var session2 = DictationSessionId.Create();
+        var session3 = DictationSessionId.Create();
+        var audio = new CapturedAudio(session1, new float[1600], 16_000, 1);
+
+        var id1 = await persistence.SaveHistoryAsync(
+            new Transcript(session1, "one", "parakeet"),
+            "one",
+            HistoryWriteIntent.Delivered(false, true),
+            audio: audio);
+        var id2 = await persistence.SaveHistoryAsync(
+            new Transcript(session2, "two", "parakeet"),
+            "two",
+            HistoryWriteIntent.Delivered(false, true),
+            audio: audio);
+        Assert.NotNull(id1);
+        Assert.NotNull(id2);
+        File.SetLastWriteTimeUtc(Path.Combine(recordingsDir, $"{id1:D}.wav"), DateTime.UtcNow.AddMinutes(-5));
+
+        // Simulate History store failure: new WAV is rolled back and neither older WAV is pruned.
+        fakeStore.FailAdds = true;
+        var failedId = await persistence.SaveHistoryAsync(
+            new Transcript(session3, "three-failed", "parakeet"),
+            "three-failed",
+            HistoryWriteIntent.Delivered(false, true),
+            audio: audio);
+        Assert.Null(failedId);
+        Assert.True(File.Exists(Path.Combine(recordingsDir, $"{id1:D}.wav")));
+        Assert.True(File.Exists(Path.Combine(recordingsDir, $"{id2:D}.wav")));
+        Assert.Equal(2, Directory.GetFiles(recordingsDir, "*.wav").Length);
+
+        // Once commit succeeds, retention prunes the oldest WAV (id1) leaving id2 and the new entry.
+        fakeStore.FailAdds = false;
+        var id3 = await persistence.SaveHistoryAsync(
+            new Transcript(session3, "three-ok", "parakeet"),
+            "three-ok",
+            HistoryWriteIntent.Delivered(false, true),
+            audio: audio);
+        Assert.NotNull(id3);
+        Assert.False(File.Exists(Path.Combine(recordingsDir, $"{id1:D}.wav")));
+        Assert.True(File.Exists(Path.Combine(recordingsDir, $"{id2:D}.wav")));
+        Assert.True(File.Exists(Path.Combine(recordingsDir, $"{id3:D}.wav")));
+    }
+
+    [Fact]
+    public void AsyncCloudAndOllamaNoticesRefreshInlineProviderDisplayWithoutInfoBar()
+    {
+        var baseLocalBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+            PolishProvider.Ollama,
+            selectedEgOneState: null,
+            egOneServerExists: false,
+            isOllamaHosted: true);
+        Assert.Equal("Runs on Ollama's servers", baseLocalBadge.BadgeText);
+
+        var updatedBadge = HistoryPlaybackPresentation.ApplyPolishNoticeToBadge(
+            baseLocalBadge,
+            PolishProvider.Ollama,
+            isOllamaHosted: true,
+            cloudPolishNotice: "Ollama polish uses http://127.0.0.1:11434 with hosted model qwen3:cloud on Ollama's servers.");
+        Assert.Contains("qwen3:cloud", updatedBadge.StatusText, StringComparison.Ordinal);
+
+        // Local Ollama or EG-1 must ignore cloud disclosure overrides.
+        var localUntouched = HistoryPlaybackPresentation.ApplyPolishNoticeToBadge(
+            EnginePolishPresentation.DescribeActivePolishProvider(PolishProvider.Ollama, null, false, isOllamaHosted: false),
+            PolishProvider.Ollama,
+            isOllamaHosted: false,
+            cloudPolishNotice: "stale notice");
+        Assert.DoesNotContain("stale notice", localUntouched.StatusText, StringComparison.Ordinal);
+
+        var root = FindRepositoryRoot();
+        var polishCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.AiPolish.cs"));
+        foreach (var methodName in new[] { "SetCloudPolishNotice", "SetOllamaPolishNotice" })
+        {
+            var body = ExtractMethodBody(polishCs, methodName);
+            Assert.DoesNotContain("ShowMessage(", body, StringComparison.Ordinal);
+            Assert.Contains("UpdateActivePolishProviderDisplay();", body, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

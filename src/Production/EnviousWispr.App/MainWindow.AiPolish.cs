@@ -141,20 +141,18 @@ public sealed partial class MainWindow
     public void SetCloudPolishNotice(string? notice)
     {
         _cloudPolishNotice = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
-        UpdateHistoryPolishState();
+        UpdateActivePolishProviderDisplay();
     }
 
     public void SetOllamaPolishNotice(string? notice)
     {
         _ollamaPolishNotice = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
-        if (OllamaNoticeText is not null
-            && !string.IsNullOrWhiteSpace(_ollamaPolishNotice)
-            && string.IsNullOrWhiteSpace(OllamaNoticeText.Text))
+        if (OllamaNoticeText is not null && !string.IsNullOrWhiteSpace(_ollamaPolishNotice))
         {
             SetLiveRegion(OllamaNoticeText, _ollamaPolishNotice, Visibility.Visible);
         }
 
-        UpdateHistoryPolishState();
+        UpdateActivePolishProviderDisplay();
     }
 
     private async void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
@@ -243,16 +241,15 @@ public sealed partial class MainWindow
             ? ResolveEgOneDisplayState(ResolveSelectedEgOneModelId())
             : null;
         var isOllamaHosted = provider == PolishProvider.Ollama && IsSelectedOllamaModelHosted();
-        var summaryBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+        var summaryBadge = HistoryPlaybackPresentation.ApplyPolishNoticeToBadge(
+            EnginePolishPresentation.DescribeActivePolishProvider(
+                provider,
+                selectedEgOneState,
+                _egOneServerExecutableExists,
+                isOllamaHosted),
             provider,
-            selectedEgOneState,
-            _egOneServerExecutableExists,
-            isOllamaHosted);
-        if (!string.IsNullOrWhiteSpace(_cloudPolishNotice) &&
-            (IsCloudProvider(provider) || isOllamaHosted))
-        {
-            summaryBadge = summaryBadge with { StatusText = _cloudPolishNotice };
-        }
+            isOllamaHosted,
+            _cloudPolishNotice);
         ApplyActivePolishProviderBadge(summaryBadge);
 
         if (ActivePolishProviderIcon is not null)
