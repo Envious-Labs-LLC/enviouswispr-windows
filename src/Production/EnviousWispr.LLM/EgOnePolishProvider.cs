@@ -46,6 +46,9 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
     private readonly HttpClient _httpClient;
     private readonly string _modelId;
     private readonly TimeSpan _inferenceTimeout;
+    private readonly SemaphoreSlim _slotGate = new(1, 1);
+    private readonly Lock _judgeSlotLock = new();
+    private CancellationTokenSource? _activeJudgeCts;
     private int _polishInFlight;
     private bool _disposed;
 
@@ -122,7 +125,8 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         }
 
         var timer = Stopwatch.StartNew();
-        Interlocked.Increment(ref _polishInFlight);
+        EnterCriticalSlotPriority();
+        var slotAcquired = false;
         try
         {
             var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
@@ -152,6 +156,9 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             timeoutCancellation.CancelAfter(_inferenceTimeout);
             try
             {
+                await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
+                slotAcquired = true;
+
                 for (var attempt = 0; attempt < 2; attempt++)
                 {
                     if (attempt > 0)
@@ -228,6 +235,11 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         }
         finally
         {
+            if (slotAcquired)
+            {
+                _slotGate.Release();
+            }
+
             Interlocked.Decrement(ref _polishInFlight);
         }
     }
@@ -312,19 +324,24 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
         }
 
-        var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        if (endpoint is null)
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        timeoutCancellation.CancelAfter(_inferenceTimeout);
-
+        EnterCriticalSlotPriority();
+        var slotAcquired = false;
         string? reply;
         try
         {
+            var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            if (endpoint is null)
+            {
+                return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
+            using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            timeoutCancellation.CancelAfter(_inferenceTimeout);
+
+            await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
+            slotAcquired = true;
+
             reply = await SendAsync(
                 endpoint,
                 AliasSuggestionPrompt.SystemPrompt,
@@ -337,6 +354,15 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             exception is HttpRequestException or OperationCanceledException or JsonException)
         {
             return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+        finally
+        {
+            if (slotAcquired)
+            {
+                _slotGate.Release();
+            }
+
+            Interlocked.Decrement(ref _polishInFlight);
         }
 
         if (reply is null)
@@ -373,15 +399,26 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Unavailable, null);
         }
 
-        if (Volatile.Read(ref _polishInFlight) > 0)
+        if (!_slotGate.Wait(0, CancellationToken.None))
         {
             return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
         }
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(deadline);
+        CancellationTokenSource? timeoutCts = null;
         try
         {
+            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            lock (_judgeSlotLock)
+            {
+                if (_disposed || Volatile.Read(ref _polishInFlight) > 0)
+                {
+                    return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
+                }
+
+                _activeJudgeCts = timeoutCts;
+            }
+
+            timeoutCts.CancelAfter(deadline);
             using var request = new HttpRequestMessage(HttpMethod.Post, endpoint.ChatCompletionsUri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", endpoint.AuthToken);
             request.Content = JsonContent.Create(new
@@ -441,6 +478,10 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         {
             return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Cancelled, null);
         }
+        catch (OperationCanceledException) when (Volatile.Read(ref _polishInFlight) > 0)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
+        }
         catch (OperationCanceledException)
         {
             return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Deadline, null);
@@ -453,6 +494,45 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             exception is HttpRequestException or JsonException or IOException or InvalidOperationException)
         {
             return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+        }
+        finally
+        {
+            lock (_judgeSlotLock)
+            {
+                if (timeoutCts is not null && ReferenceEquals(_activeJudgeCts, timeoutCts))
+                {
+                    _activeJudgeCts = null;
+                }
+            }
+
+            timeoutCts?.Dispose();
+            _slotGate.Release();
+        }
+    }
+
+    private void EnterCriticalSlotPriority()
+    {
+        Interlocked.Increment(ref _polishInFlight);
+        CancelActiveJudge();
+    }
+
+    private void CancelActiveJudge()
+    {
+        CancellationTokenSource? judgeCts;
+        lock (_judgeSlotLock)
+        {
+            judgeCts = _activeJudgeCts;
+        }
+
+        if (judgeCts is not null)
+        {
+            try
+            {
+                judgeCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 
@@ -590,6 +670,7 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         }
 
         _disposed = true;
+        CancelActiveJudge();
         _httpClient.Dispose();
         await _runtime.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);

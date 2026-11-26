@@ -229,6 +229,75 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         using var cancelCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
         var longJudge = new EgOneCorrectionJudge(() => timeoutProvider, deadline: TimeSpan.FromSeconds(10));
         Assert.Equal(new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Cancelled), await longJudge.JudgeAsync(req, cancelCts.Token));
+
+        // 5. Overlap preemption: an in-flight judge call holding the single EG-1 slot is preempted immediately
+        // when TryPolishAsync starts, returning NotGranted while polish acquires slot 0 without colliding.
+        var judgeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var judgeSawCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentServerCalls = 0;
+        var maxConcurrentServerCalls = 0;
+        using var preemptHandler = new StubHandler(async (requestMessage, ct) =>
+        {
+            var body = await requestMessage.Content!.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var active = Interlocked.Increment(ref concurrentServerCalls);
+            maxConcurrentServerCalls = Math.Max(maxConcurrentServerCalls, active);
+            try
+            {
+                if (body.Contains("correction_decisions", StringComparison.Ordinal))
+                {
+                    judgeEntered.TrySetResult();
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        judgeSawCancel.TrySetResult();
+                        throw;
+                    }
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"choices":[{"finish_reason":"stop","message":{"content":"Ask saurab today."}}]}""",
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref concurrentServerCalls);
+            }
+        });
+        await using var preemptProvider = new EgOnePolishProvider(warmRuntime, DefaultOptions, preemptHandler);
+        var preemptJudge = new EgOneCorrectionJudge(() => preemptProvider);
+        var inFlightJudgeTask = preemptJudge.JudgeAsync(req);
+        await judgeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var preemptingPolishTask = preemptProvider.TryPolishAsync(
+            new PolishRequest(new ProcessedText(new DictationSessionId(Guid.NewGuid()), "Ask saurab today.")));
+        await judgeSawCancel.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var preemptedOutcome = await inFlightJudgeTask;
+        var polishResult = await preemptingPolishTask;
+        Assert.Equal(new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.NotGranted), preemptedOutcome);
+        Assert.Equal("Ask saurab today.", polishResult.Output.Text);
+        Assert.Equal(1, maxConcurrentServerCalls);
+    }
+
+    [Fact]
+    public void BuildContextExcerptCentersLongDictationAroundEditedTokenSpan()
+    {
+        var prefix = string.Join(' ', Enumerable.Repeat("filler", 150)); // > 900 UTF-16 chars
+        var suffix = " and afterward meet Partnero near reception.";
+        var full = prefix + suffix;
+        var words = EditAlignment.SplitWords(full);
+        var partnerIndex = Array.FindIndex(words, w => w.StartsWith("Partnero", StringComparison.Ordinal));
+        Assert.True(partnerIndex > 100);
+
+        var excerpt = ObservedCorrectionWatcher.BuildContextExcerpt(full, partnerIndex, partnerIndex + 1);
+        Assert.True(excerpt.Length <= CorrectionJudgeRequest.MaxContextUtf16);
+        Assert.Contains("Partnero near reception.", excerpt, StringComparison.Ordinal);
+        Assert.False(excerpt.StartsWith("filler filler filler", StringComparison.Ordinal) && !excerpt.Contains("Partnero", StringComparison.Ordinal));
     }
 
     [Fact]
