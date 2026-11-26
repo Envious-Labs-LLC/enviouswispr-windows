@@ -680,6 +680,153 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         Assert.Equal(SettleEvidence.Strong, settledEv.Evidence);
     }
 
+    [Fact]
+    public async Task TrackerCapturesWhenHostStripsTrailingSpaceAndLearnsEdit()
+    {
+        // Word Smart Cut and Paste strips the trailing space when pasting into an empty document.
+        const string pastedText = "I would like to proceed with that? ";
+        const string wordFieldText = "I would like to proceed with that?";
+        Assert.True(PastedRegionTracker.TryCaptureTarget(
+            wordFieldText,
+            pastedText,
+            processId: 100,
+            windowHandle: 200,
+            processName: "WINWORD",
+            out var target,
+            out _));
+        Assert.Equal(wordFieldText, target!.EffectiveRenderedText);
+        Assert.Equal(string.Empty, target.Anchors.Before);
+        Assert.Equal(string.Empty, target.Anchors.After);
+
+        var tracker = new PastedRegionTracker(target, startedAtMs: 0);
+        Assert.Empty(tracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, wordFieldText, 0, SameApplicationFocus: true, SameElementFocus: true, ElementAlive: true),
+            nowMs: 750));
+
+        const string editedText = "I would like to ProSeed with that?";
+        Assert.IsType<PastedRegionEvent.Changed>(Assert.Single(tracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, editedText, 0, SameApplicationFocus: true, SameElementFocus: true, ElementAlive: true),
+            nowMs: 1500)));
+
+        var settledEv = Assert.IsType<PastedRegionEvent.Settled>(Assert.Single(tracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, editedText, 0, SameApplicationFocus: true, SameElementFocus: true, ElementAlive: true),
+            nowMs: 3100)));
+        Assert.Equal(SettleEvidence.Strong, settledEv.Evidence);
+
+        var dir = CreateTempDir();
+        var memory = new StoreLearnMemory(Path.Combine(dir, StoreLearnMemory.FileName));
+        var store = new InMemorySettingsStore();
+        var settingsPresenter = new SettingsPresenter(store, AppSettings.Default);
+        var vocabulary = new VocabularyPresenter(settingsPresenter);
+        var events = new List<AppLogEntry>();
+        var coordinator = new LearnedCorrectionCoordinator(vocabulary, memory, () => [], new CapturingLogger(events));
+        var presenter = new FakePresenter(coordinator);
+        coordinator.AttachPresenter(presenter);
+        var fakeObserver = new FakePastedRegionObserver();
+        var watcher = new ObservedCorrectionWatcher(
+            () => true,
+            () => new RulesCorrectionJudge(),
+            fakeObserver,
+            () => store.Current.UserData.CustomWords,
+            () => [],
+            coordinator,
+            memory,
+            new CapturingLogger(events));
+
+        watcher.OnPasteCompleted(new PasteCompletedEvent(pastedText, new TargetWindowId(200, 100, "WINWORD"), "en", DateTimeOffset.UtcNow));
+        await fakeObserver.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fakeObserver.Emit(settledEv);
+
+        var pill = await presenter.ShownQueue.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("ProSeed", pill.Canonical);
+        Assert.Contains(events, e => e.Event == AppEventCode.LearnJudged);
+        Assert.Contains(events, e => e.Event == AppEventCode.LearnAdded);
+    }
+
+    [Fact]
+    public void TrackerCapturesWhenHostStripsTrailingSpaceBeforeCarriageReturnOrUsesNbsp()
+    {
+        const string pastedText = "I would like to proceed with that? ";
+        const string oneNoteField = "I would like to proceed with that?\r";
+        Assert.True(PastedRegionTracker.TryCaptureTarget(
+            oneNoteField,
+            pastedText,
+            processId: 101,
+            windowHandle: 201,
+            processName: "ONENOTE",
+            out var oneNoteTarget,
+            out _));
+        Assert.Equal("I would like to proceed with that?", oneNoteTarget!.EffectiveRenderedText);
+        Assert.Equal("\r", oneNoteTarget.Anchors.After);
+        var oneNoteTracker = new PastedRegionTracker(oneNoteTarget, startedAtMs: 0);
+        Assert.Empty(oneNoteTracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, oneNoteField, 0, true, true, true),
+            nowMs: 750));
+
+        const string nbspPasted = "Hello saurab. ";
+        const string nbspField = "Hello\u00A0saurab.";
+        Assert.True(PastedRegionTracker.TryCaptureTarget(
+            nbspField,
+            nbspPasted,
+            processId: 102,
+            windowHandle: 202,
+            processName: "WINWORD",
+            out var nbspTarget,
+            out _));
+        Assert.Equal(nbspField, nbspTarget!.EffectiveRenderedText);
+        var nbspTracker = new PastedRegionTracker(nbspTarget, startedAtMs: 0);
+        Assert.Empty(nbspTracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, nbspField, 0, true, true, true),
+            nowMs: 750));
+        Assert.IsType<PastedRegionEvent.Changed>(Assert.Single(nbspTracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, "Hello\u00A0Saurabh.", 0, true, true, true),
+            nowMs: 1500)));
+        var nbspSettled = Assert.IsType<PastedRegionEvent.Settled>(Assert.Single(nbspTracker.Poll(
+            new PastedRegionTracker.ReadSnapshot(true, "Hello\u00A0Saurabh.", 0, true, true, true),
+            nowMs: 3100)));
+        Assert.Equal("Hello\u00A0Saurabh.", nbspSettled.Region);
+    }
+
+    [Fact]
+    public void TrackerTreatsFullPlusTrimmedDuplicateAsAnchorAmbiguous()
+    {
+        const string pastedText = "Hello world. ";
+        const string fieldText = "Hello world. Hello world.";
+        Assert.False(PastedRegionTracker.TryCaptureTarget(
+            fieldText,
+            pastedText,
+            processId: 103,
+            windowHandle: 203,
+            processName: "WINWORD",
+            out var target,
+            out var endReason));
+        Assert.Null(target);
+        Assert.Equal(PastedRegionEndReason.AnchorAmbiguous, endReason);
+    }
+
+    [Theory]
+    [InlineData("catalog cat ", "catalog ")]
+    [InlineData("cat's cat ", "cat's ")]
+    [InlineData("cat-like cat ", "cat-like ")]
+    [InlineData("cat_1 cat ", "cat_1 ")]
+    public void TrackerDoesNotTripAnchorAmbiguousWhenTrimmedFormIsPrefixOfLongerWord(
+        string fieldText,
+        string expectedBefore)
+    {
+        const string pastedText = "cat ";
+        Assert.True(PastedRegionTracker.TryCaptureTarget(
+            fieldText,
+            pastedText,
+            processId: 104,
+            windowHandle: 204,
+            processName: "WINWORD",
+            out var target,
+            out _));
+        Assert.Equal("cat ", target!.EffectiveRenderedText);
+        Assert.Equal(expectedBefore, target.Anchors.Before);
+        Assert.Equal(string.Empty, target.Anchors.After);
+    }
+
     private sealed class RecordingTargetAdapter(CaretContext context) : ITextTargetAdapter
     {
         public Task<TargetContextResult> CaptureContextAsync(

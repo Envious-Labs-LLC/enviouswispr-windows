@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace EnviousWispr.Core.Learning;
 
 /// <summary>
@@ -43,10 +45,10 @@ public sealed class PastedRegionTracker
         ArgumentNullException.ThrowIfNull(target);
         _target = target;
         _startedAtMs = startedAtMs;
-        _lastRegion = target.PastedText;
+        _lastRegion = target.EffectiveRenderedText;
         _editDistanceLimit = Math.Max(
             PastedRegionTiming.EditDistanceLimitFloor,
-            (int)Math.Floor(target.PastedText.Length * PastedRegionTiming.EditDistanceLimitFraction));
+            (int)Math.Floor(target.EffectiveRenderedText.Length * PastedRegionTiming.EditDistanceLimitFraction));
     }
 
     public bool HasEnded => _ended;
@@ -75,24 +77,97 @@ public sealed class PastedRegionTracker
             return false;
         }
 
-        var firstIndex = fieldText.IndexOf(pastedText, StringComparison.Ordinal);
-        if (firstIndex < 0)
+        // Hosts such as Word and OneNote strip a trailing space or normalize spaces to NBSP;
+        // match the exact string first at each site, then fall back to trailing-horizontal-whitespace
+        // trimmed and NBSP-folded forms, while scanning every position so an exact hit never hides
+        // a duplicate normalized hit.
+        var foldedField = FoldSpaces(fieldText);
+        var foldedFull = FoldSpaces(pastedText);
+        var foldedTrimmed = TrimTrailingHorizontalWhitespace(foldedFull);
+        if (string.IsNullOrEmpty(foldedTrimmed) || foldedTrimmed.Length == foldedFull.Length)
+        {
+            foldedTrimmed = null;
+        }
+
+        var hitStart = -1;
+        var hitLength = 0;
+        var hitCount = 0;
+        for (var i = 0; i < foldedField.Length; i++)
+        {
+            if (MatchesAt(foldedField, i, foldedFull))
+            {
+                hitStart = i;
+                hitLength = foldedFull.Length;
+                hitCount++;
+            }
+            else if (foldedTrimmed is not null &&
+                     MatchesAt(foldedField, i, foldedTrimmed) &&
+                     EndsAtTrimmedBoundary(foldedField, i + foldedTrimmed.Length, foldedTrimmed))
+            {
+                hitStart = i;
+                hitLength = foldedTrimmed.Length;
+                hitCount++;
+            }
+
+            if (hitCount > 1)
+            {
+                endReason = PastedRegionEndReason.AnchorAmbiguous;
+                return false;
+            }
+        }
+
+        if (hitCount == 0)
         {
             endReason = PastedRegionEndReason.DictatedTextNotFound;
             return false;
         }
 
-        var secondIndex = fieldText.IndexOf(pastedText, firstIndex + 1, StringComparison.Ordinal);
-        if (secondIndex >= 0)
-        {
-            endReason = PastedRegionEndReason.AnchorAmbiguous;
-            return false;
-        }
-
-        var anchors = ExtractAnchors(fieldText, firstIndex, pastedText.Length);
-        target = new PastedRegionTarget(pastedText, anchors, processId, windowHandle, processName);
+        var renderedText = fieldText.Substring(hitStart, hitLength);
+        var anchors = ExtractAnchors(fieldText, hitStart, hitLength);
+        target = new PastedRegionTarget(pastedText, anchors, processId, windowHandle, processName, renderedText);
         return true;
     }
+
+    private static string FoldSpaces(string value) =>
+        value.Contains('\u00A0', StringComparison.Ordinal) ? value.Replace('\u00A0', ' ') : value;
+
+    private static string TrimTrailingHorizontalWhitespace(string value)
+    {
+        var end = value.Length;
+        while (end > 0 && value[end - 1] is ' ' or '\t')
+        {
+            end--;
+        }
+
+        return end == value.Length ? value : value[..end];
+    }
+
+    private static bool MatchesAt(string haystack, int index, string needle) =>
+        index + needle.Length <= haystack.Length &&
+        string.CompareOrdinal(haystack, index, needle, 0, needle.Length) == 0;
+
+    private static bool EndsAtTrimmedBoundary(string haystack, int endIndex, string trimmed)
+    {
+        if (endIndex >= haystack.Length)
+        {
+            return true;
+        }
+
+        // Trimming removed trailing whitespace; avoid matching a prefix of a longer or
+        // connector-joined word (e.g. "cat" in "catalog", "cat's", "cat-like", or "cat_1").
+        if (Rune.DecodeLastFromUtf16(trimmed.AsSpan(), out var lastTrimmed, out _) != System.Buffers.OperationStatus.Done ||
+            !IsWordContinuationRune(lastTrimmed))
+        {
+            return true;
+        }
+
+        return Rune.DecodeFromUtf16(haystack.AsSpan(endIndex), out var nextRune, out _) != System.Buffers.OperationStatus.Done ||
+            !IsWordContinuationRune(nextRune);
+    }
+
+    private static bool IsWordContinuationRune(Rune rune) =>
+        Rune.IsLetterOrDigit(rune) ||
+        rune.Value is '\'' or 0x2019 or '-' or 0x2010 or 0x2011 or '_';
 
     public static PastedRegionAnchors ExtractAnchors(string fullText, int startIndex, int length)
     {
@@ -204,13 +279,14 @@ public sealed class PastedRegionTracker
             return new LocateResult(LocateKind.RegionRemoved, null);
         }
 
-        if (string.Equals(region, target.PastedText, StringComparison.Ordinal))
+        var baseline = target.EffectiveRenderedText;
+        if (string.Equals(region, baseline, StringComparison.Ordinal))
         {
             return new LocateResult(LocateKind.Located, region);
         }
 
-        if (Math.Abs(region.Length - target.PastedText.Length) > editDistanceLimit ||
-            BandedEditDistance(target.PastedText, region, editDistanceLimit) > editDistanceLimit)
+        if (Math.Abs(region.Length - baseline.Length) > editDistanceLimit ||
+            BandedEditDistance(baseline, region, editDistanceLimit) > editDistanceLimit)
         {
             return new LocateResult(LocateKind.EditDistanceExceeded, null);
         }
@@ -316,7 +392,7 @@ public sealed class PastedRegionTracker
             _lastRegion = region;
             _lastChangeAtMs = nowMs;
             _firstDeferralAtMs = -1;
-            _hasUnsettledEdit = !string.Equals(region, _target.PastedText, StringComparison.Ordinal);
+            _hasUnsettledEdit = !string.Equals(region, _target.EffectiveRenderedText, StringComparison.Ordinal);
             events.Add(new PastedRegionEvent.Changed(region));
             return events;
         }
@@ -389,7 +465,7 @@ public sealed class PastedRegionTracker
         }
 
         // Caret sits inside one of the changed character spans -> user may still be typing that word.
-        var (diffStart, diffEnd) = ChangedSpanInEdited(_target.PastedText, region);
+        var (diffStart, diffEnd) = ChangedSpanInEdited(_target.EffectiveRenderedText, region);
         var absDiffStart = regionStart + diffStart;
         var absDiffEnd = regionStart + diffEnd;
         if (caret >= absDiffStart && caret <= absDiffEnd)
@@ -426,7 +502,7 @@ public sealed class PastedRegionTracker
         {
             var age = _lastChangeAtMs >= 0 ? nowMs - _lastChangeAtMs : 0;
             if (age >= reason.MinimumPendingEditAgeMs() &&
-                !string.Equals(_lastRegion, _target.PastedText, StringComparison.Ordinal))
+                !string.Equals(_lastRegion, _target.EffectiveRenderedText, StringComparison.Ordinal))
             {
                 events.Add(new PastedRegionEvent.Settled(_lastRegion, reason.PendingEvidence()));
             }

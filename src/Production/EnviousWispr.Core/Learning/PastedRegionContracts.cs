@@ -65,7 +65,12 @@ public sealed record PastedRegionTarget(
     PastedRegionAnchors Anchors,
     int ProcessId,
     long WindowHandle,
-    string? ProcessName);
+    string? ProcessName,
+    string? RenderedText = null)
+{
+    /// <summary>The host's actual rendered substring for the located paste (equals <see cref="PastedText"/> unless the host normalized or stripped whitespace).</summary>
+    public string EffectiveRenderedText => RenderedText ?? PastedText;
+}
 
 public abstract record PastedRegionEvent
 {

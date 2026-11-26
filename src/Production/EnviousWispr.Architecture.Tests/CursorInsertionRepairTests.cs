@@ -194,6 +194,22 @@ public sealed class CursorInsertionRepairTests
         Assert.Equal(" issues", urlBar.Insertion.Text);
     }
 
+    [Theory]
+    [InlineData("世界", "zh-CN")]
+    [InlineData("こんにちは", "ja")]
+    [InlineData("世界", null)]
+    public void UnsegmentedLanguagesDoNotGainTrailingSpaceInFallbackPayload(string said, string? languageCode)
+    {
+        var result = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, said),
+            context: null,
+            languageCode);
+
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, result.Disposition);
+        Assert.Equal(said, result.Fallback.Text);
+        Assert.Equal(said, result.Insertion.Text);
+    }
+
     private static CaretContext Context(
         string left,
         string right,
