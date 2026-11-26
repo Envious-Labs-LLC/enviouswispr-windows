@@ -592,7 +592,7 @@
     <x:Double x:Key="PillImportMessageMaxWidth">280</x:Double>
     <x:Double x:Key="PillCardWidth">320</x:Double>
     <x:Double x:Key="PillCardInnerMaxWidth">280</x:Double>
-    <x:Double x:Key="PillInPanelNoticeMaxWidth">260</x:Double>
+    <x:Double x:Key="PillInPanelNoticeMaxWidth">280</x:Double>
     <x:Double x:Key="PillCardSpacing">12</x:Double>
     <x:Double x:Key="PillCardTipSpacing">10</x:Double>
     <x:Double x:Key="PillCardTightSpacing">6</x:Double>
@@ -693,7 +693,9 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="14" />
         <Setter Property="Foreground" Value="{ThemeResource PillBadgeTextBrush}" />
-        <Setter Property="Padding" Value="12,4" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Padding" Value="12,3" />
     </Style>
 
     <Style x:Key="PillEscapeUndoButtonStyle" TargetType="Button">
@@ -702,7 +704,9 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="14" />
         <Setter Property="Foreground" Value="{ThemeResource PillEscapeButtonTextBrush}" />
-        <Setter Property="Padding" Value="14,4" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Padding" Value="14,3" />
     </Style>
 
     <Style x:Key="PillLanguageLockButtonStyle" TargetType="Button">
@@ -710,7 +714,9 @@
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="CornerRadius" Value="14" />
         <Setter Property="Foreground" Value="{ThemeResource PillLanguageLockTextBrush}" />
-        <Setter Property="Padding" Value="12,4" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Padding" Value="12,3" />
     </Style>
 
     <Style x:Key="PillCardPrimaryButtonStyle" TargetType="Button">

@@ -519,7 +519,8 @@ public sealed partial class DictationOverlayWindow : Window
             }
             else
             {
-                UpdateEscapeRailWidth(1.0);
+                EscapeCountdownRail.Visibility = Visibility.Visible;
+                UpdateEscapeRailWidth(0.65);
             }
         }
         else if (ShouldAutoDwell(state))
@@ -1017,8 +1018,8 @@ public sealed partial class DictationOverlayWindow : Window
         }
 
         InPanelNoticeRow.InvalidateMeasure();
-        InPanelNoticeRow.Measure(new Windows.Foundation.Size(260, double.PositiveInfinity));
-        return (int)Math.Ceiling(Math.Max(26, InPanelNoticeRow.DesiredSize.Height + 10));
+        InPanelNoticeRow.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        return (int)Math.Ceiling(Math.Max(28, InPanelNoticeRow.DesiredSize.Height + 12));
     }
 
     private int InPanelNoticeMinimumWidth()
@@ -1029,8 +1030,8 @@ public sealed partial class DictationOverlayWindow : Window
         }
 
         InPanelNoticeRow.InvalidateMeasure();
-        InPanelNoticeRow.Measure(new Windows.Foundation.Size(260, double.PositiveInfinity));
-        var inner = Math.Max(190, InPanelNoticeRow.DesiredSize.Width);
+        InPanelNoticeRow.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var inner = Math.Max(236, InPanelNoticeRow.DesiredSize.Width + 16);
         return (int)Math.Ceiling(FrameBorderThickness * 2 + CapsuleHorizontalPadding * 2 + inner);
     }
 
@@ -1901,8 +1902,14 @@ public sealed partial class DictationOverlayWindow : Window
         LeftSpectrumStripe.Visibility = isRichError ? Visibility.Visible : Visibility.Collapsed;
 
         var horizontalPad = isRichError ? 16 : CapsuleHorizontalPadding;
-        var verticalPad = (isRichError || hasSubtitle) ? 12 : 9;
-        HeaderRow.ColumnSpacing = HeaderLeading.Visibility == Visibility.Visible || _action is not null ? _noticeColumnSpacing : 0;
+        var verticalPad = isEscapeRecovery ? 6 : (isRichError || hasSubtitle ? 12 : 9);
+        HeaderRow.ColumnSpacing = 0;
+        HeaderLeading.Margin = HeaderLeading.Visibility == Visibility.Visible
+            ? new Thickness(0, 0, _noticeColumnSpacing, 0)
+            : new Thickness(0);
+        InlineActionRow.Margin = _action is not null
+            ? new Thickness(_noticeColumnSpacing, 0, 0, 0)
+            : new Thickness(0);
         ContentPanel.Spacing = 0;
 
         var maxOuterWidth = isRichError
@@ -1913,13 +1920,22 @@ public sealed partial class DictationOverlayWindow : Window
                     ? LanguageChipMaxWidth
                     : isSaveError
                         ? 440
-                        : StandardNoticeMaxWidth;
+                        : isEscapeRecovery
+                            ? 360
+                            : StandardNoticeMaxWidth;
 
-        // Calculate inner text width ceiling cleanly so StateTitle never exceeds its intended column width.
+        // Measure action row cleanly AFTER style/content assignment and margin update.
         var leadingReserved = isRichError ? 52d : (HeaderLeading.Visibility == Visibility.Visible ? 30d : 0d);
-        var actionReserved = _action is null
-            ? 0d
-            : MeasureElementWidth(InlineActionRow, 90d) + _noticeColumnSpacing;
+        var actionReserved = 0d;
+        var actionHeight = 0d;
+        if (_action is not null)
+        {
+            InlineActionRow.InvalidateMeasure();
+            InlineActionRow.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            actionReserved = Math.Max(70d, InlineActionRow.DesiredSize.Width) + _noticeColumnSpacing;
+            actionHeight = InlineActionRow.DesiredSize.Height;
+        }
+
         var maxTextWidth = Math.Max(140d, maxOuterWidth - horizontalPad * 2 - FrameBorderThickness * 2 - leadingReserved - actionReserved);
         StateTitle.MaxWidth = maxTextWidth;
         StateSubtitle.MaxWidth = maxTextWidth;
@@ -1928,7 +1944,7 @@ public sealed partial class DictationOverlayWindow : Window
             isRichError ? horizontalPad + 2 : horizontalPad,
             verticalPad,
             horizontalPad,
-            verticalPad);
+            isEscapeRecovery ? verticalPad + 2 : verticalPad);
 
         StateTitle.InvalidateMeasure();
         StateTitle.Measure(new Windows.Foundation.Size(maxTextWidth, double.PositiveInfinity));
@@ -1940,13 +1956,13 @@ public sealed partial class DictationOverlayWindow : Window
 
         var textW = Math.Max(StateTitle.DesiredSize.Width, hasSubtitle ? StateSubtitle.DesiredSize.Width : 0);
         var textH = StateTitle.DesiredSize.Height + (hasSubtitle ? StateSubtitle.DesiredSize.Height + 2 : 0);
-        var computedWidth = (int)Math.Ceiling(FrameBorderThickness * 2 + horizontalPad * 2 + leadingReserved + textW + actionReserved + (isRichError ? 6 : 2));
+        var computedWidth = (int)Math.Ceiling(FrameBorderThickness * 2 + horizontalPad * 2 + leadingReserved + textW + actionReserved + (isRichError ? 6 : 8));
         var width = isRichError
             ? RichErrorCardWidth
-            : Math.Clamp(computedWidth, isEscapeRecovery ? 210 : 180, maxOuterWidth);
-        var contentHeight = Math.Max(textH, isRichError ? 40 : 24);
+            : Math.Clamp(computedWidth, isEscapeRecovery ? 240 : 180, maxOuterWidth);
+        var contentHeight = Math.Max(textH, Math.Max(actionHeight, isRichError ? 40 : 24));
         var height = isEscapeRecovery
-            ? RecordingCapsuleHeight
+            ? Math.Max(46, (int)Math.Ceiling(FrameBorderThickness * 2 + verticalPad * 2 + 2 + contentHeight))
             : Math.Max(RecordingCapsuleHeight, (int)Math.Ceiling(FrameBorderThickness * 2 + verticalPad * 2 + contentHeight));
 
         var cornerRadius = isRichError || height > 58 ? NoticeCapsuleRadius : height / 2.0;

@@ -512,7 +512,13 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var sentence = status.Text;
         var overlayState = status.State;
-        _overlayWindow.ShowState(status);
+        var suppressNonLiveForPreview =
+            (PillReviewModeToggle?.IsOn == true || _overlayWindow.IsPreviewVisible) &&
+            overlayState is not (DictationOverlayState.Recording or DictationOverlayState.Processing);
+        if (!suppressNonLiveForPreview)
+        {
+            _overlayWindow.ShowState(status);
+        }
         HandleRecordingSoundTransition(overlayState);
         SessionStatusChanged?.Invoke(status);
         if (overlayState is DictationOverlayState.Recording or DictationOverlayState.Processing)

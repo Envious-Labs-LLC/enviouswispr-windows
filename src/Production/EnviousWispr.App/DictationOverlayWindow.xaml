@@ -607,9 +607,9 @@
                 <!-- Animated bottom countdown rail for Escape Recovery (3s dwell, hover pauses/restarts) -->
                 <Border
                     x:Name="EscapeCountdownRail"
-                    Height="2"
+                    Height="2.5"
                     Width="0"
-                    Margin="20,0,20,1"
+                    Margin="20,0,20,2"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Bottom"
                     AutomationProperties.AccessibilityView="Raw"
