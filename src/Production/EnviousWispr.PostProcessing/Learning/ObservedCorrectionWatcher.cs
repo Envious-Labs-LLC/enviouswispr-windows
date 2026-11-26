@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
@@ -24,6 +25,7 @@ public sealed class ObservedCorrectionWatcher
     {
         public required ulong Generation { get; init; }
         public required PasteCompletedEvent Paste { get; init; }
+        public CancellationTokenSource JudgeCts { get; } = new();
         public ulong Revision { get; set; }
         public HashSet<string> SettledSnapshots { get; } = new(StringComparer.Ordinal);
         public int SettledBursts { get; set; }
@@ -37,6 +39,17 @@ public sealed class ObservedCorrectionWatcher
         public bool Ended { get; set; }
         public bool Cancelled { get; set; }
         public bool IsLive => !Ended && !Cancelled;
+
+        public void CancelJudge()
+        {
+            try
+            {
+                JudgeCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     private readonly Func<bool> _isLearnFromEditsOn;
@@ -124,6 +137,8 @@ public sealed class ObservedCorrectionWatcher
             {
                 return;
             }
+
+            liveWatch.CancelJudge();
         }
 
         if (_observer.IsObserving)
@@ -137,6 +152,7 @@ public sealed class ObservedCorrectionWatcher
             if (_watch is { } w && w.Generation == liveWatch.Generation && !w.Ended)
             {
                 w.Cancelled = true;
+                w.CancelJudge();
             }
         }
 
@@ -238,6 +254,7 @@ public sealed class ObservedCorrectionWatcher
             }
 
             _watch.Cancelled = true;
+            _watch.CancelJudge();
             _watch = null;
         }
 
@@ -255,6 +272,7 @@ public sealed class ObservedCorrectionWatcher
             }
 
             _watch.Cancelled = true;
+            _watch.CancelJudge();
             if (!_watch.Ended)
             {
                 shouldLog = true;
@@ -459,6 +477,7 @@ public sealed class ObservedCorrectionWatcher
             return;
         }
 
+        CancellationToken judgeToken;
         lock (_sync)
         {
             if (_watch is null || _watch.Generation != gen || !_watch.IsLive ||
@@ -468,6 +487,7 @@ public sealed class ObservedCorrectionWatcher
             }
 
             _watch.JudgeCalls++;
+            judgeToken = _watch.JudgeCts.Token;
             foreach (var entry in prepared.ById.Values)
             {
                 _watch.SentPairKeys.Add(entry.PairKey);
@@ -476,7 +496,7 @@ public sealed class ObservedCorrectionWatcher
 
         var context = BuildContextExcerpt(paste.PastedText);
         var request = new CorrectionJudgeRequest(prepared.Candidates, context, paste.LanguageCode);
-        _ = Task.Run(() => AskJudgeAsync(judge, request, prepared, region, evidence, gen, revision));
+        _ = Task.Run(() => AskJudgeAsync(judge, request, prepared, region, evidence, gen, revision, judgeToken));
     }
 
     private async Task AskJudgeAsync(
@@ -486,17 +506,20 @@ public sealed class ObservedCorrectionWatcher
         string region,
         SettleEvidence initialEvidence,
         ulong gen,
-        ulong revision)
+        ulong revision,
+        CancellationToken judgeToken)
     {
         try
         {
-            if (!StillWanted(gen, revision))
+            if (!StillWanted(gen, revision) || judgeToken.IsCancellationRequested)
             {
                 return;
             }
 
-            var outcome = await judge.JudgeAsync(request).ConfigureAwait(false);
-            if (!StillWanted(gen, revision))
+            var timer = Stopwatch.StartNew();
+            var outcome = await judge.JudgeAsync(request, judgeToken).ConfigureAwait(false);
+            timer.Stop();
+            if (!StillWanted(gen, revision) || judgeToken.IsCancellationRequested)
             {
                 return;
             }
@@ -513,8 +536,15 @@ public sealed class ObservedCorrectionWatcher
                 }
             }
 
-            Log(AppEventCode.LearnJudged);
-            if (outcome is not CorrectionJudgeOutcome.Verdict(var decisions))
+            var diagnosticProvider = outcome is CorrectionJudgeOutcome.Verdict v
+                ? DiagnosticProviderIds.FromProviderId(v.ProviderId)
+                : null;
+            _logger?.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LearnJudged,
+                ElapsedMilliseconds: timer.ElapsedMilliseconds,
+                Provider: diagnosticProvider));
+            if (outcome is not CorrectionJudgeOutcome.Verdict(var decisions, _))
             {
                 return;
             }
