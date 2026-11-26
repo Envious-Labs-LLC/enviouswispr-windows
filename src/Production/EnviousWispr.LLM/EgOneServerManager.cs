@@ -16,7 +16,8 @@ public sealed record EgOneServerOptions(
     TimeSpan? StartupTimeout = null,
     int? Threads = null,
     bool AllowCpuFallback = false,
-    int? BatchThreads = null)
+    int? BatchThreads = null,
+    int? SleepIdleSeconds = null)
 {
     public TimeSpan EffectiveStartupTimeout => StartupTimeout ?? TimeSpan.FromSeconds(60);
 }
@@ -24,6 +25,8 @@ public sealed record EgOneServerOptions(
 public sealed record EgOneEndpoint(int Port, string AuthToken, int ContextTokens)
 {
     public Uri HealthUri => new($"http://127.0.0.1:{Port}/health", UriKind.Absolute);
+
+    public Uri SlotsUri => new($"http://127.0.0.1:{Port}/slots", UriKind.Absolute);
 
     public Uri ChatCompletionsUri =>
         new($"http://127.0.0.1:{Port}/v1/chat/completions", UriKind.Absolute);
@@ -33,7 +36,11 @@ internal interface IEgOneRuntime : IAsyncDisposable
 {
     int? OwnedProcessId { get; }
 
+    int? SleepIdleSeconds { get; }
+
     Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken);
+
+    Task<bool> TryPreWakeAsync(CancellationToken cancellationToken);
 
     void TerminateImmediately();
 }
@@ -50,6 +57,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
     private bool _restartUsed;
     private int _failedStarts;
     private bool _disposed;
+    private int _preWakeInFlight;
     private volatile bool _isUsingAccelerator;
 
     public EgOneServerManager(EgOneServerOptions options, HttpMessageHandler? healthHandler = null)
@@ -59,6 +67,10 @@ public sealed class EgOneServerManager : IEgOneRuntime
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ModelFile);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.ContextTokens, 1_024);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(options.EffectiveStartupTimeout, TimeSpan.Zero);
+        if (options.SleepIdleSeconds is { } sleepSeconds)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sleepSeconds, 0);
+        }
         _options = options;
         _isUsingAccelerator = options.GpuLayers is > 0;
         _healthClient = healthHandler is null
@@ -67,6 +79,8 @@ public sealed class EgOneServerManager : IEgOneRuntime
     }
 
     public bool IsUsingAccelerator => _isUsingAccelerator;
+
+    public int? SleepIdleSeconds => _options.SleepIdleSeconds is > 0 ? _options.SleepIdleSeconds : null;
 
     public int? OwnedProcessId
     {
@@ -118,6 +132,52 @@ public sealed class EgOneServerManager : IEgOneRuntime
         }
     }
 
+    public Task<bool> TryPreWakeAsync(CancellationToken cancellationToken)
+    {
+        if (_disposed ||
+            _options.SleepIdleSeconds is not > 0 ||
+            _endpoint is not { } endpoint ||
+            _process is not { HasExited: false })
+        {
+            return Task.FromResult(false);
+        }
+
+        return SendPreWakeAsync(endpoint, cancellationToken);
+    }
+
+    internal async Task<bool> SendPreWakeAsync(EgOneEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        if (_disposed || Interlocked.CompareExchange(ref _preWakeInFlight, 1, 0) != 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint.SlotsUri);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", endpoint.AuthToken);
+            using var response = await _healthClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).WaitAsync(TimeSpan.FromSeconds(15), cancellationToken)
+                .ConfigureAwait(false);
+            return response.StatusCode == HttpStatusCode.OK;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException
+                or TimeoutException
+                or OperationCanceledException
+                or ObjectDisposedException
+                or InvalidOperationException)
+        {
+            return false;
+        }
+        finally
+        {
+            Volatile.Write(ref _preWakeInFlight, 0);
+        }
+    }
+
     internal static IReadOnlyList<string> CreateArguments(
         EgOneServerOptions options,
         int port,
@@ -152,6 +212,12 @@ public sealed class EgOneServerManager : IEgOneRuntime
         {
             arguments.Add("--threads-batch");
             arguments.Add(batchThreads.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (options.SleepIdleSeconds is { } sleepSeconds && sleepSeconds > 0)
+        {
+            arguments.Add("--sleep-idle-seconds");
+            arguments.Add(sleepSeconds.ToString(CultureInfo.InvariantCulture));
         }
 
         return arguments;

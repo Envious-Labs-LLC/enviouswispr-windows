@@ -163,6 +163,18 @@ public enum PolishProvider
     Gemini,
 }
 
+/// <summary>How long the local EG-1 polish model sits idle before releasing memory (ref: macOS #3853).</summary>
+public enum PolishUnloadPolicy
+{
+    Never = 0,
+    Immediately = 1,
+    TwoMinutes = 2,
+    FiveMinutes = 3,
+    TenMinutes = 4,
+    FifteenMinutes = 5,
+    SixtyMinutes = 6,
+}
+
 public enum AppTheme
 {
     System,
@@ -333,13 +345,15 @@ public sealed record PolishPreferences(
     PolishProvider Provider,
     string? ModelId,
     string? OllamaEndpoint = null,
-    string? EgOneModelId = null)
+    string? EgOneModelId = null,
+    PolishUnloadPolicy UnloadPolicy = PolishUnloadPolicy.Never)
 {
     public static PolishPreferences Default { get; } = new(
         PolishProvider.None,
         ModelId: null,
         OllamaEndpoint: null,
-        EgOneModelId: null);
+        EgOneModelId: null,
+        UnloadPolicy: PolishUnloadPolicy.Never);
 }
 
 public sealed record HistoryPreferences(bool IsEnabled, int RetentionDays)

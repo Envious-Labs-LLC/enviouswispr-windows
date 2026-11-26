@@ -133,6 +133,9 @@ public sealed record EgOneRemovalConfirmation(
     string ConfirmButtonText,
     string CancelButtonText);
 
+/// <summary>A user-facing choice for how soon an idle local EG-1 model releases memory.</summary>
+public sealed record PolishUnloadPolicyChoice(PolishUnloadPolicy Policy, string DisplayName);
+
 /// <summary>Visibility and customer-facing copy for the Dictation output language card.</summary>
 public sealed record DictationOutputLanguagePresentation(
     bool IsVisible,
@@ -141,6 +144,22 @@ public sealed record DictationOutputLanguagePresentation(
 /// <summary>Pure presentation helpers for the transcription engine, EG-1 sizing, and output language cards.</summary>
 public static class EnginePolishPresentation
 {
+    public const string UnloadPolishModelTitle = "Unload polish model after";
+    public const string UnloadPolishModelHelp =
+        "Frees the polish model's memory after the time you choose. Your next dictation wakes it while you speak; the first one after sleeping may take a moment longer.";
+    public const string UnloadPolishModelImmediatelyWarning =
+        "The polish model is freed after about 10 seconds without a request. Expect a short wait if you finish speaking before it wakes.";
+
+    public static IReadOnlyList<PolishUnloadPolicyChoice> PolishUnloadPolicyChoices { get; } =
+    [
+        new(PolishUnloadPolicy.Never, "Never"),
+        new(PolishUnloadPolicy.Immediately, "Immediately"),
+        new(PolishUnloadPolicy.TwoMinutes, "After 2 minutes"),
+        new(PolishUnloadPolicy.FiveMinutes, "After 5 minutes"),
+        new(PolishUnloadPolicy.TenMinutes, "After 10 minutes"),
+        new(PolishUnloadPolicy.FifteenMinutes, "After 15 minutes"),
+        new(PolishUnloadPolicy.SixtyMinutes, "After 1 hour"),
+    ];
     public const string ParakeetBundleSizeLabel = "640 MB";
     public const string WhisperBundleSizeLabel = "548 MB";
     public const string RemovalBlockedBusyNotice =

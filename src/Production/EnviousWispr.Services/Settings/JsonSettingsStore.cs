@@ -84,6 +84,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 21 => MigrateFromV21(json),
                 22 => MigrateFromV22(json),
                 23 => MigrateFromV23(json),
+                24 => MigrateFromV24(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -585,6 +586,19 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// "German", "Spanish") and numbers (0..4) into ISO language codes on load.
     /// </remarks>
     private static AppSettings? MigrateFromV23(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before local EG-1 idle memory sleep existed (schema v25).</summary>
+    /// <remarks>
+    /// Absent <c>unloadPolicy</c> deserializes to <see cref="PolishUnloadPolicy.Never"/>, matching macOS
+    /// and preserving existing behavior while bumping the schema version so older builds reject politely.
+    /// </remarks>
+    private static AppSettings? MigrateFromV24(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

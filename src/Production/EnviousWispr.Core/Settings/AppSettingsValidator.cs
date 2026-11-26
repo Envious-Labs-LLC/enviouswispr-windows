@@ -67,6 +67,7 @@ public static class AppSettingsValidator
         HotkeyGestureParser.ParseOneShot(preferences.Dictation.CopyLastGesture).Succeeded &&
         HasDistinctDictationGestures(preferences.Dictation) &&
         Enum.IsDefined(preferences.Polish.Provider) &&
+        Enum.IsDefined(preferences.Polish.UnloadPolicy) &&
         (preferences.Polish.ModelId is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.ModelId) && preferences.Polish.ModelId.Length <= 256)) &&
         (preferences.Polish.OllamaEndpoint is null ||

@@ -298,7 +298,10 @@ public partial class App
                 ReleaseSession: ReleaseSession,
                 DisposeDeliveryRoute: DisposeDeliveryRoute,
                 DictationActivityChanged: active =>
-                    PostToLiveWindow(window => window.SetDictationActive(active))),
+                {
+                    SetPolishSessionActive(active);
+                    PostToLiveWindow(window => window.SetDictationActive(active));
+                }),
             TimeProvider.System));
         if (_pushToTalkHook is not null)
         {

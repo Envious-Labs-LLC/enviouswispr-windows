@@ -390,6 +390,83 @@ public sealed class AiPolishEgOneParityTests
         Assert.Contains("TeardownPolishAsync", removeBody, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task LoadMigratesV24AndPortableProfileV17AndRoundTripsUnloadPolicy()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var settingsPath = Path.Combine(directory, "settings-v24.json");
+            var v24Settings = JsonSettingsStoreTests.CreatePopulatedSettings() with
+            {
+                SchemaVersion = 24,
+                Preferences = JsonSettingsStoreTests.CreatePopulatedSettings().Preferences with
+                {
+                    Polish = new PolishPreferences(PolishProvider.EgOne, "eg-1-mini", null, "eg-1-mini"),
+                },
+            };
+            var settingsNode = JsonNode.Parse(JsonSerializer.Serialize(v24Settings, JsonSettingsStore.SerializerOptions))!.AsObject();
+            settingsNode["preferences"]!["polish"]!.AsObject().Remove("unloadPolicy");
+            await File.WriteAllTextAsync(settingsPath, settingsNode.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var loaded = await new JsonSettingsStore(settingsPath).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, loaded.Status);
+            Assert.Equal(24, loaded.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.Settings.SchemaVersion);
+            Assert.Equal(PolishUnloadPolicy.Never, loaded.Settings.Preferences.Polish.UnloadPolicy);
+            Assert.Equal("eg-1-mini", loaded.Settings.Preferences.Polish.EgOneModelId);
+
+            var profilePath = Path.Combine(directory, "profile-v17.enviouswispr.json");
+            var v17Profile = v24Settings.ToPortableProfile() with { SchemaVersion = 17 };
+            var profileNode = JsonNode.Parse(JsonSerializer.Serialize(v17Profile, JsonSettingsStore.SerializerOptions))!.AsObject();
+            profileNode["preferences"]!["polish"]!.AsObject().Remove("unloadPolicy");
+            await File.WriteAllTextAsync(profilePath, profileNode.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var imported = await new JsonPortableProfileService().ImportAsync(profilePath);
+            Assert.Equal(PortableProfileImportStatus.Imported, imported.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, imported.Profile?.SchemaVersion);
+            Assert.Equal(PolishUnloadPolicy.Never, imported.Profile?.Preferences.Polish.UnloadPolicy);
+
+            var store = new JsonSettingsStore(Path.Combine(directory, "presenter-roundtrip.json"));
+            using var presenter = new SettingsPresenter(store, AppSettings.Default);
+            for (var index = 0; index < EnginePolishPresentation.PolishUnloadPolicyChoices.Count; index++)
+            {
+                var save = await presenter.SaveGeneralAsync(CreateGeneralInput(
+                    polishProviderIndex: 1,
+                    polishModel: "eg-1",
+                    egOneModelId: "eg-1",
+                    polishUnloadPolicyIndex: index));
+                Assert.True(save.Saved);
+                Assert.Equal(
+                    EnginePolishPresentation.PolishUnloadPolicyChoices[index].Policy,
+                    presenter.Current.Preferences.Polish.UnloadPolicy);
+            }
+
+            var reloaded = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, reloaded.Status);
+            Assert.Equal(PolishUnloadPolicy.SixtyMinutes, reloaded.Settings.Preferences.Polish.UnloadPolicy);
+        });
+
+        var invalid = AppSettings.Default with
+        {
+            Preferences = AppSettings.Default.Preferences with
+            {
+                Polish = AppSettings.Default.Preferences.Polish with
+                {
+                    UnloadPolicy = (PolishUnloadPolicy)99,
+                },
+            },
+        };
+        Assert.NotNull(AppSettingsValidator.Validate(invalid, AppErrorStage.SettingsLoad));
+
+        var root = FindRepositoryRoot();
+        var xamlText = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var document = XDocument.Parse(xamlText);
+        Assert.NotNull(document.Descendants().FirstOrDefault(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "EgOneUnloadPolicyComboBox"));
+        Assert.NotNull(document.Descendants().FirstOrDefault(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "EgOneUnloadImmediatelyNotice"));
+        Assert.Equal(7, EnginePolishPresentation.PolishUnloadPolicyChoices.Count);
+    }
+
     private sealed class MemoryApiKeyStore : IApiKeyStore
     {
         private readonly Dictionary<PolishProvider, string> _keys = [];
@@ -426,7 +503,8 @@ public sealed class AiPolishEgOneParityTests
     private static GeneralSettingsInput CreateGeneralInput(
         int polishProviderIndex,
         string polishModel,
-        string? egOneModelId) => new(
+        string? egOneModelId,
+        int polishUnloadPolicyIndex = 0) => new(
         RecordingShortcut: "F8",
         CancelShortcut: "Escape",
         QuickAddShortcut: "Ctrl+Alt+W",
@@ -460,7 +538,8 @@ public sealed class AiPolishEgOneParityTests
         MicrophoneId: null,
         PasteLastShortcut: string.Empty,
         CopyLastShortcut: string.Empty,
-        EgOneModelId: egOneModelId);
+        EgOneModelId: egOneModelId,
+        PolishUnloadPolicyIndex: polishUnloadPolicyIndex);
 
     private static string FindRepositoryRoot()
     {

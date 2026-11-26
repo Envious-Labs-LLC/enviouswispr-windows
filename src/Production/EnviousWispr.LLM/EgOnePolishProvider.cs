@@ -67,9 +67,27 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 
     public int? OwnedProcessId => _runtime.OwnedProcessId;
 
+    public int? SleepIdleSeconds => _runtime.SleepIdleSeconds;
+
     public bool? UsesAccelerator => (_runtime as EgOneServerManager)?.IsUsingAccelerator;
 
+    public static TimeSpan? ResolveKeepAwakeInterval(int? sleepIdleSeconds)
+    {
+        if (sleepIdleSeconds is not > 0)
+        {
+            return null;
+        }
+
+        var intervalSeconds = Math.Clamp(sleepIdleSeconds.Value / 2, 2, 30);
+        return TimeSpan.FromSeconds(intervalSeconds);
+    }
+
     public void TerminateRuntimeImmediately() => _runtime.TerminateImmediately();
+
+    public Task<bool> TryPreWakeAsync(CancellationToken cancellationToken = default) =>
+        _disposed
+            ? Task.FromResult(false)
+            : _runtime.TryPreWakeAsync(cancellationToken);
 
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
