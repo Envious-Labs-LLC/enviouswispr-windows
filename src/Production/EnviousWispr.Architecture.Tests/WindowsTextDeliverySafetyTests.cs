@@ -24,6 +24,7 @@ public sealed class ClipboardFactAttribute : FactAttribute
     }
 }
 
+[Collection("SystemClipboard")]
 public sealed class WindowsTextDeliverySafetyTests
 {
     internal static bool ClipboardAvailable() => ClipboardGuard.Available();

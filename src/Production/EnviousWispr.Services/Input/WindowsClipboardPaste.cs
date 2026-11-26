@@ -1,18 +1,23 @@
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Input;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
 using System.Windows.Forms;
 
 namespace EnviousWispr.Services.Input;
 
 internal static class WindowsClipboardPaste
 {
+    private const ushort VkShift = 0x10;
     private const ushort VkControl = 0x11;
+    private const ushort VkInsert = 0x2D;
     private const ushort VkV = 0x56;
     private const ushort VkC = 0x43;
     private const uint InputKeyboard = 1;
+    private const uint KeyEventExtendedKey = 0x0001;
     private const uint KeyEventKeyUp = 0x0002;
 
     internal static int NativeInputSize => Marshal.SizeOf<NativeInput>();
@@ -148,7 +153,7 @@ internal static class WindowsClipboardPaste
 
         // Snapshot FIRST. A snapshot that fails means we cannot promise to give the clipboard back,
         // and taking it without that promise is the failure this whole method is shaped to avoid.
-        var snapshot = TrySnapshotClipboard();
+        var snapshot = TrySnapshotClipboard(cancellationToken);
         if (snapshot is null)
         {
             return null;
@@ -274,20 +279,15 @@ internal static class WindowsClipboardPaste
             onUnexpectedFailure: static _ => null,
             cancellationToken);
 
-    private static bool SendCtrlC()
-    {
-        var inputs = new[]
-        {
-            MakeInput(VkControl, keyUp: false),
-            MakeInput(VkC, keyUp: false),
-            MakeInput(VkC, keyUp: true),
-            MakeInput(VkControl, keyUp: true),
-        };
-        return SendInput(
-            checked((uint)inputs.Length),
-            inputs,
-            NativeInputSize) == inputs.Length;
-    }
+    private static bool SendCtrlC() => SendInputs(BuildCtrlCInputs());
+
+    internal static NativeInput[] BuildCtrlCInputs() =>
+    [
+        MakeInput(VkControl, keyUp: false),
+        MakeInput(VkC, keyUp: false),
+        MakeInput(VkC, keyUp: true),
+        MakeInput(VkControl, keyUp: true),
+    ];
 
     private static string? TryGetClipboardText()
     {
@@ -307,10 +307,26 @@ internal static class WindowsClipboardPaste
         string fallbackText,
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
+        CancellationToken cancellationToken) =>
+        PasteAsync(text, fallbackText, restoreClipboard, PasteKeystrokeKind.CtrlV, preflight, cancellationToken);
+
+    public static Task<TextCommitResult> PasteAsync(
+        string text,
+        string fallbackText,
+        bool restoreClipboard,
+        PasteKeystrokeKind keystroke,
+        Func<TextDeliveryRefusalReason> preflight,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(preflight);
-        return PasteAsync(text, fallbackText, restoreClipboard, preflight, SetClipboardTextOrThrow, cancellationToken);
+        return PasteAsync(
+            text,
+            fallbackText,
+            restoreClipboard,
+            preflight,
+            SetClipboardTextOrThrow,
+            keystroke == PasteKeystrokeKind.ShiftInsert ? SendShiftInsert : SendCtrlV,
+            cancellationToken);
     }
 
     /// <summary>The paste with its clipboard writer named: production passes <see cref="SetClipboardTextOrThrow"/>; a test passes a writer that fails the way the clipboard can, after changing it.</summary>
@@ -365,7 +381,7 @@ internal static class WindowsClipboardPaste
         ClipboardSnapshot? snapshot = null;
         if (restoreClipboard)
         {
-            snapshot = TrySnapshotClipboard();
+            snapshot = TrySnapshotClipboard(cancellationToken);
             if (snapshot is null)
             {
                 return new TextCommitResult(
@@ -499,22 +515,26 @@ internal static class WindowsClipboardPaste
         {
             try
             {
-                if (snapshot.IsEmpty)
-                {
-                    ClearOnce();
-                }
-                else
-                {
-                    Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0);
-                }
-
+                RestoreSnapshotOnce(snapshot);
                 return (true, false);
             }
             catch (Exception exception) when (
-                exception is ExternalException or ThreadStateException or ArgumentException)
+                exception is ExternalException or ThreadStateException or ArgumentException or InvalidOperationException)
             {
-                if (exception is not ExternalException || remaining <= 1)
+                var canRetryContention = exception is ExternalException && remaining > 1;
+                if (!canRetryContention)
                 {
+                    if (!IsClipboardStillOurs(expected))
+                    {
+                        return (false, false);
+                    }
+
+                    if (snapshot.FallbackText is { } fallbackText &&
+                        TryRestoreFallbackTextOnce(fallbackText))
+                    {
+                        return (true, false);
+                    }
+
                     return (false, true);
                 }
 
@@ -533,22 +553,81 @@ internal static class WindowsClipboardPaste
         }
     }
 
-    private static bool SendCtrlV()
+    private static void RestoreSnapshotOnce(ClipboardSnapshot snapshot)
     {
-        var inputs = new[]
+        if (snapshot.IsEmpty)
         {
-            MakeInput(VkControl, keyUp: false),
-            MakeInput(VkV, keyUp: false),
-            MakeInput(VkV, keyUp: true),
-            MakeInput(VkControl, keyUp: true),
-        };
-        return SendInput(
+            ClearOnce();
+            return;
+        }
+
+        Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0);
+        if (!string.IsNullOrEmpty(snapshot.FallbackText) &&
+            !ClipboardContainsTextSafe() &&
+            (GetClipboardOwner() == IntPtr.Zero || ClipboardOwnedByThisThread()))
+        {
+            Clipboard.SetDataObject(snapshot.FallbackText, copy: true, retryTimes: 0, retryDelay: 0);
+        }
+    }
+
+    private static bool ClipboardContainsTextSafe()
+    {
+        try
+        {
+            return Clipboard.ContainsText();
+        }
+        catch (Exception exception) when (exception is ExternalException or ThreadStateException)
+        {
+            // If another process immediately opened the clipboard, do not treat contention as an empty flush.
+            return true;
+        }
+    }
+
+    private static bool IsClipboardStillOurs(uint expectedSequence) =>
+        GetClipboardSequenceNumber() == expectedSequence || ClipboardOwnedByThisThread();
+
+    private static bool TryRestoreFallbackTextOnce(string fallbackText)
+    {
+        try
+        {
+            Clipboard.SetDataObject(fallbackText, copy: true, retryTimes: 0, retryDelay: 0);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ExternalException or ThreadStateException or ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool SendCtrlV() => SendInputs(BuildCtrlVInputs());
+
+    private static bool SendShiftInsert() => SendInputs(BuildShiftInsertInputs());
+
+    internal static NativeInput[] BuildCtrlVInputs() =>
+    [
+        MakeInput(VkControl, keyUp: false),
+        MakeInput(VkV, keyUp: false),
+        MakeInput(VkV, keyUp: true),
+        MakeInput(VkControl, keyUp: true),
+    ];
+
+    internal static NativeInput[] BuildShiftInsertInputs() =>
+    [
+        MakeInput(VkShift, keyUp: false),
+        MakeInput(VkInsert, keyUp: false, extended: true),
+        MakeInput(VkInsert, keyUp: true, extended: true),
+        MakeInput(VkShift, keyUp: true),
+    ];
+
+    private static bool SendInputs(NativeInput[] inputs) =>
+        NativeInputSize == 40 &&
+        SendInput(
             checked((uint)inputs.Length),
             inputs,
             NativeInputSize) == inputs.Length;
-    }
 
-    private static NativeInput MakeInput(ushort virtualKey, bool keyUp) => new()
+    private static NativeInput MakeInput(ushort virtualKey, bool keyUp, bool extended = false) => new()
     {
         Type = InputKeyboard,
         Union = new NativeInputUnion
@@ -556,7 +635,7 @@ internal static class WindowsClipboardPaste
             Keyboard = new NativeKeyboardInput
             {
                 VirtualKey = virtualKey,
-                Flags = keyUp ? KeyEventKeyUp : 0,
+                Flags = (extended ? KeyEventExtendedKey : 0u) | (keyUp ? KeyEventKeyUp : 0u),
                 // THE APP'S OWN KEYSTROKE, SO ITS OWN HOOK STEPS ASIDE. With a last-dictation shortcut bound to
                 // Ctrl+V or Ctrl+C, the hook would otherwise swallow the very paste or copy this sends. Ref: #206.
                 ExtraInfo = MenuKeyMask.Tag,
@@ -625,44 +704,183 @@ internal static class WindowsClipboardPaste
     /// <param name="OwnedSequence">The clipboard's sequence number when what is on it is our own change; null when nothing of ours is on it.</param>
     private readonly record struct ClipboardWrite(bool Written, uint? OwnedSequence);
 
-    /// <summary>Every format on the clipboard, copied; null when any format cannot be copied, in which case nothing that borrows the clipboard may proceed.</summary>
-    internal static ClipboardSnapshot? TrySnapshotClipboard()
+    private const int ClipboardReadAttempts = 8;
+
+    private static readonly TimeSpan ClipboardReadRetryDelay = TimeSpan.FromMilliseconds(25);
+
+    /// <summary>
+    /// Captures all readable/cloneable clipboard formats with bounded STA pumping retries on transient
+    /// clipboard lock contention. Unreadable, null, or uncloneable Electron/OLE auxiliary formats are
+    /// skipped safely whenever usable formats are preserved; a non-empty clipboard with zero usable
+    /// formats still returns null so an opaque clipboard is never overwritten.
+    /// </summary>
+    internal static ClipboardSnapshot? TrySnapshotClipboard() =>
+        TrySnapshotClipboard(CancellationToken.None);
+
+    internal static ClipboardSnapshot? TrySnapshotClipboard(CancellationToken cancellationToken) =>
+        TrySnapshotClipboardWithRetry(
+            static () =>
+            {
+                var source = Clipboard.GetDataObject();
+                return TrySnapshotDataObject(source);
+            },
+            PumpingWait,
+            cancellationToken);
+
+    internal static ClipboardSnapshot? TrySnapshotClipboardWithRetry(
+        Func<ClipboardSnapshot?> readOnce,
+        Action<TimeSpan> wait,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readOnce);
+        ArgumentNullException.ThrowIfNull(wait);
+
+        for (var remaining = ClipboardReadAttempts; ; remaining--)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return readOnce();
+            }
+            catch (ExternalException) when (remaining > 1)
+            {
+                wait(ClipboardReadRetryDelay);
+            }
+            catch (Exception exception) when (
+                exception is ExternalException or ThreadStateException or
+                    InvalidOperationException or ArgumentException)
+            {
+                return null;
+            }
+        }
+    }
+
+    internal static ClipboardSnapshot? TrySnapshotDataObject(System.Windows.Forms.IDataObject? source)
+    {
+        if (source is null)
+        {
+            return new ClipboardSnapshot(IsEmpty: true, Data: null);
+        }
+
+        var formats = source.GetFormats(autoConvert: false);
+        if (formats is null || formats.Length == 0)
+        {
+            return new ClipboardSnapshot(IsEmpty: true, Data: null);
+        }
+
+        var copy = new DataObject();
+        var copiedFormats = 0;
+        var skippedFormats = 0;
+        string? fallbackText = null;
+
+        foreach (var format in formats)
+        {
+            if (string.IsNullOrWhiteSpace(format))
+            {
+                continue;
+            }
+
+            object? value;
+            try
+            {
+                value = source.GetData(format, autoConvert: false);
+            }
+            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+            {
+                skippedFormats++;
+                continue;
+            }
+
+            if (value is null)
+            {
+                skippedFormats++;
+                continue;
+            }
+
+            object? cloned;
+            try
+            {
+                cloned = CloneClipboardValue(value);
+            }
+            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+            {
+                skippedFormats++;
+                continue;
+            }
+
+            if (cloned is null)
+            {
+                skippedFormats++;
+                continue;
+            }
+
+            try
+            {
+                copy.SetData(format, autoConvert: false, cloned);
+            }
+            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+            {
+                skippedFormats++;
+                continue;
+            }
+
+            copiedFormats++;
+            if (cloned is string textValue &&
+                (string.Equals(format, DataFormats.UnicodeText, StringComparison.Ordinal) ||
+                 (fallbackText is null && string.Equals(format, DataFormats.Text, StringComparison.Ordinal))))
+            {
+                fallbackText = textValue;
+            }
+        }
+
+        if (fallbackText is null && TryReadUnicodeTextFallback(source) is { } rescuedText)
+        {
+            if (!copy.GetDataPresent(DataFormats.UnicodeText, autoConvert: false))
+            {
+                try
+                {
+                    copy.SetData(DataFormats.UnicodeText, autoConvert: true, rescuedText);
+                    copiedFormats++;
+                }
+                catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+                {
+                }
+            }
+
+            fallbackText = rescuedText;
+        }
+
+        if (copiedFormats == 0)
+        {
+            return null;
+        }
+
+        return new ClipboardSnapshot(
+            IsEmpty: false,
+            Data: copy,
+            FallbackText: fallbackText,
+            SkippedFormatCount: skippedFormats);
+    }
+
+    private static string? TryReadUnicodeTextFallback(System.Windows.Forms.IDataObject source)
     {
         try
         {
-            var source = Clipboard.GetDataObject();
-            if (source is null)
-            {
-                return new ClipboardSnapshot(IsEmpty: true, Data: null);
-            }
-
-            var copy = new DataObject();
-            foreach (var format in source.GetFormats(autoConvert: false))
-            {
-                var value = source.GetData(format, autoConvert: false);
-                if (value is null)
-                {
-                    return null;
-                }
-
-                var cloned = CloneClipboardValue(value);
-                if (cloned is null)
-                {
-                    return null;
-                }
-
-                copy.SetData(format, autoConvert: false, cloned);
-            }
-
-            return new ClipboardSnapshot(IsEmpty: false, copy);
+            return source.GetDataPresent(DataFormats.UnicodeText, autoConvert: true) &&
+                source.GetData(DataFormats.UnicodeText, autoConvert: true) is string text
+                    ? text
+                    : null;
         }
-        catch (Exception exception) when (
-            exception is ExternalException or ThreadStateException or
-                InvalidOperationException or ArgumentException)
+        catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
         {
             return null;
         }
     }
+
+    private static bool IsClipboardFormatReadFailure(Exception exception) =>
+        exception is ExternalException or ThreadStateException or InvalidOperationException or
+            ArgumentException or NotSupportedException or InvalidCastException or
+            SerializationException or IOException;
 
     /// <summary>The whole of a seekable stream, from its start, with its position put back; null for a stream whose whole contents cannot be read without consuming it, or that fails to read.</summary>
     /// <remarks>
@@ -726,6 +944,8 @@ internal static class WindowsClipboardPaste
                 clone.AddRange(strings.Cast<string>().ToArray());
                 return clone;
             }
+            case string[] stringArray:
+                return (string[])stringArray.Clone();
             case ICloneable cloneable:
                 return cloneable.Clone();
             case string or char or bool or byte or sbyte or short or ushort or int or uint or
@@ -812,13 +1032,22 @@ internal static class WindowsClipboardPaste
             }
             else
             {
-                WithPumpingRetry(() => Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0));
+                try
+                {
+                    WithPumpingRetry(() => RestoreSnapshotOnce(snapshot));
+                }
+                catch (Exception exception) when (
+                    exception is ArgumentException or InvalidOperationException &&
+                    snapshot.FallbackText is not null)
+                {
+                    WithPumpingRetry(() => Clipboard.SetDataObject(snapshot.FallbackText!, copy: true, retryTimes: 0, retryDelay: 0));
+                }
             }
 
             return true;
         }
         catch (Exception exception) when (
-            exception is ExternalException or ThreadStateException or ArgumentException)
+            exception is ExternalException or ThreadStateException or ArgumentException or InvalidOperationException)
         {
             return false;
         }
@@ -883,24 +1112,28 @@ internal static class WindowsClipboardPaste
         return completion.Task;
     }
 
-    internal sealed record ClipboardSnapshot(bool IsEmpty, DataObject? Data);
+    internal sealed record ClipboardSnapshot(
+        bool IsEmpty,
+        DataObject? Data,
+        string? FallbackText = null,
+        int SkippedFormatCount = 0);
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeInput
+    internal struct NativeInput
     {
         public uint Type;
         public NativeInputUnion Union;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 32)]
-    private struct NativeInputUnion
+    internal struct NativeInputUnion
     {
         [FieldOffset(0)]
         public NativeKeyboardInput Keyboard;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeKeyboardInput
+    internal struct NativeKeyboardInput
     {
         public ushort VirtualKey;
         public ushort ScanCode;

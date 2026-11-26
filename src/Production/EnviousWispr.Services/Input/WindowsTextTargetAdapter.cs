@@ -106,7 +106,12 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
-        if (CanUseDirectValueWrite(current.Context, request))
+        var commitRule = ResolveTargetPolicy(
+            request.Target,
+            elementClassName: null,
+            isControlEdit: current.Context.TargetKind == TextTargetKind.StandardEdit);
+
+        if (CanUseDirectValueWrite(current.Context, request, commitRule))
         {
             var direct = TryDirectValueWrite(request, current.Context);
             if (direct is not null)
@@ -136,6 +141,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             request.Text.Text,
             request.FallbackText.Text,
             request.Options.RestoreClipboardAfterPaste,
+            commitRule.Keystroke,
             () => GuardedPreflight(() => PreflightInput(
                 request.Target,
                 request.ExpectedContext,
@@ -200,9 +206,11 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         _ => TextDeliveryRefusalReason.None,
     };
 
-    private static bool CanUseDirectValueWrite(
+    internal static bool CanUseDirectValueWrite(
         CaretContext context,
-        TextCommitRequest request) =>
+        TextCommitRequest request,
+        WindowsPasteRule rule) =>
+        !rule.SkipDirectValueWrite &&
         context.TargetKind == TextTargetKind.StandardEdit &&
         context.SupportsDirectValueWrite &&
         context.DirectValueWriteAtEnd &&
@@ -290,9 +298,26 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         if (target.FocusedElementId is null)
         {
+            var fallbackRule = ResolveTargetPolicy(target, elementClassName: null, isControlEdit: false);
+            if (!fallbackRule.AllowsWindowFallbackWithoutFocusedElement)
+            {
+                return new TargetContextResult(
+                    TargetContextStatus.AccessibilityUnavailable,
+                    EmptyContext(target, string.Empty, fallbackRule.TargetKind),
+                    TextDeliveryRefusalReason.UnsupportedTarget);
+            }
+
+            if (TryInspectOptionalPasswordField(target.ProcessId))
+            {
+                return new TargetContextResult(
+                    TargetContextStatus.Protected,
+                    EmptyContext(target, string.Empty, fallbackRule.TargetKind),
+                    TextDeliveryRefusalReason.ProtectedField);
+            }
+
             return new TargetContextResult(
-                TargetContextStatus.AccessibilityUnavailable,
-                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
+                TargetContextStatus.Available,
+                EmptyContext(target, string.Empty, fallbackRule.TargetKind));
         }
 
         var element = Automation(static () => AutomationElement.FocusedElement);
@@ -309,7 +334,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             element.Current.HasKeyboardFocus,
             element.Current.IsPassword,
             element.Current.IsEnabled,
-            element.Current.IsKeyboardFocusable));
+            element.Current.IsKeyboardFocusable,
+            element.Current.ControlType == ControlType.Edit,
+            element.Current.ClassName ?? string.Empty));
         var focusedId = focus.RuntimeId;
         if (focus.ProcessId != target.ProcessId ||
             !string.Equals(focusedId, target.FocusedElementId, StringComparison.Ordinal) ||
@@ -320,7 +347,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: TextDeliveryRefusalReason.TargetChanged);
         }
 
-        var targetKind = ClassifyTarget(target, element);
+        var rule = ResolveTargetPolicy(target, focus.ClassName, focus.IsControlEdit);
+        var targetKind = rule.TargetKind;
         if (focus.IsPassword)
         {
             return new TargetContextResult(
@@ -356,10 +384,12 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 TextDeliveryRefusalReason.UnsupportedTarget);
         }
 
-        var supportsValue = Automation(() =>
-            element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObject) &&
-            valuePatternObject is ValuePattern valuePattern &&
-            !valuePattern.Current.IsReadOnly);
+        var supportsValue = !rule.SkipDirectValueWrite &&
+            targetKind == TextTargetKind.StandardEdit &&
+            Automation(() =>
+                element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObject) &&
+                valuePatternObject is ValuePattern valuePattern &&
+                !valuePattern.Current.IsReadOnly);
         var urlBar = IsUrlBarField(element, targetKind);
         return new TargetContextResult(
             TargetContextStatus.Available,
@@ -379,6 +409,24 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 IsUrlBarField: urlBar));
     }
 
+    private static bool TryInspectOptionalPasswordField(uint targetProcessId)
+    {
+        try
+        {
+            return Automation(() =>
+            {
+                var focused = AutomationElement.FocusedElement;
+                return focused is not null &&
+                    checked((uint)focused.Current.ProcessId) == targetProcessId &&
+                    focused.Current.IsPassword;
+            });
+        }
+        catch (AutomationRefusalException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>What the focused element says about itself, read in one automation call.</summary>
     private sealed record FocusedElementFacts(
         uint ProcessId,
@@ -386,7 +434,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool HasKeyboardFocus,
         bool IsPassword,
         bool IsEnabled,
-        bool IsKeyboardFocusable);
+        bool IsKeyboardFocusable,
+        bool IsControlEdit,
+        string ClassName);
 
     /// <summary>The text around the caret, as the text pattern reports it.</summary>
     private sealed record CaretText(string Selected, string Left, bool LeftAtStart, string Right, bool RightAtEnd);
@@ -455,42 +505,25 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         RightReachedDocumentEnd: false,
         HasTextContext: false,
         SupportsDirectValueWrite: false,
-        DirectValueWriteAtEnd: false);
+        DirectValueWriteAtEnd: false,
+        IsScreenDerived: targetKind == TextTargetKind.Terminal);
 
-    private static TextTargetKind ClassifyTarget(
+    internal static WindowsPasteRule ResolveTargetPolicy(
         TargetWindowId target,
-        AutomationElement element)
+        string? elementClassName,
+        bool isControlEdit)
     {
-        var processName = TryGetProcessName(target.ProcessId);
-        if (TerminalProcesses.Contains(processName))
-        {
-            return TextTargetKind.Terminal;
-        }
-
-        if (OfficeProcesses.Contains(processName))
-        {
-            return TextTargetKind.Office;
-        }
-
-        if (ChatProcesses.Contains(processName))
-        {
-            return TextTargetKind.Chat;
-        }
-
-        if (BrowserProcesses.Contains(processName))
-        {
-            return TextTargetKind.Browser;
-        }
-
-        var controlType = Automation(() => element.Current.ControlType);
-        if (controlType == ControlType.Edit)
-        {
-            return TextTargetKind.StandardEdit;
-        }
-
-        return IsFullscreen(target.Value)
-            ? TextTargetKind.Game
-            : TextTargetKind.Unknown;
+        var processName = !string.IsNullOrWhiteSpace(target.ProcessName)
+            ? target.ProcessName
+            : WindowsWindowIdentity.TryGetProcessName(target.ProcessId);
+        var windowClassName = WindowsWindowIdentity.TryGetClassName(target.Value);
+        var fullscreen = IsFullscreen(target.Value);
+        return WindowsPastePolicy.Resolve(
+            processName,
+            windowClassName,
+            elementClassName,
+            isControlEdit,
+            fullscreen);
     }
 
     private static bool IsUrlBarField(
@@ -510,45 +543,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             automationId.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
             className.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
             className.Contains("urlbar", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static readonly HashSet<string> BrowserProcesses =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "chrome", "msedge", "firefox", "brave", "opera", "vivaldi",
-        };
-
-    private static readonly HashSet<string> OfficeProcesses =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "winword", "excel", "outlook", "onenote", "powerpnt",
-        };
-
-    private static readonly HashSet<string> ChatProcesses =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "discord", "slack", "ms-teams", "teams", "signal", "telegram", "whatsapp",
-        };
-
-    private static readonly HashSet<string> TerminalProcesses =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "windowsterminal", "cmd", "powershell", "pwsh", "conhost", "wezterm",
-            "alacritty", "mintty", "tabby",
-        };
-
-    private static string TryGetProcessName(uint processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(checked((int)processId));
-            return process.ProcessName;
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException or InvalidOperationException or Win32Exception)
-        {
-            return string.Empty;
-        }
     }
 
     private static TargetContextStatus ActivateAndValidateWindow(TargetWindowId target)
@@ -572,7 +566,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         if (GetForegroundWindow() != target.Value)
         {
-            _ = SetForegroundWindow(target.Value);
+            WindowsWindowIdentity.RestoreAndFocus(target.Value);
             var timer = Stopwatch.StartNew();
             while (GetForegroundWindow() != target.Value &&
                 timer.Elapsed < TargetActivationTimeout)
@@ -832,10 +826,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindow(nint window);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

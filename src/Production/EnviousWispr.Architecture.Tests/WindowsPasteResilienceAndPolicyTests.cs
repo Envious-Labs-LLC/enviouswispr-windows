@@ -1,0 +1,765 @@
+using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
+using System.Drawing;
+using System.Reflection.Metadata;
+using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
+using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.History;
+using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Settings;
+using EnviousWispr.Pipeline;
+using EnviousWispr.Services.Input;
+
+namespace EnviousWispr.Architecture.Tests;
+
+[Collection("SystemClipboard")]
+public sealed class WindowsPasteResilienceAndPolicyTests
+{
+    private const ushort VkShift = 0x10;
+    private const ushort VkInsert = 0x2D;
+    private const uint KeyEventExtendedKey = 0x0001;
+    private const uint KeyEventKeyUp = 0x0002;
+
+    [Fact]
+    public void SnapshotPreservesReadableFormatsAndSkipsChromiumAuxiliaryFailures()
+    {
+        var source = new FakeDataObject(
+        [
+            (System.Windows.Forms.DataFormats.UnicodeText, "primary user text"),
+            (System.Windows.Forms.DataFormats.Text, "primary user text"),
+            (System.Windows.Forms.DataFormats.Html, "<html><body>primary user text</body></html>"),
+            ("Chromium internal source URL", new MemoryStream([1, 2, 3, 4])),
+            ("OlePrivateData", null),
+            ("UncloneableComObject", new object()),
+            ("BrokenDelayedRender", new ThrowingValue(static () => Marshal.ThrowExceptionForHR(unchecked((int)0x80040064)))),
+            ("SerializationRejected", new ThrowingValue(static () => throw new SerializationException("bad ole stream"))),
+        ]);
+
+        var snapshot = WindowsClipboardPaste.TrySnapshotDataObject(source);
+
+        Assert.NotNull(snapshot);
+        Assert.False(snapshot!.IsEmpty);
+        Assert.Equal("primary user text", snapshot.FallbackText);
+        Assert.Equal(4, snapshot.SkippedFormatCount);
+        Assert.NotNull(snapshot.Data);
+        Assert.True(snapshot.Data!.TryGetData<string>(System.Windows.Forms.DataFormats.UnicodeText, autoConvert: false, out var unicode));
+        Assert.Equal("primary user text", unicode);
+        Assert.True(snapshot.Data.TryGetData<string>(System.Windows.Forms.DataFormats.Html, autoConvert: false, out var html));
+        Assert.Equal("<html><body>primary user text</body></html>", html);
+        Assert.True(snapshot.Data.TryGetData<MemoryStream>("Chromium internal source URL", autoConvert: false, out var urlStream));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, urlStream!.ToArray());
+    }
+
+    [Fact]
+    public void SnapshotPreservesFileDropAndBitmapWhileSkippingNullAuxiliaryFormat()
+    {
+        using var bitmap = new Bitmap(2, 2);
+        bitmap.SetPixel(0, 0, Color.Red);
+        string[] files = [@"C:\temp\a.txt", @"C:\temp\b.txt"];
+        var source = new FakeDataObject(
+        [
+            (System.Windows.Forms.DataFormats.FileDrop, files),
+            (System.Windows.Forms.DataFormats.Bitmap, bitmap),
+            ("Preferred DropEffect", new byte[] { 5, 0, 0, 0 }),
+            ("EnhancedMetafile", null),
+        ]);
+
+        var snapshot = WindowsClipboardPaste.TrySnapshotDataObject(source);
+
+        Assert.NotNull(snapshot);
+        Assert.False(snapshot!.IsEmpty);
+        Assert.Equal(1, snapshot.SkippedFormatCount);
+        Assert.True(snapshot.Data!.TryGetData<string[]>(System.Windows.Forms.DataFormats.FileDrop, autoConvert: false, out var restoredFiles));
+        Assert.Equal(files, restoredFiles);
+        Assert.NotSame(files, restoredFiles);
+        Assert.True(snapshot.Data.TryGetData<Bitmap>(System.Windows.Forms.DataFormats.Bitmap, autoConvert: false, out var restoredBitmap));
+        Assert.NotNull(restoredBitmap);
+        Assert.True(snapshot.Data.TryGetData<byte[]>("Preferred DropEffect", autoConvert: false, out var dropEffect));
+        Assert.Equal(new byte[] { 5, 0, 0, 0 }, dropEffect);
+    }
+
+    [Fact]
+    public void SnapshotRescuesUnicodeTextViaAutoConvertWhenRawFormatIsNull()
+    {
+        var source = new FakeDataObject(
+            entries:
+            [
+                (System.Windows.Forms.DataFormats.UnicodeText, null),
+                ("Chromium Web Custom MIME Data Format", new object()),
+            ],
+            autoConvertUnicodeText: "rescued clipboard text");
+
+        var snapshot = WindowsClipboardPaste.TrySnapshotDataObject(source);
+
+        Assert.NotNull(snapshot);
+        Assert.False(snapshot!.IsEmpty);
+        Assert.Equal("rescued clipboard text", snapshot.FallbackText);
+        Assert.True(snapshot.Data!.TryGetData<string>(System.Windows.Forms.DataFormats.UnicodeText, autoConvert: true, out var rescued));
+        Assert.Equal("rescued clipboard text", rescued);
+    }
+
+    [Fact]
+    public void SnapshotFailsClosedWhenNonEmptyClipboardHasZeroReadableFormats()
+    {
+        var opaque = new FakeDataObject(
+        [
+            ("OpaqueVendorObject", new object()),
+            ("NullAuxiliary", null),
+        ]);
+
+        Assert.Null(WindowsClipboardPaste.TrySnapshotDataObject(opaque));
+
+        var empty = new FakeDataObject([]);
+        var emptySnapshot = WindowsClipboardPaste.TrySnapshotDataObject(empty);
+        Assert.NotNull(emptySnapshot);
+        Assert.True(emptySnapshot!.IsEmpty);
+        Assert.Null(WindowsClipboardPaste.TrySnapshotDataObject(null)!.Data);
+    }
+
+    [Fact]
+    public void SnapshotReadRetryRecoversFromTransientClipboardContention()
+    {
+        var attempts = 0;
+        var waits = 0;
+        var expected = new WindowsClipboardPaste.ClipboardSnapshot(IsEmpty: true, Data: null);
+
+        var snapshot = WindowsClipboardPaste.TrySnapshotClipboardWithRetry(
+            () =>
+            {
+                attempts++;
+                if (attempts < 4)
+                {
+                    Marshal.ThrowExceptionForHR(unchecked((int)0x800401D0));
+                }
+
+                return expected;
+            },
+            _ => waits++);
+
+        Assert.Same(expected, snapshot);
+        Assert.Equal(4, attempts);
+        Assert.Equal(3, waits);
+    }
+
+    [Fact]
+    public void SnapshotReadRetryHonorsCancellationAndExhaustion()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.Throws<OperationCanceledException>(() =>
+            WindowsClipboardPaste.TrySnapshotClipboardWithRetry(
+                static () => new WindowsClipboardPaste.ClipboardSnapshot(IsEmpty: true, Data: null),
+                static _ => { },
+                cts.Token));
+
+        var exhausted = WindowsClipboardPaste.TrySnapshotClipboardWithRetry(
+            static () =>
+            {
+                Marshal.ThrowExceptionForHR(unchecked((int)0x800401D0));
+                return null;
+            },
+            static _ => { });
+        Assert.Null(exhausted);
+    }
+
+    [ClipboardFact]
+    public void RestoreRecoversPrimaryTextWhenAuxiliaryFormatInSnapshotFailsFlush()
+    {
+        using var guard = StaClipboardFixture.Capture();
+        const string expectedText = "user electron clipboard text";
+
+        var badData = new System.Windows.Forms.DataObject();
+        badData.SetData("UnflushableAux", autoConvert: false, new UnserializableCloneable());
+        var snapshot = new WindowsClipboardPaste.ClipboardSnapshot(
+            IsEmpty: false,
+            Data: badData,
+            FallbackText: expectedText,
+            SkippedFormatCount: 1);
+
+        StaClipboardFixture.SetDataObject(() =>
+        {
+            var data = new System.Windows.Forms.DataObject();
+            data.SetData(System.Windows.Forms.DataFormats.UnicodeText, autoConvert: false, "dictation text");
+            return data;
+        });
+
+        var restored = StaClipboardFixture.Restore(snapshot);
+
+        Assert.True(restored);
+        Assert.Equal(expectedText, StaClipboardFixture.GetText());
+    }
+
+    [ClipboardFact]
+    public async Task PasteWithMultiFormatClipboardAndStandInTargetRestoresAllPrimaryAndAuxiliaryFormats()
+    {
+        using var guard = StaClipboardFixture.Capture();
+        const string expectedText = "user electron clipboard text";
+        const string expectedHtml = "<html><body>user electron clipboard text</body></html>";
+        byte[] customUrlBytes = "https://example.test/electron"u8.ToArray();
+
+        StaClipboardFixture.SetDataObject(() =>
+        {
+            var data = new System.Windows.Forms.DataObject();
+            data.SetData(System.Windows.Forms.DataFormats.UnicodeText, autoConvert: false, expectedText);
+            data.SetData(System.Windows.Forms.DataFormats.Html, autoConvert: false, expectedHtml);
+            data.SetData("Chromium internal source URL", autoConvert: false, new MemoryStream(customUrlBytes));
+            return data;
+        });
+
+        string? clipboardDuringPaste = null;
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            WindowsClipboardPaste.SetClipboardTextOrThrow,
+            () =>
+            {
+                clipboardDuringPaste = StaClipboardFixture.GetText();
+                return true;
+            },
+            CancellationToken.None);
+
+        Assert.True(pasted.Delivered);
+        Assert.Equal(TextDeliveryRoute.ClipboardPaste, pasted.Route);
+        Assert.True(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+        Assert.Equal("dictated words", clipboardDuringPaste);
+        Assert.Equal(expectedText, StaClipboardFixture.GetText());
+        Assert.Equal(expectedHtml, StaClipboardFixture.GetData(System.Windows.Forms.DataFormats.Html));
+        var restoredStream = Assert.IsType<MemoryStream>(StaClipboardFixture.GetData("Chromium internal source URL"));
+        Assert.Equal(customUrlBytes, restoredStream.ToArray());
+    }
+
+    [Theory]
+    [InlineData("antigravity", null, null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("Antigravity.exe", "Chrome_WidgetWin_1", null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("Code", "Chrome_WidgetWin_1", null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("Cursor", null, null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("Windsurf", null, null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("notion", null, null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("obsidian", null, null, true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("chrome", null, null, true, TextTargetKind.Browser, true, DirectWriteSkipReason.Browser, PasteKeystrokeKind.CtrlV)]
+    [InlineData("msedge", null, null, true, TextTargetKind.Browser, true, DirectWriteSkipReason.Browser, PasteKeystrokeKind.CtrlV)]
+    [InlineData("brave", null, null, true, TextTargetKind.Browser, true, DirectWriteSkipReason.Browser, PasteKeystrokeKind.CtrlV)]
+    [InlineData("firefox", "MozillaWindowClass", null, true, TextTargetKind.Browser, true, DirectWriteSkipReason.Browser, PasteKeystrokeKind.CtrlV)]
+    [InlineData("slack", null, null, true, TextTargetKind.Chat, true, DirectWriteSkipReason.Chat, PasteKeystrokeKind.CtrlV)]
+    [InlineData("discord", null, null, true, TextTargetKind.Chat, true, DirectWriteSkipReason.Chat, PasteKeystrokeKind.CtrlV)]
+    [InlineData("ms-teams", null, null, true, TextTargetKind.Chat, true, DirectWriteSkipReason.Chat, PasteKeystrokeKind.CtrlV)]
+    [InlineData("winword", null, null, true, TextTargetKind.Office, true, DirectWriteSkipReason.Office, PasteKeystrokeKind.CtrlV)]
+    [InlineData("windowsterminal", "CASCADIA_HOSTING_WINDOW_CLASS", null, true, TextTargetKind.Terminal, true, DirectWriteSkipReason.Terminal, PasteKeystrokeKind.ShiftInsert)]
+    [InlineData("pwsh", "ConsoleWindowClass", null, true, TextTargetKind.Terminal, true, DirectWriteSkipReason.Terminal, PasteKeystrokeKind.ShiftInsert)]
+    [InlineData("cmd", null, null, false, TextTargetKind.Terminal, true, DirectWriteSkipReason.Terminal, PasteKeystrokeKind.ShiftInsert)]
+    [InlineData("mintty", "mintty", null, false, TextTargetKind.Terminal, true, DirectWriteSkipReason.Terminal, PasteKeystrokeKind.ShiftInsert)]
+    [InlineData("tabby", "Chrome_WidgetWin_1", null, true, TextTargetKind.Terminal, true, DirectWriteSkipReason.Terminal, PasteKeystrokeKind.ShiftInsert)]
+    [InlineData("custom-electron-fork", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", true, TextTargetKind.Unknown, true, DirectWriteSkipReason.ElectronOrChromiumHost, PasteKeystrokeKind.CtrlV)]
+    [InlineData("notepad", "Notepad", "RichEditD2DPT", true, TextTargetKind.StandardEdit, false, DirectWriteSkipReason.None, PasteKeystrokeKind.CtrlV)]
+    [InlineData("EnviousWispr.Delivery.Target.Uat", "WindowsForms10.Window.8.app.0.141b42a_r8_ad1", "WindowsForms10.EDIT.app.0.141b42a_r8_ad1", true, TextTargetKind.StandardEdit, false, DirectWriteSkipReason.None, PasteKeystrokeKind.CtrlV)]
+    public void PastePolicyRoutesStandardEditsElectronIdesBrowsersAndTerminalsCorrectly(
+        string processName,
+        string? windowClassName,
+        string? elementClassName,
+        bool isControlEdit,
+        TextTargetKind expectedKind,
+        bool expectedSkipDirectWrite,
+        DirectWriteSkipReason expectedSkipReason,
+        PasteKeystrokeKind expectedKeystroke)
+    {
+        var rule = WindowsPastePolicy.Resolve(
+            processName,
+            windowClassName,
+            elementClassName,
+            isControlEdit,
+            isFullscreen: false);
+
+        Assert.Equal(expectedKind, rule.TargetKind);
+        Assert.Equal(expectedSkipDirectWrite, rule.SkipDirectValueWrite);
+        Assert.Equal(expectedSkipReason, rule.DirectWriteSkip);
+        Assert.Equal(expectedKeystroke, rule.Keystroke);
+        Assert.True(rule.AllowsWindowFallbackWithoutFocusedElement);
+    }
+
+    [Fact]
+    public void PastePolicyRefusesFullscreenGameWindowFallbackAndDirectWrite()
+    {
+        var rule = WindowsPastePolicy.Resolve(
+            "game-binary",
+            windowClassName: "UnrealWindow",
+            elementClassName: null,
+            isControlEdit: false,
+            isFullscreen: true);
+
+        Assert.Equal(TextTargetKind.Game, rule.TargetKind);
+        Assert.True(rule.SkipDirectValueWrite);
+        Assert.False(rule.AllowsWindowFallbackWithoutFocusedElement);
+    }
+
+    [Fact]
+    public void ShiftInsertInputsUseExtendedInsertKeyAndReleaseShiftDeterministically()
+    {
+        var inputs = WindowsClipboardPaste.BuildShiftInsertInputs();
+
+        Assert.Equal(4, inputs.Length);
+        Assert.All(inputs, input =>
+        {
+            Assert.Equal(1u, input.Type);
+            Assert.Equal(MenuKeyMask.Tag, input.Union.Keyboard.ExtraInfo);
+        });
+
+        Assert.Equal(VkShift, inputs[0].Union.Keyboard.VirtualKey);
+        Assert.Equal(0u, inputs[0].Union.Keyboard.Flags);
+
+        Assert.Equal(VkInsert, inputs[1].Union.Keyboard.VirtualKey);
+        Assert.Equal(KeyEventExtendedKey, inputs[1].Union.Keyboard.Flags);
+
+        Assert.Equal(VkInsert, inputs[2].Union.Keyboard.VirtualKey);
+        Assert.Equal(KeyEventExtendedKey | KeyEventKeyUp, inputs[2].Union.Keyboard.Flags);
+
+        Assert.Equal(VkShift, inputs[3].Union.Keyboard.VirtualKey);
+        Assert.Equal(KeyEventKeyUp, inputs[3].Union.Keyboard.Flags);
+    }
+
+    [Fact]
+    public void AdapterDirectValueWriteRespectsPerAppSkipPolicyWhilePreservingStandardEdit()
+    {
+        var text = new ProcessedText(DictationSessionId.Create(), "hello");
+        var options = TextDeliveryOptions.Default;
+
+        var standardTarget = new TargetWindowId(0, 0, "1.2.3", ProcessName: "notepad");
+        var standardRule = WindowsPastePolicy.Resolve("notepad", "Notepad", "Edit", isControlEdit: true);
+        var standardContext = new CaretContext(
+            standardTarget,
+            "1.2.3",
+            TextTargetKind.StandardEdit,
+            Left: "",
+            Selection: "",
+            Right: "",
+            LeftReachedDocumentStart: true,
+            RightReachedDocumentEnd: true,
+            HasTextContext: true,
+            SupportsDirectValueWrite: true,
+            DirectValueWriteAtEnd: true);
+        var standardRequest = new TextCommitRequest(text, text, standardTarget, standardContext, TextTargetKind.StandardEdit, options);
+        Assert.True(WindowsTextTargetAdapter.CanUseDirectValueWrite(standardContext, standardRequest, standardRule));
+
+        var antigravityRule = WindowsPastePolicy.Resolve("Antigravity", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", isControlEdit: true);
+        var antigravityContext = standardContext with { Target = standardTarget with { ProcessName = "Antigravity" } };
+        var antigravityRequest = new TextCommitRequest(text, text, antigravityContext.Target, antigravityContext, antigravityRule.TargetKind, options);
+        Assert.False(WindowsTextTargetAdapter.CanUseDirectValueWrite(antigravityContext, antigravityRequest, antigravityRule));
+
+        var terminalRule = WindowsPastePolicy.Resolve("windowsterminal", "CASCADIA_HOSTING_WINDOW_CLASS", null, isControlEdit: true);
+        Assert.False(WindowsTextTargetAdapter.CanUseDirectValueWrite(standardContext, standardRequest, terminalRule));
+    }
+
+    [Theory]
+    [InlineData("Shell_TrayWnd", true, false, true, 1920, 48, true)]
+    [InlineData("Shell_SecondaryTrayWnd", true, false, true, 1920, 48, true)]
+    [InlineData("XamlExplorerHostWindow", true, false, true, 600, 600, true)]
+    [InlineData("XamlExplorerHostIslandWindow", true, false, true, 600, 600, true)]
+    [InlineData("Windows.UI.Core.CoreWindow", true, false, true, 800, 600, true)]
+    [InlineData("Shell_InputSwitchTopLevelWindow", true, false, true, 200, 300, true)]
+    [InlineData("MultitaskingViewFrame", true, false, true, 1200, 800, true)]
+    [InlineData("TaskListThumbnailWnd", true, false, true, 300, 200, true)]
+    [InlineData("ForegroundStaging", true, false, true, 100, 100, true)]
+    [InlineData("LockScreenControllerProxyWindow", true, false, true, 100, 100, true)]
+    [InlineData("WorkerW", true, false, true, 1920, 1080, true)]
+    [InlineData("Progman", true, false, true, 1920, 1080, true)]
+    [InlineData("#32768", true, false, true, 200, 300, true)]
+    [InlineData("ApplicationFrameWindow", true, false, false, 800, 600, true)]
+    [InlineData("ApplicationFrameWindow", true, false, true, 0, 0, true)]
+    [InlineData("ApplicationFrameWindow", true, true, true, 800, 600, true)]
+    [InlineData("ApplicationFrameWindow", true, false, true, 800, 600, false)]
+    [InlineData("Chrome_WidgetWin_1", false, false, true, 1200, 800, true)]
+    [InlineData("Chrome_WidgetWin_1", true, true, true, 1200, 800, true)]
+    [InlineData("Chrome_WidgetWin_1", true, false, true, 1200, 800, false)]
+    [InlineData("Notepad", true, false, true, 1000, 700, false)]
+    public void ForegroundHistoryFiltersWin11TransientShellAndEmptyApplicationFrameWindows(
+        string className,
+        bool isVisible,
+        bool isCloaked,
+        bool hasChildWindow,
+        int width,
+        int height,
+        bool expectedFiltered)
+    {
+        Assert.Equal(
+            expectedFiltered,
+            WindowsForegroundHistory.IsTransientShellWindow(
+                className,
+                isVisible,
+                isCloaked,
+                hasChildWindow,
+                width,
+                height));
+    }
+
+    [Fact]
+    public async Task ReacquireRestoresMinimizedTargetAndAllowsElectronWithoutFocusedElementId()
+    {
+        var target = new TargetWindowId(0x4321, 512, FocusedElementId: null, ProcessName: "Antigravity");
+        var isMinimized = true;
+        var foreground = (nint)0x9999;
+        var restoreCalls = 0;
+
+        var reacquired = await WindowsForegroundTargetProvider.ReacquireCoreAsync(
+            target,
+            TimeSpan.FromMilliseconds(400),
+            isWindowValid: static _ => true,
+            restoreAndFocus: hwnd =>
+            {
+                restoreCalls++;
+                if (hwnd == target.Value)
+                {
+                    isMinimized = false;
+                    foreground = hwnd;
+                }
+            },
+            isIconic: _ => isMinimized,
+            getForegroundWindow: () => foreground,
+            captureCurrentTarget: () => new TargetWindowId(target.Value, target.ProcessId, FocusedElementId: null, ProcessName: "Antigravity"),
+            getWindowClassName: static _ => "Chrome_WidgetWin_1",
+            CancellationToken.None,
+            pollIntervalMs: 5,
+            focusedElementGraceMs: 25);
+
+        Assert.NotNull(reacquired);
+        Assert.Equal(target.Value, reacquired!.Value.Value);
+        Assert.Equal(target.ProcessId, reacquired.Value.ProcessId);
+        Assert.Null(reacquired.Value.FocusedElementId);
+        Assert.Equal(1, restoreCalls);
+    }
+
+    [Fact]
+    public async Task ReacquireReturnsEarlyWhenFocusedElementAppearsDuringGraceWindow()
+    {
+        var target = new TargetWindowId(0x4321, 512, FocusedElementId: null, ProcessName: "Code");
+        var polls = 0;
+
+        var reacquired = await WindowsForegroundTargetProvider.ReacquireCoreAsync(
+            target,
+            TimeSpan.FromMilliseconds(500),
+            isWindowValid: static _ => true,
+            restoreAndFocus: static _ => { },
+            isIconic: static _ => false,
+            getForegroundWindow: () => target.Value,
+            captureCurrentTarget: () =>
+            {
+                polls++;
+                return new TargetWindowId(
+                    target.Value,
+                    target.ProcessId,
+                    FocusedElementId: polls >= 2 ? "42.7.1" : null,
+                    ProcessName: "Code");
+            },
+            getWindowClassName: static _ => "Chrome_WidgetWin_1",
+            CancellationToken.None,
+            pollIntervalMs: 5,
+            focusedElementGraceMs: 200);
+
+        Assert.NotNull(reacquired);
+        Assert.Equal("42.7.1", reacquired!.Value.FocusedElementId);
+        Assert.Equal(2, polls);
+    }
+
+    [Fact]
+    public async Task ReacquireRefusesClosedOrNonForegroundTargets()
+    {
+        var target = new TargetWindowId(0x4321, 512, FocusedElementId: null, ProcessName: "Antigravity");
+
+        var closed = await WindowsForegroundTargetProvider.ReacquireCoreAsync(
+            target,
+            TimeSpan.FromMilliseconds(100),
+            isWindowValid: static _ => false,
+            restoreAndFocus: static _ => { },
+            isIconic: static _ => false,
+            getForegroundWindow: static () => 0,
+            captureCurrentTarget: static () => null,
+            getWindowClassName: static _ => null,
+            CancellationToken.None,
+            pollIntervalMs: 5,
+            focusedElementGraceMs: 20);
+        Assert.Null(closed);
+
+        var blockedFocus = await WindowsForegroundTargetProvider.ReacquireCoreAsync(
+            target,
+            TimeSpan.FromMilliseconds(40),
+            isWindowValid: static _ => true,
+            restoreAndFocus: static _ => { },
+            isIconic: static _ => false,
+            getForegroundWindow: static () => 0x8888,
+            captureCurrentTarget: static () => null,
+            getWindowClassName: static _ => "Chrome_WidgetWin_1",
+            CancellationToken.None,
+            pollIntervalMs: 5,
+            focusedElementGraceMs: 20);
+        Assert.Null(blockedFocus);
+    }
+
+    [Fact]
+    public async Task HistoryPasteDeliversWhenReacquireReturnsElectronWindowWithoutFocusedElementId()
+    {
+        var now = new DateTimeOffset(2026, 11, 25, 18, 0, 0, TimeSpan.Zero);
+        var entry = DictationHistoryEntry.Create(now.AddMinutes(-2), "pasted into electron", "parakeet", false, true);
+        var target = new TargetWindowId(0x2222, 999, FocusedElementId: null, ProcessName: "Antigravity");
+        var adapter = new WindowLevelTargetAdapter();
+        var persistence = new SessionPersistence(
+            new FakeRecoveryStore(),
+            new FakeHistoryStore([entry]),
+            new NullLogger(),
+            TimeProvider.System,
+            () => HistoryPreferences.Default,
+            new FakeEffects());
+        var paste = new SavedDictationPaste(new SavedDictationPasteEnvironment(
+            _ => Task.FromResult<IReadOnlyList<DictationHistoryEntry>>([entry]),
+            () => now,
+            () => false,
+            new ContextAwareTextDelivery(adapter),
+            () => TextDeliveryOptions.Default,
+            (window, _) => Task.FromResult<TargetWindowId?>(window),
+            persistence));
+
+        var result = await paste.PasteAsync(entry.Id, target);
+
+        Assert.Equal(SavedDictationPasteOutcome.Pasted, result.Outcome);
+        Assert.Equal(TextDeliveryRoute.ClipboardPaste, result.Delivery?.Route);
+        var commit = Assert.Single(adapter.Commits);
+        Assert.Equal(TextDeliveryRefusalReason.None, commit.ForcedRefusalReason);
+        Assert.Null(commit.Target.FocusedElementId);
+    }
+
+    private sealed class UnserializableCloneable : ICloneable
+    {
+        public object Clone() => new UnserializableCloneable();
+    }
+
+    private sealed class ThrowingValue(Action throwAction)
+    {
+        public Action Throw { get; } = throwAction;
+    }
+
+    private sealed class FakeDataObject(
+        IReadOnlyList<(string Format, object? Value)> entries,
+        string? autoConvertUnicodeText = null) : System.Windows.Forms.IDataObject, System.Windows.Forms.ITypedDataObject
+    {
+        public object? GetData(string format) => GetData(format, autoConvert: true);
+
+        public object? GetData(Type format) => GetData(format.FullName ?? string.Empty, autoConvert: true);
+
+        public object? GetData(string format, bool autoConvert)
+        {
+            if (autoConvert &&
+                string.Equals(format, System.Windows.Forms.DataFormats.UnicodeText, StringComparison.Ordinal) &&
+                autoConvertUnicodeText is not null)
+            {
+                return autoConvertUnicodeText;
+            }
+
+            foreach (var entry in entries)
+            {
+                if (string.Equals(entry.Format, format, StringComparison.Ordinal))
+                {
+                    if (entry.Value is ThrowingValue throwing)
+                    {
+                        throwing.Throw();
+                    }
+
+                    return entry.Value;
+                }
+            }
+
+            return null;
+        }
+
+        public bool GetDataPresent(string format) => GetDataPresent(format, autoConvert: true);
+
+        public bool GetDataPresent(Type format) => GetDataPresent(format.FullName ?? string.Empty, autoConvert: true);
+
+        public bool GetDataPresent(string format, bool autoConvert)
+        {
+            if (autoConvert &&
+                string.Equals(format, System.Windows.Forms.DataFormats.UnicodeText, StringComparison.Ordinal) &&
+                autoConvertUnicodeText is not null)
+            {
+                return true;
+            }
+
+            return entries.Any(entry => string.Equals(entry.Format, format, StringComparison.Ordinal));
+        }
+
+        public string[] GetFormats() => GetFormats(autoConvert: true);
+
+        public string[] GetFormats(bool autoConvert) =>
+            entries.Select(entry => entry.Format).ToArray();
+
+        public void SetData(string format, bool autoConvert, object? data) => throw new NotSupportedException();
+        public void SetData(string format, object? data) => throw new NotSupportedException();
+        public void SetData(Type format, object? data) => throw new NotSupportedException();
+        public void SetData(object? data) => throw new NotSupportedException();
+
+        public bool TryGetData<T>([NotNullWhen(true), MaybeNullWhen(false)] out T data)
+        {
+            data = default;
+            return false;
+        }
+
+        public bool TryGetData<T>(string format, [NotNullWhen(true), MaybeNullWhen(false)] out T data) =>
+            TryGetData(format, autoConvert: true, out data);
+
+        public bool TryGetData<T>(string format, bool autoConvert, [NotNullWhen(true), MaybeNullWhen(false)] out T data)
+        {
+            if (GetData(format, autoConvert) is T typed)
+            {
+                data = typed;
+                return true;
+            }
+
+            data = default;
+            return false;
+        }
+
+        public bool TryGetData<T>(string format, Func<TypeName, Type?> resolver, bool autoConvert, [NotNullWhen(true), MaybeNullWhen(false)] out T data) =>
+            TryGetData(format, autoConvert, out data);
+    }
+
+    private sealed class StaClipboardFixture : IDisposable
+    {
+        private readonly WindowsClipboardPaste.ClipboardSnapshot _snapshot;
+
+        private StaClipboardFixture(WindowsClipboardPaste.ClipboardSnapshot snapshot) => _snapshot = snapshot;
+
+        public static StaClipboardFixture Capture()
+        {
+            var snapshot = OnSta(() => WindowsClipboardPaste.TrySnapshotClipboard());
+            Assert.NotNull(snapshot);
+            return new StaClipboardFixture(snapshot!);
+        }
+
+        public static void SetDataObject(Func<System.Windows.Forms.DataObject> factory) => OnSta(() =>
+        {
+            System.Windows.Forms.Clipboard.SetDataObject(factory(), copy: true, retryTimes: 10, retryDelay: 50);
+            return true;
+        });
+
+        public static string? GetText() => OnSta(static () =>
+            System.Windows.Forms.Clipboard.ContainsText() ? System.Windows.Forms.Clipboard.GetText() : null);
+
+        public static object? GetData(string format) => OnSta(() =>
+            System.Windows.Forms.Clipboard.GetDataObject()?.GetData(format, autoConvert: false));
+
+        public static bool Restore(WindowsClipboardPaste.ClipboardSnapshot snapshot) =>
+            OnSta(() => WindowsClipboardPaste.TryRestoreClipboard(snapshot));
+
+        public void Dispose()
+        {
+            Assert.True(OnSta(() => WindowsClipboardPaste.TryRestoreClipboard(_snapshot)));
+        }
+
+        private static T OnSta<T>(Func<T> operation)
+        {
+            T? result = default;
+            Exception? failure = null;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    result = operation();
+                }
+                catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+                {
+                    failure = exception;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            if (failure is not null)
+            {
+                throw failure;
+            }
+
+            return result!;
+        }
+    }
+
+    private sealed class WindowLevelTargetAdapter : ITextTargetAdapter
+    {
+        public List<TextCommitRequest> Commits { get; } = [];
+
+        public Task<TargetContextResult> CaptureContextAsync(
+            TargetWindowId target,
+            TextDeliveryOptions options,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TargetContextResult(
+                TargetContextStatus.Available,
+                new CaretContext(
+                    target,
+                    string.Empty,
+                    TextTargetKind.Unknown,
+                    Left: string.Empty,
+                    Selection: string.Empty,
+                    Right: string.Empty,
+                    LeftReachedDocumentStart: false,
+                    RightReachedDocumentEnd: false,
+                    HasTextContext: false,
+                    SupportsDirectValueWrite: false,
+                    DirectValueWriteAtEnd: false)));
+
+        public Task<TextCommitResult> CommitAsync(
+            TextCommitRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Commits.Add(request);
+            return Task.FromResult(new TextCommitResult(
+                TextDeliveryRoute.ClipboardPaste,
+                Delivered: true,
+                ClipboardFallback: false,
+                ClipboardRestored: true));
+        }
+
+        public Task<TextCommitResult> CopyOnlyAsync(
+            ProcessedText text,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class FakeRecoveryStore : Core.Reliability.IRecoveryTextStore
+    {
+        public Task<Core.Reliability.RecoveryTextLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new Core.Reliability.RecoveryTextLoadResult(Core.Reliability.RecoveryTextLoadStatus.Missing));
+
+        public Task<bool> SaveAsync(Core.Reliability.RecoveryTextRecord record, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+        public Task<bool> ClearAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    }
+
+    private sealed class FakeHistoryStore(IReadOnlyList<DictationHistoryEntry> entries) : IHistoryStore
+    {
+        public Task<HistoryLoadResult> LoadAsync(int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new HistoryLoadResult(entries, HistoryLoadStatus.Loaded));
+
+        public Task<HistoryOperationResult> AddAsync(DictationHistoryEntry entry, int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new HistoryOperationResult(true));
+
+        public Task<HistoryOperationResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new HistoryOperationResult(false));
+
+        public Task<HistoryOperationResult> KeepAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new HistoryOperationResult(false));
+
+        public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new HistoryOperationResult(true));
+    }
+
+    private sealed class FakeEffects : ISessionPersistenceEffects
+    {
+        public void ShowPendingRecovery(Core.Reliability.RecoveryTextRecord record, bool undoOffered) { }
+        public void ClearRecoveredText() { }
+        public void NotifyHistoryChanged() { }
+    }
+
+    private sealed class NullLogger : Core.Diagnostics.IAppLogger
+    {
+        public void Write(Core.Diagnostics.AppLogEntry entry) { }
+    }
+}
