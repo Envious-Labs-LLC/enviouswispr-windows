@@ -11,7 +11,11 @@ namespace EnviousWispr.Services.Input;
 public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 {
     private static readonly TimeSpan TargetActivationTimeout = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan ArrivalObservationTimeout = TimeSpan.FromMilliseconds(250);
+    private const int ArrivalPollIntervalMs = 35;
     private readonly SemaphoreSlim _automationGate = new(1, 1);
+    private readonly PasteRevealPatience _revealPatience = new();
+    private int _arrivalProbeInFlight;
 
     public void Dispose() => _automationGate.Dispose();
 
@@ -138,7 +142,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
 
         var keystroke = ResolveCommitKeystroke(current.Context, commitRule);
-        return await WindowsClipboardPaste.PasteAsync(
+        var processName = !string.IsNullOrWhiteSpace(request.Target.ProcessName)
+            ? request.Target.ProcessName
+            : WindowsWindowIdentity.TryGetProcessName(request.Target.ProcessId);
+        var settleFloor = TimeSpan.FromMilliseconds(commitRule.MinimumPasteSettleMilliseconds);
+        var settleDelay = _revealPatience.GetSettleDelay(processName, settleFloor);
+        var dispatchToken = _revealPatience.RecordDispatch(processName);
+        Stopwatch? dispatchedWatch = null;
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
             request.Text.Text,
             request.FallbackText.Text,
             request.Options.RestoreClipboardAfterPaste,
@@ -147,8 +159,295 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 request.Target,
                 request.ExpectedContext,
                 request.Options)),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            settleDelay,
+            onPasteDispatched: () => dispatchedWatch = Stopwatch.StartNew()).ConfigureAwait(false);
+
+        if (!pasted.Delivered || pasted.Route != TextDeliveryRoute.ClipboardPaste)
+        {
+            return pasted;
+        }
+
+        // Post-paste arrival verification runs strictly best-effort after the paste keystroke and
+        // clipboard restoration already completed: cancellation or observer failure must never turn
+        // an already-completed paste into Cancelled/DeliveryFaulted and trigger duplicate retries.
+        PasteArrivalStatus arrivalStatus;
+        int arrivalElapsedMs;
+        try
+        {
+            (arrivalStatus, arrivalElapsedMs) = await ObserveArrivalAsync(
+                request,
+                dispatchedWatch,
+                dispatchToken,
+                settleFloor,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            arrivalStatus = PasteArrivalStatus.Unreadable;
+            arrivalElapsedMs = dispatchedWatch is { } w
+                ? (int)Math.Min(int.MaxValue, w.ElapsedMilliseconds)
+                : 0;
+        }
+
+        return pasted with
+        {
+            ArrivalStatus = arrivalStatus,
+            ArrivalElapsedMilliseconds = arrivalElapsedMs,
+        };
     }
+
+    private async Task<(PasteArrivalStatus Status, int ElapsedMilliseconds)> ObserveArrivalAsync(
+        TextCommitRequest request,
+        Stopwatch? dispatchedWatch,
+        PasteRevealPatience.DispatchToken? dispatchToken,
+        TimeSpan settleFloor,
+        CancellationToken cancellationToken)
+    {
+        var contextWindow = Math.Max(request.Options.ContextWindowCharacters, request.Text.Text.Length + 64);
+        var previousLeft = request.ExpectedContext?.HasTextContext == true ? request.ExpectedContext.Left : null;
+        var previousValue = request.ExpectedContext?.BaselineValue;
+        var deadline = Environment.TickCount64 + (long)ArrivalObservationTimeout.TotalMilliseconds;
+        var attempt = 0;
+
+        while (true)
+        {
+            var remainingMs = (int)Math.Max(0, deadline - Environment.TickCount64);
+            if (remainingMs == 0 && attempt > 0)
+            {
+                var timeoutElapsed = dispatchedWatch is { } tw ? (int)Math.Min(int.MaxValue, tw.ElapsedMilliseconds) : 0;
+                return (PasteArrivalStatus.BudgetExhausted, timeoutElapsed);
+            }
+
+            if (Interlocked.CompareExchange(ref _arrivalProbeInFlight, 1, 0) != 0)
+            {
+                var busyElapsed = dispatchedWatch is { } bw ? (int)Math.Min(int.MaxValue, bw.ElapsedMilliseconds) : 0;
+                return (PasteArrivalStatus.BudgetExhausted, busyElapsed);
+            }
+
+            PasteArrivalStatus status;
+            var probeTask = Task.Run(() =>
+            {
+                try
+                {
+                    return ObserveArrivalOnce(request, contextWindow, previousLeft, previousValue);
+                }
+                catch (Exception exception) when (IsExpectedAutomationFailure(exception))
+                {
+                    return PasteArrivalStatus.Unreadable;
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _arrivalProbeInFlight, 0);
+                }
+            }, CancellationToken.None);
+
+            var waitMs = Math.Max(1, remainingMs);
+            var finished = await Task.WhenAny(
+                probeTask,
+                Task.Delay(waitMs, cancellationToken)).ConfigureAwait(false);
+            if (!ReferenceEquals(finished, probeTask))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var expiredElapsed = dispatchedWatch is { } ew ? (int)Math.Min(int.MaxValue, ew.ElapsedMilliseconds) : 0;
+                return (PasteArrivalStatus.BudgetExhausted, expiredElapsed);
+            }
+
+            status = await probeTask.ConfigureAwait(false);
+            var sinceDispatchMs = dispatchedWatch is { } sw ? (int)Math.Min(int.MaxValue, sw.ElapsedMilliseconds) : 0;
+
+            if (status == PasteArrivalStatus.Confirmed)
+            {
+                // First-check confirmation landed inside the already-waited settle delay: report 0 ms
+                // so fast confirmations never multiply the prior wait upward into the 1.2 s ceiling.
+                var revealSampleMs = attempt == 0 ? 0 : sinceDispatchMs;
+                _ = _revealPatience.RecordSighting(dispatchToken, revealSampleMs, settleFloor);
+                return (PasteArrivalStatus.Confirmed, sinceDispatchMs);
+            }
+
+            if (status != PasteArrivalStatus.NotObserved || Environment.TickCount64 >= deadline)
+            {
+                return (status, sinceDispatchMs);
+            }
+
+            attempt++;
+            await Task.Delay(ArrivalPollIntervalMs, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed record ObservedArrivalText(
+        uint FocusProcessId,
+        bool IsPassword,
+        string? LeftBeforeCaret,
+        string? FullValue);
+
+    private static PasteArrivalStatus ObserveArrivalOnce(
+        TextCommitRequest request,
+        int contextCharacters,
+        string? previousLeft,
+        string? previousValue)
+    {
+        if (GetForegroundWindow() != request.Target.Value)
+        {
+            return PasteArrivalStatus.Unreadable;
+        }
+
+        var observed = Automation(() =>
+        {
+            if (AutomationElement.FocusedElement is not { } element)
+            {
+                return null;
+            }
+
+            var pid = checked((uint)element.Current.ProcessId);
+            if (element.Current.IsPassword)
+            {
+                return new ObservedArrivalText(pid, IsPassword: true, null, null);
+            }
+
+            string? leftBeforeCaret = null;
+            if (element.TryGetCurrentPattern(TextPattern.Pattern, out var textPatternObj) &&
+                textPatternObj is TextPattern textPattern)
+            {
+                var selections = textPattern.GetSelection();
+                if (selections.Length == 1)
+                {
+                    var leftRange = textPattern.DocumentRange.Clone();
+                    leftRange.MoveEndpointByRange(
+                        TextPatternRangeEndpoint.End,
+                        selections[0],
+                        TextPatternRangeEndpoint.Start);
+                    leftRange.MoveEndpointByUnit(
+                        TextPatternRangeEndpoint.Start,
+                        TextUnit.Character,
+                        -contextCharacters);
+                    leftBeforeCaret = leftRange.GetText(contextCharacters);
+                }
+            }
+
+            string? fullValue = null;
+            if (leftBeforeCaret is null &&
+                element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObj) &&
+                valuePatternObj is ValuePattern valuePattern)
+            {
+                var raw = valuePattern.Current.Value;
+                if (raw is not null)
+                {
+                    var maxSlice = contextCharacters * 2;
+                    fullValue = raw.Length > maxSlice ? raw[^maxSlice..] : raw;
+                }
+            }
+
+            return new ObservedArrivalText(
+                pid,
+                IsPassword: false,
+                leftBeforeCaret,
+                fullValue);
+        });
+
+        if (observed is null ||
+            observed.IsPassword ||
+            !WindowsWindowIdentity.IsMatchingFocusProcess(
+                request.Target.Value,
+                request.Target.ProcessId,
+                observed.FocusProcessId))
+        {
+            return PasteArrivalStatus.Unreadable;
+        }
+
+        return EvaluateArrival(
+            request.Text.Text,
+            observed.LeftBeforeCaret,
+            observed.FullValue,
+            previousLeft,
+            previousValue);
+    }
+
+    internal static PasteArrivalStatus EvaluateArrival(
+        string insertedText,
+        string? observedLeft,
+        string? observedValue,
+        string? previousLeft,
+        string? previousValue = null)
+    {
+        var normalizedExpected = NormalizeArrivalText(insertedText).Trim();
+        if (string.IsNullOrEmpty(normalizedExpected))
+        {
+            return PasteArrivalStatus.Unreadable;
+        }
+
+        if (observedLeft is null && observedValue is null)
+        {
+            return PasteArrivalStatus.Unreadable;
+        }
+
+        if (observedLeft is not null)
+        {
+            if (previousLeft is null && previousValue is null)
+            {
+                return PasteArrivalStatus.Unreadable;
+            }
+
+            var normalizedLeft = NormalizeArrivalText(observedLeft).TrimEnd();
+            if (previousLeft is not null)
+            {
+                var normalizedPreviousLeft = NormalizeArrivalText(previousLeft).TrimEnd();
+                var previousAlreadyEndedWithExpected = !string.IsNullOrEmpty(normalizedPreviousLeft) &&
+                    normalizedPreviousLeft.EndsWith(normalizedExpected, StringComparison.Ordinal);
+                if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal) &&
+                    (!previousAlreadyEndedWithExpected ||
+                     normalizedLeft.Length >= normalizedPreviousLeft.Length + normalizedExpected.Length))
+                {
+                    return PasteArrivalStatus.Confirmed;
+                }
+            }
+            else if (previousValue is not null)
+            {
+                var normalizedPrevValue = NormalizeArrivalText(previousValue).TrimEnd();
+                if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal) &&
+                    CountOccurrences(normalizedLeft, normalizedExpected) > CountOccurrences(normalizedPrevValue, normalizedExpected))
+                {
+                    return PasteArrivalStatus.Confirmed;
+                }
+            }
+
+            return PasteArrivalStatus.NotObserved;
+        }
+
+        // ValuePattern-only controls have no TextPattern caret, so compare against a pre-paste value
+        // baseline rather than confirming stale text that was already in the box before the paste.
+        if (previousValue is null)
+        {
+            return PasteArrivalStatus.Unreadable;
+        }
+
+        var normalizedValue = NormalizeArrivalText(observedValue!).TrimEnd();
+        var normalizedPreviousValue = NormalizeArrivalText(previousValue).TrimEnd();
+        return CountOccurrences(normalizedValue, normalizedExpected) > CountOccurrences(normalizedPreviousValue, normalizedExpected)
+            ? PasteArrivalStatus.Confirmed
+            : PasteArrivalStatus.NotObserved;
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        if (string.IsNullOrEmpty(needle) || string.IsNullOrEmpty(haystack))
+        {
+            return 0;
+        }
+
+        var count = 0;
+        var index = 0;
+        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
+    }
+
+    private static string NormalizeArrivalText(string value) =>
+        value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
     internal static PasteKeystrokeKind ResolveCommitKeystroke(
         CaretContext context,
@@ -300,7 +599,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         TargetWindowId target,
         TextDeliveryOptions options)
     {
-        var windowStatus = ActivateAndValidateWindow(target, out var activationBudget, out var wasReactivated);
+        var budget = new UiaPreparationBudget(TargetActivationTimeout);
+        var windowStatus = ActivateAndValidateWindow(target, budget, out var wasReactivated);
         if (windowStatus != TargetContextStatus.Available)
         {
             return new TargetContextResult(
@@ -308,11 +608,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: RefusalFor(windowStatus));
         }
 
-        if (wasReactivated && activationBudget is not null)
+        if (wasReactivated)
         {
-            while (!IsFocusSettledForProcess(target.ProcessId) &&
-                activationBudget.Elapsed < TargetActivationTimeout)
+            while (!budget.IsExhausted && !IsFocusSettledForProcess(target.Value, target.ProcessId))
             {
+                if (budget.IsExhausted)
+                {
+                    break;
+                }
+
                 Thread.Sleep(25);
                 if (GetForegroundWindow() != target.Value)
                 {
@@ -324,6 +628,13 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
 
         var win32ChildFocusId = WindowsWindowIdentity.TryCaptureDistinctWin32ChildFocusId(target.Value, target.ProcessId);
+        if (!budget.TryAdmit())
+        {
+            return new TargetContextResult(
+                TargetContextStatus.AccessibilityUnavailable,
+                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
+        }
+
         var element = Automation(static () => AutomationElement.FocusedElement);
         var focus = ReadFocusedElementFacts(element);
         if (element is null || focus is null)
@@ -333,13 +644,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
 
+        var focusMatchesProcess = WindowsWindowIdentity.IsMatchingFocusProcess(target.Value, target.ProcessId, focus.ProcessId);
         var evaluation = EvaluateFocusedElement(
             target,
             focus,
             win32ChildFocusId,
             options.IsExplicitHistoryPaste || options.TargetMode == Core.Settings.PasteTargetMode.WhereCursorIsAtRelease,
             (className, isControlEdit) => ResolveTargetPolicy(target, className, isControlEdit),
-            allowSameWindowEditableReplacement: options.TargetMode == Core.Settings.PasteTargetMode.WhereDictationStarted);
+            allowSameWindowEditableReplacement: options.TargetMode == Core.Settings.PasteTargetMode.WhereDictationStarted,
+            focusProcessMatchesTarget: focusMatchesProcess);
         if (evaluation.Failure is not null)
         {
             return evaluation.Failure;
@@ -348,7 +661,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         var focusedId = evaluation.EffectiveFocusId;
         var rule = evaluation.Rule!;
         var targetKind = rule.TargetKind;
-        if (evaluation.WindowFallbackOnly || !focus.IsEnabled || !focus.IsKeyboardFocusable)
+        if (evaluation.WindowFallbackOnly || !focus.IsEnabled || !focus.IsKeyboardFocusable || !budget.TryAdmit())
         {
             return new TargetContextResult(
                 TargetContextStatus.Available,
@@ -361,18 +674,38 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 : null);
         if (textPattern is null)
         {
+            string? baselineValue = null;
+            if (budget.TryAdmit())
+            {
+                var maxBaseline = options.ContextWindowCharacters * 2;
+                baselineValue = Automation(() =>
+                    element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObj) &&
+                    valuePatternObj is ValuePattern valuePattern
+                        ? valuePattern.Current.Value is { } raw
+                            ? (raw.Length > maxBaseline ? raw[^maxBaseline..] : raw)
+                            : string.Empty
+                        : null);
+            }
+
             return new TargetContextResult(
                 TargetContextStatus.Available,
-                EmptyContext(target, focusedId, targetKind));
+                EmptyContext(target, focusedId, targetKind, baselineValue));
         }
 
         var caret = Automation(() => ReadCaret(textPattern, options));
-        if (caret is null)
+        if (caret is null || (caret.NoSelection && targetKind != TextTargetKind.Terminal))
         {
             return new TargetContextResult(
                 TargetContextStatus.AccessibilityUnavailable,
                 EmptyContext(target, focusedId, targetKind),
                 TextDeliveryRefusalReason.UnsupportedTarget);
+        }
+
+        if (caret.NoSelection)
+        {
+            return new TargetContextResult(
+                TargetContextStatus.Available,
+                EmptyContext(target, focusedId, targetKind));
         }
 
         var supportsValue = !rule.SkipDirectValueWrite &&
@@ -400,11 +733,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 IsUrlBarField: urlBar));
     }
 
-    private static bool IsFocusSettledForProcess(uint targetProcessId) =>
-        Automation(() =>
-            AutomationElement.FocusedElement is { } focused &&
-            checked((uint)focused.Current.ProcessId) == targetProcessId &&
-            focused.Current.HasKeyboardFocus);
+    private static bool IsFocusSettledForProcess(nint windowHandle, uint targetProcessId)
+    {
+        var focusedPid = Automation(static () =>
+            AutomationElement.FocusedElement is { } focused && focused.Current.HasKeyboardFocus
+                ? checked((uint)focused.Current.ProcessId)
+                : 0u);
+        return focusedPid != 0 &&
+            WindowsWindowIdentity.IsMatchingFocusProcess(windowHandle, targetProcessId, focusedPid);
+    }
 
     private static FocusedElementFacts? ReadFocusedElementFacts(AutomationElement? element) =>
         element is null
@@ -432,7 +769,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         string? win32ChildFocusId,
         bool isExplicitHistoryPaste,
         Func<string?, bool, WindowsPasteRule> resolvePolicy,
-        bool allowSameWindowEditableReplacement = true)
+        bool allowSameWindowEditableReplacement = true,
+        bool? focusProcessMatchesTarget = null)
     {
         ArgumentNullException.ThrowIfNull(resolvePolicy);
         if (focus is null)
@@ -445,6 +783,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 EffectiveFocusId: string.Empty,
                 Rule: null);
         }
+
+        var processMatches = focusProcessMatchesTarget ?? (focus.ProcessId == target.ProcessId);
 
         if (target.FocusedElementId is null)
         {
@@ -463,7 +803,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
             // Explicit History Paste has no prior dictation caret to drift from, but still requires
             // live UIA confirmation that focus is inside target.ProcessId and is not a password field.
-            if (focus.ProcessId != target.ProcessId)
+            if (!processMatches)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
@@ -533,7 +873,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                     Rule: null);
             }
 
-            if (focus.ProcessId != target.ProcessId)
+            if (!processMatches)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
@@ -587,7 +927,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 Rule: win32Rule);
         }
 
-        if (focus.ProcessId != target.ProcessId || !focus.HasKeyboardFocus)
+        if (!processMatches || !focus.HasKeyboardFocus)
         {
             return new FocusEvaluationResult(
                 new TargetContextResult(
@@ -651,13 +991,24 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool IsControlDocument = false);
 
     /// <summary>The text around the caret, as the text pattern reports it.</summary>
-    private sealed record CaretText(string Selected, string Left, bool LeftAtStart, string Right, bool RightAtEnd);
+    private sealed record CaretText(
+        string Selected,
+        string Left,
+        bool LeftAtStart,
+        string Right,
+        bool RightAtEnd,
+        bool NoSelection = false);
 
     /// <summary>Reads the selection and the bounded text on either side of it; null when the control's selection is not one range within the window.</summary>
     /// <remarks>UI AUTOMATION CALLS ONLY, so the caller can put the whole read behind one boundary.</remarks>
     private static CaretText? ReadCaret(TextPattern textPattern, TextDeliveryOptions options)
     {
         var selections = textPattern.GetSelection();
+        if (selections.Length == 0)
+        {
+            return new CaretText(string.Empty, string.Empty, false, string.Empty, false, NoSelection: true);
+        }
+
         if (selections.Length != 1)
         {
             return null;
@@ -706,7 +1057,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private static CaretContext EmptyContext(
         TargetWindowId target,
         string focusedId,
-        TextTargetKind targetKind) => new(
+        TextTargetKind targetKind,
+        string? baselineValue = null) => new(
         target,
         focusedId,
         targetKind,
@@ -718,7 +1070,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         HasTextContext: false,
         SupportsDirectValueWrite: false,
         DirectValueWriteAtEnd: false,
-        IsScreenDerived: targetKind == TextTargetKind.Terminal);
+        IsScreenDerived: targetKind == TextTargetKind.Terminal,
+        BaselineValue: baselineValue);
 
     internal static WindowsPasteRule ResolveTargetPolicy(
         TargetWindowId target,
@@ -759,10 +1112,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     private static TargetContextStatus ActivateAndValidateWindow(
         TargetWindowId target,
-        out Stopwatch? activationBudget,
+        UiaPreparationBudget budget,
         out bool wasReactivated)
     {
-        activationBudget = null;
         wasReactivated = false;
         if (!target.IsValid || !IsWindow(target.Value))
         {
@@ -775,7 +1127,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return TargetContextStatus.TargetChanged;
         }
 
-        var integrity = TargetHasHigherIntegrity(target.ProcessId);
+        var integrity = WindowsWindowIdentity.TryIsHigherIntegrityProcess(target.ProcessId);
         if (integrity is null or true)
         {
             return TargetContextStatus.Elevated;
@@ -784,10 +1136,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         if (GetForegroundWindow() != target.Value)
         {
             wasReactivated = true;
-            activationBudget = Stopwatch.StartNew();
             _ = WindowsWindowIdentity.TryRestoreAndFocus(target.Value);
-            while (GetForegroundWindow() != target.Value &&
-                activationBudget.Elapsed < TargetActivationTimeout)
+            while (GetForegroundWindow() != target.Value && !budget.IsExhausted)
             {
                 Thread.Sleep(25);
             }
@@ -928,76 +1278,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     /// <summary>Whether an exception is one a UI Automation call refused, answered as "accessibility unavailable" rather than escaping.</summary>
     internal static bool IsExpectedAutomationFailure(Exception exception) => exception is AutomationRefusalException;
 
-    private static bool? TargetHasHigherIntegrity(uint targetProcessId)
-    {
-        var ours = GetIntegrityLevel(GetCurrentProcess());
-        var targetProcess = OpenProcess(ProcessQueryLimitedInformation, false, targetProcessId);
-        if (targetProcess == 0)
-        {
-            return null;
-        }
-
-        try
-        {
-            var target = GetIntegrityLevel(targetProcess);
-            return ours is null || target is null ? null : target > ours;
-        }
-        finally
-        {
-            _ = CloseHandle(targetProcess);
-        }
-    }
-
-    private static uint? GetIntegrityLevel(nint process)
-    {
-        if (!OpenProcessToken(process, TokenQuery, out var token))
-        {
-            return null;
-        }
-
-        try
-        {
-            _ = GetTokenInformation(token, TokenIntegrityLevel, 0, 0, out var needed);
-            if (needed == 0)
-            {
-                return null;
-            }
-
-            var buffer = Marshal.AllocHGlobal(checked((int)needed));
-            try
-            {
-                if (!GetTokenInformation(token, TokenIntegrityLevel, buffer, needed, out _))
-                {
-                    return null;
-                }
-
-                var sid = Marshal.ReadIntPtr(buffer);
-                var countPointer = GetSidSubAuthorityCount(sid);
-                if (countPointer == 0)
-                {
-                    return null;
-                }
-
-                var count = Marshal.ReadByte(countPointer);
-                if (count == 0)
-                {
-                    return null;
-                }
-
-                var authority = GetSidSubAuthority(sid, checked((uint)(count - 1)));
-                return authority == 0 ? null : checked((uint)Marshal.ReadInt32(authority));
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
-        finally
-        {
-            _ = CloseHandle(token);
-        }
-    }
-
     private static bool IsFullscreen(nint window)
     {
         if (!GetWindowRect(window, out var windowRect))
@@ -1015,9 +1295,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             windowRect.Bottom >= info.Monitor.Bottom;
     }
 
-    private const uint ProcessQueryLimitedInformation = 0x1000;
-    private const uint TokenQuery = 0x0008;
-    private const int TokenIntegrityLevel = 25;
     private const uint MonitorDefaultToNearest = 2;
     private const int VkShift = 0x10;
     private const int VkControl = 0x11;
@@ -1056,35 +1333,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int virtualKey);
-
-    [DllImport("kernel32.dll")]
-    private static extern nint GetCurrentProcess();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool OpenProcessToken(nint process, uint desiredAccess, out nint token);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetTokenInformation(
-        nint token,
-        int tokenInformationClass,
-        nint tokenInformation,
-        uint tokenInformationLength,
-        out uint returnLength);
-
-    [DllImport("advapi32.dll")]
-    private static extern nint GetSidSubAuthorityCount(nint sid);
-
-    [DllImport("advapi32.dll")]
-    private static extern nint GetSidSubAuthority(nint sid, uint subAuthority);
-
-    [DllImport("kernel32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(nint handle);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

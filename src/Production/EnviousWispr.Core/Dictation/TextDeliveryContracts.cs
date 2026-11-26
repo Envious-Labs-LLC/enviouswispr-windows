@@ -32,6 +32,16 @@ public enum TextDeliveryRoute
     ClipboardOnly,
 }
 
+/// <summary>Outcome of post-paste UI Automation verification after a synthetic clipboard paste.</summary>
+public enum PasteArrivalStatus
+{
+    NotAttempted,
+    Confirmed,
+    NotObserved,
+    Unreadable,
+    BudgetExhausted,
+}
+
 public enum TextDeliveryRefusalReason
 {
     /// <summary>Nothing was refused.</summary>
@@ -213,7 +223,8 @@ public sealed record CaretContext(
     bool SupportsDirectValueWrite,
     bool DirectValueWriteAtEnd,
     bool IsScreenDerived = false,
-    bool IsUrlBarField = false);
+    bool IsUrlBarField = false,
+    string? BaselineValue = null);
 
 public sealed record TargetContextResult(
     TargetContextStatus Status,
@@ -243,7 +254,9 @@ public sealed record TextCommitResult(
     bool ClipboardFallback,
     bool ClipboardRestored,
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None,
-    bool ClipboardUncertain = false);
+    bool ClipboardUncertain = false,
+    PasteArrivalStatus ArrivalStatus = PasteArrivalStatus.NotAttempted,
+    int? ArrivalElapsedMilliseconds = null);
 
 /// <param name="Fault">The defect that stopped the delivery, for <see cref="TextDeliveryRefusalReason.DeliveryFaulted"/> and <see cref="TextDeliveryRefusalReason.DeliveryDisposed"/>; null otherwise.</param>
 /// <param name="ClipboardUncertain">Carried from <see cref="TextCommitResult.ClipboardUncertain"/>: the clipboard could not be given back, and the person is told.</param>
@@ -256,7 +269,9 @@ public sealed record DeliveryResult(
     CursorRepairDisposition RepairDisposition = CursorRepairDisposition.FallbackPayload,
     bool ClipboardRestored = false,
     DeliveryFault? Fault = null,
-    bool ClipboardUncertain = false);
+    bool ClipboardUncertain = false,
+    PasteArrivalStatus ArrivalStatus = PasteArrivalStatus.NotAttempted,
+    int? ArrivalElapsedMilliseconds = null);
 
 public interface ITextTargetAdapter
 {

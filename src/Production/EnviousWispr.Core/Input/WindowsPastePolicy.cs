@@ -26,7 +26,8 @@ public sealed record WindowsPasteRule(
     bool SkipDirectValueWrite,
     DirectWriteSkipReason DirectWriteSkip,
     PasteKeystrokeKind Keystroke,
-    bool AllowsWindowFallbackWithoutFocusedElement);
+    bool AllowsWindowFallbackWithoutFocusedElement,
+    int MinimumPasteSettleMilliseconds = 200);
 
 /// <summary>
 /// Per-application paste routing policy for Windows targets (ported in spirit from macOS
@@ -54,6 +55,14 @@ public static class WindowsPastePolicy
         "tabby",
         "putty",
         "kitty",
+        "ghostty",
+        "hyper",
+        "git-bash",
+        "bash",
+        "wsl",
+        "ubuntu",
+        "rio",
+        "warp",
     };
 
     private static readonly HashSet<string> BrowserProcesses = new(StringComparer.OrdinalIgnoreCase)
@@ -79,6 +88,16 @@ public static class WindowsPastePolicy
         "codium",
         "cursor",
         "windsurf",
+        "zed",
+        "sublime_text",
+        "idea64",
+        "pycharm64",
+        "webstorm64",
+        "rider64",
+        "clion64",
+        "goland64",
+        "datagrip64",
+        "studio64",
         "obsidian",
         "notion",
         "postman",
@@ -88,6 +107,17 @@ public static class WindowsPastePolicy
         "spotify",
         "claude",
         "chatgpt",
+        "perplexity",
+        "superhuman",
+        "thunderbird",
+        "logseq",
+        "craft",
+        "clickup",
+        "asana",
+        "trello",
+        "miro",
+        "airtable",
+        "canva",
     };
 
     private static readonly HashSet<string> ChatProcesses = new(StringComparer.OrdinalIgnoreCase)
@@ -96,6 +126,10 @@ public static class WindowsPastePolicy
         "slack",
         "ms-teams",
         "teams",
+        "teams2",
+        "skype",
+        "webex",
+        "zoom",
         "signal",
         "telegram",
         "whatsapp",
@@ -111,6 +145,7 @@ public static class WindowsPastePolicy
         "outlook",
         "olk",
         "onenote",
+        "onenoteim",
         "powerpnt",
     };
 
@@ -130,6 +165,7 @@ public static class WindowsPastePolicy
         "Chrome_RenderWidgetHostHWND",
         "CefBrowserWindow",
         "MozillaWindowClass",
+        "SunAwtFrame",
     };
 
     public static WindowsPasteRule Resolve(
@@ -148,7 +184,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: true,
                 DirectWriteSkipReason.Terminal,
                 PasteKeystrokeKind.ShiftInsert,
-                AllowsWindowFallbackWithoutFocusedElement: true);
+                AllowsWindowFallbackWithoutFocusedElement: true,
+                MinimumPasteSettleMilliseconds: 300);
         }
 
         if (OfficeProcesses.Contains(normalized))
@@ -158,7 +195,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: true,
                 DirectWriteSkipReason.Office,
                 PasteKeystrokeKind.CtrlV,
-                AllowsWindowFallbackWithoutFocusedElement: true);
+                AllowsWindowFallbackWithoutFocusedElement: true,
+                MinimumPasteSettleMilliseconds: 350);
         }
 
         if (ChatProcesses.Contains(normalized))
@@ -168,7 +206,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: true,
                 DirectWriteSkipReason.Chat,
                 PasteKeystrokeKind.CtrlV,
-                AllowsWindowFallbackWithoutFocusedElement: true);
+                AllowsWindowFallbackWithoutFocusedElement: true,
+                MinimumPasteSettleMilliseconds: 350);
         }
 
         if (BrowserProcesses.Contains(normalized))
@@ -178,7 +217,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: true,
                 DirectWriteSkipReason.Browser,
                 PasteKeystrokeKind.CtrlV,
-                AllowsWindowFallbackWithoutFocusedElement: true);
+                AllowsWindowFallbackWithoutFocusedElement: true,
+                MinimumPasteSettleMilliseconds: 350);
         }
 
         if (ElectronAndChromiumAppProcesses.Contains(normalized) ||
@@ -190,7 +230,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: true,
                 DirectWriteSkipReason.ElectronOrChromiumHost,
                 PasteKeystrokeKind.CtrlV,
-                AllowsWindowFallbackWithoutFocusedElement: true);
+                AllowsWindowFallbackWithoutFocusedElement: true,
+                MinimumPasteSettleMilliseconds: 350);
         }
 
         if (isControlEdit)
@@ -200,7 +241,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: false,
                 DirectWriteSkipReason.None,
                 PasteKeystrokeKind.CtrlV,
-                AllowsWindowFallbackWithoutFocusedElement: true);
+                AllowsWindowFallbackWithoutFocusedElement: true,
+                MinimumPasteSettleMilliseconds: 200);
         }
 
         if (isFullscreen)
@@ -210,7 +252,8 @@ public static class WindowsPastePolicy
                 SkipDirectValueWrite: true,
                 DirectWriteSkipReason.None,
                 PasteKeystrokeKind.CtrlV,
-                AllowsWindowFallbackWithoutFocusedElement: false);
+                AllowsWindowFallbackWithoutFocusedElement: false,
+                MinimumPasteSettleMilliseconds: 200);
         }
 
         return new WindowsPasteRule(
@@ -218,7 +261,8 @@ public static class WindowsPastePolicy
             SkipDirectValueWrite: false,
             DirectWriteSkipReason.None,
             PasteKeystrokeKind.CtrlV,
-            AllowsWindowFallbackWithoutFocusedElement: true);
+            AllowsWindowFallbackWithoutFocusedElement: true,
+            MinimumPasteSettleMilliseconds: 250);
     }
 
     public static PasteKeystrokeKind KeystrokeForTargetKind(TextTargetKind targetKind) =>

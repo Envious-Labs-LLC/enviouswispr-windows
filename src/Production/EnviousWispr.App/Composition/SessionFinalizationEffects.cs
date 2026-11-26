@@ -111,6 +111,22 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
         {
             _logger.Write(clipboard);
         }
+
+        var arrivalEvent = delivery.ArrivalStatus switch
+        {
+            PasteArrivalStatus.Confirmed => (AppEventCode?)AppEventCode.TextDeliveryArrivalConfirmed,
+            PasteArrivalStatus.NotObserved => AppEventCode.TextDeliveryArrivalNotObserved,
+            PasteArrivalStatus.Unreadable => AppEventCode.TextDeliveryArrivalUnreadable,
+            _ => null,
+        };
+        if (arrivalEvent is { } arrivalCode)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                arrivalCode,
+                AppFailureCategory.None,
+                delivery.ArrivalElapsedMilliseconds));
+        }
     }
 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>

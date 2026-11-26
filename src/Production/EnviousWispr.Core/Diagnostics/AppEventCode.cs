@@ -384,4 +384,13 @@ public enum AppEventCode
 
     /// <summary>A recording push/release audio cue failed to initialize or play on the output device.</summary>
     RecordingSoundCueFailed,
+
+    /// <summary>Post-paste UI Automation inspection observed the inserted text in the target control.</summary>
+    TextDeliveryArrivalConfirmed,
+
+    /// <summary>Post-paste UI Automation inspection read the target control after the settle wait without observing the inserted text yet.</summary>
+    TextDeliveryArrivalNotObserved,
+
+    /// <summary>Post-paste UI Automation inspection could not read the target control after paste (normal for terminals and custom canvases).</summary>
+    TextDeliveryArrivalUnreadable,
 }

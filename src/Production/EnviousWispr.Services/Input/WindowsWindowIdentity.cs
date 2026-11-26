@@ -218,6 +218,130 @@ internal static class WindowsWindowIdentity
             ? uiaFocusId
             : $"{uiaFocusId}|{win32FocusId}";
 
+    internal static bool IsConsoleHostProcessName(string? processName)
+    {
+        var normalized = NormalizeProcessName(processName);
+        return string.Equals(normalized, "conhost", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "OpenConsole", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsMatchingFocusProcess(
+        nint windowHandle,
+        uint targetProcessId,
+        uint focusProcessId) =>
+        IsMatchingFocusProcessCore(
+            targetProcessId,
+            focusProcessId,
+            () => TryGetClassName(windowHandle),
+            TryGetProcessName,
+            TryIsHigherIntegrityProcess);
+
+    internal static bool IsMatchingFocusProcessCore(
+        uint targetProcessId,
+        uint focusProcessId,
+        Func<string?> getWindowClassName,
+        Func<uint, string?> getProcessName,
+        Func<uint, bool?> isHigherIntegrity)
+    {
+        if (targetProcessId == 0 || focusProcessId == 0)
+        {
+            return false;
+        }
+
+        if (focusProcessId == targetProcessId)
+        {
+            return true;
+        }
+
+        var windowClass = getWindowClassName();
+        return string.Equals(windowClass, "ConsoleWindowClass", StringComparison.OrdinalIgnoreCase) &&
+            IsConsoleHostProcessName(getProcessName(focusProcessId)) &&
+            isHigherIntegrity(focusProcessId) == false;
+    }
+
+    /// <summary>
+    /// Returns whether <paramref name="targetProcessId"/> runs at a higher Windows integrity level
+    /// than this process, or <see langword="null"/> when the process token cannot be queried.
+    /// </summary>
+    internal static bool? TryIsHigherIntegrityProcess(uint targetProcessId)
+    {
+        if (targetProcessId == 0)
+        {
+            return null;
+        }
+
+        var ours = GetIntegrityLevel(GetCurrentProcess());
+        var targetProcess = OpenProcess(ProcessQueryLimitedInformation, false, targetProcessId);
+        if (targetProcess == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var target = GetIntegrityLevel(targetProcess);
+            return ours is null || target is null ? null : target > ours;
+        }
+        finally
+        {
+            _ = CloseHandle(targetProcess);
+        }
+    }
+
+    private static uint? GetIntegrityLevel(nint process)
+    {
+        if (!OpenProcessToken(process, TokenQuery, out var token))
+        {
+            return null;
+        }
+
+        try
+        {
+            _ = GetTokenInformation(token, TokenIntegrityLevel, 0, 0, out var needed);
+            if (needed == 0)
+            {
+                return null;
+            }
+
+            var buffer = Marshal.AllocHGlobal(checked((int)needed));
+            try
+            {
+                if (!GetTokenInformation(token, TokenIntegrityLevel, buffer, needed, out _))
+                {
+                    return null;
+                }
+
+                var sid = Marshal.ReadIntPtr(buffer);
+                var countPointer = GetSidSubAuthorityCount(sid);
+                if (countPointer == 0)
+                {
+                    return null;
+                }
+
+                var count = Marshal.ReadByte(countPointer);
+                if (count == 0)
+                {
+                    return null;
+                }
+
+                var authority = GetSidSubAuthority(sid, checked((uint)(count - 1)));
+                return authority == 0 ? null : checked((uint)Marshal.ReadInt32(authority));
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        finally
+        {
+            _ = CloseHandle(token);
+        }
+    }
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const uint TokenQuery = 0x0008;
+    private const int TokenIntegrityLevel = 25;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
     {
@@ -283,4 +407,33 @@ internal static class WindowsWindowIdentity
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(nint process, uint desiredAccess, out nint token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(
+        nint token,
+        int tokenInformationClass,
+        nint tokenInformation,
+        uint tokenInformationLength,
+        out uint returnLength);
+
+    [DllImport("advapi32.dll")]
+    private static extern nint GetSidSubAuthorityCount(nint sid);
+
+    [DllImport("advapi32.dll")]
+    private static extern nint GetSidSubAuthority(nint sid, uint subAuthority);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(nint handle);
 }
