@@ -517,7 +517,10 @@ public sealed partial class MainWindow
 
         _showingEditsIds.Add(card.Id);
         _editsViewModes[card.Id] = HistoryEditsViewMode.MarkedUp;
-        card.SetShowingEdits(true, HistoryEditsViewMode.MarkedUp);
+        var diffResult = card.HasPolishEdits
+            ? _historyDiffCache.GetOrCompute(card.OriginalText, card.Text)
+            : HistoryDiffResult.Empty;
+        card.SetShowingEdits(true, HistoryEditsViewMode.MarkedUp, diffResult);
     }
 
     private void CardShowPolished_Click(object sender, RoutedEventArgs e)
@@ -1322,7 +1325,8 @@ public sealed partial class MainWindow
                     }
                 }
 
-                var diffResult = HistoryDiaryPresentation.HasPolishEdits(entry)
+                var isShowingEdits = _showingEditsIds.Contains(entry.Id);
+                var diffResult = isShowingEdits && HistoryDiaryPresentation.HasPolishEdits(entry)
                     ? _historyDiffCache.GetOrCompute(entry.OriginalText, entry.Text)
                     : HistoryDiffResult.Empty;
                 var editsViewMode = _editsViewModes.GetValueOrDefault(entry.Id, HistoryEditsViewMode.MarkedUp);
@@ -1332,7 +1336,7 @@ public sealed partial class MainWindow
                     isSelectionMode: _isHistorySelectionMode,
                     isSelected: _selectedHistoryIds.Contains(entry.Id),
                     isTranscriptExpanded: _expandedTranscriptIds.Contains(entry.Id),
-                    isShowingEdits: _showingEditsIds.Contains(entry.Id),
+                    isShowingEdits: isShowingEdits,
                     editsViewMode: editsViewMode,
                     diffResult: diffResult,
                     isGlobalBusy: busy,
@@ -1785,7 +1789,7 @@ public sealed partial class MainWindow
     public sealed class HistoryItemViewModel : INotifyPropertyChanged
     {
         private readonly DictationHistoryEntry _entry;
-        private readonly HistoryDiffResult _diffResult;
+        private HistoryDiffResult _diffResult;
         private bool _isSelectionMode;
         private bool _isSelected;
         private bool _isTranscriptExpanded;
@@ -2151,10 +2155,14 @@ public sealed partial class MainWindow
             }
         }
 
-        public void SetShowingEdits(bool isShowingEdits, HistoryEditsViewMode? initialMode = null)
+        public void SetShowingEdits(
+            bool isShowingEdits,
+            HistoryEditsViewMode? initialMode = null,
+            HistoryDiffResult? diffResult = null)
         {
             var modeChanged = initialMode is { } mode && _editsViewMode != mode;
-            if (_isShowingEdits == isShowingEdits && !modeChanged)
+            var diffChanged = diffResult is not null && !ReferenceEquals(_diffResult, diffResult);
+            if (_isShowingEdits == isShowingEdits && !modeChanged && !diffChanged)
             {
                 return;
             }
@@ -2163,6 +2171,11 @@ public sealed partial class MainWindow
             if (initialMode is { } nextMode)
             {
                 _editsViewMode = nextMode;
+            }
+
+            if (diffResult is not null)
+            {
+                _diffResult = diffResult;
             }
 
             _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayedCopyText);
@@ -2178,6 +2191,7 @@ public sealed partial class MainWindow
                 nameof(OriginalActiveVisibility),
                 nameof(OriginalInactiveVisibility),
                 nameof(ComparisonStatusText),
+                nameof(MarkedUpRuns),
                 nameof(MarkedUpLegendVisibility),
                 nameof(IsShowingOriginalView),
                 nameof(DisplayedCopyText),

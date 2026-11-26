@@ -48,6 +48,10 @@ public sealed class WordDiffTests
         var diacriticDiff = HistoryEditsPresentation.ComputeDiff("Feliz ano", "Feliz año");
         Assert.Equal(1, diacriticDiff.ChangeCount);
         Assert.Equal("1 edit", diacriticDiff.SummaryText);
+
+        var spacingDiff = HistoryEditsPresentation.ComputeDiff("hello world", "hello  world");
+        Assert.Equal(0, spacingDiff.ChangeCount);
+        Assert.Equal(HistoryEditsPresentation.SpacingOnlySummaryText, spacingDiff.SummaryText);
     }
 
     [Fact]

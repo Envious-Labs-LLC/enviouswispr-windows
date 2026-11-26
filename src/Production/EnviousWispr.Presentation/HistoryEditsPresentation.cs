@@ -119,6 +119,7 @@ public static class HistoryEditsPresentation
     public const string BeforePolishStatusText = "Your words before AI polish";
     public const string PolishedStatusText = "AI-polished transcript";
     public const string FormattingOnlySummaryText = "Punctuation & casing";
+    public const string SpacingOnlySummaryText = "Spacing only";
 
     public static HistoryDiffResult ComputeDiff(
         string? originalText,
@@ -155,11 +156,46 @@ public static class HistoryEditsPresentation
             return new HistoryDiffResult(new[] { run }, 1, FormatEditCountSummary(1, hasTextDifference: true));
         }
 
-        var entries = WordDiff.Compute(orig, polished, culture);
+        var origTokens = WordDiff.Tokenize(orig, culture);
+        var editTokens = WordDiff.Tokenize(polished, culture);
+        var entries = WordDiff.Compute(origTokens, editTokens);
         var (runs, changeCount) = BuildMarkedUpRuns(entries);
-        var hasTextDifference = !string.Equals(orig.Trim(), polished.Trim(), StringComparison.Ordinal);
-        var summary = FormatEditCountSummary(changeCount, hasTextDifference);
+        var summary = changeCount > 0
+            ? FormatEditCountSummary(changeCount, hasTextDifference: true)
+            : FormatZeroChangeSummary(orig, polished, origTokens, editTokens);
         return new HistoryDiffResult(runs, changeCount, summary);
+    }
+
+    private static string FormatZeroChangeSummary(
+        string orig,
+        string polished,
+        IReadOnlyList<WordDiffToken> origTokens,
+        IReadOnlyList<WordDiffToken> editTokens)
+    {
+        if (string.Equals(orig.Trim(), polished.Trim(), StringComparison.Ordinal))
+        {
+            return "No edits";
+        }
+
+        if (origTokens.Count == editTokens.Count)
+        {
+            var allSurfacesIdentical = true;
+            for (var i = 0; i < origTokens.Count; i++)
+            {
+                if (!string.Equals(origTokens[i].Surface, editTokens[i].Surface, StringComparison.Ordinal))
+                {
+                    allSurfacesIdentical = false;
+                    break;
+                }
+            }
+
+            if (allSurfacesIdentical)
+            {
+                return SpacingOnlySummaryText;
+            }
+        }
+
+        return FormattingOnlySummaryText;
     }
 
     public static (IReadOnlyList<MarkedUpRun> Runs, int ChangeCount) BuildMarkedUpRuns(
