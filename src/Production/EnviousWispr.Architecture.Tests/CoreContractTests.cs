@@ -28,7 +28,7 @@ public sealed class CoreContractTests
             .Select(property => property.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        Assert.Equal(["EgOneModelId", "ModelId", "OllamaEndpoint", "Provider"], propertyNames.Order());
+        Assert.Equal(["EgOneModelId", "ModelId", "OllamaEndpoint", "Provider", "UnloadPolicy"], propertyNames.Order());
         Assert.DoesNotContain("apiKey", propertyNames);
         Assert.DoesNotContain("credential", propertyNames);
         Assert.DoesNotContain("secret", propertyNames);
