@@ -356,11 +356,20 @@ public sealed partial class DictationOverlayWindow : Window
         {
             StartEscapeCountdown();
         }
-        else if (_state == DictationOverlayState.CorrectionLearned &&
-            _learnedModel?.Phase == LearnedCorrectionPillPhase.Learned)
+        else if (_state == DictationOverlayState.CorrectionLearned && _learnedModel is { } learned)
         {
-            _learnedWatch.Restart();
-            _learnedTimer.Start();
+            var seconds = learned.Phase switch
+            {
+                LearnedCorrectionPillPhase.Learned => LearnedDwellSeconds,
+                LearnedCorrectionPillPhase.UndoPending => LearnedUndoPendingFloorSeconds,
+                LearnedCorrectionPillPhase.Undone => LearnedUndoneDwellSeconds,
+                LearnedCorrectionPillPhase.UndoError => LearnedErrorDwellSeconds,
+                _ => 0,
+            };
+            if (seconds > 0)
+            {
+                StartLearnedCountdown(seconds);
+            }
         }
         else
         {
@@ -1124,12 +1133,23 @@ public sealed partial class DictationOverlayWindow : Window
             {
                 StartLearnedCountdown(LearnedUndoPendingFloorSeconds);
             }
+            else
+            {
+                UpdateLearnedRailWidth(0.35);
+            }
         }
         else if (model.Phase == LearnedCorrectionPillPhase.Undone)
         {
             if (!(isPreview && _previewHoldOpen))
             {
                 StartLearnedCountdown(LearnedUndoneDwellSeconds);
+            }
+        }
+        else if (model.Phase == LearnedCorrectionPillPhase.UndoError)
+        {
+            if (!(isPreview && _previewHoldOpen))
+            {
+                StartLearnedCountdown(LearnedErrorDwellSeconds);
             }
         }
 
