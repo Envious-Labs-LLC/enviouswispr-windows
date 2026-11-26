@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Sessions;
@@ -90,7 +91,12 @@ public static class SessionComposition
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the
         // queue's first hop.
-        return new DictationSessionCoordinator(executor, parts.Controller.CaptureStartContext, parts.Clock);
+        return new DictationSessionCoordinator(
+            executor,
+            parts.Controller.CaptureStartContext,
+            parts.Clock,
+            parts.Controller.CaptureReleaseTarget,
+            parts.Controller.CaptureReleaseTarget);
     }
 }
 

@@ -881,7 +881,11 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
                         await _controller.PressAsync(startContext, none).ConfigureAwait(false),
                     PushToTalkSignal.Pressed => await _controller.PressAsync(none).ConfigureAwait(false),
+                    PushToTalkSignal.Released when command.ReleaseTarget is { } releaseTarget =>
+                        await _controller.ReleaseAsync(releaseTarget, releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Released => await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
+                    PushToTalkSignal.Cancelled when recoverCancelledRecording && command.ReleaseTarget is { } escapeReleaseTarget =>
+                        await _controller.ReleaseAsync(escapeReleaseTarget, releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Cancelled when recoverCancelledRecording =>
                         await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Cancelled => await _controller.CancelAsync(none).ConfigureAwait(false),

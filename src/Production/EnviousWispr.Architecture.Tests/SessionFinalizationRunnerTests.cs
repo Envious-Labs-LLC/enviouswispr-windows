@@ -340,6 +340,52 @@ public sealed class SessionFinalizationRunnerTests
         Assert.False(Assert.Single(world.History.Added).WasPolished);
     }
 
+    [Fact]
+    public async Task WhereCursorIsAtReleaseModeResolvesReleaseTargetAtReleaseBeforeTranscription()
+    {
+        var releaseTarget = new TargetWindowId(202, 4242, FocusedElementId: "win32:99", ProcessName: "notepad");
+        var targetSequence = new Queue<TargetWindowId?>([new TargetWindowId(101), releaseTarget]);
+        var world = await World.RecordingFinishedAsync(
+            "hello world",
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease },
+            () => targetSequence.Count > 0 ? targetSequence.Dequeue() : new TargetWindowId(303, 9999, ProcessName: "later"));
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.Equal(releaseTarget, Assert.Single(world.Delivery.Requests).Target);
+    }
+
+    [Fact]
+    public async Task WhereDictationStartedModeKeepsStartTargetEvenWhenForegroundChangesBeforeRelease()
+    {
+        var targetSequence = new Queue<TargetWindowId?>([new TargetWindowId(101), new TargetWindowId(202, 4242, ProcessName: "notepad")]);
+        var world = await World.RecordingFinishedAsync(
+            "hello world",
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereDictationStarted },
+            () => targetSequence.Count > 0 ? targetSequence.Dequeue() : null);
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.Equal(new TargetWindowId(101), Assert.Single(world.Delivery.Requests).Target);
+    }
+
+    [Fact]
+    public async Task WhereCursorIsAtReleaseWithNullReleaseTargetDoesNotRedirectToStartTarget()
+    {
+        var targetSequence = new Queue<TargetWindowId?>([new TargetWindowId(101), null]);
+        var world = await World.RecordingFinishedAsync(
+            "hello world",
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease },
+            () => targetSequence.Count > 0 ? targetSequence.Dequeue() : null);
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.Equal(default, Assert.Single(world.Delivery.Requests).Target);
+    }
+
     /// <summary>Everything wired the way the shell wires it, minus the shell.</summary>
     private sealed class World
     {
@@ -365,10 +411,20 @@ public sealed class SessionFinalizationRunnerTests
 
         public List<string> Trace => Effects.Trace;
 
-        public static async Task<World> RecordingFinishedAsync(string spoken)
+        public static async Task<World> RecordingFinishedAsync(
+            string spoken,
+            TextDeliveryOptions? deliveryOptions = null,
+            Func<TargetWindowId?>? nextTarget = null)
         {
             var capture = new FakeAudioCapture();
-            var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
+            var targetProvider = nextTarget is null
+                ? (IForegroundTargetProvider)new FakeTargetProvider(101)
+                : new SequenceTargetProvider(nextTarget);
+            var controller = new PushToTalkSessionController(
+                capture,
+                targetProvider,
+                deliveryOptions: deliveryOptions is null ? null : () => deliveryOptions,
+                minimumHoldDuration: TimeSpan.Zero);
             var started = await controller.PressAsync();
             var released = await controller.ReleaseAsync();
             Assert.Equal(SessionTransitionKind.FinalizeReady, released.Kind);
@@ -721,6 +777,11 @@ public sealed class SessionFinalizationRunnerTests
     private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider
     {
         public TargetWindowId? CaptureForegroundTarget() => new TargetWindowId(window);
+    }
+
+    private sealed class SequenceTargetProvider(Func<TargetWindowId?> next) : IForegroundTargetProvider
+    {
+        public TargetWindowId? CaptureForegroundTarget() => next();
     }
 
     private sealed class FakeAudioCapture(float[]? samples = null) : IAudioCapture

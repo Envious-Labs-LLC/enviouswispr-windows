@@ -175,6 +175,13 @@ public enum PolishUnloadPolicy
     SixtyMinutes = 6,
 }
 
+/// <summary>Which window receives dictated text when focus moves between pressing the hotkey and releasing it.</summary>
+public enum PasteTargetMode
+{
+    WhereDictationStarted = 0,
+    WhereCursorIsAtRelease = 1,
+}
+
 public enum AppTheme
 {
     System,
@@ -389,7 +396,8 @@ public sealed record UserPreferences(
     RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick,
     bool CopyInsteadOfPaste = false,
     [property: JsonConverter(typeof(LivePreviewEngineChoiceJsonConverter))]
-    LivePreviewEngineChoice LivePreviewEngine = LivePreviewEngineChoice.Parakeet)
+    LivePreviewEngineChoice LivePreviewEngine = LivePreviewEngineChoice.Parakeet,
+    PasteTargetMode PasteTargetMode = PasteTargetMode.WhereDictationStarted)
 {
     public static UserPreferences Default { get; } = new(
         DictationPreferences.Default,
@@ -403,5 +411,6 @@ public sealed record UserPreferences(
         PlayRecordingSounds: true,
         RecordingSoundPairing: RecordingSoundPairing.WhisperTick,
         CopyInsteadOfPaste: false,
-        LivePreviewEngine: LivePreviewEngineChoice.Parakeet);
+        LivePreviewEngine: LivePreviewEngineChoice.Parakeet,
+        PasteTargetMode: PasteTargetMode.WhereDictationStarted);
 }

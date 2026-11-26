@@ -4,6 +4,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Sessions;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
 
@@ -32,6 +33,12 @@ public sealed record SessionTransitionResult(
 /// </summary>
 public sealed record RecordingStartContext(TargetWindowId? Target, TextDeliveryOptions DeliveryOptions);
 
+/// <summary>
+/// What a release is about, taken at the instant of the release when cursor-at-release targeting
+/// is in force: the live non-self foreground window under the caret before transcription or polish runs.
+/// </summary>
+public sealed record ReleaseTargetContext(TargetWindowId? Target);
+
 public sealed class PushToTalkSessionController : IAsyncDisposable
 {
     private readonly IAudioCapture _audioCapture;
@@ -43,6 +50,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly Func<CancellationToken, Task<AudioDeviceId?>>? _resolveAudioDevice;
     private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private TextDeliveryOptions? _inFlightPressOptions;
     private bool _disposed;
 
     public PushToTalkSessionController(
@@ -165,46 +173,101 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         }
 
         var sessionId = DictationSessionId.Create();
-        var targetAudioDevice = _resolveAudioDevice is not null
-            ? await _resolveAudioDevice(cancellationToken).ConfigureAwait(false)
-            : _preferredAudioDevice;
-        var started = await _audioCapture
-            .StartAsync(new AudioCaptureRequest(sessionId, targetAudioDevice), cancellationToken)
-            .ConfigureAwait(false);
-        AppError? fallbackReason = null;
-        if (!started.Succeeded &&
-            targetAudioDevice is not null &&
-            started.Error?.Code is AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost)
+        // Hold the press's frozen delivery options across audio startup so an early release sees them
+        // even before CurrentSession exists.
+        Volatile.Write(ref _inFlightPressOptions, deliveryOptions);
+        try
         {
-            fallbackReason = started.Error;
-            started = await _audioCapture
-                .StartAsync(new AudioCaptureRequest(sessionId), cancellationToken)
+            var targetAudioDevice = _resolveAudioDevice is not null
+                ? await _resolveAudioDevice(cancellationToken).ConfigureAwait(false)
+                : _preferredAudioDevice;
+            var started = await _audioCapture
+                .StartAsync(new AudioCaptureRequest(sessionId, targetAudioDevice), cancellationToken)
                 .ConfigureAwait(false);
-        }
+            AppError? fallbackReason = null;
+            if (!started.Succeeded &&
+                targetAudioDevice is not null &&
+                started.Error?.Code is AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost)
+            {
+                fallbackReason = started.Error;
+                started = await _audioCapture
+                    .StartAsync(new AudioCaptureRequest(sessionId), cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
-        if (!started.Succeeded)
+            if (!started.Succeeded)
+            {
+                return Failure(started.Error ?? new AppError(
+                    AppErrorCode.AudioDeviceUnavailable,
+                    AppErrorStage.AudioCapture,
+                    CanRetry: true));
+            }
+
+            CurrentSession = DictationSessionSnapshot.Start(
+                sessionId,
+                _timeProvider.GetUtcNow(),
+                target.Value,
+                deliveryOptions);
+            RaiseChanged();
+            return new SessionTransitionResult(
+                SessionTransitionKind.Started,
+                CurrentSession,
+                Error: fallbackReason);
+        }
+        finally
         {
-            return Failure(started.Error ?? new AppError(
-                AppErrorCode.AudioDeviceUnavailable,
-                AppErrorStage.AudioCapture,
-                CanRetry: true));
+            Volatile.Write(ref _inFlightPressOptions, null);
         }
-
-        CurrentSession = DictationSessionSnapshot.Start(
-            sessionId,
-            _timeProvider.GetUtcNow(),
-            target.Value,
-            deliveryOptions);
-        RaiseChanged();
-        return new SessionTransitionResult(
-            SessionTransitionKind.Started,
-            CurrentSession,
-            Error: fallbackReason);
     }
 
+    /// <summary>
+    /// Takes the release-time window under the caret when cursor-at-release targeting is active
+    /// and Copy-only is off, excluding EnviousWispr's own windows. Returns null otherwise so start
+    /// targeting avoids any unnecessary UI Automation probe on release.
+    /// </summary>
+    public ReleaseTargetContext? CaptureReleaseTarget() =>
+        CaptureReleaseTarget(pendingDeliveryOptions: null);
+
+    /// <summary>
+    /// Overload allowing callers with an admitted press's frozen options (before <see cref="PressAsync"/>
+    /// enters audio startup) to supply those options synchronously on release.
+    /// </summary>
+    public ReleaseTargetContext? CaptureReleaseTarget(TextDeliveryOptions? pendingDeliveryOptions)
+    {
+        var deliveryOptions = CurrentSession?.DeliveryOptions
+            ?? Volatile.Read(ref _inFlightPressOptions)
+            ?? pendingDeliveryOptions
+            ?? _deliveryOptions();
+        if (deliveryOptions.CopyInsteadOfPaste ||
+            deliveryOptions.TargetMode != PasteTargetMode.WhereCursorIsAtRelease)
+        {
+            return null;
+        }
+
+        return new ReleaseTargetContext(CaptureNonSelfTarget());
+    }
+
+    private TargetWindowId? CaptureNonSelfTarget()
+    {
+        var captured = _targetProvider.CaptureForegroundTarget();
+        return captured is { } target &&
+            target.ProcessId != 0 &&
+            target.ProcessId == (uint)Environment.ProcessId
+                ? null
+                : captured;
+    }
+
+    public Task<SessionTransitionResult> ReleaseAsync(
+        CancellationToken cancellationToken = default) =>
+        ReleaseAsync(releaseContext: null, cancellationToken);
+
     public async Task<SessionTransitionResult> ReleaseAsync(
+        ReleaseTargetContext? releaseContext,
         CancellationToken cancellationToken = default)
     {
+        var captureFallback = releaseContext is null &&
+            CurrentSession is { DeliveryOptions: { CopyInsteadOfPaste: false, TargetMode: PasteTargetMode.WhereCursorIsAtRelease } };
+        var fallbackReleaseTarget = captureFallback ? CaptureNonSelfTarget() : null;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -225,7 +288,20 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
             }
 
             var sessionId = CurrentSession.Id.Value;
-            CurrentSession = CurrentSession with { State = DictationSessionState.Finalizing };
+            var effectiveTarget = CurrentSession.DeliveryOptions is
+                {
+                    CopyInsteadOfPaste: false,
+                    TargetMode: PasteTargetMode.WhereCursorIsAtRelease,
+                }
+                    ? (releaseContext is not null
+                        ? releaseContext.Target
+                        : (captureFallback ? fallbackReleaseTarget : CaptureNonSelfTarget())) ?? default
+                    : CurrentSession.Target;
+            CurrentSession = CurrentSession with
+            {
+                State = DictationSessionState.Finalizing,
+                Target = effectiveTarget,
+            };
             RaiseChanged();
             _phaseJournal?.Record(UatRuntimePhase.CaptureStopEntered, sessionId);
             var audio = await _audioCapture.StopAsync(cancellationToken).ConfigureAwait(false);

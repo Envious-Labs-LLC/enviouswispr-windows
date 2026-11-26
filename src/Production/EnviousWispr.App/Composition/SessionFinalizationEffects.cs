@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Pipeline;
 

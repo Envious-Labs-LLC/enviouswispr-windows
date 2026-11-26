@@ -262,6 +262,7 @@ public partial class App
             deliveryOptions: () => TextDeliveryOptions.Default with
             {
                 CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
+                TargetMode = _settings.Preferences.PasteTargetMode,
             },
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
