@@ -31,13 +31,13 @@ public static class CursorInsertionRepair
         string? languageCode)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var fallback = input with { Text = FallbackPayload(input.Text) };
+        var useSpaces = UsesWordSpacing(languageCode, input.Text);
+        var fallback = input with { Text = FallbackPayload(input.Text, useSpaces) };
         if (context is null || !context.HasTextContext)
         {
             return Fallback(fallback);
         }
 
-        var useSpaces = UsesWordSpacing(languageCode, input.Text);
         if (useSpaces && IsInsideWord(context.Left, context.Right))
         {
             return Fallback(fallback, refusedInsideWord: true);
@@ -123,9 +123,9 @@ public static class CursorInsertionRepair
         CursorRepairDisposition.FallbackPayload,
         RefusedInsideWord: refusedInsideWord);
 
-    /// <summary>The fallback payload: the words as said, with one trailing space so a paste can continue a sentence. Not raw text, and never context-adjusted.</summary>
-    private static string FallbackPayload(string text) =>
-        text.EndsWith(' ') ? text : text + " ";
+    /// <summary>The fallback payload: the words as said, with one trailing space in space-separated languages so a paste can continue a sentence. Not raw text, and never context-adjusted.</summary>
+    private static string FallbackPayload(string text, bool usesWordSpacing) =>
+        !usesWordSpacing || text.EndsWith(' ') ? text : text + " ";
 
     private static bool UsesWordSpacing(string? languageCode, string payload)
     {
