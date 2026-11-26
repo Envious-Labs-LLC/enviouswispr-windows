@@ -42,7 +42,7 @@ public static class EgOneModelCatalog
     public static int DefaultContextTokens(string? modelId) =>
         NormalizeOrDefault(modelId) switch
         {
-            MicroId => 8_192,
-            _ => 16_384,
+            MiniId or MicroId => 4_096,
+            _ => 8_192,
         };
 }

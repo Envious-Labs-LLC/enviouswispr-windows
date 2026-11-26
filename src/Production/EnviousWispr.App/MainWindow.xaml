@@ -2321,8 +2321,8 @@
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock x:Name="EgOneFullTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Best quality" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                        <TextBlock x:Name="EgOneFullDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="The most accurate. Pick it for long dictations, email and languages other than English." TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="EgOneFullSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Best accuracy · Standard speed · ~5.5 GB memory · ~4.1 GB disk" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneFullDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="The most accurate offline model. Best on PCs with 24 GB+ RAM and GPU acceleration for long dictation and multilingual cleanup." TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneFullSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Best accuracy · Standard speed · ~3.4 GB memory · ~3.0 GB disk" TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </RadioButton>
                                                 <Border Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10">
@@ -2342,7 +2342,7 @@
                                                 </Border>
                                             </StackPanel>
                                             <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                <RadioButton x:Name="EgOneSizeMiniCard" Tag="eg-1-mini" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Mini. Fast all-rounder. Close to EG-1 on short dictation, at about half the memory.">
+                                                <RadioButton x:Name="EgOneSizeMiniCard" Tag="eg-1-mini" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Mini. Fast all-rounder. High accuracy at roughly half the size of EG-1.">
                                                     <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
                                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
                                                             <TextBlock x:Name="EgOneMiniTitleText" Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Mini" />
@@ -2354,8 +2354,8 @@
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock x:Name="EgOneMiniTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Fast all-rounder" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                        <TextBlock x:Name="EgOneMiniDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="Close to EG-1 on short dictation, at about half the memory. Weaker on long dictations." TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="EgOneMiniSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="High on short dictation · Fast · ~2.9 GB memory · ~2.1 GB disk" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneMiniDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="High accuracy at roughly half the size of EG-1. Ideal for everyday laptops and fast GPU-accelerated polish." TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneMiniSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="High accuracy · Fast · ~1.6 GB memory · ~1.4 GB disk" TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </RadioButton>
                                                 <Border Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10">
@@ -2375,7 +2375,7 @@
                                                 </Border>
                                             </StackPanel>
                                             <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                <RadioButton x:Name="EgOneSizeMicroCard" Tag="eg-1-micro" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Micro. Smallest and fastest. The lightest. Good for short English dictation on PCs with little memory to spare.">
+                                                <RadioButton x:Name="EgOneSizeMicroCard" Tag="eg-1-micro" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Micro. Smallest and fastest. Ultra-lightweight model built for fast local polish.">
                                                     <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
                                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
                                                             <TextBlock x:Name="EgOneMicroTitleText" Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Micro" />
@@ -2387,8 +2387,8 @@
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock x:Name="EgOneMicroTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Smallest and fastest" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                        <TextBlock x:Name="EgOneMicroDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="The lightest. Good for short English dictation on PCs with little memory to spare. Weaker in other languages." TextWrapping="Wrap" />
-                                                        <TextBlock x:Name="EgOneMicroSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Short English dictation · Fastest · ~1.6 GB memory · ~1.2 GB disk" TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneMicroDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="Ultra-lightweight model built for fast local polish on CPU-only laptops and PCs with tighter memory." TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneMicroSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Fast lightweight polish · Fastest · ~1.0 GB memory · ~520 MB disk" TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </RadioButton>
                                                 <Border Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10">

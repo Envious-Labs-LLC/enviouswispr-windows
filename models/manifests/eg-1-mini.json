@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "modelId": "eg-1-mini",
+  "version": "1.0.0",
+  "minimumAppVersion": "0.19.0",
+  "license": {
+    "name": "EG-1 Community Model License v1.0",
+    "url": "https://models.enviouswispr.com/eg1/EG-1-MODEL-LICENSE.txt",
+    "notice": "EG-1 Community Model License v1.0 (derived from Qwen3.5, Apache-2.0). Permitted for in-app, personal, research, and benchmarking use; redistribution or commercial embedding is prohibited."
+  },
+  "files": [
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00001-of-00007.gguf",
+      "sizeBytes": 10945408,
+      "sha256": "a1c27d75290277d128bbe79fa58edb43b4f5135de7454b76665e282011298d04",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00001-of-00007.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00002-of-00007.gguf",
+      "sizeBytes": 417177792,
+      "sha256": "a37613cd53aee2081e55d43c902abf79742c0e075286c9a88892601d8bd7f1d1",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00002-of-00007.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00003-of-00007.gguf",
+      "sizeBytes": 231752352,
+      "sha256": "f62104a39ad8c307eb1d6d86fdb44b91fc01509cbf2d511c1724fa66837df238",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00003-of-00007.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00004-of-00007.gguf",
+      "sizeBytes": 232112160,
+      "sha256": "07d50f18f34220a292a160d20b5e875a0bd2daab1daba1e387f6658b9c6d836e",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00004-of-00007.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00005-of-00007.gguf",
+      "sizeBytes": 232055648,
+      "sha256": "1c5cbb00ba4fdd5a5e687df4f80838b886504115e75edafab2895404f099902d",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00005-of-00007.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00006-of-00007.gguf",
+      "sizeBytes": 237511360,
+      "sha256": "2670155756f974a3fe4debd64f921bd1ad35d206a66495158090fa9dfd17b0f8",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00006-of-00007.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-mini-1.0-g3onestage-q5km-00007-of-00007.gguf",
+      "sizeBytes": 93227808,
+      "sha256": "f0f81929121c9b7e71ccecaf062689253058d9010f752fd06158305df2f13bbb",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-mini-1.0-g3onestage-gguf-q5km/eg1-mini-1.0-g3onestage-q5km-00007-of-00007.gguf"
+      ]
+    }
+  ],
+  "manifestDigest": "a338e5d90cadadf05f2be60eff1130873d7f7e779fe4dfa0973e88e7ff67ed19"
+}

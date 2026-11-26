@@ -320,6 +320,7 @@ public partial class App
 
         int? gpuLayers = null;
         var allowCpuFallback = false;
+        var hardwareProfile = EnviousWispr.Services.Diagnostics.HardwareProfileSummary.GetCurrent();
         if (int.TryParse(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_GPU_LAYERS"),
                 System.Globalization.NumberStyles.Integer,
@@ -332,16 +333,25 @@ public partial class App
                 _polishResource = RuntimeResourceKind.Accelerator;
             }
         }
-        else if (!string.IsNullOrWhiteSpace(serverExecutable) &&
-                 File.Exists(Path.Combine(Path.GetDirectoryName(serverExecutable) ?? string.Empty, "ggml-cuda.dll")) &&
-                 EnviousWispr.Services.Diagnostics.HardwareProfileSummary.GetCurrent().HasNvidiaGpu)
+        else if (!string.IsNullOrWhiteSpace(serverExecutable))
         {
-            gpuLayers = 99;
-            allowCpuFallback = true;
-            _polishResource = RuntimeResourceKind.Accelerator;
+            var runtimeDirectory = Path.GetDirectoryName(serverExecutable) ?? string.Empty;
+            var hasCudaBackend = File.Exists(Path.Combine(runtimeDirectory, "ggml-cuda.dll")) &&
+                                 hardwareProfile.HasNvidiaGpu;
+            var hasVulkanBackend = File.Exists(Path.Combine(runtimeDirectory, "ggml-vulkan.dll")) &&
+                                   hardwareProfile.HasVulkanGpu;
+            if (hasCudaBackend || hasVulkanBackend)
+            {
+                gpuLayers = 99;
+                allowCpuFallback = true;
+                _polishResource = RuntimeResourceKind.Accelerator;
+            }
         }
 
-        int? threads = null;
+        var (defaultThreads, defaultBatchThreads) =
+            EnviousWispr.Services.Diagnostics.HardwareProfileSummary.ChooseCpuThreadCounts();
+        int? threads = defaultThreads;
+        int? batchThreads = defaultBatchThreads;
         if (int.TryParse(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_THREADS"),
                 System.Globalization.NumberStyles.Integer,
@@ -350,6 +360,7 @@ public partial class App
             parsedThreads > 0)
         {
             threads = parsedThreads;
+            batchThreads = Math.Max(parsedThreads, defaultBatchThreads);
         }
 
         _configuredEgOneModelPath = modelFile;
@@ -360,7 +371,8 @@ public partial class App
                 ContextTokens: contextTokens,
                 GpuLayers: gpuLayers,
                 Threads: threads,
-                AllowCpuFallback: allowCpuFallback),
+                AllowCpuFallback: allowCpuFallback,
+                BatchThreads: batchThreads),
             modelId));
         _polishUsesLocalRuntime = true;
     }
