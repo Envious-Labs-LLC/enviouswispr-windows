@@ -163,6 +163,105 @@ public sealed class WindowsPasteResilienceAndPolicyTests
         Assert.Null(exhausted);
     }
 
+    [Theory]
+    [InlineData("FileDrop", true)]
+    [InlineData("Bitmap", true)]
+    [InlineData("DeviceIndependentBitmap", true)]
+    [InlineData("TaggedImageFileFormat", true)]
+    [InlineData("WaveAudio", true)]
+    [InlineData("Rich Text Format", true)]
+    [InlineData("HTML Format", true)]
+    [InlineData("Csv", true)]
+    [InlineData("UnicodeText", true)]
+    [InlineData("Text", true)]
+    [InlineData("OEMText", true)]
+    [InlineData("OlePrivateData", false)]
+    [InlineData("Chromium Web Custom MIME Data Format", false)]
+    [InlineData("Preferred DropEffect", false)]
+    public void IsPrimaryUserFormatClassifiesClosedPrimarySetOnly(string format, bool expectedPrimary)
+    {
+        Assert.Equal(expectedPrimary, WindowsClipboardPaste.IsPrimaryUserFormat(format));
+    }
+
+    [Fact]
+    public void SnapshotAbortsInsteadOfReturningPartialSnapshotWhenPrimaryFileDropFails()
+    {
+        var withNullFileDrop = new FakeDataObject(
+        [
+            (System.Windows.Forms.DataFormats.FileDrop, null),
+            ("Preferred DropEffect", new byte[] { 5, 0, 0, 0 }),
+        ]);
+        Assert.Null(WindowsClipboardPaste.TrySnapshotDataObject(withNullFileDrop));
+
+        var withBrokenFileDrop = new FakeDataObject(
+        [
+            (System.Windows.Forms.DataFormats.FileDrop, new ThrowingValue(static () => throw new SerializationException("drop failed"))),
+            (System.Windows.Forms.DataFormats.UnicodeText, "fallback label"),
+        ]);
+        Assert.Null(WindowsClipboardPaste.TrySnapshotDataObject(withBrokenFileDrop));
+
+        var withContendedFileDrop = new FakeDataObject(
+        [
+            (System.Windows.Forms.DataFormats.FileDrop, new ThrowingValue(static () => Marshal.ThrowExceptionForHR(unchecked((int)0x800401D0)))),
+            (System.Windows.Forms.DataFormats.UnicodeText, "fallback label"),
+        ]);
+        Assert.Throws<COMException>(() => WindowsClipboardPaste.TrySnapshotDataObject(withContendedFileDrop));
+
+        string[] recoveredFiles = [@"C:\temp\recovered.txt"];
+        var retryAttempts = 0;
+        var transientContentionSnapshot = WindowsClipboardPaste.TrySnapshotClipboardWithRetry(
+            () =>
+            {
+                retryAttempts++;
+                if (retryAttempts < 3)
+                {
+                    return WindowsClipboardPaste.TrySnapshotDataObject(withContendedFileDrop);
+                }
+
+                return WindowsClipboardPaste.TrySnapshotDataObject(new FakeDataObject(
+                [
+                    (System.Windows.Forms.DataFormats.FileDrop, recoveredFiles),
+                ]));
+            },
+            static _ => { });
+        Assert.NotNull(transientContentionSnapshot);
+        Assert.Equal(3, retryAttempts);
+
+        var exhaustedContention = WindowsClipboardPaste.TrySnapshotClipboardWithRetry(
+            () => WindowsClipboardPaste.TrySnapshotDataObject(withContendedFileDrop),
+            static _ => { });
+        Assert.Null(exhaustedContention);
+    }
+
+    [Theory]
+    [InlineData("Bitmap")]
+    [InlineData("DeviceIndependentBitmap")]
+    [InlineData("Rich Text Format")]
+    [InlineData("HTML Format")]
+    [InlineData("WaveAudio")]
+    public void SnapshotAbortsInsteadOfDroppingNonTextPrimaryFormat(string primaryFormat)
+    {
+        var source = new FakeDataObject(
+        [
+            (primaryFormat, new object()),
+            ("Chromium internal source URL", new MemoryStream([1, 2, 3])),
+        ]);
+
+        Assert.Null(WindowsClipboardPaste.TrySnapshotDataObject(source));
+    }
+
+    [Fact]
+    public void SnapshotAbortsWhenPrimaryUnicodeTextFailsWithoutRescue()
+    {
+        var unrescuable = new FakeDataObject(
+        [
+            (System.Windows.Forms.DataFormats.UnicodeText, null),
+            (System.Windows.Forms.DataFormats.Html, "<html><body>text</body></html>"),
+        ]);
+
+        Assert.Null(WindowsClipboardPaste.TrySnapshotDataObject(unrescuable));
+    }
+
     [ClipboardFact]
     public void RestoreRecoversPrimaryTextWhenAuxiliaryFormatInSnapshotFailsFlush()
     {
@@ -526,6 +625,339 @@ public sealed class WindowsPasteResilienceAndPolicyTests
         var commit = Assert.Single(adapter.Commits);
         Assert.Equal(TextDeliveryRefusalReason.None, commit.ForcedRefusalReason);
         Assert.Null(commit.Target.FocusedElementId);
+    }
+
+    [Fact]
+    public async Task ReacquireWaitsBrieflyForUiaFocusWhenWin32FocusIsAlreadyPresent()
+    {
+        var target = new TargetWindowId(0x4321, 512, FocusedElementId: null, ProcessName: "notepad");
+        var polls = 0;
+
+        var reacquired = await WindowsForegroundTargetProvider.ReacquireCoreAsync(
+            target,
+            TimeSpan.FromMilliseconds(500),
+            isWindowValid: static _ => true,
+            restoreAndFocus: static _ => { },
+            isIconic: static _ => false,
+            getForegroundWindow: () => target.Value,
+            captureCurrentTarget: () =>
+            {
+                polls++;
+                return new TargetWindowId(
+                    target.Value,
+                    target.ProcessId,
+                    FocusedElementId: polls >= 2 ? "42.99.1" : "win32:1A2B",
+                    ProcessName: "notepad");
+            },
+            getWindowClassName: static _ => "Notepad",
+            CancellationToken.None,
+            pollIntervalMs: 5,
+            focusedElementGraceMs: 200);
+
+        Assert.NotNull(reacquired);
+        Assert.Equal("42.99.1", reacquired!.Value.FocusedElementId);
+        Assert.Equal(2, polls);
+    }
+
+    [Fact]
+    public void FocusEvaluationFailsClosedWhenPasswordVerificationCannotBeConfirmed()
+    {
+        var target = new TargetWindowId(0x1111, 4242, FocusedElementId: null, ProcessName: "Antigravity");
+        var electronRule = WindowsPastePolicy.Resolve("Antigravity", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", isControlEdit: false);
+
+        var unavailable = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            target,
+            focus: null,
+            win32FocusId: "win32:1000",
+            (_, _) => electronRule);
+        Assert.NotNull(unavailable.Failure);
+        Assert.Equal(TargetContextStatus.AccessibilityUnavailable, unavailable.Failure!.Status);
+        Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, unavailable.Failure.RefusalReason);
+
+        var mismatchedPid = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            target,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 9999,
+                RuntimeId: "42.1.1",
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Chrome_RenderWidgetHostHWND"),
+            win32FocusId: "win32:1000",
+            (_, _) => electronRule);
+        Assert.NotNull(mismatchedPid.Failure);
+        Assert.Equal(TargetContextStatus.AccessibilityUnavailable, mismatchedPid.Failure!.Status);
+        Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, mismatchedPid.Failure.RefusalReason);
+
+        var passwordField = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            target,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: true,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Chrome_RenderWidgetHostHWND"),
+            win32FocusId: "win32:1000",
+            (_, _) => electronRule);
+        Assert.NotNull(passwordField.Failure);
+        Assert.Equal(TargetContextStatus.Protected, passwordField.Failure!.Status);
+        Assert.Equal(TextDeliveryRefusalReason.ProtectedField, passwordField.Failure.RefusalReason);
+
+        var win32Target = target with { FocusedElementId = "win32:1000" };
+        var win32Shifted = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            win32Target,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Chrome_RenderWidgetHostHWND"),
+            win32FocusId: "win32:2000",
+            (_, _) => electronRule);
+        Assert.NotNull(win32Shifted.Failure);
+        Assert.Equal(TargetContextStatus.TargetChanged, win32Shifted.Failure!.Status);
+
+        var win32MismatchedPid = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            win32Target,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 9999,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Chrome_RenderWidgetHostHWND"),
+            win32FocusId: "win32:1000",
+            (_, _) => electronRule);
+        Assert.NotNull(win32MismatchedPid.Failure);
+        Assert.Equal(TargetContextStatus.AccessibilityUnavailable, win32MismatchedPid.Failure!.Status);
+
+        var expectedUiaFallback = WindowsWindowIdentity.FormatUiaFallbackElementId(
+            50004,
+            0x1111,
+            "Chrome_RenderWidgetHostHWND",
+            "editor-a",
+            "win32:1000");
+        var uiaFallbackTarget = target with { FocusedElementId = expectedUiaFallback };
+        var uiaShifted = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            uiaFallbackTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Chrome_RenderWidgetHostHWND",
+                ControlTypeId: 50004,
+                NativeWindowHandle: 0x1111,
+                AutomationId: "editor-b"),
+            win32FocusId: "win32:1000",
+            (_, _) => electronRule);
+        Assert.NotNull(uiaShifted.Failure);
+        Assert.Equal(TargetContextStatus.TargetChanged, uiaShifted.Failure!.Status);
+    }
+
+    [Fact]
+    public async Task DeliveryRefusesWhenPasswordInspectionFailsAtCommitOrCapture()
+    {
+        var target = new TargetWindowId(0x1111, 4242, FocusedElementId: null, ProcessName: "Antigravity");
+        var adapter = new EvaluableFocusAdapter(static call =>
+            call == 1
+                ? throw new AutomationRefusalException("uia refused", new InvalidOperationException("E_ACCESSDENIED"))
+                : throw new InvalidOperationException("unexpected commit attempt"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(DictationSessionId.Create(), "secret dictation"),
+            target,
+            "en",
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
+
+        Assert.False(result.Delivered);
+        Assert.True(result.ClipboardFallback);
+        Assert.Equal(TextDeliveryRoute.ClipboardOnly, result.Route);
+        Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, result.RefusalReason);
+        Assert.False(adapter.CommitAttempted);
+    }
+
+    [Fact]
+    public async Task IntraWindowFocusShiftIsDetectedAndRefusedWhenTargetFocusedElementIdIsNull()
+    {
+        var target = new TargetWindowId(0x2222, 7777, FocusedElementId: null, ProcessName: "Antigravity");
+        var adapter = new EvaluableFocusAdapter(call => call == 1
+            ? (new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 7777,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Chrome_RenderWidgetHostHWND",
+                ControlTypeId: 50004,
+                NativeWindowHandle: 0x2222,
+                AutomationId: "editor-primary"), "win32:200")
+            : (new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 7777,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Chrome_RenderWidgetHostHWND",
+                ControlTypeId: 50004,
+                NativeWindowHandle: 0x2222,
+                AutomationId: "chat-sidebar"), "win32:200"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(DictationSessionId.Create(), "dictated words"),
+            target,
+            "en",
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
+
+        Assert.False(result.Delivered);
+        Assert.True(result.ClipboardFallback);
+        Assert.Equal(TextDeliveryRoute.ClipboardOnly, result.Route);
+        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, result.RefusalReason);
+        Assert.False(adapter.PasteKeystrokeSent);
+    }
+
+    [Fact]
+    public async Task MatchingWin32AndUiaFallbackFocusAllowsWindowLevelDeliveryWhenTargetFocusedElementIdIsNull()
+    {
+        var target = new TargetWindowId(0x2222, 7777, FocusedElementId: null, ProcessName: "Antigravity");
+        var sameFocus = new WindowsTextTargetAdapter.FocusedElementFacts(
+            ProcessId: 7777,
+            RuntimeId: string.Empty,
+            HasKeyboardFocus: true,
+            IsPassword: false,
+            IsEnabled: true,
+            IsKeyboardFocusable: true,
+            IsControlEdit: false,
+            ClassName: "Chrome_RenderWidgetHostHWND",
+            ControlTypeId: 50004,
+            NativeWindowHandle: 0x2222,
+            AutomationId: "editor-primary");
+        var adapter = new EvaluableFocusAdapter(_ => (sameFocus, "win32:200"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(DictationSessionId.Create(), "dictated words"),
+            target,
+            "en",
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
+
+        Assert.True(result.Delivered);
+        Assert.Equal(TextDeliveryRoute.ClipboardPaste, result.Route);
+        Assert.Equal(TextDeliveryRefusalReason.None, result.RefusalReason);
+        Assert.True(adapter.PasteKeystrokeSent);
+    }
+
+    private sealed class EvaluableFocusAdapter(
+        Func<int, (WindowsTextTargetAdapter.FocusedElementFacts? Focus, string? Win32FocusId)> sample) : ITextTargetAdapter
+    {
+        private int _calls;
+
+        public bool CommitAttempted { get; private set; }
+        public bool PasteKeystrokeSent { get; private set; }
+
+        public Task<TargetContextResult> CaptureContextAsync(
+            TargetWindowId target,
+            TextDeliveryOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            var call = Interlocked.Increment(ref _calls);
+            try
+            {
+                var (focus, win32FocusId) = sample(call);
+                var eval = WindowsTextTargetAdapter.EvaluateFocusedElement(
+                    target,
+                    focus,
+                    win32FocusId,
+                    (className, isEdit) => WindowsPastePolicy.Resolve(target.ProcessName, "Chrome_WidgetWin_1", className, isEdit));
+                if (eval.Failure is not null)
+                {
+                    return Task.FromResult(eval.Failure);
+                }
+
+                return Task.FromResult(new TargetContextResult(
+                    TargetContextStatus.Available,
+                    new CaretContext(
+                        target,
+                        eval.EffectiveFocusId,
+                        eval.Rule!.TargetKind,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false)));
+            }
+            catch (AutomationRefusalException)
+            {
+                return Task.FromResult(new TargetContextResult(
+                    TargetContextStatus.AccessibilityUnavailable,
+                    RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable));
+            }
+        }
+
+        public async Task<TextCommitResult> CommitAsync(
+            TextCommitRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (request.ForcedRefusalReason != TextDeliveryRefusalReason.None)
+            {
+                return new TextCommitResult(
+                    TextDeliveryRoute.ClipboardOnly,
+                    Delivered: false,
+                    ClipboardFallback: true,
+                    ClipboardRestored: false,
+                    request.ForcedRefusalReason);
+            }
+
+            CommitAttempted = true;
+            var current = await CaptureContextAsync(request.Target, request.Options, cancellationToken).ConfigureAwait(false);
+            if (current.Status != TargetContextStatus.Available ||
+                current.Context is null ||
+                request.ExpectedContext is null ||
+                !WindowsTextTargetAdapter.CaretUnchanged(request.ExpectedContext, current.Context))
+            {
+                return new TextCommitResult(
+                    TextDeliveryRoute.ClipboardOnly,
+                    Delivered: false,
+                    ClipboardFallback: true,
+                    ClipboardRestored: false,
+                    WindowsTextTargetAdapter.RevalidationRefusal(current));
+            }
+
+            PasteKeystrokeSent = true;
+            return new TextCommitResult(
+                TextDeliveryRoute.ClipboardPaste,
+                Delivered: true,
+                ClipboardFallback: false,
+                ClipboardRestored: true);
+        }
+
+        public Task<TextCommitResult> CopyOnlyAsync(ProcessedText text, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class UnserializableCloneable : ICloneable

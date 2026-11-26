@@ -31,50 +31,46 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
         return new TargetWindowId(
             handle,
             processId,
-            TryCaptureFocusedElementId(processId),
-            TryCaptureProcessName(processId));
+            TryCaptureFocusedElementId(handle, processId),
+            WindowsWindowIdentity.TryGetProcessName(processId));
     }
 
-    private static string? TryCaptureProcessName(uint processId)
-    {
-        if (processId == 0)
-        {
-            return null;
-        }
+    private static string? TryCaptureProcessName(uint processId) =>
+        WindowsWindowIdentity.TryGetProcessName(processId);
 
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
-            return process.ProcessName;
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            return null;
-        }
-    }
-
-    private static string? TryCaptureFocusedElementId(uint processId)
+    private static string? TryCaptureFocusedElementId(nint windowHandle, uint processId)
     {
+        var win32FocusId = WindowsWindowIdentity.TryCaptureWin32FocusId(windowHandle, processId);
         try
         {
             var focused = AutomationElement.FocusedElement;
             if (focused is null || focused.Current.ProcessId != processId)
             {
-                return null;
+                return win32FocusId;
             }
 
             var runtimeId = focused.GetRuntimeId();
-            return runtimeId is { Length: > 0 }
-                ? string.Join('.', runtimeId)
-                : null;
+            if (runtimeId is { Length: > 0 })
+            {
+                return string.Join('.', runtimeId);
+            }
+
+            // Some Chromium/Electron widgets expose a valid FocusedElement for the window process
+            // while returning a null or empty RuntimeId; keep a deterministic UIA+Win32 fingerprint
+            // (free of user text) so intra-window focus shifts remain detectable.
+            return WindowsWindowIdentity.FormatUiaFallbackElementId(
+                focused.Current.ControlType.Id,
+                focused.Current.NativeWindowHandle,
+                focused.Current.ClassName,
+                focused.Current.AutomationId,
+                win32FocusId);
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            // A focused-element runtime ID improves target-change detection, but it is optional.
-            // UI Automation can fail with provider-specific non-fatal exception types, especially
-            // across application/runtime boundaries. Preserve the frozen HWND/process target and
-            // let delivery fall back safely instead of aborting the recording before capture starts.
-            return null;
+            // UI Automation can fail with provider-specific non-fatal exception types across runtime
+            // boundaries; preserve Win32 GuiThreadInfo focus identity when present instead of dropping
+            // all intra-window focus identity.
+            return win32FocusId;
         }
     }
 
@@ -144,13 +140,17 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
                     captured.Value == window.Value &&
                     (window.ProcessId == 0 || captured.ProcessId == window.ProcessId))
                 {
-                    if (captured.FocusedElementId is not null)
+                    var hasUiaFocus = captured.FocusedElementId is not null &&
+                        !captured.FocusedElementId.StartsWith(WindowsWindowIdentity.Win32FocusPrefix, StringComparison.Ordinal);
+                    if (hasUiaFocus)
                     {
                         return captured;
                     }
 
                     var graceElapsed = now - firstForegroundAt.Value >= focusedElementGraceMs || now >= deadline;
-                    if (graceElapsed && CanFallbackWithoutFocusedElement(captured, getWindowClassName(captured.Value)))
+                    if (graceElapsed &&
+                        (captured.FocusedElementId is not null ||
+                         CanFallbackWithoutFocusedElement(captured, getWindowClassName(captured.Value))))
                     {
                         return captured;
                     }

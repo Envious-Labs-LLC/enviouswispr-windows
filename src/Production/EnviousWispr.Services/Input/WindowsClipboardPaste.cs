@@ -755,6 +755,29 @@ internal static class WindowsClipboardPaste
         }
     }
 
+    private static readonly HashSet<string> PrimaryUserFormats = new(StringComparer.OrdinalIgnoreCase)
+    {
+        DataFormats.FileDrop,
+        DataFormats.Bitmap,
+        DataFormats.Dib,
+        DataFormats.Tiff,
+        DataFormats.WaveAudio,
+        DataFormats.Rtf,
+        DataFormats.Html,
+        DataFormats.CommaSeparatedValue,
+        DataFormats.UnicodeText,
+        DataFormats.Text,
+        DataFormats.OemText,
+    };
+
+    internal static bool IsPrimaryUserFormat(string? format) =>
+        !string.IsNullOrWhiteSpace(format) && PrimaryUserFormats.Contains(format.Trim());
+
+    private static bool IsTextPrimaryFormat(string format) =>
+        string.Equals(format, DataFormats.UnicodeText, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(format, DataFormats.Text, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(format, DataFormats.OemText, StringComparison.OrdinalIgnoreCase);
+
     internal static ClipboardSnapshot? TrySnapshotDataObject(System.Windows.Forms.IDataObject? source)
     {
         if (source is null)
@@ -772,6 +795,8 @@ internal static class WindowsClipboardPaste
         var copiedFormats = 0;
         var skippedFormats = 0;
         string? fallbackText = null;
+        var failedTextFormat = false;
+        ExternalException? deferredTextExternalException = null;
 
         foreach (var format in formats)
         {
@@ -780,74 +805,81 @@ internal static class WindowsClipboardPaste
                 continue;
             }
 
-            object? value;
-            try
+            if (!TryCopyFormat(
+                    source,
+                    format,
+                    copy,
+                    ref fallbackText,
+                    ref copiedFormats,
+                    ref skippedFormats,
+                    ref failedTextFormat,
+                    ref deferredTextExternalException))
             {
-                value = source.GetData(format, autoConvert: false);
-            }
-            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
-            {
-                skippedFormats++;
-                continue;
-            }
-
-            if (value is null)
-            {
-                skippedFormats++;
-                continue;
-            }
-
-            object? cloned;
-            try
-            {
-                cloned = CloneClipboardValue(value);
-            }
-            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
-            {
-                skippedFormats++;
-                continue;
-            }
-
-            if (cloned is null)
-            {
-                skippedFormats++;
-                continue;
-            }
-
-            try
-            {
-                copy.SetData(format, autoConvert: false, cloned);
-            }
-            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
-            {
-                skippedFormats++;
-                continue;
-            }
-
-            copiedFormats++;
-            if (cloned is string textValue &&
-                (string.Equals(format, DataFormats.UnicodeText, StringComparison.Ordinal) ||
-                 (fallbackText is null && string.Equals(format, DataFormats.Text, StringComparison.Ordinal))))
-            {
-                fallbackText = textValue;
+                return null;
             }
         }
 
-        if (fallbackText is null && TryReadUnicodeTextFallback(source) is { } rescuedText)
+        if (fallbackText is null)
         {
-            if (!copy.GetDataPresent(DataFormats.UnicodeText, autoConvert: false))
+            if (TryReadUnicodeTextFallback(source, out var rescueExternalException) is { } rescuedText)
             {
-                try
+                if (!copy.GetDataPresent(DataFormats.UnicodeText, autoConvert: false))
                 {
-                    copy.SetData(DataFormats.UnicodeText, autoConvert: true, rescuedText);
-                    copiedFormats++;
+                    try
+                    {
+                        copy.SetData(DataFormats.UnicodeText, autoConvert: true, rescuedText);
+                        copiedFormats++;
+                    }
+                    catch (ExternalException) when (failedTextFormat)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+                    {
+                        if (failedTextFormat)
+                        {
+                            return null;
+                        }
+                    }
                 }
-                catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
-                {
-                }
+
+                fallbackText = rescuedText;
+                failedTextFormat = false;
+                deferredTextExternalException = null;
+            }
+            else if (rescueExternalException is not null)
+            {
+                deferredTextExternalException ??= rescueExternalException;
+            }
+        }
+        else if (failedTextFormat)
+        {
+            // UnicodeText succeeded while synthesized Text/OemText failed: rewrite UnicodeText with
+            // autoConvert=true so Windows Forms preserves synthesized ANSI/OEM text views on restore.
+            try
+            {
+                copy.SetData(DataFormats.UnicodeText, autoConvert: true, fallbackText);
+                failedTextFormat = false;
+                deferredTextExternalException = null;
+            }
+            catch (ExternalException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+            {
+                return null;
+            }
+        }
+
+        if (failedTextFormat)
+        {
+            if (deferredTextExternalException is not null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(deferredTextExternalException).Throw();
             }
 
-            fallbackText = rescuedText;
+            return null;
         }
 
         if (copiedFormats == 0)
@@ -862,14 +894,103 @@ internal static class WindowsClipboardPaste
             SkippedFormatCount: skippedFormats);
     }
 
-    private static string? TryReadUnicodeTextFallback(System.Windows.Forms.IDataObject source)
+    private static bool TryCopyFormat(
+        System.Windows.Forms.IDataObject source,
+        string format,
+        DataObject destination,
+        ref string? fallbackText,
+        ref int copiedFormats,
+        ref int skippedFormats,
+        ref bool failedTextFormat,
+        ref ExternalException? deferredTextExternalException)
     {
+        var isPrimary = IsPrimaryUserFormat(format);
+        var isTextPrimary = isPrimary && IsTextPrimaryFormat(format);
+
+        try
+        {
+            var value = source.GetData(format, autoConvert: false);
+            var cloned = value is null ? null : CloneClipboardValue(value);
+            if (cloned is null)
+            {
+                return RecordFormatFailure(isPrimary, isTextPrimary, ref failedTextFormat, ref skippedFormats);
+            }
+
+            destination.SetData(format, autoConvert: false, cloned);
+            copiedFormats++;
+            if (cloned is string textValue &&
+                (string.Equals(format, DataFormats.UnicodeText, StringComparison.OrdinalIgnoreCase) ||
+                 (fallbackText is null && string.Equals(format, DataFormats.Text, StringComparison.OrdinalIgnoreCase))))
+            {
+                fallbackText = textValue;
+            }
+
+            return true;
+        }
+        catch (ExternalException exception)
+        {
+            if (isPrimary && !isTextPrimary)
+            {
+                throw;
+            }
+
+            if (isTextPrimary)
+            {
+                failedTextFormat = true;
+                deferredTextExternalException ??= exception;
+            }
+            else
+            {
+                skippedFormats++;
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+        {
+            return RecordFormatFailure(isPrimary, isTextPrimary, ref failedTextFormat, ref skippedFormats);
+        }
+    }
+
+    private static bool RecordFormatFailure(
+        bool isPrimary,
+        bool isTextPrimary,
+        ref bool failedTextFormat,
+        ref int skippedFormats)
+    {
+        if (isPrimary && !isTextPrimary)
+        {
+            return false;
+        }
+
+        if (isTextPrimary)
+        {
+            failedTextFormat = true;
+        }
+        else
+        {
+            skippedFormats++;
+        }
+
+        return true;
+    }
+
+    private static string? TryReadUnicodeTextFallback(
+        System.Windows.Forms.IDataObject source,
+        out ExternalException? externalException)
+    {
+        externalException = null;
         try
         {
             return source.GetDataPresent(DataFormats.UnicodeText, autoConvert: true) &&
                 source.GetData(DataFormats.UnicodeText, autoConvert: true) is string text
                     ? text
                     : null;
+        }
+        catch (ExternalException exception)
+        {
+            externalException = exception;
+            return null;
         }
         catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
         {
