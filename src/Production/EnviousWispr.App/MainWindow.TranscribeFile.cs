@@ -145,8 +145,6 @@ public sealed partial class MainWindow
         TranscribeFileProgress.Value = 0;
         TranscribeFileProgress.IsIndeterminate = true;
         TranscribeFileProgress.Visibility = Visibility.Visible;
-        TranscribeFileResultPanel.Visibility = Visibility.Collapsed;
-        ResetTranscribeFileCopyVisual();
         SetTranscribeFileStep(FileTranscriptionStepState.StartStep);
         ShowTranscribeFileStatus($"Working on {System.IO.Path.GetFileName(filePath)}...");
         try

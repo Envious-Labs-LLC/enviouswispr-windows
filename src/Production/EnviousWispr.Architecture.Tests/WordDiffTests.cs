@@ -32,6 +32,22 @@ public sealed class WordDiffTests
         Assert.Equal("don't", WordDiff.KeyFor("Don't."));
         Assert.Equal("...", WordDiff.KeyFor("..."));
         Assert.Equal("i", WordDiff.KeyFor("\u0130", CultureInfo.InvariantCulture));
+        Assert.NotEqual(WordDiff.KeyFor("C++"), WordDiff.KeyFor("C#"));
+        Assert.NotEqual(WordDiff.KeyFor("$100"), WordDiff.KeyFor("100"));
+        Assert.NotEqual(WordDiff.KeyFor("100%"), WordDiff.KeyFor("100"));
+        Assert.NotEqual(WordDiff.KeyFor("ano"), WordDiff.KeyFor("año"));
+    }
+
+    [Fact]
+    public void ComputePreservesSymbolAndDiacriticMeaningChangesAsEdits()
+    {
+        var symbolDiff = HistoryEditsPresentation.ComputeDiff("Use C++ for $100", "Use C# for 100");
+        Assert.Equal(2, symbolDiff.ChangeCount);
+        Assert.Equal("2 edits", symbolDiff.SummaryText);
+
+        var diacriticDiff = HistoryEditsPresentation.ComputeDiff("Feliz ano", "Feliz año");
+        Assert.Equal(1, diacriticDiff.ChangeCount);
+        Assert.Equal("1 edit", diacriticDiff.SummaryText);
     }
 
     [Fact]

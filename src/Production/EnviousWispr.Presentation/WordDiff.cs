@@ -65,7 +65,8 @@ public static class WordDiff
     }
 
     /// <summary>
-    /// Computes the comparison key for a token by trimming outer punctuation/symbols and case-folding.
+    /// Computes the comparison key for a token by trimming outer sentence punctuation and case-folding,
+    /// while preserving diacritics and meaningful symbols/markers such as $, +, #, %, and @.
     /// Falls back to the original surface if trimming leaves an empty string.
     /// </summary>
     public static string KeyFor(string surface, CultureInfo? culture = null)
@@ -77,29 +78,24 @@ public static class WordDiff
 
         var start = 0;
         var end = surface.Length - 1;
-        while (start <= end && IsPunctuationOrSymbol(surface[start]))
+        while (start <= end && IsOuterSentencePunctuation(surface[start]))
         {
             start++;
         }
 
-        while (end >= start && IsPunctuationOrSymbol(surface[end]))
+        while (end >= start && IsOuterSentencePunctuation(surface[end]))
         {
             end--;
         }
 
         var core = start <= end ? surface[start..(end + 1)] : surface;
         var targetCulture = culture ?? CultureInfo.InvariantCulture;
-        var lowered = core.ToLower(targetCulture).Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder(lowered.Length);
-        foreach (var ch in lowered)
+        var folded = core.ToLower(targetCulture);
+        if (folded.Contains('\u0130'))
         {
-            if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
-            {
-                sb.Append(ch);
-            }
+            folded = folded.Replace("\u0130", "i", StringComparison.Ordinal);
         }
 
-        var folded = sb.ToString().ToLower(targetCulture);
         if (folded.Contains("i\u0307", StringComparison.Ordinal))
         {
             folded = folded.Replace("i\u0307", "i", StringComparison.Ordinal);
@@ -107,6 +103,9 @@ public static class WordDiff
 
         return folded.Normalize(NormalizationForm.FormC);
     }
+
+    private static bool IsOuterSentencePunctuation(char c) =>
+        char.IsPunctuation(c) && c is not ('#' or '%' or '@' or '&');
 
     /// <summary>
     /// Computes minimal word-level edit entries turning <paramref name="original"/> into <paramref name="edited"/>.
@@ -138,9 +137,6 @@ public static class WordDiff
         DiffRange(originalTokens, 0, originalTokens.Count, editedTokens, 0, editedTokens.Count, entries);
         return entries;
     }
-
-    private static bool IsPunctuationOrSymbol(char c) =>
-        char.IsPunctuation(c) || char.IsSymbol(c);
 
     private static void DiffRange(
         IReadOnlyList<WordDiffToken> a,
