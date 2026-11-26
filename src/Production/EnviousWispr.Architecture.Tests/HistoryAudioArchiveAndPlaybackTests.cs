@@ -776,22 +776,27 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
             Assert.True(File.Exists(wav1Path));
         }
 
-        // Locking entry2's WAV must fail explicit DeleteManyAsync and keep entry2 in history.json.
+        // Locking entry2's WAV must fail explicit DeleteManyAsync for [entry1, entry2] AND roll back entry1's staged WAV.
         using (new FileStream(wav2Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            var deleteManyResult = await store.DeleteManyAsync([entry2.Id]);
+            var deleteManyResult = await store.DeleteManyAsync([entry1.Id, entry2.Id]);
             Assert.False(deleteManyResult.Succeeded);
             Assert.Equal(AppErrorCode.StorageUnavailable, deleteManyResult.Error?.Code);
 
             var loaded = await store.LoadAsync(30, Now.AddMinutes(2));
             Assert.Equal(2, loaded.Entries.Count);
+            Assert.Contains(loaded.Entries, e => e.Id == entry1.Id);
             Assert.Contains(loaded.Entries, e => e.Id == entry2.Id);
+            Assert.True(File.Exists(wav1Path));
+            Assert.True(File.Exists(wav2Path));
 
-            // ClearAsync must likewise fail when any WAV under recordingsDir remains locked.
+            // ClearAsync must likewise fail when any WAV under recordingsDir remains locked, preserving both WAVs.
             var clearLockedResult = await store.ClearAsync();
             Assert.False(clearLockedResult.Succeeded);
             Assert.Equal(AppErrorCode.StorageUnavailable, clearLockedResult.Error?.Code);
             Assert.Equal(2, (await store.LoadAsync(30, Now.AddMinutes(2))).Entries.Count);
+            Assert.True(File.Exists(wav1Path));
+            Assert.True(File.Exists(wav2Path));
         }
 
         // Releasing all locks allows ClearAsync to succeed and remove both entries and WAVs.
@@ -800,7 +805,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.Empty((await store.LoadAsync(30, Now.AddMinutes(2))).Entries);
         Assert.Empty(Directory.GetFiles(recordingsDir));
 
-        // Passive LoadAsync retention pruning must still remain non-fatal even when an expired entry's WAV is locked.
+        // Passive LoadAsync retention pruning must stay non-fatal if locked, and retry deletion on later loads once unlocked.
         var expired = DictationHistoryEntry.Create(Now.AddDays(-10), "Expired entry", "parakeet", false, true);
         var savedExpired = archive.SaveForEntry(expired.Id, audio)!;
         await store.AddAsync(expired with { AudioFileName = savedExpired.FileName, AudioDurationMs = savedExpired.DurationMs }, 30, Now);
@@ -810,7 +815,12 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
             var passiveLoaded = await store.LoadAsync(1, Now);
             Assert.Equal(HistoryLoadStatus.Loaded, passiveLoaded.Status);
             Assert.Empty(passiveLoaded.Entries);
+            Assert.True(File.Exists(expiredWavPath));
         }
+
+        var retriedLoad = await store.LoadAsync(1, Now.AddMinutes(5));
+        Assert.Equal(HistoryLoadStatus.Loaded, retriedLoad.Status);
+        Assert.False(File.Exists(expiredWavPath));
     }
 
     [Fact]
@@ -834,11 +844,13 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         var root = FindRepositoryRoot();
         var playbackCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "Services", "WindowsAudioPlaybackService.cs"));
         Assert.Contains("Interlocked.Increment(ref _mediaGeneration);", playbackCs, StringComparison.Ordinal);
+        Assert.Contains("AttachMediaHandlers(player, sourceGeneration);", playbackCs, StringComparison.Ordinal);
+        Assert.Contains("_mediaEndedHandler = (_, _) => OnMediaEnded(sourceGeneration);", playbackCs, StringComparison.Ordinal);
+        Assert.Contains("_mediaFailedHandler = (_, _) => OnMediaFailed(sourceGeneration);", playbackCs, StringComparison.Ordinal);
 
-        foreach (var callbackName in new[] { "OnMediaEnded", "OnMediaFailed" })
+        foreach (var callbackName in new[] { "private void OnMediaEnded", "private void OnMediaFailed" })
         {
             var body = ExtractMethodBody(playbackCs, callbackName);
-            Assert.Contains("var callbackGeneration = Volatile.Read(ref _mediaGeneration);", body, StringComparison.Ordinal);
             Assert.Contains("HistoryPlaybackPresentation.ShouldAcceptMediaCallback(", body, StringComparison.Ordinal);
         }
     }

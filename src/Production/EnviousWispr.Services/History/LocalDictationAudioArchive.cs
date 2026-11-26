@@ -186,6 +186,118 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
 
     public static string BuildFileName(Guid entryId) => $"{entryId:D}.wav";
 
+    internal sealed record StagedAudioDelete(string OriginalPath, string StagedPath);
+
+    internal static AppErrorCode? TryStageDeletes(
+        string recordingsDirectory,
+        IEnumerable<string> fileNames,
+        bool includeAllWaveFiles,
+        out List<StagedAudioDelete> staged)
+    {
+        staged = [];
+        var targetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fileName in fileNames)
+        {
+            var resolved = ResolveSafePath(recordingsDirectory, fileName);
+            if (resolved is not null && File.Exists(resolved))
+            {
+                targetPaths.Add(resolved);
+            }
+        }
+
+        if (includeAllWaveFiles && !string.IsNullOrWhiteSpace(recordingsDirectory) && Directory.Exists(recordingsDirectory))
+        {
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(recordingsDirectory, "*.wav"))
+                {
+                    targetPaths.Add(path);
+                }
+            }
+            catch (IOException)
+            {
+                return AppErrorCode.StorageUnavailable;
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or SecurityException)
+            {
+                return AppErrorCode.AccessDenied;
+            }
+        }
+
+        foreach (var path in targetPaths)
+        {
+            var stagedPath = $"{path}.{Guid.NewGuid():N}.deltmp";
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                File.Move(path, stagedPath, overwrite: false);
+                staged.Add(new StagedAudioDelete(path, stagedPath));
+            }
+            catch (IOException)
+            {
+                RollbackStagedDeletes(staged);
+                staged.Clear();
+                return AppErrorCode.StorageUnavailable;
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or SecurityException)
+            {
+                RollbackStagedDeletes(staged);
+                staged.Clear();
+                return AppErrorCode.AccessDenied;
+            }
+        }
+
+        return null;
+    }
+
+    internal static void RollbackStagedDeletes(IReadOnlyList<StagedAudioDelete> staged)
+    {
+        for (var index = staged.Count - 1; index >= 0; index--)
+        {
+            var item = staged[index];
+            try
+            {
+                if (File.Exists(item.StagedPath) && !File.Exists(item.OriginalPath))
+                {
+                    File.Move(item.StagedPath, item.OriginalPath, overwrite: false);
+                }
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or SecurityException)
+            {
+            }
+        }
+    }
+
+    internal static void CommitStagedDeletes(
+        string recordingsDirectory,
+        IReadOnlyList<StagedAudioDelete> staged,
+        bool cleanRemainingTempFiles)
+    {
+        foreach (var item in staged)
+        {
+            TryDeletePath(item.StagedPath);
+        }
+
+        if (cleanRemainingTempFiles
+            && !string.IsNullOrWhiteSpace(recordingsDirectory)
+            && Directory.Exists(recordingsDirectory))
+        {
+            try
+            {
+                _ = CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or SecurityException)
+            {
+            }
+        }
+    }
+
     internal static AppErrorCode? TryDeleteNamedFileOutcome(string recordingsDirectory, string? fileName)
     {
         var path = ResolveSafePath(recordingsDirectory, fileName);
@@ -195,26 +307,29 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
     private static AppErrorCode? CleanupTempFiles(string recordingsDirectory, TimeSpan? maxAge, DateTimeOffset now)
     {
         AppErrorCode? firstError = null;
-        foreach (var path in Directory.EnumerateFiles(recordingsDirectory, "*.tmp"))
+        foreach (var pattern in new[] { "*.tmp", "*.deltmp" })
         {
-            if (maxAge is { } threshold)
+            foreach (var path in Directory.EnumerateFiles(recordingsDirectory, pattern))
             {
-                try
+                if (maxAge is { } threshold)
                 {
-                    var info = new FileInfo(path);
-                    if (!info.Exists || now - info.LastWriteTimeUtc < threshold)
+                    try
+                    {
+                        var info = new FileInfo(path);
+                        if (!info.Exists || now - info.LastWriteTimeUtc < threshold)
+                        {
+                            continue;
+                        }
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException or SecurityException)
                     {
                         continue;
                     }
                 }
-                catch (Exception exception) when (
-                    exception is IOException or UnauthorizedAccessException or SecurityException)
-                {
-                    continue;
-                }
-            }
 
-            firstError ??= TryDeletePathOutcome(path);
+                firstError ??= TryDeletePathOutcome(path);
+            }
         }
 
         return firstError;

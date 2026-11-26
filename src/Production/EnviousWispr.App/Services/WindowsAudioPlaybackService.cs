@@ -1,5 +1,6 @@
 using EnviousWispr.Presentation;
 using Microsoft.UI.Dispatching;
+using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage.Streams;
@@ -18,6 +19,8 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
     private MediaPlayer? _player;
     private MediaSource? _currentSource;
     private InMemoryRandomAccessStream? _currentStream;
+    private TypedEventHandler<MediaPlayer, object>? _mediaEndedHandler;
+    private TypedEventHandler<MediaPlayer, MediaPlayerFailedEventArgs>? _mediaFailedHandler;
     private long _loadGeneration;
     private long _mediaGeneration;
     private bool _disposed;
@@ -150,8 +153,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
         StopMediaCore();
         if (_player is not null)
         {
-            _player.MediaEnded -= OnMediaEnded;
-            _player.MediaFailed -= OnMediaFailed;
+            DetachMediaHandlers(_player);
             _player.Dispose();
             _player = null;
         }
@@ -207,11 +209,11 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
             stream.Seek(0);
             source = MediaSource.CreateFromStream(stream, "audio/wav");
             var player = EnsurePlayer();
-            ReplaceMediaResources(source, stream);
+            var sourceGeneration = ReplaceMediaResources(source, stream);
             stream = null;
             source = null;
 
-            Interlocked.Increment(ref _mediaGeneration);
+            AttachMediaHandlers(player, sourceGeneration);
             player.Source = _currentSource;
             var naturalMs = (long)player.PlaybackSession.NaturalDuration.TotalMilliseconds;
             var durationMs = naturalMs > 0 ? naturalMs : expectedDurationMs;
@@ -258,17 +260,16 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
             AudioCategory = MediaPlayerAudioCategory.Media,
             AutoPlay = false,
         };
-        player.MediaEnded += OnMediaEnded;
-        player.MediaFailed += OnMediaFailed;
         _player = player;
         return player;
     }
 
-    private void ReplaceMediaResources(MediaSource nextSource, InMemoryRandomAccessStream nextStream)
+    private long ReplaceMediaResources(MediaSource nextSource, InMemoryRandomAccessStream nextStream)
     {
-        Interlocked.Increment(ref _mediaGeneration);
+        var nextGeneration = Interlocked.Increment(ref _mediaGeneration);
         if (_player is not null)
         {
+            DetachMediaHandlers(_player);
             _player.Pause();
             _player.Source = null;
         }
@@ -277,6 +278,31 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
         _currentStream?.Dispose();
         _currentSource = nextSource;
         _currentStream = nextStream;
+        return nextGeneration;
+    }
+
+    private void AttachMediaHandlers(MediaPlayer player, long sourceGeneration)
+    {
+        DetachMediaHandlers(player);
+        _mediaEndedHandler = (_, _) => OnMediaEnded(sourceGeneration);
+        _mediaFailedHandler = (_, _) => OnMediaFailed(sourceGeneration);
+        player.MediaEnded += _mediaEndedHandler;
+        player.MediaFailed += _mediaFailedHandler;
+    }
+
+    private void DetachMediaHandlers(MediaPlayer player)
+    {
+        if (_mediaEndedHandler is not null)
+        {
+            player.MediaEnded -= _mediaEndedHandler;
+            _mediaEndedHandler = null;
+        }
+
+        if (_mediaFailedHandler is not null)
+        {
+            player.MediaFailed -= _mediaFailedHandler;
+            _mediaFailedHandler = null;
+        }
     }
 
     private void StopMediaCore()
@@ -284,6 +310,7 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
         Interlocked.Increment(ref _mediaGeneration);
         if (_player is not null)
         {
+            DetachMediaHandlers(_player);
             _player.Pause();
             _player.Source = null;
         }
@@ -309,9 +336,8 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
         PublishState();
     }
 
-    private void OnMediaEnded(MediaPlayer sender, object args)
+    private void OnMediaEnded(long callbackGeneration)
     {
-        var callbackGeneration = Volatile.Read(ref _mediaGeneration);
         _dispatcherQueue.TryEnqueue(() =>
         {
             if (!HistoryPlaybackPresentation.ShouldAcceptMediaCallback(
@@ -337,9 +363,8 @@ internal sealed class WindowsAudioPlaybackService : IDisposable
         });
     }
 
-    private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
+    private void OnMediaFailed(long callbackGeneration)
     {
-        var callbackGeneration = Volatile.Read(ref _mediaGeneration);
         _dispatcherQueue.TryEnqueue(() =>
         {
             if (!HistoryPlaybackPresentation.ShouldAcceptMediaCallback(
