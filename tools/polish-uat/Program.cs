@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.LLM;
 
 var arguments = ParseArguments(args);
@@ -8,28 +10,74 @@ if (!arguments.TryGetValue("server", out var server) ||
     !arguments.TryGetValue("model", out var model))
 {
     Console.Error.WriteLine(
-        "Usage: EnviousWispr.Polish.Uat --server <llama-server.exe> --model <eg-1.gguf> [--gpu-layers <count>]");
+        "Usage: EnviousWispr.Polish.Uat --server <llama-server.exe> --model <eg-1.gguf> [--model-id <eg-1|eg-1-mini|eg-1-micro>] [--gpu-layers <count>] [--threads <count>] [--context <tokens>]");
     return 2;
 }
 
 int? gpuLayers = null;
 if (arguments.TryGetValue("gpu-layers", out var configuredLayers) &&
-    int.TryParse(configuredLayers, System.Globalization.CultureInfo.InvariantCulture, out var layers))
+    int.TryParse(configuredLayers, CultureInfo.InvariantCulture, out var layers))
 {
     gpuLayers = layers;
 }
 
+int? threads = null;
+if (arguments.TryGetValue("threads", out var configuredThreads) &&
+    int.TryParse(configuredThreads, CultureInfo.InvariantCulture, out var parsedThreads) &&
+    parsedThreads > 0)
+{
+    threads = parsedThreads;
+}
+
+var inferredModelId = arguments.GetValueOrDefault("model-id");
+if (string.IsNullOrWhiteSpace(inferredModelId))
+{
+    inferredModelId = model.Contains("micro", StringComparison.OrdinalIgnoreCase)
+        ? EgOneModelCatalog.MicroId
+        : model.Contains("mini", StringComparison.OrdinalIgnoreCase)
+            ? EgOneModelCatalog.MiniId
+            : EgOneModelCatalog.FullId;
+}
+
+var contextTokens = EgOneModelCatalog.DefaultContextTokens(inferredModelId);
+if (arguments.TryGetValue("context", out var configuredContext) &&
+    int.TryParse(configuredContext, CultureInfo.InvariantCulture, out var parsedContext) &&
+    parsedContext >= 1_024)
+{
+    contextTokens = parsedContext;
+}
+
 await using var provider = new EgOnePolishProvider(new EgOnePolishOptions(
-    new EgOneServerOptions(server, model, GpuLayers: gpuLayers),
-    InferenceTimeout: TimeSpan.FromSeconds(20)));
+    new EgOneServerOptions(server, model, ContextTokens: contextTokens, GpuLayers: gpuLayers, Threads: threads)));
 var totalTimer = Stopwatch.StartNew();
 var health = await provider.ProbeHealthAsync();
+long peakWorkingSetBytes = 0;
+void SampleServerMemory()
+{
+    if (provider.OwnedProcessId is not { } pid)
+    {
+        return;
+    }
+
+    try
+    {
+        using var proc = Process.GetProcessById(pid);
+        proc.Refresh();
+        peakWorkingSetBytes = Math.Max(peakWorkingSetBytes, Math.Max(proc.PeakWorkingSet64, proc.WorkingSet64));
+    }
+    catch (Exception exception) when (
+        exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+    {
+    }
+}
+SampleServerMemory();
 var cases = CreateCases();
 var results = new List<CaseResult>(cases.Count);
 foreach (var item in cases)
 {
     var input = new ProcessedText(DictationSessionId.Create(), item.Input);
     var result = await provider.TryPolishAsync(new PolishRequest(input, item.Language));
+    SampleServerMemory();
     var passed = !result.UsedFallback && item.Predicate(result.Output.Text);
     results.Add(new CaseResult(item.Category, passed, result.Status.ToString(), result.ElapsedMilliseconds));
 }
@@ -39,7 +87,11 @@ var passedCount = results.Count(result => result.Passed);
 var timings = results.Select(result => result.ElapsedMilliseconds).Order().ToArray();
 var summary = new
 {
-    runtime = gpuLayers is null ? "cpu" : "cuda",
+    runtime = gpuLayers is > 0 ? "cuda" : "cpu",
+    gpuLayers,
+    threads,
+    contextTokens,
+    peakWorkingSetMb = Math.Round(peakWorkingSetBytes / (1024d * 1024d), 1),
     health = health.Health.ToString(),
     healthReason = health.Reason,
     healthElapsedMilliseconds = health.ElapsedMilliseconds,

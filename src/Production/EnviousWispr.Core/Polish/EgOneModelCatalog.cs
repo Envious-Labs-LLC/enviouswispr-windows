@@ -38,4 +38,11 @@ public static class EgOneModelCatalog
 
     public static string NormalizeOrDefault(string? modelId) =>
         TryNormalize(modelId, out var normalized) ? normalized : FullId;
+
+    public static int DefaultContextTokens(string? modelId) =>
+        NormalizeOrDefault(modelId) switch
+        {
+            MicroId => 8_192,
+            _ => 16_384,
+        };
 }

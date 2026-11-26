@@ -312,12 +312,14 @@ public partial class App
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
 
         var modelId = ConfiguredEgOneModelId(preferences);
+        var contextTokens = EgOneModelCatalog.DefaultContextTokens(modelId);
         var modelFile = resolvedEgOneModelFile ?? EgOneRuntimeLocator.ResolveModelFile(
             _dataDirectory,
             modelId,
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
 
         int? gpuLayers = null;
+        var allowCpuFallback = false;
         if (int.TryParse(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_GPU_LAYERS"),
                 System.Globalization.NumberStyles.Integer,
@@ -325,12 +327,40 @@ public partial class App
                 out var parsedGpuLayers))
         {
             gpuLayers = parsedGpuLayers;
+            if (parsedGpuLayers > 0)
+            {
+                _polishResource = RuntimeResourceKind.Accelerator;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(serverExecutable) &&
+                 File.Exists(Path.Combine(Path.GetDirectoryName(serverExecutable) ?? string.Empty, "ggml-cuda.dll")) &&
+                 EnviousWispr.Services.Diagnostics.HardwareProfileSummary.GetCurrent().HasNvidiaGpu)
+        {
+            gpuLayers = 99;
+            allowCpuFallback = true;
             _polishResource = RuntimeResourceKind.Accelerator;
+        }
+
+        int? threads = null;
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_THREADS"),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedThreads) &&
+            parsedThreads > 0)
+        {
+            threads = parsedThreads;
         }
 
         _configuredEgOneModelPath = modelFile;
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
-            new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
+            new EgOneServerOptions(
+                serverExecutable,
+                modelFile,
+                ContextTokens: contextTokens,
+                GpuLayers: gpuLayers,
+                Threads: threads,
+                AllowCpuFallback: allowCpuFallback),
             modelId));
         _polishUsesLocalRuntime = true;
     }
@@ -407,8 +437,13 @@ public partial class App
     /// <summary>The polish provider in force, and how it is hosted, or null when there is none.</summary>
     private PolishSetup? CurrentPolishSetup() =>
         _polishProvider is { } provider
-            ? new PolishSetup(provider, _polishUsesLocalRuntime, _polishResource)
+            ? new PolishSetup(provider, _polishUsesLocalRuntime, EffectivePolishResource(provider))
             : null;
+
+    private RuntimeResourceKind EffectivePolishResource(IPolishProvider provider) =>
+        provider is EgOnePolishProvider { UsesAccelerator: { } usesAccelerator }
+            ? (usesAccelerator ? RuntimeResourceKind.Accelerator : RuntimeResourceKind.Cpu)
+            : _polishResource;
 
     /// <summary>The button an advisory about the cleanup provider carries.</summary>
     /// <remarks>
