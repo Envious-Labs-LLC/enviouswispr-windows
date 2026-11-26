@@ -68,7 +68,8 @@ public sealed partial class MainWindow
             SelectedLivePreviewEngineIndex(),
             SendCrashReportsToggle.IsOn,
             EgOneModelId: _selectedEgOneModelId,
-            PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex ?? 0);
+            PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex ?? 0,
+            ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn ?? true);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -116,7 +117,18 @@ public sealed partial class MainWindow
         HistoryEnabledToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         LivePreviewToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         PlayRecordingSoundsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
-        CopyInsteadOfPasteToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        CopyInsteadOfPasteToggle.Toggled += (_, _) =>
+        {
+            if (ReturnToStartWindowToggle is not null)
+            {
+                ReturnToStartWindowToggle.IsEnabled = !CopyInsteadOfPasteToggle.IsOn;
+            }
+            _ = TriggerAutoSaveAsync();
+        };
+        if (ReturnToStartWindowToggle is not null)
+        {
+            ReturnToStartWindowToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        }
         LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         ShareUsageMetricsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         SendCrashReportsToggle.Toggled += (_, _) =>
@@ -508,6 +520,11 @@ public sealed partial class MainWindow
                 : RecordingPillDesign.Classic;
             PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
             CopyInsteadOfPasteToggle.IsOn = preferences.CopyInsteadOfPaste;
+            if (ReturnToStartWindowToggle is not null)
+            {
+                ReturnToStartWindowToggle.IsOn = preferences.PasteTargetMode == PasteTargetMode.WhereDictationStarted;
+                ReturnToStartWindowToggle.IsEnabled = !preferences.CopyInsteadOfPaste;
+            }
             SelectChimePairing(preferences.RecordingSoundPairing, triggerSave: false);
             UpdatePillDesignControls();
             _overlayWindow.ApplyPreferences(

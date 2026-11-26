@@ -1,0 +1,374 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Xml.Linq;
+using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Settings;
+using EnviousWispr.Presentation;
+using EnviousWispr.Services.Input;
+using EnviousWispr.Services.Settings;
+
+namespace EnviousWispr.Architecture.Tests;
+
+public sealed class FocusTargetArchitectureTests
+{
+    private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+    [Fact]
+    public async Task LoadMigratesV25AndPortableProfileV18AndRoundTripsPasteTargetMode()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var settingsPath = Path.Combine(directory, "settings-v25.json");
+            var v25Settings = JsonSettingsStoreTests.CreatePopulatedSettings() with { SchemaVersion = 25 };
+            var settingsNode = JsonNode.Parse(JsonSerializer.Serialize(v25Settings, JsonSettingsStore.SerializerOptions))!.AsObject();
+            settingsNode["preferences"]!.AsObject().Remove("pasteTargetMode");
+            await File.WriteAllTextAsync(settingsPath, settingsNode.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var loaded = await new JsonSettingsStore(settingsPath).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, loaded.Status);
+            Assert.Equal(25, loaded.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.Settings.SchemaVersion);
+            Assert.Equal(PasteTargetMode.WhereDictationStarted, loaded.Settings.Preferences.PasteTargetMode);
+
+            var profilePath = Path.Combine(directory, "profile-v18.enviouswispr.json");
+            var v18Profile = v25Settings.ToPortableProfile() with { SchemaVersion = 18 };
+            var profileNode = JsonNode.Parse(JsonSerializer.Serialize(v18Profile, JsonSettingsStore.SerializerOptions))!.AsObject();
+            profileNode["preferences"]!.AsObject().Remove("pasteTargetMode");
+            await File.WriteAllTextAsync(profilePath, profileNode.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var imported = await new JsonPortableProfileService().ImportAsync(profilePath);
+            Assert.Equal(PortableProfileImportStatus.Imported, imported.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, imported.Profile?.SchemaVersion);
+            Assert.Equal(PasteTargetMode.WhereDictationStarted, imported.Profile?.Preferences.PasteTargetMode);
+
+            var store = new JsonSettingsStore(Path.Combine(directory, "presenter-roundtrip.json"));
+            using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+            var saveCursor = await presenter.SaveGeneralAsync(CreateGeneralInput(returnToStartWindow: false));
+            Assert.True(saveCursor.Saved);
+            Assert.Equal(PasteTargetMode.WhereCursorIsAtRelease, presenter.Current.Preferences.PasteTargetMode);
+
+            var saveStart = await presenter.SaveGeneralAsync(CreateGeneralInput(returnToStartWindow: true));
+            Assert.True(saveStart.Saved);
+            Assert.Equal(PasteTargetMode.WhereDictationStarted, presenter.Current.Preferences.PasteTargetMode);
+
+            var reloaded = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, reloaded.Status);
+            Assert.Equal(PasteTargetMode.WhereDictationStarted, reloaded.Settings.Preferences.PasteTargetMode);
+        });
+
+        var invalid = AppSettings.Default with
+        {
+            Preferences = AppSettings.Default.Preferences with
+            {
+                PasteTargetMode = (PasteTargetMode)99,
+            },
+        };
+        Assert.NotNull(AppSettingsValidator.Validate(invalid, AppErrorStage.SettingsLoad));
+
+        var root = FindRepositoryRoot();
+        var xamlText = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var document = XDocument.Parse(xamlText);
+        Assert.NotNull(document.Descendants().FirstOrDefault(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "ReturnToStartWindowToggle"));
+    }
+
+    [Fact]
+    public void RestoreAndFocusCoreSkipsAttachWhenDirectActivationSucceedsOrAlreadyForeground()
+    {
+        nint foreground = 0x1001;
+        var calls = new List<string>();
+
+        var alreadyFront = WindowsWindowIdentity.RestoreAndFocusCore(
+            window: 0x1001,
+            isWindow: _ => true,
+            isIconic: _ => false,
+            showWindowRestore: _ => calls.Add("restore"),
+            getForegroundWindow: () => foreground,
+            getWindowThreadProcessId: (nint h, out uint pid) => { pid = 10; return 100; },
+            getCurrentThreadId: () => 50,
+            tryGetProcessName: _ => "notepad",
+            bringWindowToTop: _ => { calls.Add("top"); return true; },
+            setForegroundWindow: h => { calls.Add("setfg"); foreground = h; return true; },
+            setActiveWindow: h => { calls.Add("active"); return h; },
+            attachThreadInput: (_, _, _) => { calls.Add("attach"); return true; });
+
+        Assert.True(alreadyFront);
+        Assert.Empty(calls);
+
+        foreground = 0x2002;
+        var restoredDirectly = WindowsWindowIdentity.RestoreAndFocusCore(
+            window: 0x1001,
+            isWindow: _ => true,
+            isIconic: _ => true,
+            showWindowRestore: _ => calls.Add("restore"),
+            getForegroundWindow: () => foreground,
+            getWindowThreadProcessId: (nint h, out uint pid) => { pid = 10; return h == 0x1001 ? 100u : 200u; },
+            getCurrentThreadId: () => 50,
+            tryGetProcessName: _ => "notepad",
+            bringWindowToTop: _ => { calls.Add("top"); return true; },
+            setForegroundWindow: h => { calls.Add("setfg"); foreground = h; return true; },
+            setActiveWindow: h => { calls.Add("active"); return h; },
+            attachThreadInput: (_, _, _) => { calls.Add("attach"); return true; });
+
+        Assert.True(restoredDirectly);
+        Assert.Equal(["restore", "top", "setfg"], calls);
+    }
+
+    [Fact]
+    public void RestoreAndFocusCoreUsesBoundedAttachAndDetachesOnThrow()
+    {
+        nint foreground = 0x2002;
+        var directAttempts = 0;
+        var attachEvents = new List<string>();
+
+        var restored = WindowsWindowIdentity.RestoreAndFocusCore(
+            window: 0x1001,
+            isWindow: _ => true,
+            isIconic: _ => false,
+            showWindowRestore: _ => { },
+            getForegroundWindow: () => foreground,
+            getWindowThreadProcessId: (nint h, out uint pid) =>
+            {
+                pid = h == 0x1001 ? 101u : 202u;
+                return h == 0x1001 ? 1001u : 2002u;
+            },
+            getCurrentThreadId: () => 50,
+            tryGetProcessName: _ => "notepad",
+            bringWindowToTop: _ => true,
+            setForegroundWindow: h =>
+            {
+                directAttempts++;
+                if (directAttempts >= 2)
+                {
+                    foreground = h;
+                    return true;
+                }
+
+                return false;
+            },
+            setActiveWindow: h => h,
+            attachThreadInput: (a, b, attach) =>
+            {
+                attachEvents.Add($"{a}->{b}:{attach}");
+                return true;
+            });
+
+        Assert.True(restored);
+        Assert.Equal(["50->2002:True", "50->1001:True", "50->1001:False", "50->2002:False"], attachEvents);
+
+        attachEvents.Clear();
+        foreground = 0x2002;
+        var attemptsBeforeThrow = 0;
+        Assert.Throws<InvalidOperationException>(() =>
+            WindowsWindowIdentity.RestoreAndFocusCore(
+                window: 0x1001,
+                isWindow: _ => true,
+                isIconic: _ => false,
+                showWindowRestore: _ => { },
+                getForegroundWindow: () => foreground,
+                getWindowThreadProcessId: (nint h, out uint pid) =>
+                {
+                    pid = h == 0x1001 ? 101u : 202u;
+                    return h == 0x1001 ? 1001u : 2002u;
+                },
+                getCurrentThreadId: () => 50,
+                tryGetProcessName: _ => "notepad",
+                bringWindowToTop: _ => true,
+                setForegroundWindow: _ =>
+                {
+                    attemptsBeforeThrow++;
+                    if (attemptsBeforeThrow >= 2)
+                    {
+                        throw new InvalidOperationException("simulated failure");
+                    }
+
+                    return false;
+                },
+                setActiveWindow: h => h,
+                attachThreadInput: (a, b, attach) =>
+                {
+                    attachEvents.Add($"{a}->{b}:{attach}");
+                    return true;
+                }));
+
+        Assert.Equal(["50->2002:True", "50->1001:True", "50->1001:False", "50->2002:False"], attachEvents);
+    }
+
+    [Theory]
+    [InlineData("consent")]
+    [InlineData("LockApp")]
+    [InlineData("LogonUI")]
+    [InlineData("CredentialUIBroker")]
+    [InlineData("ScreenClippingHost")]
+    public void RestoreAndFocusCoreNeverStealsProtectedSecurityScreen(string protectedProcess)
+    {
+        nint foreground = 0x9999;
+        var attached = false;
+
+        var result = WindowsWindowIdentity.RestoreAndFocusCore(
+            window: 0x1001,
+            isWindow: _ => true,
+            isIconic: _ => false,
+            showWindowRestore: _ => { },
+            getForegroundWindow: () => foreground,
+            getWindowThreadProcessId: (nint h, out uint pid) =>
+            {
+                pid = h == 0x1001 ? 101u : 999u;
+                return h == 0x1001 ? 1001u : 9001u;
+            },
+            getCurrentThreadId: () => 50,
+            tryGetProcessName: pid => pid == 999u ? protectedProcess : "notepad",
+            bringWindowToTop: _ => true,
+            setForegroundWindow: _ => false,
+            setActiveWindow: h => h,
+            attachThreadInput: (_, _, _) => { attached = true; return true; });
+
+        Assert.False(result);
+        Assert.False(attached);
+    }
+
+    [Fact]
+    public void EvaluateFocusedElementAllowsSameWindowEditableReplacementFieldWhileBlockingPasswordAndNonTextControls()
+    {
+        var rule = WindowsPastePolicy.Resolve("msedge", "Chrome_WidgetWin_1", isControlEdit: true);
+        var uiaTarget = new TargetWindowId(0x1111, 4242, FocusedElementId: "42.1.10", ProcessName: "msedge");
+
+        var replacedEdit = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            uiaTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: "42.1.25",
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Edit"),
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => rule);
+        Assert.Null(replacedEdit.Failure);
+        Assert.Equal("42.1.25", replacedEdit.EffectiveFocusId);
+
+        var replacedDocument = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            uiaTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: "42.1.30",
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "RichEditD2DPT",
+                IsControlDocument: true),
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => rule);
+        Assert.Null(replacedDocument.Failure);
+        Assert.Equal("42.1.30", replacedDocument.EffectiveFocusId);
+
+        var switchedToPassword = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            uiaTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: "42.1.99",
+                HasKeyboardFocus: true,
+                IsPassword: true,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Edit"),
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => rule);
+        Assert.Equal(TextDeliveryRefusalReason.ProtectedField, switchedToPassword.Failure?.RefusalReason);
+
+        var nonTextFocus = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            uiaTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: "42.1.77",
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: false,
+                ClassName: "Button",
+                IsControlDocument: false),
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => rule);
+        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, nonTextFocus.Failure?.RefusalReason);
+
+        var win32Target = new TargetWindowId(0x1111, 4242, FocusedElementId: "win32:100", ProcessName: "notepad");
+        var replacedWin32Edit = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            win32Target,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Edit"),
+            win32ChildFocusId: "win32:200",
+            isExplicitHistoryPaste: false,
+            (_, _) => WindowsPastePolicy.Resolve("notepad", "Notepad", "Edit", isControlEdit: true));
+        Assert.Null(replacedWin32Edit.Failure);
+        Assert.Equal("win32:200", replacedWin32Edit.EffectiveFocusId);
+    }
+
+    private static GeneralSettingsInput CreateGeneralInput(bool returnToStartWindow) => new(
+        RecordingShortcut: "F8",
+        CancelShortcut: "Escape",
+        QuickAddShortcut: "Ctrl+Alt+W",
+        FinalEngineIndex: 0,
+        WordCorrection: true,
+        FillerRemoval: false,
+        EmojiFormatter: true,
+        SpokenPunctuation: false,
+        WhisperLanguage: "auto",
+        EnglishSpellingIndex: 0,
+        RecordingModeIndex: 0,
+        EscapeRecovery: false,
+        AutoStop: false,
+        AutoStopSeconds: 3.0,
+        PolishProviderIndex: 0,
+        PolishModel: string.Empty,
+        OllamaEndpoint: string.Empty,
+        HistoryEnabled: true,
+        HistoryRetentionDays: 30,
+        ThemeIndex: 0,
+        LivePreview: false,
+        OverlayPositionIndex: 0,
+        LevelRailPill: false,
+        PlayRecordingSounds: false,
+        RecordingSoundPairing: RecordingSoundPairing.WhisperTick,
+        CopyInsteadOfPaste: false,
+        LocalDiagnostics: true,
+        DiagnosticRetentionDays: 30,
+        ShareTelemetry: false,
+        TelemetryAvailable: true,
+        MicrophoneId: null,
+        PasteLastShortcut: string.Empty,
+        CopyLastShortcut: string.Empty,
+        ReturnToStartWindow: returnToStartWindow);
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory!.FullName;
+    }
+}

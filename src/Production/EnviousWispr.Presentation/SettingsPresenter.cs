@@ -109,7 +109,8 @@ public sealed record GeneralSettingsInput(
     int LivePreviewEngineIndex = 0,
     bool SendCrashReports = true,
     string? EgOneModelId = null,
-    int PolishUnloadPolicyIndex = 0);
+    int PolishUnloadPolicyIndex = 0,
+    bool ReturnToStartWindow = true);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -378,7 +379,10 @@ public sealed class SettingsPresenter : IDisposable
             input.PlayRecordingSounds,
             input.RecordingSoundPairing ?? RecordingSoundPairing.WhisperTick,
             input.CopyInsteadOfPaste,
-            LivePreviewEngineFromIndex(Chosen(input.LivePreviewEngineIndex)));
+            LivePreviewEngineFromIndex(Chosen(input.LivePreviewEngineIndex)),
+            input.ReturnToStartWindow
+                ? PasteTargetMode.WhereDictationStarted
+                : PasteTargetMode.WhereCursorIsAtRelease);
 
         // THE VALUES WERE READ ON THE UI THREAD AND ARE APPLIED INSIDE THE GATE: the record above is
         // built now, from what was read; the transform below touches the three fields it replaces and

@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Pipeline;
 
@@ -26,6 +27,8 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     public ITextDelivery? Delivery => parts.Shell.Delivery();
 
     public FinalizationOptions CurrentOptions() => parts.Shell.Options();
+
+    public TargetWindowId? ResolveReleaseTarget() => parts.Shell.ResolveReleaseTarget?.Invoke();
 
     public void ArchiveAudio(CapturedAudio audio) => parts.Shell.ArchiveAudio(audio);
 

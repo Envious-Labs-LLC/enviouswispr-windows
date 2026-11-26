@@ -10,7 +10,7 @@ namespace EnviousWispr.Services.Input;
 
 public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 {
-    private static readonly TimeSpan TargetActivationTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan TargetActivationTimeout = TimeSpan.FromMilliseconds(500);
     private readonly SemaphoreSlim _automationGate = new(1, 1);
 
     public void Dispose() => _automationGate.Dispose();
@@ -300,7 +300,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         TargetWindowId target,
         TextDeliveryOptions options)
     {
-        var windowStatus = ActivateAndValidateWindow(target);
+        var windowStatus = ActivateAndValidateWindow(target, out var activationBudget, out var wasReactivated);
         if (windowStatus != TargetContextStatus.Available)
         {
             return new TargetContextResult(
@@ -308,24 +308,30 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: RefusalFor(windowStatus));
         }
 
+        if (wasReactivated && activationBudget is not null)
+        {
+            while (!IsFocusSettledForProcess(target.ProcessId) &&
+                activationBudget.Elapsed < TargetActivationTimeout)
+            {
+                Thread.Sleep(25);
+                if (GetForegroundWindow() != target.Value)
+                {
+                    return new TargetContextResult(
+                        TargetContextStatus.TargetChanged,
+                        RefusalReason: TextDeliveryRefusalReason.TargetChanged);
+                }
+            }
+        }
+
         var win32ChildFocusId = WindowsWindowIdentity.TryCaptureDistinctWin32ChildFocusId(target.Value, target.ProcessId);
         var element = Automation(static () => AutomationElement.FocusedElement);
-        if (element is null)
+        var focus = ReadFocusedElementFacts(element);
+        if (element is null || focus is null)
         {
             return new TargetContextResult(
                 TargetContextStatus.AccessibilityUnavailable,
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
-
-        var focus = Automation(() => new FocusedElementFacts(
-            checked((uint)element.Current.ProcessId),
-            RuntimeId(element),
-            element.Current.HasKeyboardFocus,
-            element.Current.IsPassword,
-            element.Current.IsEnabled,
-            element.Current.IsKeyboardFocusable,
-            element.Current.ControlType == ControlType.Edit,
-            element.Current.ClassName ?? string.Empty));
 
         var evaluation = EvaluateFocusedElement(
             target,
@@ -392,6 +398,32 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 IsScreenDerived: targetKind == TextTargetKind.Terminal,
                 IsUrlBarField: urlBar));
     }
+
+    private static bool IsFocusSettledForProcess(uint targetProcessId) =>
+        Automation(() =>
+            AutomationElement.FocusedElement is { } focused &&
+            checked((uint)focused.Current.ProcessId) == targetProcessId &&
+            focused.Current.HasKeyboardFocus);
+
+    private static FocusedElementFacts? ReadFocusedElementFacts(AutomationElement? element) =>
+        element is null
+            ? null
+            : Automation(() => new FocusedElementFacts(
+                checked((uint)element.Current.ProcessId),
+                RuntimeId(element),
+                element.Current.HasKeyboardFocus,
+                element.Current.IsPassword,
+                element.Current.IsEnabled,
+                element.Current.IsKeyboardFocusable,
+                element.Current.ControlType == ControlType.Edit,
+                element.Current.ClassName ?? string.Empty,
+                element.Current.ControlType == ControlType.Document));
+
+    private static bool IsEditableReplacementCandidate(FocusedElementFacts focus) =>
+        !focus.IsPassword &&
+        focus.IsEnabled &&
+        focus.IsKeyboardFocusable &&
+        (focus.IsControlEdit || focus.IsControlDocument);
 
     internal static FocusEvaluationResult EvaluateFocusedElement(
         TargetWindowId target,
@@ -488,8 +520,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         if (target.FocusedElementId.StartsWith(WindowsWindowIdentity.Win32FocusPrefix, StringComparison.Ordinal))
         {
-            if (!string.Equals(win32ChildFocusId, target.FocusedElementId, StringComparison.Ordinal) ||
-                !focus.HasKeyboardFocus)
+            if (!focus.HasKeyboardFocus)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
@@ -511,22 +542,40 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                     Rule: null);
             }
 
-            var effectiveWin32Id = !string.IsNullOrEmpty(focus.RuntimeId)
-                ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
-                : target.FocusedElementId;
-            var win32Rule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
             if (focus.IsPassword)
             {
+                var protectedRule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
+                var protectedFocusId = !string.IsNullOrEmpty(focus.RuntimeId)
+                    ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
+                    : (win32ChildFocusId ?? target.FocusedElementId);
                 return new FocusEvaluationResult(
                     new TargetContextResult(
                         TargetContextStatus.Protected,
-                        EmptyContext(target, effectiveWin32Id, win32Rule.TargetKind),
+                        EmptyContext(target, protectedFocusId, protectedRule.TargetKind),
                         TextDeliveryRefusalReason.ProtectedField),
                     WindowFallbackOnly: false,
-                    EffectiveFocusId: effectiveWin32Id,
-                    Rule: win32Rule);
+                    EffectiveFocusId: protectedFocusId,
+                    Rule: protectedRule);
             }
 
+            var exactWin32Match = string.Equals(win32ChildFocusId, target.FocusedElementId, StringComparison.Ordinal);
+            var resolvedWin32Id = !string.IsNullOrEmpty(focus.RuntimeId)
+                ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
+                : win32ChildFocusId;
+            if (!exactWin32Match &&
+                (!IsEditableReplacementCandidate(focus) || string.IsNullOrEmpty(resolvedWin32Id)))
+            {
+                return new FocusEvaluationResult(
+                    new TargetContextResult(
+                        TargetContextStatus.TargetChanged,
+                        RefusalReason: TextDeliveryRefusalReason.TargetChanged),
+                    WindowFallbackOnly: false,
+                    EffectiveFocusId: string.Empty,
+                    Rule: null);
+            }
+
+            var effectiveWin32Id = resolvedWin32Id ?? target.FocusedElementId;
+            var win32Rule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
             return new FocusEvaluationResult(
                 Failure: null,
                 WindowFallbackOnly: false,
@@ -534,9 +583,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 Rule: win32Rule);
         }
 
-        if (focus.ProcessId != target.ProcessId ||
-            !string.Equals(focus.RuntimeId, target.FocusedElementId, StringComparison.Ordinal) ||
-            !focus.HasKeyboardFocus)
+        if (focus.ProcessId != target.ProcessId || !focus.HasKeyboardFocus)
         {
             return new FocusEvaluationResult(
                 new TargetContextResult(
@@ -558,6 +605,18 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 WindowFallbackOnly: false,
                 EffectiveFocusId: focus.RuntimeId,
                 Rule: rule);
+        }
+
+        if (!string.Equals(focus.RuntimeId, target.FocusedElementId, StringComparison.Ordinal) &&
+            (!IsEditableReplacementCandidate(focus) || string.IsNullOrEmpty(focus.RuntimeId)))
+        {
+            return new FocusEvaluationResult(
+                new TargetContextResult(
+                    TargetContextStatus.TargetChanged,
+                    RefusalReason: TextDeliveryRefusalReason.TargetChanged),
+                WindowFallbackOnly: false,
+                EffectiveFocusId: string.Empty,
+                Rule: null);
         }
 
         return new FocusEvaluationResult(
@@ -582,7 +641,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool IsEnabled,
         bool IsKeyboardFocusable,
         bool IsControlEdit,
-        string ClassName);
+        string ClassName,
+        bool IsControlDocument = false);
 
     /// <summary>The text around the caret, as the text pattern reports it.</summary>
     private sealed record CaretText(string Selected, string Left, bool LeftAtStart, string Right, bool RightAtEnd);
@@ -691,8 +751,13 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             className.Contains("urlbar", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static TargetContextStatus ActivateAndValidateWindow(TargetWindowId target)
+    private static TargetContextStatus ActivateAndValidateWindow(
+        TargetWindowId target,
+        out Stopwatch? activationBudget,
+        out bool wasReactivated)
     {
+        activationBudget = null;
+        wasReactivated = false;
         if (!target.IsValid || !IsWindow(target.Value))
         {
             return TargetContextStatus.TargetUnavailable;
@@ -712,12 +777,13 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         if (GetForegroundWindow() != target.Value)
         {
-            WindowsWindowIdentity.RestoreAndFocus(target.Value);
-            var timer = Stopwatch.StartNew();
+            wasReactivated = true;
+            activationBudget = Stopwatch.StartNew();
+            _ = WindowsWindowIdentity.TryRestoreAndFocus(target.Value);
             while (GetForegroundWindow() != target.Value &&
-                timer.Elapsed < TargetActivationTimeout)
+                activationBudget.Elapsed < TargetActivationTimeout)
             {
-                Thread.Sleep(50);
+                Thread.Sleep(25);
             }
         }
 

@@ -262,6 +262,7 @@ public partial class App
             deliveryOptions: () => TextDeliveryOptions.Default with
             {
                 CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
+                TargetMode = _settings.Preferences.PasteTargetMode,
             },
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
@@ -301,6 +302,13 @@ public partial class App
                 {
                     SetPolishSessionActive(active);
                     PostToLiveWindow(window => window.SetDictationActive(active));
+                },
+                ResolveReleaseTarget: () =>
+                {
+                    var captured = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
+                    return captured is { } target && target.ProcessId != (uint)Environment.ProcessId
+                        ? captured
+                        : null;
                 }),
             TimeProvider.System));
         if (_pushToTalkHook is not null)

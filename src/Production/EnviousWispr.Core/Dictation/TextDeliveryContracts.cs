@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Core.Dictation;
 
@@ -172,14 +173,16 @@ public sealed record TextDeliveryOptions(
     int ContextWindowCharacters,
     int MaximumDirectValueCharacters,
     bool CopyInsteadOfPaste = false,
-    bool IsExplicitHistoryPaste = false)
+    bool IsExplicitHistoryPaste = false,
+    PasteTargetMode TargetMode = PasteTargetMode.WhereDictationStarted)
 {
     public static TextDeliveryOptions Default { get; } = new(
         RestoreClipboardAfterPaste: true,
         ContextWindowCharacters: 256,
         MaximumDirectValueCharacters: 16_384,
         CopyInsteadOfPaste: false,
-        IsExplicitHistoryPaste: false);
+        IsExplicitHistoryPaste: false,
+        TargetMode: PasteTargetMode.WhereDictationStarted);
 }
 
 /// <param name="SnippetExpanded">

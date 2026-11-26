@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Sessions;
@@ -38,7 +39,8 @@ public sealed record SessionShell(
     Action ReleaseSession,
     Action DisposeDeliveryRoute,
     Action<bool>? DictationActivityChanged = null,
-    Action<bool>? CancelArmed = null);
+    Action<bool>? CancelArmed = null,
+    Func<TargetWindowId?>? ResolveReleaseTarget = null);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>

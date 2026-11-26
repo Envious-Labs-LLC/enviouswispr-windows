@@ -90,7 +90,8 @@ public static class AppSettingsValidator
         preferences.PillDesignWithoutWords is not RecordingPillDesign.ReadingWell &&
         preferences.PillDesignWithWords is RecordingPillDesign.ReadingWell &&
         Enum.IsDefined(preferences.RecordingSoundPairing) &&
-        Enum.IsDefined(preferences.LivePreviewEngine);
+        Enum.IsDefined(preferences.LivePreviewEngine) &&
+        Enum.IsDefined(preferences.PasteTargetMode);
 
     private static bool IsValidRecentLanguages(IReadOnlyList<string>? recentLanguages)
     {

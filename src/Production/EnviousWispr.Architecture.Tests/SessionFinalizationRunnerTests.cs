@@ -340,6 +340,49 @@ public sealed class SessionFinalizationRunnerTests
         Assert.False(Assert.Single(world.History.Added).WasPolished);
     }
 
+    [Fact]
+    public async Task WhereCursorIsAtReleaseModeResolvesReleaseTargetInsteadOfStartTarget()
+    {
+        var world = await World.RecordingFinishedAsync(
+            "hello world",
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease });
+        var releaseTarget = new TargetWindowId(202, 4242, FocusedElementId: "win32:99", ProcessName: "notepad");
+        world.Effects.ReleaseTargetResolver = () => releaseTarget;
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.Equal(releaseTarget, Assert.Single(world.Delivery.Requests).Target);
+    }
+
+    [Fact]
+    public async Task WhereDictationStartedModeIgnoresReleaseResolverAndDeliversToStartTarget()
+    {
+        var world = await World.RecordingFinishedAsync(
+            "hello world",
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereDictationStarted });
+        world.Effects.ReleaseTargetResolver = () => new TargetWindowId(202, 4242, ProcessName: "notepad");
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.Equal(new TargetWindowId(101), Assert.Single(world.Delivery.Requests).Target);
+    }
+
+    [Fact]
+    public async Task WhereCursorIsAtReleaseWithNullReleaseTargetDoesNotRedirectToStartTarget()
+    {
+        var world = await World.RecordingFinishedAsync(
+            "hello world",
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease });
+        world.Effects.ReleaseTargetResolver = () => null;
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.Equal(default, Assert.Single(world.Delivery.Requests).Target);
+    }
+
     /// <summary>Everything wired the way the shell wires it, minus the shell.</summary>
     private sealed class World
     {
@@ -365,10 +408,14 @@ public sealed class SessionFinalizationRunnerTests
 
         public List<string> Trace => Effects.Trace;
 
-        public static async Task<World> RecordingFinishedAsync(string spoken)
+        public static async Task<World> RecordingFinishedAsync(string spoken, TextDeliveryOptions? deliveryOptions = null)
         {
             var capture = new FakeAudioCapture();
-            var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
+            var controller = new PushToTalkSessionController(
+                capture,
+                new FakeTargetProvider(101),
+                deliveryOptions: deliveryOptions is null ? null : () => deliveryOptions,
+                minimumHoldDuration: TimeSpan.Zero);
             var started = await controller.PressAsync();
             var released = await controller.ReleaseAsync();
             Assert.Equal(SessionTransitionKind.FinalizeReady, released.Kind);
@@ -507,6 +554,10 @@ public sealed class SessionFinalizationRunnerTests
 
         public Func<FinalizationOptions> Options { get; set; } =
             () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), SnippetVocabulary.Empty, null);
+
+        public Func<TargetWindowId?>? ReleaseTargetResolver { get; set; }
+
+        public TargetWindowId? ResolveReleaseTarget() => ReleaseTargetResolver?.Invoke();
 
         public FinalizationOptions CurrentOptions()
         {

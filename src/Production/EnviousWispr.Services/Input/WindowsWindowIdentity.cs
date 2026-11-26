@@ -10,6 +10,15 @@ internal static class WindowsWindowIdentity
     private const int SwRestore = 9;
     internal const string Win32FocusPrefix = "win32:";
 
+    private static readonly HashSet<string> ProtectedForegroundProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "consent",
+        "LockApp",
+        "LogonUI",
+        "CredentialUIBroker",
+        "ScreenClippingHost",
+    };
+
     internal static string? TryGetClassName(nint window)
     {
         if (window == 0)
@@ -41,20 +50,134 @@ internal static class WindowsWindowIdentity
         }
     }
 
-    internal static void RestoreAndFocus(nint window)
+    internal delegate uint WindowThreadProcessIdReader(nint window, out uint processId);
+
+    internal static void RestoreAndFocus(nint window) =>
+        _ = TryRestoreAndFocus(window);
+
+    internal static bool TryRestoreAndFocus(nint window) =>
+        RestoreAndFocusCore(
+            window,
+            isWindow: IsWindow,
+            isIconic: IsIconic,
+            showWindowRestore: static handle => _ = ShowWindow(handle, SwRestore),
+            getForegroundWindow: GetForegroundWindow,
+            getWindowThreadProcessId: GetWindowThreadProcessId,
+            getCurrentThreadId: GetCurrentThreadId,
+            tryGetProcessName: TryGetProcessName,
+            bringWindowToTop: BringWindowToTop,
+            setForegroundWindow: SetForegroundWindow,
+            setActiveWindow: SetActiveWindow,
+            attachThreadInput: AttachThreadInput);
+
+    /// <summary>
+    /// Brings <paramref name="window"/> back (restoring if minimized) using direct focus calls first
+    /// and falling back cleanly to bounded <c>AttachThreadInput</c> only when needed, never stealing
+    /// focus from Windows security/lock screens and never synthesizing Alt keystrokes.
+    /// </summary>
+    internal static bool RestoreAndFocusCore(
+        nint window,
+        Func<nint, bool> isWindow,
+        Func<nint, bool> isIconic,
+        Action<nint> showWindowRestore,
+        Func<nint> getForegroundWindow,
+        WindowThreadProcessIdReader getWindowThreadProcessId,
+        Func<uint> getCurrentThreadId,
+        Func<uint, string?> tryGetProcessName,
+        Func<nint, bool> bringWindowToTop,
+        Func<nint, bool> setForegroundWindow,
+        Func<nint, nint> setActiveWindow,
+        Func<uint, uint, bool, bool> attachThreadInput)
     {
-        if (window == 0)
+        if (window == 0 || !isWindow(window))
         {
-            return;
+            return false;
         }
 
-        if (IsIconic(window))
+        if (isIconic(window))
         {
-            _ = ShowWindow(window, SwRestore);
+            showWindowRestore(window);
         }
 
-        _ = BringWindowToTop(window);
-        _ = SetForegroundWindow(window);
+        if (getForegroundWindow() == window)
+        {
+            return true;
+        }
+
+        _ = bringWindowToTop(window);
+        _ = setForegroundWindow(window);
+        if (getForegroundWindow() == window)
+        {
+            return true;
+        }
+
+        var foreground = getForegroundWindow();
+        if (foreground != 0)
+        {
+            _ = getWindowThreadProcessId(foreground, out var foregroundProcessId);
+            if (foregroundProcessId != 0)
+            {
+                var foregroundProcess = NormalizeProcessName(tryGetProcessName(foregroundProcessId));
+                if (ProtectedForegroundProcesses.Contains(foregroundProcess))
+                {
+                    return false;
+                }
+            }
+        }
+
+        var currentThreadId = getCurrentThreadId();
+        var foregroundThreadId = foreground != 0 ? getWindowThreadProcessId(foreground, out _) : 0;
+        var targetThreadId = getWindowThreadProcessId(window, out _);
+        if (currentThreadId == 0 || (foregroundThreadId == 0 && targetThreadId == 0))
+        {
+            return getForegroundWindow() == window;
+        }
+
+        var attachedForeground = false;
+        var attachedTarget = false;
+        try
+        {
+            if (foregroundThreadId != 0 && foregroundThreadId != currentThreadId)
+            {
+                attachedForeground = attachThreadInput(currentThreadId, foregroundThreadId, true);
+            }
+
+            if (targetThreadId != 0 && targetThreadId != currentThreadId && targetThreadId != foregroundThreadId)
+            {
+                attachedTarget = attachThreadInput(currentThreadId, targetThreadId, true);
+            }
+
+            _ = bringWindowToTop(window);
+            _ = setForegroundWindow(window);
+            _ = setActiveWindow(window);
+        }
+        finally
+        {
+            if (attachedTarget)
+            {
+                _ = attachThreadInput(currentThreadId, targetThreadId, false);
+            }
+
+            if (attachedForeground)
+            {
+                _ = attachThreadInput(currentThreadId, foregroundThreadId, false);
+            }
+        }
+
+        return getForegroundWindow() == window;
+    }
+
+    private static string NormalizeProcessName(string? processName)
+    {
+        if (string.IsNullOrWhiteSpace(processName))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = processName.Trim();
+        return trimmed.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? trimmed[..^4]
+            : trimmed;
     }
 
     /// <summary>
@@ -143,4 +266,21 @@ internal static class WindowsWindowIdentity
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetActiveWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindow(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool attach);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 }

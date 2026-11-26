@@ -34,7 +34,7 @@ public sealed record AppSettings(
     /// <summary>Up to five recently selected picker languages (e.g. "ja", "en-gb"), newest first.</summary>
     IReadOnlyList<string>? RecentLanguages = null)
 {
-    public const int CurrentSchemaVersion = 25;
+    public const int CurrentSchemaVersion = 26;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,

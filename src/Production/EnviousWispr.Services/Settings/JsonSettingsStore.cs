@@ -85,6 +85,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 22 => MigrateFromV22(json),
                 23 => MigrateFromV23(json),
                 24 => MigrateFromV24(json),
+                25 => MigrateFromV25(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -599,6 +600,19 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// and preserving existing behavior while bumping the schema version so older builds reject politely.
     /// </remarks>
     private static AppSettings? MigrateFromV24(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before configurable start-vs-release paste targeting existed (schema v26).</summary>
+    /// <remarks>
+    /// Absent <c>pasteTargetMode</c> deserializes to <see cref="PasteTargetMode.WhereDictationStarted"/>,
+    /// preserving start-of-dictation pull-back as the safe default for existing users.
+    /// </remarks>
+    private static AppSettings? MigrateFromV25(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null
