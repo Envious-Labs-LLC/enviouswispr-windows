@@ -296,7 +296,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: RefusalFor(windowStatus));
         }
 
-        var win32FocusId = WindowsWindowIdentity.TryCaptureWin32FocusId(target.Value, target.ProcessId);
+        var win32ChildFocusId = WindowsWindowIdentity.TryCaptureDistinctWin32ChildFocusId(target.Value, target.ProcessId);
         var element = Automation(static () => AutomationElement.FocusedElement);
         if (element is null)
         {
@@ -313,15 +313,13 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             element.Current.IsEnabled,
             element.Current.IsKeyboardFocusable,
             element.Current.ControlType == ControlType.Edit,
-            element.Current.ClassName ?? string.Empty,
-            element.Current.ControlType.Id,
-            element.Current.NativeWindowHandle,
-            element.Current.AutomationId ?? string.Empty));
+            element.Current.ClassName ?? string.Empty));
 
         var evaluation = EvaluateFocusedElement(
             target,
             focus,
-            win32FocusId,
+            win32ChildFocusId,
+            options.IsExplicitHistoryPaste,
             (className, isControlEdit) => ResolveTargetPolicy(target, className, isControlEdit));
         if (evaluation.Failure is not null)
         {
@@ -386,7 +384,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     internal static FocusEvaluationResult EvaluateFocusedElement(
         TargetWindowId target,
         FocusedElementFacts? focus,
-        string? win32FocusId,
+        string? win32ChildFocusId,
+        bool isExplicitHistoryPaste,
         Func<string?, bool, WindowsPasteRule> resolvePolicy)
     {
         ArgumentNullException.ThrowIfNull(resolvePolicy);
@@ -401,20 +400,23 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 Rule: null);
         }
 
-        var liveUiaId = !string.IsNullOrEmpty(focus.RuntimeId)
-            ? focus.RuntimeId
-            : WindowsWindowIdentity.FormatUiaFallbackElementId(
-                focus.ControlTypeId,
-                focus.NativeWindowHandle,
-                focus.ClassName,
-                focus.AutomationId,
-                win32FocusId);
-        var liveCombinedId = WindowsWindowIdentity.CombineFocusIdentity(win32FocusId, liveUiaId);
-
         if (target.FocusedElementId is null)
         {
-            // Fail closed unless UIA positively confirms the focused element belongs to the
-            // target process and is not a password field.
+            // Live dictation and Undo must never guess a target when neither a UIA RuntimeId nor a
+            // distinct Win32 child control HWND was captured when dictation started.
+            if (!isExplicitHistoryPaste)
+            {
+                return new FocusEvaluationResult(
+                    new TargetContextResult(
+                        TargetContextStatus.AccessibilityUnavailable,
+                        RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
+                    WindowFallbackOnly: false,
+                    EffectiveFocusId: string.Empty,
+                    Rule: null);
+            }
+
+            // Explicit History Paste has no prior dictation caret to drift from, but still requires
+            // live UIA confirmation that focus is inside target.ProcessId and is not a password field.
             if (focus.ProcessId != target.ProcessId)
             {
                 return new FocusEvaluationResult(
@@ -449,29 +451,32 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                     Rule: null);
             }
 
-            var fallbackRule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
-            if (!fallbackRule.AllowsWindowFallbackWithoutFocusedElement)
+            var historyRule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
+            if (!historyRule.AllowsWindowFallbackWithoutFocusedElement)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
                         TargetContextStatus.AccessibilityUnavailable,
-                        EmptyContext(target, string.Empty, fallbackRule.TargetKind),
+                        EmptyContext(target, string.Empty, historyRule.TargetKind),
                         TextDeliveryRefusalReason.UnsupportedTarget),
                     WindowFallbackOnly: false,
                     EffectiveFocusId: string.Empty,
                     Rule: null);
             }
 
+            var liveHistoryId = !string.IsNullOrEmpty(focus.RuntimeId)
+                ? focus.RuntimeId
+                : (win32ChildFocusId ?? string.Empty);
             return new FocusEvaluationResult(
                 Failure: null,
                 WindowFallbackOnly: true,
-                EffectiveFocusId: liveCombinedId,
-                Rule: fallbackRule);
+                EffectiveFocusId: liveHistoryId,
+                Rule: historyRule);
         }
 
         if (target.FocusedElementId.StartsWith(WindowsWindowIdentity.Win32FocusPrefix, StringComparison.Ordinal))
         {
-            if (!string.Equals(win32FocusId, target.FocusedElementId, StringComparison.Ordinal) ||
+            if (!string.Equals(win32ChildFocusId, target.FocusedElementId, StringComparison.Ordinal) ||
                 !focus.HasKeyboardFocus)
             {
                 return new FocusEvaluationResult(
@@ -494,30 +499,32 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                     Rule: null);
             }
 
+            var effectiveWin32Id = !string.IsNullOrEmpty(focus.RuntimeId)
+                ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
+                : target.FocusedElementId;
             var win32Rule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
             if (focus.IsPassword)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
                         TargetContextStatus.Protected,
-                        EmptyContext(target, liveCombinedId, win32Rule.TargetKind),
+                        EmptyContext(target, effectiveWin32Id, win32Rule.TargetKind),
                         TextDeliveryRefusalReason.ProtectedField),
                     WindowFallbackOnly: false,
-                    EffectiveFocusId: liveCombinedId,
+                    EffectiveFocusId: effectiveWin32Id,
                     Rule: win32Rule);
             }
 
             return new FocusEvaluationResult(
                 Failure: null,
                 WindowFallbackOnly: false,
-                EffectiveFocusId: liveCombinedId,
+                EffectiveFocusId: effectiveWin32Id,
                 Rule: win32Rule);
         }
 
-        var expectedUiaMatched = target.FocusedElementId.StartsWith(WindowsWindowIdentity.UiaFallbackPrefix, StringComparison.Ordinal)
-            ? string.Equals(liveUiaId, target.FocusedElementId, StringComparison.Ordinal)
-            : string.Equals(focus.RuntimeId, target.FocusedElementId, StringComparison.Ordinal);
-        if (focus.ProcessId != target.ProcessId || !expectedUiaMatched || !focus.HasKeyboardFocus)
+        if (focus.ProcessId != target.ProcessId ||
+            !string.Equals(focus.RuntimeId, target.FocusedElementId, StringComparison.Ordinal) ||
+            !focus.HasKeyboardFocus)
         {
             return new FocusEvaluationResult(
                 new TargetContextResult(
@@ -528,26 +535,23 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 Rule: null);
         }
 
-        var effectiveFocusId = target.FocusedElementId.StartsWith(WindowsWindowIdentity.UiaFallbackPrefix, StringComparison.Ordinal)
-            ? liveCombinedId
-            : focus.RuntimeId;
         var rule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
         if (focus.IsPassword)
         {
             return new FocusEvaluationResult(
                 new TargetContextResult(
                     TargetContextStatus.Protected,
-                    EmptyContext(target, effectiveFocusId, rule.TargetKind),
+                    EmptyContext(target, focus.RuntimeId, rule.TargetKind),
                     TextDeliveryRefusalReason.ProtectedField),
                 WindowFallbackOnly: false,
-                EffectiveFocusId: effectiveFocusId,
+                EffectiveFocusId: focus.RuntimeId,
                 Rule: rule);
         }
 
         return new FocusEvaluationResult(
             Failure: null,
             WindowFallbackOnly: false,
-            EffectiveFocusId: effectiveFocusId,
+            EffectiveFocusId: focus.RuntimeId,
             Rule: rule);
     }
 
@@ -566,10 +570,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool IsEnabled,
         bool IsKeyboardFocusable,
         bool IsControlEdit,
-        string ClassName,
-        int ControlTypeId = 0,
-        int NativeWindowHandle = 0,
-        string AutomationId = "");
+        string ClassName);
 
     /// <summary>The text around the caret, as the text pattern reports it.</summary>
     private sealed record CaretText(string Selected, string Left, bool LeftAtStart, string Right, bool RightAtEnd);

@@ -40,38 +40,28 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
 
     private static string? TryCaptureFocusedElementId(nint windowHandle, uint processId)
     {
-        var win32FocusId = WindowsWindowIdentity.TryCaptureWin32FocusId(windowHandle, processId);
+        var win32ChildFocusId = WindowsWindowIdentity.TryCaptureDistinctWin32ChildFocusId(windowHandle, processId);
         try
         {
             var focused = AutomationElement.FocusedElement;
-            if (focused is null || focused.Current.ProcessId != processId)
+            if (focused is not null && focused.Current.ProcessId == processId)
             {
-                return win32FocusId;
+                var runtimeId = focused.GetRuntimeId();
+                if (runtimeId is { Length: > 0 })
+                {
+                    return string.Join('.', runtimeId);
+                }
             }
-
-            var runtimeId = focused.GetRuntimeId();
-            if (runtimeId is { Length: > 0 })
-            {
-                return string.Join('.', runtimeId);
-            }
-
-            // Some Chromium/Electron widgets expose a valid FocusedElement for the window process
-            // while returning a null or empty RuntimeId; keep a deterministic UIA+Win32 fingerprint
-            // (free of user text) so intra-window focus shifts remain detectable.
-            return WindowsWindowIdentity.FormatUiaFallbackElementId(
-                focused.Current.ControlType.Id,
-                focused.Current.NativeWindowHandle,
-                focused.Current.ClassName,
-                focused.Current.AutomationId,
-                win32FocusId);
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            // UI Automation can fail with provider-specific non-fatal exception types across runtime
-            // boundaries; preserve Win32 GuiThreadInfo focus identity when present instead of dropping
-            // all intra-window focus identity.
-            return win32FocusId;
+            // UI Automation can fail across process/runtime boundaries; fall through to the
+            // distinct Win32 child HWND focus check below.
         }
+
+        // Only accept a distinct child control HWND (never top-level HWND); otherwise return null so
+        // live dictation fails closed rather than missing intra-window shifts.
+        return win32ChildFocusId;
     }
 
     /// <summary>Brings a remembered window back (restoring it if minimized) and captures its focused field when available.</summary>

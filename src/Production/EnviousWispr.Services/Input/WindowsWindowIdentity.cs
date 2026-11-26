@@ -9,7 +9,6 @@ internal static class WindowsWindowIdentity
 {
     private const int SwRestore = 9;
     internal const string Win32FocusPrefix = "win32:";
-    internal const string UiaFallbackPrefix = "uia-el:";
 
     internal static string? TryGetClassName(nint window)
     {
@@ -58,7 +57,12 @@ internal static class WindowsWindowIdentity
         _ = SetForegroundWindow(window);
     }
 
-    internal static string? TryCaptureWin32FocusId(nint window, uint expectedProcessId)
+    /// <summary>
+    /// Captures a distinct Win32 child control HWND focus token when UIA has no RuntimeId.
+    /// Returns null whenever focus equals the top-level window HWND so windowless intra-window
+    /// shifts (e.g. Electron panes sharing one HWND) cannot bypass change detection.
+    /// </summary>
+    internal static string? TryCaptureDistinctWin32ChildFocusId(nint window, uint expectedProcessId)
     {
         if (window == 0)
         {
@@ -72,7 +76,9 @@ internal static class WindowsWindowIdentity
         }
 
         var gui = new GuiThreadInfo { Size = Marshal.SizeOf<GuiThreadInfo>() };
-        if (!GetGUIThreadInfo(threadId, ref gui) || gui.HwndFocus == 0)
+        if (!GetGUIThreadInfo(threadId, ref gui) ||
+            gui.HwndFocus == 0 ||
+            gui.HwndFocus == window)
         {
             return null;
         }
@@ -82,19 +88,6 @@ internal static class WindowsWindowIdentity
         return focusProcessId == requiredProcessId
             ? $"{Win32FocusPrefix}{gui.HwndFocus:X}"
             : null;
-    }
-
-    internal static string FormatUiaFallbackElementId(
-        int controlTypeId,
-        int nativeWindowHandle,
-        string? className,
-        string? automationId,
-        string? win32FocusId)
-    {
-        var cls = string.IsNullOrWhiteSpace(className) ? "-" : className.Trim();
-        var aid = string.IsNullOrWhiteSpace(automationId) ? "-" : automationId.Trim();
-        var win = string.IsNullOrWhiteSpace(win32FocusId) ? "-" : win32FocusId.Trim();
-        return $"{UiaFallbackPrefix}{controlTypeId}:{nativeWindowHandle:X}:{cls}:{aid}:{win}";
     }
 
     internal static string CombineFocusIdentity(string? win32FocusId, string uiaFocusId) =>

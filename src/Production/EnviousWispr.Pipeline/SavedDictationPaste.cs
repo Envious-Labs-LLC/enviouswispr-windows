@@ -280,6 +280,10 @@ public sealed class SavedDictationPaste
             // The person asked for a paste; the dictation's copy-instead setting does not turn it into a copy.
             // Only an Undo with no field to return to is a copy, and that is this code's choice, not a setting.
             CopyInsteadOfPaste = clipboardOnly,
+            // Explicit History Paste originates from the user clicking Paste in History after leaving the
+            // target window, so there was no prior caret position during dictation to drift from. Live
+            // dictation and Undo leave this false and keep strict frozen-field tracking.
+            IsExplicitHistoryPaste = action == SavedDictationPasteAction.HistoryPaste,
         };
         var delivery = await _environment.Delivery.DeliverAsync(
             new TextDeliveryRequest(
