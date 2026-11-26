@@ -286,7 +286,7 @@
                 </StackPanel>
 
                 <!-- Self-Learning Dictionary Undo pill (issue 380): matches macOS CorrectionLearnedPillFace -->
-                <Grid x:Name="LearnedPillPanel" Margin="12,10,10,10" VerticalAlignment="Center" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                <Grid x:Name="LearnedPillPanel" Margin="14,9,12,11" VerticalAlignment="Center" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />

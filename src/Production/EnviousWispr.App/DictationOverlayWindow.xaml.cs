@@ -73,8 +73,8 @@ public sealed partial class DictationOverlayWindow : Window
     private LearnedCorrectionPillModel? _learnedModel;
     private TimeSpan _learnedDuration = TimeSpan.FromSeconds(12);
     private double _learnedElapsedBaseMs;
-    private const double LearnedCapsuleRadius = 28;
-    private const double LearnedPillHeight = 58;
+    private const double LearnedCapsuleRadius = 32;
+    private const double LearnedPillHeight = 64;
     private const double LearnedDwellSeconds = 12.0;
     private const double LearnedHoverResumeFloorSeconds = 2.0;
     private const double LearnedUndoneDwellSeconds = 1.5;
