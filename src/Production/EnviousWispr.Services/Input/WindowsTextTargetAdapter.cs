@@ -276,7 +276,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     }
 
     private sealed record ObservedArrivalText(
-        bool SameProcess,
+        uint FocusProcessId,
         bool IsPassword,
         string? LeftBeforeCaret,
         string? FullValue);
@@ -300,14 +300,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             }
 
             var pid = checked((uint)element.Current.ProcessId);
-            if (pid != request.Target.ProcessId)
-            {
-                return new ObservedArrivalText(SameProcess: false, IsPassword: false, null, null);
-            }
-
             if (element.Current.IsPassword)
             {
-                return new ObservedArrivalText(SameProcess: true, IsPassword: true, null, null);
+                return new ObservedArrivalText(pid, IsPassword: true, null, null);
             }
 
             string? leftBeforeCaret = null;
@@ -344,13 +339,18 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             }
 
             return new ObservedArrivalText(
-                SameProcess: true,
+                pid,
                 IsPassword: false,
                 leftBeforeCaret,
                 fullValue);
         });
 
-        if (observed is null || !observed.SameProcess || observed.IsPassword)
+        if (observed is null ||
+            observed.IsPassword ||
+            !WindowsWindowIdentity.IsMatchingFocusProcess(
+                request.Target.Value,
+                request.Target.ProcessId,
+                observed.FocusProcessId))
         {
             return PasteArrivalStatus.Unreadable;
         }
@@ -610,7 +610,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         if (wasReactivated)
         {
-            while (!budget.IsExhausted && !IsFocusSettledForProcess(target.ProcessId))
+            while (!budget.IsExhausted && !IsFocusSettledForProcess(target.Value, target.ProcessId))
             {
                 if (budget.IsExhausted)
                 {
@@ -644,13 +644,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
 
+        var focusMatchesProcess = WindowsWindowIdentity.IsMatchingFocusProcess(target.Value, target.ProcessId, focus.ProcessId);
         var evaluation = EvaluateFocusedElement(
             target,
             focus,
             win32ChildFocusId,
             options.IsExplicitHistoryPaste || options.TargetMode == Core.Settings.PasteTargetMode.WhereCursorIsAtRelease,
             (className, isControlEdit) => ResolveTargetPolicy(target, className, isControlEdit),
-            allowSameWindowEditableReplacement: options.TargetMode == Core.Settings.PasteTargetMode.WhereDictationStarted);
+            allowSameWindowEditableReplacement: options.TargetMode == Core.Settings.PasteTargetMode.WhereDictationStarted,
+            focusProcessMatchesTarget: focusMatchesProcess);
         if (evaluation.Failure is not null)
         {
             return evaluation.Failure;
@@ -691,12 +693,19 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
 
         var caret = Automation(() => ReadCaret(textPattern, options));
-        if (caret is null)
+        if (caret is null || (caret.NoSelection && targetKind != TextTargetKind.Terminal))
         {
             return new TargetContextResult(
                 TargetContextStatus.AccessibilityUnavailable,
                 EmptyContext(target, focusedId, targetKind),
                 TextDeliveryRefusalReason.UnsupportedTarget);
+        }
+
+        if (caret.NoSelection)
+        {
+            return new TargetContextResult(
+                TargetContextStatus.Available,
+                EmptyContext(target, focusedId, targetKind));
         }
 
         var supportsValue = !rule.SkipDirectValueWrite &&
@@ -724,11 +733,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 IsUrlBarField: urlBar));
     }
 
-    private static bool IsFocusSettledForProcess(uint targetProcessId) =>
-        Automation(() =>
-            AutomationElement.FocusedElement is { } focused &&
-            checked((uint)focused.Current.ProcessId) == targetProcessId &&
-            focused.Current.HasKeyboardFocus);
+    private static bool IsFocusSettledForProcess(nint windowHandle, uint targetProcessId)
+    {
+        var focusedPid = Automation(static () =>
+            AutomationElement.FocusedElement is { } focused && focused.Current.HasKeyboardFocus
+                ? checked((uint)focused.Current.ProcessId)
+                : 0u);
+        return focusedPid != 0 &&
+            WindowsWindowIdentity.IsMatchingFocusProcess(windowHandle, targetProcessId, focusedPid);
+    }
 
     private static FocusedElementFacts? ReadFocusedElementFacts(AutomationElement? element) =>
         element is null
@@ -756,7 +769,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         string? win32ChildFocusId,
         bool isExplicitHistoryPaste,
         Func<string?, bool, WindowsPasteRule> resolvePolicy,
-        bool allowSameWindowEditableReplacement = true)
+        bool allowSameWindowEditableReplacement = true,
+        bool? focusProcessMatchesTarget = null)
     {
         ArgumentNullException.ThrowIfNull(resolvePolicy);
         if (focus is null)
@@ -769,6 +783,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 EffectiveFocusId: string.Empty,
                 Rule: null);
         }
+
+        var processMatches = focusProcessMatchesTarget ?? (focus.ProcessId == target.ProcessId);
 
         if (target.FocusedElementId is null)
         {
@@ -787,7 +803,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
             // Explicit History Paste has no prior dictation caret to drift from, but still requires
             // live UIA confirmation that focus is inside target.ProcessId and is not a password field.
-            if (focus.ProcessId != target.ProcessId)
+            if (!processMatches)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
@@ -857,7 +873,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                     Rule: null);
             }
 
-            if (focus.ProcessId != target.ProcessId)
+            if (!processMatches)
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
@@ -911,7 +927,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 Rule: win32Rule);
         }
 
-        if (focus.ProcessId != target.ProcessId || !focus.HasKeyboardFocus)
+        if (!processMatches || !focus.HasKeyboardFocus)
         {
             return new FocusEvaluationResult(
                 new TargetContextResult(
@@ -975,13 +991,24 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool IsControlDocument = false);
 
     /// <summary>The text around the caret, as the text pattern reports it.</summary>
-    private sealed record CaretText(string Selected, string Left, bool LeftAtStart, string Right, bool RightAtEnd);
+    private sealed record CaretText(
+        string Selected,
+        string Left,
+        bool LeftAtStart,
+        string Right,
+        bool RightAtEnd,
+        bool NoSelection = false);
 
     /// <summary>Reads the selection and the bounded text on either side of it; null when the control's selection is not one range within the window.</summary>
     /// <remarks>UI AUTOMATION CALLS ONLY, so the caller can put the whole read behind one boundary.</remarks>
     private static CaretText? ReadCaret(TextPattern textPattern, TextDeliveryOptions options)
     {
         var selections = textPattern.GetSelection();
+        if (selections.Length == 0)
+        {
+            return new CaretText(string.Empty, string.Empty, false, string.Empty, false, NoSelection: true);
+        }
+
         if (selections.Length != 1)
         {
             return null;

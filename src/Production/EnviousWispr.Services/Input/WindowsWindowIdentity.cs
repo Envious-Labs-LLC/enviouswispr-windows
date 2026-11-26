@@ -218,6 +218,47 @@ internal static class WindowsWindowIdentity
             ? uiaFocusId
             : $"{uiaFocusId}|{win32FocusId}";
 
+    internal static bool IsConsoleHostProcessName(string? processName)
+    {
+        var normalized = NormalizeProcessName(processName);
+        return string.Equals(normalized, "conhost", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "OpenConsole", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsMatchingFocusProcess(
+        nint windowHandle,
+        uint targetProcessId,
+        uint focusProcessId) =>
+        IsMatchingFocusProcessCore(
+            targetProcessId,
+            focusProcessId,
+            () => TryGetClassName(windowHandle),
+            TryGetProcessName,
+            TryIsHigherIntegrityProcess);
+
+    internal static bool IsMatchingFocusProcessCore(
+        uint targetProcessId,
+        uint focusProcessId,
+        Func<string?> getWindowClassName,
+        Func<uint, string?> getProcessName,
+        Func<uint, bool?> isHigherIntegrity)
+    {
+        if (targetProcessId == 0 || focusProcessId == 0)
+        {
+            return false;
+        }
+
+        if (focusProcessId == targetProcessId)
+        {
+            return true;
+        }
+
+        var windowClass = getWindowClassName();
+        return string.Equals(windowClass, "ConsoleWindowClass", StringComparison.OrdinalIgnoreCase) &&
+            IsConsoleHostProcessName(getProcessName(focusProcessId)) &&
+            isHigherIntegrity(focusProcessId) == false;
+    }
+
     /// <summary>
     /// Returns whether <paramref name="targetProcessId"/> runs at a higher Windows integrity level
     /// than this process, or <see langword="null"/> when the process token cannot be queried.

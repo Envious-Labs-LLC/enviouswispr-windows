@@ -143,6 +143,104 @@ public sealed class MultiAppPasteReliabilityTests
         Assert.Equal(expected, actual);
     }
 
+    [Fact]
+    public void IsMatchingFocusProcessCoreAllowsNonElevatedConsoleHostOnlyOnConsoleWindows()
+    {
+        Assert.True(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 45012,
+            () => "Notepad",
+            _ => "notepad",
+            _ => false));
+
+        Assert.True(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 35352,
+            () => "ConsoleWindowClass",
+            _ => "conhost.exe",
+            _ => false));
+
+        Assert.True(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 35352,
+            () => "ConsoleWindowClass",
+            _ => "OpenConsole",
+            _ => false));
+
+        // Elevated or unreadable integrity console host must never match.
+        Assert.False(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 35352,
+            () => "ConsoleWindowClass",
+            _ => "conhost",
+            _ => true));
+        Assert.False(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 35352,
+            () => "ConsoleWindowClass",
+            _ => "conhost",
+            _ => null));
+
+        // Non-console window classes and non-host processes keep strict PID equality.
+        Assert.False(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 35352,
+            () => "Chrome_WidgetWin_1",
+            _ => "conhost",
+            _ => false));
+        Assert.False(WindowsWindowIdentity.IsMatchingFocusProcessCore(
+            targetProcessId: 45012,
+            focusProcessId: 35352,
+            () => "ConsoleWindowClass",
+            _ => "notepad",
+            _ => false));
+    }
+
+    [Fact]
+    public void EvaluateFocusedElementAcceptsMatchedConsoleHostTerminalAndBlocksMismatchedFocusOrPassword()
+    {
+        var terminalTarget = new TargetWindowId(7408622, 45012, FocusedElementId: "42.7408622.4.-1", ProcessName: "pwsh");
+        var terminalRule = WindowsPastePolicy.Resolve("pwsh", "ConsoleWindowClass", null, isControlEdit: false);
+        var consoleFocus = new WindowsTextTargetAdapter.FocusedElementFacts(
+            ProcessId: 35352,
+            RuntimeId: "42.7408622.4.-1",
+            HasKeyboardFocus: true,
+            IsPassword: false,
+            IsEnabled: true,
+            IsKeyboardFocusable: true,
+            IsControlEdit: false,
+            ClassName: string.Empty,
+            IsControlDocument: true);
+
+        var matched = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            terminalTarget,
+            consoleFocus,
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => terminalRule,
+            focusProcessMatchesTarget: true);
+        Assert.Null(matched.Failure);
+        Assert.Equal("42.7408622.4.-1", matched.EffectiveFocusId);
+
+        var unmatched = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            terminalTarget,
+            consoleFocus,
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => terminalRule,
+            focusProcessMatchesTarget: false);
+        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, unmatched.Failure?.RefusalReason);
+
+        var passwordInConsole = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            terminalTarget,
+            consoleFocus with { IsPassword = true },
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => terminalRule,
+            focusProcessMatchesTarget: true);
+        Assert.Equal(TextDeliveryRefusalReason.ProtectedField, passwordInConsole.Failure?.RefusalReason);
+    }
+
     [ClipboardFact]
     public async Task TemporaryPasteClipboardWritesCarryExclusionMarkersWithoutCorruptingRestoreOrCopyOnly()
     {

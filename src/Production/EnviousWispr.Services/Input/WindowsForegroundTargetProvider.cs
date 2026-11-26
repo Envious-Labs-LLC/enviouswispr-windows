@@ -49,7 +49,8 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
         try
         {
             var focused = AutomationElement.FocusedElement;
-            if (focused is not null && focused.Current.ProcessId == processId)
+            if (focused is not null &&
+                WindowsWindowIdentity.IsMatchingFocusProcess(windowHandle, processId, checked((uint)focused.Current.ProcessId)))
             {
                 var runtimeId = focused.GetRuntimeId();
                 if (runtimeId is { Length: > 0 })
