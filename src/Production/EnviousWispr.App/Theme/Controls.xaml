@@ -1357,6 +1357,69 @@
         <Setter Property="Padding" Value="{StaticResource BrandHelpFlyoutPadding}" />
         <Setter Property="MaxWidth" Value="{StaticResource BrandHelpFlyoutMaxWidth}" />
     </Style>
+    <!-- Circular 28x28 solid accent play/pause control for inline History playback strips -->
+    <Style x:Key="BrandPlaybackCircleButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Width" Value="28" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="MinWidth" Value="28" />
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandOnAccentBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandOnAccentBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="RootGrid"
+                          Width="{TemplateBinding Width}"
+                          Height="{TemplateBinding Height}"
+                          CornerRadius="{TemplateBinding CornerRadius}"
+                          Background="{TemplateBinding Background}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Background" Value="{ThemeResource BrandAccentBrush}" />
+                                        <Setter Target="HoverWash.Opacity" Value="0.16" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Background" Value="{ThemeResource BrandAccentBrush}" />
+                                        <Setter Target="RootGrid.Opacity" Value="0.82" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Opacity" Value="0.45" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="HoverWash"
+                                CornerRadius="{TemplateBinding CornerRadius}"
+                                Background="{ThemeResource BrandOnAccentBrush}"
+                                Opacity="0"
+                                IsHitTestVisible="False" />
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Padding="{TemplateBinding Padding}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          AutomationProperties.AccessibilityView="Raw" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- History list rows are separated into unselectable day headers and custom card borders so container hover/selection chrome never bleeds across gaps or headings. -->
     <Style x:Key="BrandHistoryListItemStyle" TargetType="ListViewItem">
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />

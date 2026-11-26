@@ -1,6 +1,8 @@
 using EnviousWispr.Pipeline;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
@@ -16,11 +18,42 @@ namespace EnviousWispr.App;
 public sealed partial class MainWindow
 {
     private CancellationTokenSource? _transcribeFileRun;
+    private int _transcribeFileCopyVersion;
+    private bool _transcribeFileDropZoneHovering;
+    private bool _transcribeFileDropZoneDragActive;
 
     /// <summary>Runs one file through the app's transcription; null until the app has an engine to offer.</summary>
     public Func<string, IProgress<FileTranscriptionProgress>, CancellationToken, Task<FileTranscriptionResult>>? TranscribeFile { get; set; }
 
     private async void TranscribeFileChooseButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickAndStartFileTranscriptionAsync().ConfigureAwait(true);
+    }
+
+    private async void TranscribeFileDropZone_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject source && IsInsideInteractiveChildButton(source))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await PickAndStartFileTranscriptionAsync().ConfigureAwait(true);
+    }
+
+    private void TranscribeFileDropZone_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        _transcribeFileDropZoneHovering = true;
+        UpdateTranscribeDropZoneVisualState();
+    }
+
+    private void TranscribeFileDropZone_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        _transcribeFileDropZoneHovering = false;
+        UpdateTranscribeDropZoneVisualState();
+    }
+
+    private async Task PickAndStartFileTranscriptionAsync()
     {
         if (TranscribeFile is not { } || _transcribeFileRun is not null)
         {
@@ -48,6 +81,8 @@ public sealed partial class MainWindow
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
+            _transcribeFileDropZoneDragActive = true;
+            UpdateTranscribeDropZoneVisualState();
             e.AcceptedOperation = DataPackageOperation.Copy;
             e.DragUIOverride.Caption = "Drop audio file to transcribe";
             e.DragUIOverride.IsCaptionVisible = true;
@@ -59,8 +94,17 @@ public sealed partial class MainWindow
         }
     }
 
+    private void TranscribeFileDropZone_DragLeave(object sender, DragEventArgs e)
+    {
+        _transcribeFileDropZoneDragActive = false;
+        UpdateTranscribeDropZoneVisualState();
+    }
+
     private async void TranscribeFileDropZone_Drop(object sender, DragEventArgs e)
     {
+        _transcribeFileDropZoneDragActive = false;
+        UpdateTranscribeDropZoneVisualState();
+
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             return;
@@ -101,8 +145,10 @@ public sealed partial class MainWindow
         TranscribeFileProgress.Value = 0;
         TranscribeFileProgress.IsIndeterminate = true;
         TranscribeFileProgress.Visibility = Visibility.Visible;
+        TranscribeFileResultPanel.Visibility = Visibility.Collapsed;
+        ResetTranscribeFileCopyVisual();
         SetTranscribeFileStep(FileTranscriptionStepState.StartStep);
-        ShowTranscribeFileStatus("Reading the file...");
+        ShowTranscribeFileStatus($"Working on {System.IO.Path.GetFileName(filePath)}...");
         try
         {
             var result = await transcribe(filePath, new Progress<FileTranscriptionProgress>(ShowTranscribeFileProgress), run.Token)
@@ -115,6 +161,7 @@ public sealed partial class MainWindow
             TranscribeFileChooseButton.IsEnabled = true;
             TranscribeFileCancelButton.Visibility = Visibility.Collapsed;
             TranscribeFileProgress.Visibility = Visibility.Collapsed;
+            UpdateTranscribeDropZoneVisualState();
         }
     }
 
@@ -158,7 +205,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        SetTranscribeFileStep(FileTranscriptionStepState.StepForOutcome(result.Outcome));
+        var completedCleanly = result.Outcome == FileTranscriptionOutcome.Completed && !string.IsNullOrWhiteSpace(result.Text);
+        SetTranscribeFileStep(FileTranscriptionStepState.StepForOutcome(result.Outcome), isDone: completedCleanly);
 
         var (status, showText) = result.Outcome switch
         {
@@ -173,9 +221,10 @@ public sealed partial class MainWindow
         ShowTranscribeFileStatus(status);
         TranscribeFileResultText.Text = showText ? result.Text : string.Empty;
         TranscribeFileResultPanel.Visibility = showText ? Visibility.Visible : Visibility.Collapsed;
+        ResetTranscribeFileCopyVisual();
     }
 
-    private void SetTranscribeFileStep(int step)
+    private void SetTranscribeFileStep(int step, bool isDone = false)
     {
         if (TranscribeStep1Badge is null)
         {
@@ -189,46 +238,105 @@ public sealed partial class MainWindow
         var tertiaryBrush = (Brush)Application.Current.Resources["BrandTextTertiaryBrush"];
         var successBrush = (Brush)Application.Current.Resources["BrandSuccessBrush"];
         var secondaryBrush = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
+        var transparentBrush = (Brush)Application.Current.Resources["BrandHitTestBrush"];
+        var textFont = new FontFamily("Segoe UI Variable Text, Segoe UI");
+        var symbolFont = new FontFamily("Segoe Fluent Icons");
 
         var activeStep = FileTranscriptionStepState.ClampStep(step);
-        var steps = new (Border? Badge, TextBlock? Num, TextBlock? Label)[]
+        var steps = new (Border? Container, Border? Badge, TextBlock? Num, TextBlock? Label, string NumberText)[]
         {
-            (TranscribeStep1Badge, TranscribeStep1Num, TranscribeStep1Label),
-            (TranscribeStep2Badge, TranscribeStep2Num, TranscribeStep2Label),
-            (TranscribeStep3Badge, TranscribeStep3Num, TranscribeStep3Label),
+            (TranscribeStep1Container, TranscribeStep1Badge, TranscribeStep1Num, TranscribeStep1Label, "1"),
+            (TranscribeStep2Container, TranscribeStep2Badge, TranscribeStep2Num, TranscribeStep2Label, "2"),
+            (TranscribeStep3Container, TranscribeStep3Badge, TranscribeStep3Num, TranscribeStep3Label, "3"),
         };
 
         for (var i = 0; i < steps.Length; i++)
         {
-            var (badge, num, label) = steps[i];
+            var (container, badge, num, label, numberText) = steps[i];
             if (badge is null || num is null || label is null)
             {
                 continue;
             }
 
             var stepNum = i + 1;
-            if (stepNum == activeStep)
+            var isStepCompleted = stepNum < activeStep || (isDone && stepNum == 3);
+            var isStepActive = stepNum == activeStep;
+
+            if (container is not null)
             {
-                badge.Background = accentSolidBrush;
-                num.Foreground = onAccentBrush;
-                label.Foreground = accentBrush;
-                label.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                container.BorderBrush = isStepActive ? accentSolidBrush : transparentBrush;
             }
-            else if (stepNum < activeStep)
+
+            if (isStepCompleted)
             {
                 badge.Background = successBrush;
+                num.FontFamily = symbolFont;
+                num.FontSize = 14;
+                num.FontWeight = FontWeights.Bold;
+                num.Text = "\uE73E";
                 num.Foreground = onAccentBrush;
-                label.Foreground = secondaryBrush;
-                label.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+                label.Foreground = isStepActive ? accentBrush : secondaryBrush;
+                label.FontWeight = isStepActive ? FontWeights.SemiBold : FontWeights.Normal;
+            }
+            else if (isStepActive)
+            {
+                badge.Background = accentSolidBrush;
+                num.FontFamily = textFont;
+                num.FontSize = 14;
+                num.FontWeight = FontWeights.Bold;
+                num.Text = numberText;
+                num.Foreground = onAccentBrush;
+                label.Foreground = accentBrush;
+                label.FontWeight = FontWeights.SemiBold;
             }
             else
             {
                 badge.Background = dividerBrush;
+                num.FontFamily = textFont;
+                num.FontSize = 14;
+                num.FontWeight = FontWeights.Bold;
+                num.Text = numberText;
                 num.Foreground = tertiaryBrush;
                 label.Foreground = tertiaryBrush;
-                label.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+                label.FontWeight = FontWeights.Normal;
             }
         }
+    }
+
+    private void UpdateTranscribeDropZoneVisualState()
+    {
+        if (TranscribeFileDropZone is null || TranscribeFileDashedBorder is null)
+        {
+            return;
+        }
+
+        var highlighted = (_transcribeFileDropZoneHovering || _transcribeFileDropZoneDragActive) && _transcribeFileRun is null;
+        if (highlighted)
+        {
+            TranscribeFileDashedBorder.Stroke = (Brush)Application.Current.Resources["BrandAccentBrush"];
+            TranscribeFileDropZone.Background = (Brush)Application.Current.Resources["BrandAccentLightBrush"];
+        }
+        else
+        {
+            TranscribeFileDashedBorder.ClearValue(Microsoft.UI.Xaml.Shapes.Shape.StrokeProperty);
+            TranscribeFileDropZone.ClearValue(Panel.BackgroundProperty);
+        }
+    }
+
+    private static bool IsInsideInteractiveChildButton(DependencyObject source)
+    {
+        DependencyObject? current = source;
+        while (current is not null)
+        {
+            if (current is Button or TextBox)
+            {
+                return true;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
     }
 
     /// <summary>Why a file could not start, in macOS's words where macOS has them. Ref: #211.</summary>
@@ -256,7 +364,36 @@ public sealed partial class MainWindow
         package.SetText(TranscribeFileResultText.Text);
         Clipboard.SetContent(package);
         Clipboard.Flush();
-        ShowMessage("Copied", "The transcript is on your clipboard.", InfoBarSeverity.Success);
+
+        var version = ++_transcribeFileCopyVersion;
+        if (TranscribeFileCopyIcon is not null && TranscribeFileCopyText is not null)
+        {
+            TranscribeFileCopyIcon.Glyph = "\uE73E";
+            TranscribeFileCopyText.Text = "Copied";
+        }
+
+        _ = ResetTranscribeFileCopyBadgeAfterDelayAsync(version);
+    }
+
+    private async Task ResetTranscribeFileCopyBadgeAfterDelayAsync(int expectedVersion)
+    {
+        await Task.Delay(2000).ConfigureAwait(true);
+        if (_shuttingDownProductWindows || _transcribeFileCopyVersion != expectedVersion)
+        {
+            return;
+        }
+
+        ResetTranscribeFileCopyVisual();
+    }
+
+    private void ResetTranscribeFileCopyVisual()
+    {
+        _transcribeFileCopyVersion++;
+        if (TranscribeFileCopyIcon is not null && TranscribeFileCopyText is not null)
+        {
+            TranscribeFileCopyIcon.Glyph = "\uE8C8";
+            TranscribeFileCopyText.Text = "Copy";
+        }
     }
 
     private async void TranscribeFileSaveButton_Click(object sender, RoutedEventArgs e)
@@ -283,6 +420,21 @@ public sealed partial class MainWindow
         {
             ShowMessage("Not saved", "The transcript could not be written there. Choose another place.", InfoBarSeverity.Error);
         }
+    }
+
+    private void TranscribeFileNewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transcribeFileRun is not null)
+        {
+            return;
+        }
+
+        ResetTranscribeFileCopyVisual();
+        TranscribeFileResultText.Text = string.Empty;
+        TranscribeFileResultPanel.Visibility = Visibility.Collapsed;
+        SetLiveRegion(TranscribeFileStatusText, string.Empty, Visibility.Collapsed);
+        SetTranscribeFileStep(FileTranscriptionStepState.ChooseFileStep);
+        UpdateTranscribeDropZoneVisualState();
     }
 
     private static string Minutes(TimeSpan span) =>
