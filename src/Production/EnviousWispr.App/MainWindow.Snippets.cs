@@ -31,6 +31,12 @@ public sealed class SnippetRow
 
     public string Body => Entry.Body;
 
+    public string BodyPreview => Entry.Body
+        .Replace("\r\n", " ", StringComparison.Ordinal)
+        .Replace('\r', ' ')
+        .Replace('\n', ' ')
+        .Trim();
+
     public bool IsExample { get; }
 
     public Visibility ExampleVisibility => IsExample ? Visibility.Visible : Visibility.Collapsed;
@@ -92,8 +98,22 @@ public sealed partial class MainWindow
         SnippetList.ItemsSource = shown.Select(entry => new SnippetRow(entry)).ToArray();
         SnippetCountText.Text = snippets.Count == 0 ? string.Empty : SnippetImportCopy.CountLabel(shown.Count, snippets.Count, searching);
 
+        if (SnippetSearchClearButton is not null)
+        {
+            SnippetSearchClearButton.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         // THE SEARCH BOX STAYS WHILE IT HOLDS A QUERY, even if the list emptied under it, so the query can be cleared.
-        SnippetSearchBox.Visibility = snippets.Count > 0 || searching ? Visibility.Visible : Visibility.Collapsed;
+        var showSearch = snippets.Count > 0 || searching;
+        if (SnippetSearchContainer is not null)
+        {
+            SnippetSearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else
+        {
+            SnippetSearchBox.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         SnippetEmptyState.Visibility = snippets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var noMatch = snippets.Count > 0 && shown.Count == 0;
         SnippetNoMatchState.Visibility = noMatch ? Visibility.Visible : Visibility.Collapsed;
@@ -104,8 +124,11 @@ public sealed partial class MainWindow
     private void SnippetSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
         RefreshSnippetList(_settings.UserData.Snippets);
 
-    private void ClearSnippetSearchButton_Click(object sender, RoutedEventArgs e) =>
+    private void ClearSnippetSearchButton_Click(object sender, RoutedEventArgs e)
+    {
         SnippetSearchBox.Text = string.Empty;
+        SnippetSearchBox.Focus(FocusState.Programmatic);
+    }
 
     // ---- Export ------------------------------------------------------------------------------------------
 
@@ -175,7 +198,8 @@ public sealed partial class MainWindow
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(count, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         var dialog = new ContentDialog
         {
-            XamlRoot = Content.XamlRoot,
+            XamlRoot = WindowRoot.XamlRoot ?? Content.XamlRoot,
+            RequestedTheme = WindowRoot.ActualTheme,
             Title = "Paste snippets",
             PrimaryButtonText = "Continue",
             CloseButtonText = "Cancel",
@@ -318,7 +342,8 @@ public sealed partial class MainWindow
         var panel = Stack(Text("Snippets you already saved in another dictation app, found on this PC.", "BrandBodyStyle"));
         var dialog = new ContentDialog
         {
-            XamlRoot = Content.XamlRoot,
+            XamlRoot = WindowRoot.XamlRoot ?? Content.XamlRoot,
+            RequestedTheme = WindowRoot.ActualTheme,
             Title = "From another app",
             CloseButtonText = "Cancel",
             Content = panel,
@@ -562,53 +587,35 @@ public sealed partial class MainWindow
         return panel;
     }
 
-    /// <summary>Saves the snippet in the boxes, or says in the person's terms why it was not saved.</summary>
-    /// <remarks>
-    /// THE TEXT IS NOT TRIMMED. Leading or trailing space or a line break can be deliberate - a snippet
-    /// that starts on a new line, or ends with a space before the next word - and "exactly as written"
-    /// has to mean exactly (macOS <c>SnippetEditSheet.save</c>). The trigger is trimmed; its spacing
-    /// means nothing to the matcher.
-    /// </remarks>
-    private async void AddSnippetButton_Click(object sender, RoutedEventArgs e)
-    {
-        var trigger = SnippetNameBox.Text.Trim();
-        var body = SnippetBodyBox.Text;
+    private async void AddSnippetToolbarButton_Click(object sender, RoutedEventArgs e) =>
+        await ShowSnippetEditorDialogAsync(existing: null).ConfigureAwait(true);
 
-        // Same reason as the word boxes above: a refused save must not eat the snippet someone
-        // just wrote.
-        var saved = await CommitVocabularyAsync(_session.Vocabulary.AddSnippetAsync(new SnippetEntry(trigger, body))).ConfigureAwait(true);
+    private async void OpenNewSnippetDialogButton_Click(object sender, RoutedEventArgs e) =>
+        await ShowSnippetEditorDialogAsync(existing: null).ConfigureAwait(true);
+
+    private async void LoadExampleSnippetsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var saved = await CommitVocabularyAsync(_session.Vocabulary.RestoreStarterSnippetsAsync()).ConfigureAwait(true);
         if (!saved.Saved)
         {
             return;
         }
 
-        if (saved.Value.Refusal is { } refusal)
+        if (saved.Value > 0)
         {
-            ShowMessage("Snippet not saved", SnippetRefusalMessage(refusal, saved.Value.Clash), InfoBarSeverity.Warning);
-            return;
+            ShowMessage(
+                "Example snippets loaded",
+                saved.Value == 1 ? "Added 1 example snippet." : $"Added {saved.Value} example snippets.",
+                InfoBarSeverity.Success);
         }
-
-        ShowMessage("Snippet saved", "The change was saved locally.", InfoBarSeverity.Success);
-        SnippetNameBox.Text = string.Empty;
-        SnippetBodyBox.Text = string.Empty;
     }
 
-    /// <summary>Appends a fill-in's token to the snippet text.</summary>
-    /// <remarks>
-    /// AT THE END, NOT AT THE CARET, as macOS does: the helper copy under the buttons says so, and the
-    /// person can move the token anywhere. The token comes from the one spelling the matcher reads,
-    /// never a string written here.
-    /// </remarks>
-    private void SnippetFillInButton_Click(object sender, RoutedEventArgs e)
+    private async void SnippetList_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (sender is not Button { Tag: string tag } ||
-            !Enum.TryParse<SnippetPlaceholder>(tag, ignoreCase: false, out var placeholder))
+        if (e.ClickedItem is SnippetRow { Entry: var existing })
         {
-            return;
+            await ShowSnippetEditorDialogAsync(existing).ConfigureAwait(true);
         }
-
-        SnippetBodyBox.Text += SnippetPlaceholders.Token(placeholder);
-        SnippetBodyBox.SelectionStart = SnippetBodyBox.Text.Length;
     }
 
     private void SnippetKeywordBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -658,14 +665,7 @@ public sealed partial class MainWindow
         _ => throw new ArgumentOutOfRangeException(nameof(refusal), refusal, "Not a snippet refusal."),
     };
 
-    /// <summary>The keyword box and the two sentences built from the keyword the person actually has.</summary>
-    /// <remarks>
-    /// THE EXAMPLE IS BUILT FROM A TRIGGER THE PERSON ACTUALLY HAS, never a literal: a fixed "my email"
-    /// becomes a lie the moment that snippet is renamed or deleted, and with no snippets there is no
-    /// honest example, so it names none (macOS <c>SnippetsView.keywordExample</c>). The box is left
-    /// alone while it has focus unless a commit asks, or a refresh would write the old keyword over
-    /// what is being typed.
-    /// </remarks>
+    /// <summary>The keyword box and the visual spoken-command example built from what the person actually has.</summary>
     private void RefreshSnippetKeywordViews(bool force)
     {
         var keyword = _settings.UserData.SnippetKeyword;
@@ -675,23 +675,32 @@ public sealed partial class MainWindow
         }
 
         var snippets = _settings.UserData.Snippets;
-        SnippetKeywordExample.Text = snippets.Count > 0
-            ? $"For example, say \u201C{keyword} {snippets[0].Name}\u201D and that snippet is pasted."
-            : "Say your keyword, then the words you saved a snippet under, and that snippet is pasted.";
-        SnippetTriggerHelp.Text = $"Matched word for word, and only after you say \u201C{keyword}\u201D.";
-    }
+        var hasSnippet = snippets.Count > 0;
+        var exampleTrigger = hasSnippet ? snippets[0].Name : "my email";
+        var exampleExpansion = hasSnippet
+            ? new SnippetRow(snippets[0]).BodyPreview
+            : "john.doe@example.com";
 
-    private async void RemoveSnippetButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (SnippetList.SelectedItem is not SnippetRow { Entry: var selected })
+        if (SnippetKeywordExample is not null)
         {
-            ShowMessage("Select a snippet first", "Choose the snippet you want to remove.", InfoBarSeverity.Informational);
-            return;
+            SnippetKeywordExample.Text = hasSnippet
+                ? $"For example, say \u201C{keyword} {exampleTrigger}\u201D and that snippet is pasted."
+                : "Say your keyword, then the words you saved a snippet under, and that snippet is pasted.";
         }
 
-        await CommitVocabularyAsync(_session.Vocabulary.RemoveSnippetAsync(selected), "Snippet removed").ConfigureAwait(true);
-    }
+        if (SnippetFlowKeywordChipText is not null)
+        {
+            SnippetFlowKeywordChipText.Text = keyword;
+        }
 
-    private void FocusAddSnippetButton_Click(object sender, RoutedEventArgs e) =>
-        SnippetNameBox.Focus(FocusState.Programmatic);
+        if (SnippetFlowTriggerChipText is not null)
+        {
+            SnippetFlowTriggerChipText.Text = exampleTrigger;
+        }
+
+        if (SnippetFlowExpansionText is not null)
+        {
+            SnippetFlowExpansionText.Text = exampleExpansion;
+        }
+    }
 }

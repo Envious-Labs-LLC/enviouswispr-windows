@@ -284,11 +284,21 @@ public sealed class FluentShellTests
                      "HistorySummaryText",
                      "LivePreviewText",
                      "OpenHistoryButton_Click",
+                     "HelpNavItem",
+                     "HelpPage",
+                     "ConfigureHelpPage",
+                     "HelpSections",
                  })
         {
             Assert.DoesNotContain(removed, markup, StringComparison.Ordinal);
             Assert.DoesNotContain(removed, codeBehind, StringComparison.Ordinal);
         }
+
+        var doc = LoadMainWindow();
+        Assert.Equal("{StaticResource BrandToolbarIconButtonStyle}", (string?)FindNamed(doc, "WhatsNewToolbarButton").Attribute("Style"));
+        Assert.Equal("{StaticResource BrandToolbarIconButtonStyle}", (string?)FindNamed(doc, "FeedbackToolbarButton").Attribute("Style"));
+        Assert.Equal("{StaticResource BrandRecordToolbarButtonStyle}", (string?)FindNamed(doc, "RecordToolbarButton").Attribute("Style"));
+        Assert.NotNull(FindNamed(doc, "BuildInfoText"));
 
         Assert.Contains("\"home\" => (\"history\", null)", codeBehind, StringComparison.Ordinal);
     }

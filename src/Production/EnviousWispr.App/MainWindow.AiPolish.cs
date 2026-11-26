@@ -563,6 +563,33 @@ public sealed partial class MainWindow
         }
     }
 
+    private void EgOneCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ApplyResponsiveThreeCardGridLayout(
+            EgOneCardsGrid,
+            e.NewSize.Width,
+            stackThreshold: 700,
+            [EgOneFullCardContainer, EgOneMiniCardContainer, EgOneMicroCardContainer]);
+
+    private void EgOneCardFooter_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string tag } || e.NewSize.Height <= 0)
+        {
+            return;
+        }
+
+        var targetCard = tag switch
+        {
+            "eg-1" => EgOneSizeFullCard,
+            "eg-1-mini" => EgOneSizeMiniCard,
+            "eg-1-micro" => EgOneSizeMicroCard,
+            _ => null,
+        };
+        if (targetCard is not null)
+        {
+            targetCard.Padding = new Thickness(16, 16, 16, Math.Ceiling(e.NewSize.Height) + 22);
+        }
+    }
+
     private static void ApplyEgOneCardPresentation(
         EgOneCardPresentation card,
         RadioButton? cardButton,
@@ -720,7 +747,7 @@ public sealed partial class MainWindow
             var dialog = new ContentDialog
             {
                 XamlRoot = xamlRoot,
-                RequestedTheme = (Content as FrameworkElement)?.RequestedTheme ?? ElementTheme.Default,
+                RequestedTheme = WindowRoot.ActualTheme,
                 Title = confirmation.Title,
                 Content = new TextBlock
                 {

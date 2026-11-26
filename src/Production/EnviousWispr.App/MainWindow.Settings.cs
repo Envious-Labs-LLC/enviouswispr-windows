@@ -346,7 +346,6 @@ public sealed partial class MainWindow
         if (RemoveWordButton is null
             || SelectAllWordsButton is null
             || WordSelectionCountText is null
-            || RemoveSnippetButton is null
             || ExportSnippetsButton is null)
         {
             return;
@@ -370,7 +369,6 @@ public sealed partial class MainWindow
 
         // Export needs words rather than a selection - it writes the whole list.
         ExportWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
-        RemoveSnippetButton.IsEnabled = SnippetList.SelectedItem is not null;
         ExportSnippetsButton.IsEnabled = (_settings?.UserData.Snippets.Count ?? 0) > 0;
     }
 
@@ -751,21 +749,12 @@ public sealed partial class MainWindow
 
     private static int OverlayPositionIndex(OverlayPillPosition position) => SettingsPresenter.OverlayPositionIndex(position);
 
-    private void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        var stackVertically = e.NewSize.Width > 0 && e.NewSize.Width < 620;
-        RecordingPillCardsGrid.RowSpacing = stackVertically
-            ? (double)Application.Current.Resources["BrandSpacingM"]
-            : 0;
-        var span = stackVertically ? 3 : 1;
-        RadioButton[] cards = [CapsulePillButton, LevelRailPillButton, ReadingWellPillButton];
-        for (var i = 0; i < cards.Length; i++)
-        {
-            Grid.SetRow(cards[i], stackVertically ? i : 0);
-            Grid.SetColumn(cards[i], stackVertically ? 0 : i);
-            Grid.SetColumnSpan(cards[i], span);
-        }
-    }
+    private void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ApplyResponsiveThreeCardGridLayout(
+            RecordingPillCardsGrid,
+            e.NewSize.Width,
+            stackThreshold: 620,
+            [CapsulePillButton, LevelRailPillButton, ReadingWellPillButton]);
 
     private RecordingPillDesign PillDesignWithoutWordsFromControls()
     {

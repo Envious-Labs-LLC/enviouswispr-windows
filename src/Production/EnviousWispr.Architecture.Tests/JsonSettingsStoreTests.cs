@@ -85,7 +85,7 @@ public sealed class JsonSettingsStoreTests
                     Dictation = DictationPreferences.Default with { PushToTalkGesture = "F8" },
                 },
                 result.Settings.Preferences);
-            Assert.Equal(ReusableUserData.Empty, result.Settings.UserData);
+            Assert.Equal(ReusableUserData.Empty.WithSnippets(SnippetStarters.All).WithHasSeededStarterSnippets(true), result.Settings.UserData);
 
             var persisted = await store.ResetAsync(result.Settings);
             Assert.True(persisted.PreservedPreviousData);
@@ -506,13 +506,17 @@ public sealed class JsonSettingsStoreTests
             await File.WriteAllTextAsync(path, corruptJson);
             var store = new JsonSettingsStore(path);
 
-            var reset = await store.ResetAsync(AppSettings.Default);
+            var expectedDefaultAfterReset = AppSettings.Default with
+            {
+                UserData = ReusableUserData.Empty.WithHasSeededStarterSnippets(true),
+            };
+            var reset = await store.ResetAsync(expectedDefaultAfterReset);
 
             Assert.True(reset.PreservedPreviousData);
             Assert.Equal(corruptJson, await File.ReadAllTextAsync(path + ".previous"));
             var loaded = await store.LoadAsync();
             Assert.Equal(SettingsLoadStatus.Loaded, loaded.Status);
-            Assert.Equal(AppSettings.Default, loaded.Settings);
+            Assert.Equal(expectedDefaultAfterReset, loaded.Settings);
         });
     }
 
@@ -580,7 +584,8 @@ public sealed class JsonSettingsStoreTests
             [new CustomWordEntry("envy wisper", "EnviousWispr")],
             [new SnippetEntry("signature", "Kind regards")],
             // NOT THE DEFAULT, so a round trip that dropped the member would read back a different word.
-            "insert"),
+            "insert",
+            hasSeededStarterSnippets: true),
     };
 
     internal static async Task WithTestDirectoryAsync(Func<string, Task> test)

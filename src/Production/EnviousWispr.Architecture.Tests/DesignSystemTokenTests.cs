@@ -1686,7 +1686,6 @@ public sealed partial class DesignSystemTokenTests
                      "DictionaryPage",
                      "SnippetsPage",
                      "SettingsPage",
-                     "HelpPage",
                  })
         {
             var page = FindNamedElement(document, name);

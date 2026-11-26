@@ -26,14 +26,28 @@ public sealed class ChoiceCardColumnTests
         "ReadingWellPillButton",
     };
 
+    // Founder directive 2026-11-26: EG-1 size cards mirror macOS 3-column horizontal EGOneSizeCards layout.
+    private static readonly HashSet<string> EgOneSizeHorizontalCards = new(StringComparer.Ordinal)
+    {
+        "EgOneSizeFullCard",
+        "EgOneSizeMiniCard",
+        "EgOneSizeMicroCard",
+    };
+
+    private static bool IsApprovedThreeColumnCard(XElement card)
+    {
+        var name = (string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty;
+        return RecordingPillHorizontalCards.Contains(name) || EgOneSizeHorizontalCards.Contains(name);
+    }
+
     [Fact]
-    public void NoChoiceCardIsPlacedInASecondColumnExceptTheThreeColumnPillSelector()
+    public void NoChoiceCardIsPlacedInASecondColumnExceptApprovedThreeColumnSelectors()
     {
         var cards = SelectableCards();
         Assert.True(cards.Count >= 4, $"Expected the choice cards, found {cards.Count}.");
 
         var sideBySide = cards
-            .Where(card => !RecordingPillHorizontalCards.Contains((string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
+            .Where(card => !IsApprovedThreeColumnCard(card))
             .Where(card => (string?)card.Attribute("Grid.Column") is { } column && column != "0")
             .Select(card => (string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed")
             .ToArray();
@@ -45,10 +59,10 @@ public sealed class ChoiceCardColumnTests
     }
 
     [Fact]
-    public void NoChoiceCardSitsInsideAMultiColumnGridExceptTheThreeColumnPillSelector()
+    public void NoChoiceCardSitsInsideAMultiColumnGridExceptApprovedThreeColumnSelectors()
     {
         var offenders = SelectableCards()
-            .Where(card => !RecordingPillHorizontalCards.Contains((string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
+            .Where(card => !IsApprovedThreeColumnCard(card))
             .Where(card => card.Parent is { } parent &&
                 parent.Name.LocalName == "Grid" &&
                 parent.Elements()
@@ -86,6 +100,41 @@ public sealed class ChoiceCardColumnTests
         Assert.Equal(["0", "1", "2"], cards.Select(card => (string?)card.Attribute("Grid.Column") ?? string.Empty).ToArray());
         Assert.Equal("RecordingPillCardsGrid_SizeChanged", (string?)parentGrid.Attribute("SizeChanged"));
         var rows = parentGrid.Elements()
+            .FirstOrDefault(child => child.Name.LocalName == "Grid.RowDefinitions")?
+            .Elements()
+            .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
+            .ToArray() ?? [];
+        Assert.Equal(["Auto", "Auto", "Auto"], rows);
+    }
+
+    [Fact]
+    public void EgOneSizeCardsSitTogetherInOneEqualThreeColumnGridWithUnifiedFooters()
+    {
+        var doc = Markup();
+        var cards = doc.Descendants()
+            .Where(element => EgOneSizeHorizontalCards.Contains((string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
+            .ToArray();
+        Assert.Equal(3, cards.Length);
+
+        var containers = cards.Select(c => c.Parent).ToArray();
+        Assert.All(containers, c => Assert.NotNull(c));
+        Assert.All(containers, c => Assert.Equal("Grid", c!.Name.LocalName));
+
+        var grid = containers[0]!.Parent;
+        Assert.NotNull(grid);
+        Assert.Equal("EgOneCardsGrid", (string?)grid!.Attribute(XName.Get("Name", XamlNamespace)));
+        Assert.All(containers, c => Assert.Same(grid, c!.Parent));
+
+        var columns = grid.Elements()
+            .FirstOrDefault(child => child.Name.LocalName == "Grid.ColumnDefinitions")?
+            .Elements()
+            .Select(col => (string?)col.Attribute("Width") ?? string.Empty)
+            .ToArray() ?? [];
+        Assert.Equal(["*", "*", "*"], columns);
+        Assert.Equal(["0", "1", "2"], containers.Select(c => (string?)c!.Attribute("Grid.Column") ?? string.Empty).ToArray());
+        Assert.Equal("EgOneCardsGrid_SizeChanged", (string?)grid.Attribute("SizeChanged"));
+
+        var rows = grid.Elements()
             .FirstOrDefault(child => child.Name.LocalName == "Grid.RowDefinitions")?
             .Elements()
             .Select(row => (string?)row.Attribute("Height") ?? string.Empty)

@@ -381,8 +381,7 @@ public sealed partial class MainWindow
 
         var errorText = new TextBlock
         {
-            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BrandErrorBrush"],
+            Style = (Style)Application.Current.Resources["BrandErrorHelperStyle"],
             TextWrapping = TextWrapping.Wrap,
             Visibility = Visibility.Collapsed,
         };
@@ -410,7 +409,7 @@ public sealed partial class MainWindow
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot ?? Content.XamlRoot,
-            RequestedTheme = WindowRoot.RequestedTheme,
+            RequestedTheme = WindowRoot.ActualTheme,
             Title = existing is null ? "Add word" : "Edit word",
             PrimaryButtonText = existing is null ? "Add word" : "Save",
             SecondaryButtonText = existing is null ? string.Empty : "Delete",
@@ -601,7 +600,7 @@ public sealed partial class MainWindow
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot ?? Content.XamlRoot,
-            RequestedTheme = WindowRoot.RequestedTheme,
+            RequestedTheme = WindowRoot.ActualTheme,
             Title = pack.Name,
             CloseButtonText = "Close",
             Content = Stack(
@@ -643,25 +642,95 @@ public sealed partial class MainWindow
             return;
         }
 
+        await ShowSnippetEditorDialogAsync(existing).ConfigureAwait(true);
+    }
+
+    private async Task ShowSnippetEditorDialogAsync(SnippetEntry? existing)
+    {
+        var isNew = existing is null;
+        var keyword = _settings?.UserData.SnippetKeyword ?? SnippetVocabulary.DefaultKeyword;
         var headerTemplate = (DataTemplate)Application.Current.Resources["BrandControlHeaderTemplate"];
+
+        var iconTile = new Border
+        {
+            Width = 40,
+            Height = 40,
+            Style = (Style)Application.Current.Resources["BrandIconTileStyle"],
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = "{}",
+                Style = (Style)Application.Current.Resources["BrandAccentTitleStyle"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+        var dialogHeader = new Grid
+        {
+            ColumnSpacing = (double)Application.Current.Resources["BrandSpacingM"],
+        };
+        dialogHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        dialogHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(iconTile, 0);
+        dialogHeader.Children.Add(iconTile);
+
+        var headerTextStack = new StackPanel { Spacing = (double)Application.Current.Resources["BrandSpacingXs"] };
+        headerTextStack.Children.Add(new TextBlock
+        {
+            Text = isNew ? "New snippet" : "Edit snippet",
+            Style = (Style)Application.Current.Resources["BrandRowTitleStyle"],
+        });
+        headerTextStack.Children.Add(new TextBlock
+        {
+            Text = "Say your keyword followed by your trigger to paste saved text anywhere.",
+            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        Grid.SetColumn(headerTextStack, 1);
+        dialogHeader.Children.Add(headerTextStack);
+
         var triggerBox = new TextBox
         {
             Header = "Trigger",
             HeaderTemplate = headerTemplate,
             MaxLength = 128,
-            PlaceholderText = "my email address",
-            Text = existing.Name,
+            PlaceholderText = "my email",
+            Text = existing?.Name ?? string.Empty,
         };
+
+        var liveSayPreviewText = new TextBlock
+        {
+            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var liveSayPreviewCard = new Border
+        {
+            Style = (Style)Application.Current.Resources["BrandAccentChipStyle"],
+            Padding = new Thickness(12, 8, 12, 8),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = liveSayPreviewText,
+        };
+
+        void UpdateSayPreview()
+        {
+            var typedTrigger = triggerBox.Text.Trim();
+            var shownTrigger = string.IsNullOrEmpty(typedTrigger) ? "my email" : typedTrigger;
+            liveSayPreviewText.Text = $"You\u2019ll say: \u201C{keyword} {shownTrigger}\u201D";
+        }
+
+        UpdateSayPreview();
+        triggerBox.TextChanged += (_, _) => UpdateSayPreview();
+
         var bodyBox = new TextBox
         {
             Header = "Expands to",
             HeaderTemplate = headerTemplate,
             AcceptsReturn = true,
             MaxLength = 10000,
-            MinHeight = 100,
+            MinHeight = 110,
             PlaceholderText = "Kind regards,",
             TextWrapping = TextWrapping.Wrap,
-            Text = existing.Body,
+            Text = existing?.Body ?? string.Empty,
         };
 
         var fillInRow = new StackPanel
@@ -692,23 +761,50 @@ public sealed partial class MainWindow
             fillInRow.Children.Add(button);
         }
 
+        var fillInHint = new TextBlock
+        {
+            Text = "A fill-in becomes the date, the time, or what you copied. AI Polish never rewrites snippets.",
+            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+            TextWrapping = TextWrapping.Wrap,
+        };
+
         var errorText = new TextBlock
         {
-            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BrandErrorBrush"],
+            Style = (Style)Application.Current.Resources["BrandErrorHelperStyle"],
             TextWrapping = TextWrapping.Wrap,
             Visibility = Visibility.Collapsed,
+        };
+
+        var dialogBody = new StackPanel
+        {
+            Spacing = (double)Application.Current.Resources["BrandSpacingM"],
+            MinWidth = 440,
+            Children =
+            {
+                dialogHeader,
+                triggerBox,
+                liveSayPreviewCard,
+                bodyBox,
+                fillInRow,
+                fillInHint,
+                errorText,
+            },
         };
 
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot ?? Content.XamlRoot,
-            RequestedTheme = WindowRoot.RequestedTheme,
-            Title = "Edit snippet",
-            PrimaryButtonText = "Save",
+            RequestedTheme = WindowRoot.ActualTheme,
+            Background = ResolveWindowThemeBrush("BrandCardBgBrush"),
+            BorderBrush = ResolveWindowThemeBrush("BrandDividerBrush"),
+            PrimaryButtonText = isNew ? "Add snippet" : "Save",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["BrandPrimaryButtonStyle"],
+            SecondaryButtonText = isNew ? string.Empty : "Delete snippet",
+            SecondaryButtonStyle = isNew ? null : (Style)Application.Current.Resources["BrandDestructiveButtonStyle"],
             CloseButtonText = "Cancel",
+            CloseButtonStyle = (Style)Application.Current.Resources["BrandQuietButtonStyle"],
             DefaultButton = ContentDialogButton.Primary,
-            Content = Stack(triggerBox, bodyBox, fillInRow, errorText),
+            Content = dialogBody,
         };
 
         var isSaving = false;
@@ -722,12 +818,10 @@ public sealed partial class MainWindow
 
             var trigger = triggerBox.Text.Trim();
             var body = bodyBox.Text;
-            var preflightRefusal = VocabularyPresenter.ValidateSnippetEdit(
-                existing,
-                trigger,
-                body,
-                _settings.UserData.Snippets,
-                out var preflightClash);
+            var snippets = _settings?.UserData.Snippets ?? Array.Empty<SnippetEntry>();
+            var preflightRefusal = existing is null
+                ? SnippetRules.Validate(new SnippetEntry(trigger, body), snippets, out var preflightClash)
+                : VocabularyPresenter.ValidateSnippetEdit(existing, trigger, body, snippets, out preflightClash);
             if (preflightRefusal is not null)
             {
                 errorText.Text = SnippetRefusalMessage(preflightRefusal.Value, preflightClash);
@@ -741,8 +835,10 @@ public sealed partial class MainWindow
             dialog.IsPrimaryButtonEnabled = false;
             try
             {
-                var saved = await _session.Vocabulary.UpdateSnippetAsync(existing, trigger, body)
-                    .ConfigureAwait(true);
+                var saved = existing is null
+                    ? await _session.Vocabulary.AddSnippetAsync(new SnippetEntry(trigger, body)).ConfigureAwait(true)
+                    : await _session.Vocabulary.UpdateSnippetAsync(existing, trigger, body).ConfigureAwait(true);
+
                 if (!saved.Saved)
                 {
                     if (saved.Refusal != SettingsSaveRefusal.Closing)
@@ -783,7 +879,17 @@ public sealed partial class MainWindow
             }
         };
 
-        await dialog.ShowAsync().AsTask().ConfigureAwait(true);
+        var result = await dialog.ShowAsync().AsTask().ConfigureAwait(true);
+        if (result == ContentDialogResult.Secondary && existing is not null)
+        {
+            var deleted = await CommitVocabularyAsync(
+                _session.Vocabulary.RemoveSnippetAsync(existing),
+                "Snippet deleted").ConfigureAwait(true);
+            if (deleted)
+            {
+                RefreshReusableUserDataViews();
+            }
+        }
     }
 
     private static string SettingsRefusalDialogMessage(SettingsSaveRefusal? refusal) => refusal switch

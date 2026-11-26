@@ -500,6 +500,7 @@ public sealed class SnippetImportTests
 
             var fresh = await store.LoadAsync();
             Assert.Equal(SettingsLoadStatus.Missing, fresh.Status);
+            Assert.True(fresh.Settings.UserData.HasSeededStarterSnippets);
             Assert.Equal(
                 ["my address", "my calendar", "my email", "my intro", "my phone", "my signature"],
                 fresh.Settings.UserData.Snippets.Select(snippet => snippet.Name));
@@ -510,7 +511,33 @@ public sealed class SnippetImportTests
             await store.SaveAsync(fresh.Settings with { UserData = fresh.Settings.UserData.WithSnippets([]) });
             var existing = await store.LoadAsync();
             Assert.Equal(SettingsLoadStatus.Loaded, existing.Status);
+            Assert.True(existing.Settings.UserData.HasSeededStarterSnippets);
             Assert.Empty(existing.Settings.UserData.Snippets);
+
+            // An existing profile with zero snippets from before HasSeededStarterSnippets gets the 6 examples once.
+            var legacyEmpty = AppSettings.Default with
+            {
+                SchemaVersion = 28,
+                UserData = ReusableUserData.Empty,
+            };
+            await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(legacyEmpty, JsonSettingsStore.SerializerOptions));
+            var legacyEmptyLoaded = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Migrated, legacyEmptyLoaded.Status);
+            Assert.True(legacyEmptyLoaded.Settings.UserData.HasSeededStarterSnippets);
+            Assert.Equal(6, legacyEmptyLoaded.Settings.UserData.Snippets.Count);
+
+            // An existing profile that already has user snippets sets HasSeededStarterSnippets=true without injecting examples.
+            var customOnly = new SnippetEntry("my custom", "Custom body");
+            var legacyPopulated = AppSettings.Default with
+            {
+                SchemaVersion = 28,
+                UserData = new ReusableUserData([], [customOnly], hasSeededStarterSnippets: false),
+            };
+            await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(legacyPopulated, JsonSettingsStore.SerializerOptions));
+            var legacyPopulatedLoaded = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Migrated, legacyPopulatedLoaded.Status);
+            Assert.True(legacyPopulatedLoaded.Settings.UserData.HasSeededStarterSnippets);
+            Assert.Equal([customOnly], legacyPopulatedLoaded.Settings.UserData.Snippets);
 
             // An unreadable file is not a fresh install either.
             await File.WriteAllTextAsync(path, "{ not json");

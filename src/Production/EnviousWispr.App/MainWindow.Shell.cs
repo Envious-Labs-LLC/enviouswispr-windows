@@ -1,6 +1,8 @@
 using System.Globalization;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.System;
 
 namespace EnviousWispr.App;
@@ -25,7 +27,7 @@ public sealed partial class MainWindow
     /// </remarks>
     private void UppercaseSectionEyebrows()
     {
-        foreach (var section in SettingsSections().Concat(HelpSections()))
+        foreach (var section in SettingsSections())
         {
             if (EyebrowOf(section) is { } eyebrow)
             {
@@ -33,6 +35,165 @@ public sealed partial class MainWindow
             }
         }
     }
+
+    private void SettingsTabStrip_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is Grid stripGrid)
+        {
+            ApplyResponsiveTabStripLayout(stripGrid, e.NewSize.Width);
+        }
+    }
+
+    private static void ApplyResponsiveTabStripLayout(Grid stripGrid, double availableWidth = 0)
+    {
+        var width = availableWidth > 0 ? availableWidth : stripGrid.ActualWidth;
+        var buttons = stripGrid.Children.OfType<Button>().ToArray();
+        if (buttons.Length == 0)
+        {
+            return;
+        }
+
+        for (var i = stripGrid.Children.Count - 1; i >= 0; i--)
+        {
+            if (stripGrid.Children[i] is Border)
+            {
+                stripGrid.Children.RemoveAt(i);
+            }
+        }
+
+        var wrapTwoRows = width > 0 && width < 680 && buttons.Length >= 4;
+        stripGrid.ColumnDefinitions.Clear();
+        stripGrid.RowDefinitions.Clear();
+
+        var verticalSepStyle = Application.Current.Resources["BrandTopTabVerticalSeparatorStyle"] as Style;
+        var horizontalSepStyle = Application.Current.Resources["BrandTopTabHorizontalSeparatorStyle"] as Style;
+
+        if (!wrapTwoRows)
+        {
+            stripGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var i = 0; i < buttons.Length; i++)
+            {
+                stripGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                Grid.SetRow(buttons[i], 0);
+                Grid.SetColumn(buttons[i], i);
+                Grid.SetColumnSpan(buttons[i], 1);
+
+                if (i < buttons.Length - 1)
+                {
+                    var sep = new Border { Style = verticalSepStyle };
+                    Grid.SetRow(sep, 0);
+                    Grid.SetColumn(sep, i);
+                    stripGrid.Children.Add(sep);
+                }
+            }
+
+            return;
+        }
+
+        stripGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        stripGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        if (buttons.Length == 5)
+        {
+            for (var c = 0; c < 6; c++)
+            {
+                stripGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            }
+
+            for (var i = 0; i < 3; i++)
+            {
+                Grid.SetRow(buttons[i], 0);
+                Grid.SetColumn(buttons[i], i * 2);
+                Grid.SetColumnSpan(buttons[i], 2);
+                if (i < 2)
+                {
+                    var sep = new Border { Style = verticalSepStyle };
+                    Grid.SetRow(sep, 0);
+                    Grid.SetColumn(sep, (i * 2) + 1);
+                    stripGrid.Children.Add(sep);
+                }
+            }
+
+            for (var i = 0; i < 2; i++)
+            {
+                var btn = buttons[3 + i];
+                Grid.SetRow(btn, 1);
+                Grid.SetColumn(btn, i * 3);
+                Grid.SetColumnSpan(btn, 3);
+                if (i == 0)
+                {
+                    var sep = new Border { Style = verticalSepStyle };
+                    Grid.SetRow(sep, 1);
+                    Grid.SetColumn(sep, 2);
+                    stripGrid.Children.Add(sep);
+                }
+            }
+
+            var rowDiv = new Border { Style = horizontalSepStyle };
+            Grid.SetRow(rowDiv, 0);
+            Grid.SetColumn(rowDiv, 0);
+            Grid.SetColumnSpan(rowDiv, 6);
+            stripGrid.Children.Add(rowDiv);
+            return;
+        }
+
+        var cols = (buttons.Length + 1) / 2;
+        for (var c = 0; c < cols; c++)
+        {
+            stripGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
+
+        for (var i = 0; i < buttons.Length; i++)
+        {
+            var row = i / cols;
+            var col = i % cols;
+            Grid.SetRow(buttons[i], row);
+            Grid.SetColumn(buttons[i], col);
+            Grid.SetColumnSpan(buttons[i], 1);
+
+            var isLastInRow = col == cols - 1 || i == buttons.Length - 1;
+            if (!isLastInRow)
+            {
+                var sep = new Border { Style = verticalSepStyle };
+                Grid.SetRow(sep, row);
+                Grid.SetColumn(sep, col);
+                stripGrid.Children.Add(sep);
+            }
+        }
+
+        var divider = new Border { Style = horizontalSepStyle };
+        Grid.SetRow(divider, 0);
+        Grid.SetColumn(divider, 0);
+        Grid.SetColumnSpan(divider, cols);
+        stripGrid.Children.Add(divider);
+    }
+
+    private static void ApplyResponsiveThreeCardGridLayout(
+        Grid? grid,
+        double availableWidth,
+        double stackThreshold,
+        FrameworkElement?[] cards)
+    {
+        if (grid is null || cards.Any(c => c is null))
+        {
+            return;
+        }
+
+        var stackVertically = availableWidth > 0 && availableWidth < stackThreshold;
+        grid.RowSpacing = stackVertically ? LayoutDouble("BrandSpacingM") : 0;
+        var span = stackVertically ? cards.Length : 1;
+        for (var i = 0; i < cards.Length; i++)
+        {
+            var card = cards[i]!;
+            Grid.SetRow(card, stackVertically ? i : 0);
+            Grid.SetColumn(card, stackVertically ? 0 : i);
+            Grid.SetColumnSpan(card, span);
+        }
+    }
+
+    private Brush ResolveWindowThemeBrush(string key) =>
+        ThemeResourceLookup.Resolve<Brush>(WindowRoot, key)
+        ?? (Brush)Application.Current.Resources[key];
 
     private void SetSidebarWidth(double requested)
     {

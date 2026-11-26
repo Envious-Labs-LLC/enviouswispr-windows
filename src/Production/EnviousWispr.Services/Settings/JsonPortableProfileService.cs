@@ -94,6 +94,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 18 => MigrateFromV18(json),
                 19 => MigrateFromV19(json),
                 20 => MigrateFromV20(json),
+                21 => MigrateFromV21(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -121,12 +122,25 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 }
             }
 
-            if (profile is { Preferences: not null } && schemaVersion < PortableProfile.CurrentSchemaVersion)
+            if (profile is not null && schemaVersion < PortableProfile.CurrentSchemaVersion)
             {
-                profile = profile with
+                if (profile.Preferences is not null)
                 {
-                    Preferences = JsonSettingsStore.SeedEgOneModelIdIfMissing(profile.Preferences)!,
-                };
+                    profile = profile with
+                    {
+                        Preferences = JsonSettingsStore.SeedEgOneModelIdIfMissing(profile.Preferences)!,
+                    };
+                }
+
+                // Importing an older profile adopts its explicit snippet list (including empty); it must
+                // never cause one-time starter seeding to inject examples on the next settings load.
+                if (profile.UserData is { HasSeededStarterSnippets: false } importedUserData)
+                {
+                    profile = profile with
+                    {
+                        UserData = importedUserData.WithHasSeededStarterSnippets(true),
+                    };
+                }
             }
 
             // A PROFILE CANNOT BRING IN A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN: the hook refuses both, and with
@@ -402,6 +416,20 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                         FixLearnedWordsEnabled = true,
                     },
                 },
+            };
+    }
+
+    /// <summary>Takes a portable profile written before starter snippet seeding tracking existed (v21).</summary>
+    private static PortableProfile? MigrateFromV21(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
             };
     }
 

@@ -360,6 +360,7 @@ public sealed class MultiAliasAndPackParityTests
         Assert.Contains("WordFilterBrandChip", xaml, StringComparison.Ordinal);
         Assert.Contains("WordFilterAcronymChip", xaml, StringComparison.Ordinal);
         Assert.Contains("WordFilterDomainChip", xaml, StringComparison.Ordinal);
+        Assert.Contains("WordFilterAutoLearnedChip", xaml, StringComparison.Ordinal);
         Assert.Contains("MassEditWordsToggle", xaml, StringComparison.Ordinal);
         Assert.Contains("VocabularyPacksList", xaml, StringComparison.Ordinal);
         Assert.Contains("ShowPackDetailDialogAsync", editorCs, StringComparison.Ordinal);

@@ -447,16 +447,11 @@ public sealed partial class FeedbackDialog : ContentDialog, IDisposable
     }
 
     private Style? ResolveStyle(string key) =>
-        Resources.TryGetValue(key, out var local) && local is Style localStyle
-            ? localStyle
-            : Application.Current.Resources.TryGetValue(key, out var appRes) && appRes is Style appStyle
-                ? appStyle
-                : null;
+        ResolveThemeResource<Style>(key);
 
     private Brush? ResolveBrush(string key) =>
-        Resources.TryGetValue(key, out var local) && local is Brush localBrush
-            ? localBrush
-            : Application.Current.Resources.TryGetValue(key, out var appRes) && appRes is Brush appBrush
-                ? appBrush
-                : null;
+        ResolveThemeResource<Brush>(key);
+
+    private T? ResolveThemeResource<T>(string key) where T : class =>
+        ThemeResourceLookup.Resolve<T>(this, key);
 }

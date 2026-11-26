@@ -82,8 +82,8 @@ public sealed class NavigationIconTests
                 .Select(match => match.Groups[1].Value))
             .ToArray();
 
-        Assert.True(answered.Length >= 7,
-            $"Only {answered.Length} page tags were parsed. Seven grouped settings/help tags are " +
+        Assert.True(answered.Length >= 6,
+            $"Only {answered.Length} page tags were parsed. Six grouped settings tags are " +
             "expected, so a lower number means the sweep is reading less than the app.");
 
         var orphans = answered.Where(tag => !tags.Contains(tag)).Distinct().ToArray();
@@ -125,8 +125,8 @@ public sealed class NavigationIconTests
 
     // ---- parsing ----
 
-    /// <summary>The two methods that build a page header.</summary>
-    private static readonly string[] PageDispatchNames = ["ConfigureSettingsPage", "ConfigureHelpPage"];
+    /// <summary>The method that builds the settings page header.</summary>
+    private static readonly string[] PageDispatchNames = ["ConfigureSettingsPage"];
 
     /// <summary>The two page dispatches, sliced to the end of their method body.</summary>
     private static (string Name, string Body)[] PageDispatches()

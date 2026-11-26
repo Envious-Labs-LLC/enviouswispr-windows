@@ -159,7 +159,6 @@ public sealed class OvernightUatPolishTests
                      "DictionaryPage",
                      "SnippetsPage",
                      "SettingsPage",
-                     "HelpPage",
                  })
         {
             var page = FindNamed(doc, pageName);

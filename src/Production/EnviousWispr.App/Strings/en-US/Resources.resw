@@ -26,8 +26,6 @@
   <data name="DictionaryNavItem.AccessKey" xml:space="preserve"><value>D</value></data>
   <data name="SnippetsNavItem.Content" xml:space="preserve"><value>Snippets</value></data>
   <data name="SnippetsNavItem.AccessKey" xml:space="preserve"><value>S</value></data>
-  <data name="HelpNavItem.Content" xml:space="preserve"><value>Help and privacy</value></data>
-  <data name="HelpNavItem.AccessKey" xml:space="preserve"><value>P</value></data>
   <data name="HomeTitle.Text" xml:space="preserve"><value>Speak naturally. Keep working.</value></data>
   <data name="WhisperLanguageButton.AutomationProperties.HelpText" xml:space="preserve"><value>Choose Automatic detection, or pick one of 99+ languages with Whisper or 25 European languages with Parakeet.</value></data>
 </root>

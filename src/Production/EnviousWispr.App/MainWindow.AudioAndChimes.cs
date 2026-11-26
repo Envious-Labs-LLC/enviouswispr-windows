@@ -27,6 +27,8 @@ public sealed partial class MainWindow
     private CancellationTokenSource? _soundPreviewCancellation;
 
     private RecordingSoundPairing _selectedRecordingSoundPairing = RecordingSoundPairing.WhisperTick;
+    private RecordingSoundPairing? _focusedChimePairing;
+    private RecordingSoundPairing? _hoveredChimePairing;
     private readonly Dictionary<RecordingSoundPairing, Border> _chimeCards = new();
     private readonly Dictionary<RecordingSoundPairing, Button> _chimeSelectButtons = new();
     private readonly Dictionary<RecordingSoundPairing, Border> _chimeBadges = new();
@@ -103,6 +105,17 @@ public sealed partial class MainWindow
         _chimeBadges.Clear();
         _chimeWaveformBars.Clear();
         _chimePlayButtons.Clear();
+        _focusedChimePairing = null;
+        _hoveredChimePairing = null;
+
+        var defaultCardStyle = (Style)Application.Current.Resources["BrandChimeCardStyle"];
+        var rowLabelStyle = (Style)Application.Current.Resources["BrandRowLabelStyle"];
+        var helperStyle = (Style)Application.Current.Resources["BrandHelperStyle"];
+        var accentChipStyle = (Style)Application.Current.Resources["BrandAccentChipStyle"];
+        var accentChipTextStyle = (Style)Application.Current.Resources["BrandAccentChipTextStyle"];
+        var waveInactiveStyle = (Style)Application.Current.Resources["BrandChimeWaveInactiveStyle"];
+        var selectButtonStyle = (Style)Application.Current.Resources["BrandChimeSelectButtonStyle"];
+        var quietButtonStyle = (Style)Application.Current.Resources["BrandQuietButtonStyle"];
 
         var choices = RecordingSoundCatalog.Choices;
         for (var index = 0; index < choices.Count; index++)
@@ -113,11 +126,7 @@ public sealed partial class MainWindow
 
             var card = new Border
             {
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12, 10, 12, 10),
-                Background = (Brush)Application.Current.Resources["BrandCardBgBrush"],
-                BorderBrush = (Brush)Application.Current.Resources["BrandDividerBrush"],
-                BorderThickness = new Thickness(1),
+                Style = defaultCardStyle,
                 Tag = choice.Pairing,
                 IsTapEnabled = true,
             };
@@ -129,6 +138,26 @@ public sealed partial class MainWindow
                 if (s is Border b && b.Tag is RecordingSoundPairing pairing)
                 {
                     SelectChimePairing(pairing, triggerSave: true);
+                }
+            };
+            card.PointerEntered += (s, _) =>
+            {
+                if (s is Border b && b.Tag is RecordingSoundPairing pairing)
+                {
+                    _hoveredChimePairing = pairing;
+                    ApplyChimeCardStyle(pairing);
+                }
+            };
+            card.PointerExited += (s, _) =>
+            {
+                if (s is Border b && b.Tag is RecordingSoundPairing pairing)
+                {
+                    if (_hoveredChimePairing == pairing)
+                    {
+                        _hoveredChimePairing = null;
+                    }
+
+                    ApplyChimeCardStyle(pairing);
                 }
             };
 
@@ -151,14 +180,14 @@ public sealed partial class MainWindow
             var titleText = new TextBlock
             {
                 Text = choice.DisplayName,
-                Style = (Style)Application.Current.Resources["BrandRowLabelStyle"],
+                Style = rowLabelStyle,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             };
 
             var badge = new Border
             {
                 CornerRadius = new CornerRadius(4),
-                Background = (Brush)Application.Current.Resources["BrandAccentBrush"],
+                Style = accentChipStyle,
                 Padding = new Thickness(6, 1, 6, 1),
                 Visibility = Visibility.Collapsed,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -167,7 +196,7 @@ public sealed partial class MainWindow
                     Text = "IN USE",
                     FontSize = 10,
                     FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-                    Foreground = (Brush)Application.Current.Resources["BrandOnAccentBrush"],
+                    Style = accentChipTextStyle,
                 },
             };
 
@@ -178,7 +207,7 @@ public sealed partial class MainWindow
             var descText = new TextBlock
             {
                 Text = choice.Description,
-                Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+                Style = helperStyle,
                 TextWrapping = TextWrapping.NoWrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxLines = 1,
@@ -203,8 +232,7 @@ public sealed partial class MainWindow
                 {
                     Width = 2,
                     Height = barHeight,
-                    CornerRadius = new CornerRadius(1),
-                    Background = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"],
+                    Style = waveInactiveStyle,
                     VerticalAlignment = VerticalAlignment.Center,
                 };
                 bars.Add(bar);
@@ -214,12 +242,7 @@ public sealed partial class MainWindow
 
             var selectButton = new Button
             {
-                Background = (Brush)Application.Current.Resources["BrandHitTestBrush"],
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(0),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
+                Style = selectButtonStyle,
                 Content = contentStack,
                 Tag = choice.Pairing,
             };
@@ -234,16 +257,22 @@ public sealed partial class MainWindow
             };
             selectButton.GotFocus += (s, e) =>
             {
-                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing && pairing != _selectedRecordingSoundPairing && _chimeCards.TryGetValue(pairing, out var c))
+                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing)
                 {
-                    c.BorderBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
+                    _focusedChimePairing = pairing;
+                    ApplyChimeCardStyle(pairing);
                 }
             };
             selectButton.LostFocus += (s, e) =>
             {
-                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing && pairing != _selectedRecordingSoundPairing && _chimeCards.TryGetValue(pairing, out var c))
+                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing)
                 {
-                    c.BorderBrush = (Brush)Application.Current.Resources["BrandDividerBrush"];
+                    if (_focusedChimePairing == pairing)
+                    {
+                        _focusedChimePairing = null;
+                    }
+
+                    ApplyChimeCardStyle(pairing);
                 }
             };
             Grid.SetColumn(selectButton, 0);
@@ -257,7 +286,7 @@ public sealed partial class MainWindow
                 Padding = new Thickness(0),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                Style = (Style)Application.Current.Resources["BrandQuietButtonStyle"],
+                Style = quietButtonStyle,
                 Content = new FontIcon
                 {
                     Glyph = "\uE768",
@@ -313,20 +342,32 @@ public sealed partial class MainWindow
         }
     }
 
+    private void ApplyChimeCardStyle(RecordingSoundPairing pairing)
+    {
+        if (!_chimeCards.TryGetValue(pairing, out var card))
+        {
+            return;
+        }
+
+        var styleKey = pairing == _selectedRecordingSoundPairing
+            ? "BrandChimeCardSelectedStyle"
+            : _focusedChimePairing == pairing
+                ? "BrandChimeCardFocusedStyle"
+                : _hoveredChimePairing == pairing
+                    ? "BrandChimeCardHoverStyle"
+                    : "BrandChimeCardStyle";
+        card.Style = (Style)Application.Current.Resources[styleKey];
+    }
+
     private void UpdateChimeCardsVisuals()
     {
-        var accentBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
-        var dividerBrush = (Brush)Application.Current.Resources["BrandDividerBrush"];
-        var surfaceBrush = (Brush)Application.Current.Resources["BrandCardBgBrush"];
-        var hoverBrush = (Brush)Application.Current.Resources["BrandAccentLightBrush"];
-        var secondaryTextBrush = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
+        var waveActiveStyle = (Style)Application.Current.Resources["BrandChimeWaveActiveStyle"];
+        var waveInactiveStyle = (Style)Application.Current.Resources["BrandChimeWaveInactiveStyle"];
 
-        foreach (var (pairing, card) in _chimeCards)
+        foreach (var (pairing, _) in _chimeCards)
         {
             var isSelected = pairing == _selectedRecordingSoundPairing;
-            card.BorderBrush = isSelected ? accentBrush : dividerBrush;
-            card.BorderThickness = isSelected ? new Thickness(2) : new Thickness(1);
-            card.Background = isSelected ? hoverBrush : surfaceBrush;
+            ApplyChimeCardStyle(pairing);
 
             if (_chimeSelectButtons.TryGetValue(pairing, out var selectButton))
             {
@@ -342,10 +383,10 @@ public sealed partial class MainWindow
 
             if (_chimeWaveformBars.TryGetValue(pairing, out var bars))
             {
-                var barBrush = isSelected ? accentBrush : secondaryTextBrush;
+                var barStyle = isSelected ? waveActiveStyle : waveInactiveStyle;
                 foreach (var bar in bars)
                 {
-                    bar.Background = barBrush;
+                    bar.Style = barStyle;
                 }
             }
         }
@@ -528,8 +569,8 @@ public sealed partial class MainWindow
             // fully opaque, and accent rather than grey - which is what makes a single lit bar
             // legible on a quiet microphone.
             bar.Background = on
-                ? (Brush)Application.Current.Resources["BrandAccentSolidBrush"]
-                : (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
+                ? ResolveWindowThemeBrush("BrandAccentSolidBrush")
+                : ResolveWindowThemeBrush("BrandTextSecondaryBrush");
         }
     }
 

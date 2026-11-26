@@ -130,4 +130,10 @@
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="Foreground" Value="{ThemeResource BrandTextTertiaryBrush}" />
     </Style>
+    <Style x:Key="BrandErrorHelperStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandHelperStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandErrorBrush}" />
+    </Style>
+    <Style x:Key="BrandAccentTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandRowTitleStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
 </ResourceDictionary>

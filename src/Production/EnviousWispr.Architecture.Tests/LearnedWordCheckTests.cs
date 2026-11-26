@@ -294,7 +294,7 @@ public sealed class LearnedWordCheckTests : IDisposable
         var settingsPath = Path.Combine(dir, "settings.json");
         await new JsonSettingsStore(settingsPath).SaveAsync(AppSettings.Default);
         var currentJson = await File.ReadAllTextAsync(settingsPath);
-        var v27Json = currentJson.Replace("\"schemaVersion\": 28", "\"schemaVersion\": 27", StringComparison.Ordinal);
+        var v27Json = currentJson.Replace($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", "\"schemaVersion\": 27", StringComparison.Ordinal);
         await File.WriteAllTextAsync(settingsPath, v27Json);
 
         var loaded = await new JsonSettingsStore(settingsPath).LoadAsync();
@@ -313,7 +313,7 @@ public sealed class LearnedWordCheckTests : IDisposable
             profilePath);
         Assert.True(exported.Succeeded);
         var profileJson = await File.ReadAllTextAsync(profilePath);
-        var v20Json = profileJson.Replace("\"schemaVersion\": 21", "\"schemaVersion\": 20", StringComparison.Ordinal);
+        var v20Json = profileJson.Replace($"\"schemaVersion\": {PortableProfile.CurrentSchemaVersion}", "\"schemaVersion\": 20", StringComparison.Ordinal);
         await File.WriteAllTextAsync(profilePath, v20Json);
 
         var imported = await portableService.ImportAsync(profilePath);

@@ -606,6 +606,29 @@ public sealed class VocabularyPresenter
         return ChangeAsync(data => data.WithSnippets(data.Snippets.Where(entry => entry != snippet).ToArray()));
     }
 
+    /// <summary>Restores the shipped starter example snippets, preserving any existing user snippets.</summary>
+    public Task<SettingsSaveResult<int>> RestoreStarterSnippetsAsync() =>
+        ChangeAsync(data =>
+        {
+            var existingKeys = data.Snippets
+                .Select(entry => SnippetText.CollisionKey(entry.Name))
+                .Where(key => key is not null)
+                .ToHashSet(StringComparer.Ordinal);
+            var additions = SnippetStarters.All
+                .Where(starter => SnippetText.CollisionKey(starter.Name) is { } key && existingKeys.Add(key))
+                .ToArray();
+            if (additions.Length == 0)
+            {
+                return (data.WithHasSeededStarterSnippets(true), 0);
+            }
+
+            var updated = data.Snippets
+                .Concat(additions)
+                .OrderBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
+            return (data.WithSnippets(updated).WithHasSeededStarterSnippets(true), additions.Length);
+        });
+
     /// <summary>Validates an edited snippet against <paramref name="existing"/>, ignoring <paramref name="original"/>.</summary>
     public static SnippetRefusal? ValidateSnippetEdit(
         SnippetEntry original,
@@ -780,7 +803,7 @@ public sealed class VocabularyPresenter
             : PackWordSignatures.Value.Contains(GetSignature(entry.SpokenForm, entry.Replacement));
     }
 
-    /// <summary>Filters custom word entries by category key ("all", "custom", "packs", or WordCategory name) and optional search query.</summary>
+    /// <summary>Filters custom word entries by category key ("all", "custom", "packs", "auto-learned", or WordCategory name) and optional search query.</summary>
     public static IReadOnlyList<CustomWordEntry> FilterWords(
         IEnumerable<CustomWordEntry> words,
         string category,
@@ -796,6 +819,10 @@ public sealed class VocabularyPresenter
         else if (string.Equals(category, "packs", StringComparison.OrdinalIgnoreCase))
         {
             filtered = filtered.Where(IsPackWord);
+        }
+        else if (string.Equals(category, "auto-learned", StringComparison.OrdinalIgnoreCase))
+        {
+            filtered = filtered.Where(w => w.IsAutoLearned);
         }
         else if (!string.IsNullOrWhiteSpace(category) &&
                  !string.Equals(category, "all", StringComparison.OrdinalIgnoreCase) &&
