@@ -24,7 +24,8 @@ public static class LivePreviewTextFormatter
         string? recognitionLanguage = null,
         string? engineId = null,
         BritishSpellingConverter? britishConverter = null,
-        IReadOnlyList<string>? enabledVocabularyPackIds = null)
+        IReadOnlyList<string>? enabledVocabularyPackIds = null,
+        bool excludeLearnedAliases = false)
     {
         var bounded = LivePreviewTextBound.Apply(rawText);
         if (bounded.Length == 0)
@@ -41,7 +42,11 @@ public static class LivePreviewTextFormatter
         if (activeCustomWords.Count > 0 || activePackWords.Count > 0)
         {
             bounded = LivePreviewTextBound.Apply(
-                CustomWordCorrector.Correct(bounded, activeCustomWords, activePackWords).Text);
+                CustomWordCorrector.Correct(
+                    bounded,
+                    activeCustomWords,
+                    activePackWords,
+                    excludeLearnedAliases: excludeLearnedAliases).Text);
         }
 
         if (englishSpelling == EnglishSpelling.British &&
@@ -50,9 +55,12 @@ public static class LivePreviewTextFormatter
             var converter = britishConverter ?? BritishSpellingConverter.Shared;
             if (converter is not null)
             {
+                var protectedCustomWords = excludeLearnedAliases
+                    ? activeCustomWords.Where(entry => !entry.IsPureAutoLearned)
+                    : activeCustomWords;
                 var protectedWords = activeCustomWords.Count > 0 || activePackWords.Count > 0
                     ? BritishSpellingConverter.ProtectedWords(
-                        activeCustomWords.Select(entry => entry.Replacement)
+                        protectedCustomWords.Select(entry => entry.Replacement)
                             .Concat(activePackWords.Select(entry => entry.Replacement)))
                     : null;
                 bounded = LivePreviewTextBound.Apply(

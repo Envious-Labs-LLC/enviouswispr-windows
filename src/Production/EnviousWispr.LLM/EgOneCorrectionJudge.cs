@@ -245,7 +245,7 @@ public sealed class EgOneCorrectionJudge : ICorrectionJudge
             .Replace("</EDITS>", "<\u200C/EDITS>", StringComparison.OrdinalIgnoreCase)
             .Replace("<EDITS>", "<\u200CEDITS>", StringComparison.OrdinalIgnoreCase);
 
-    private static string? StripMarkdownFences(string? raw)
+    internal static string? StripMarkdownFences(string? raw)
     {
         var trimmed = raw?.Trim();
         if (string.IsNullOrEmpty(trimmed))

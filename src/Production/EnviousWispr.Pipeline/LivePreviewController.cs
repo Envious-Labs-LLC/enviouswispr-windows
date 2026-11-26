@@ -36,6 +36,9 @@ public interface ILivePreviewEffects
     /// <summary>Whether Custom Words correction is enabled for display-only preview text (#127).</summary>
     bool WordCorrectionEnabled => false;
 
+    /// <summary>Whether auto-learned dictionary words should be applied during live preview (#380).</summary>
+    bool FixLearnedWordsEnabled => true;
+
     /// <summary>The user's Custom Words vocabulary for display-only preview text (#127).</summary>
     IReadOnlyList<CustomWordEntry> CustomWords => [];
 
@@ -206,6 +209,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             }
 
             var wordCorrectionEnabled = _effects.WordCorrectionEnabled;
+            var fixLearnedWordsEnabled = _effects.FixLearnedWordsEnabled;
             var customWords = _effects.CustomWords;
             var enabledVocabularyPackIds = _effects.EnabledVocabularyPackIds;
             var englishSpelling = _effects.EnglishSpelling;
@@ -214,6 +218,7 @@ public sealed class LivePreviewController : IAsyncDisposable
                 engine,
                 audio,
                 wordCorrectionEnabled,
+                fixLearnedWordsEnabled,
                 customWords,
                 enabledVocabularyPackIds,
                 englishSpelling,
@@ -231,6 +236,7 @@ public sealed class LivePreviewController : IAsyncDisposable
         ILivePreviewEngine engine,
         IAudioSnapshotSource audio,
         bool wordCorrectionEnabled,
+        bool fixLearnedWordsEnabled,
         IReadOnlyList<CustomWordEntry> customWords,
         IReadOnlyList<string> enabledVocabularyPackIds,
         EnglishSpelling englishSpelling,
@@ -316,7 +322,8 @@ public sealed class LivePreviewController : IAsyncDisposable
                         update.DetectedLanguage,
                         update.RecognitionLanguage,
                         engine.EngineId,
-                        enabledVocabularyPackIds: enabledVocabularyPackIds);
+                        enabledVocabularyPackIds: enabledVocabularyPackIds,
+                        excludeLearnedAliases: !fixLearnedWordsEnabled);
                     _effects.ShowPreview(new LivePreviewFrame(
                         sessionId,
                         displayText,

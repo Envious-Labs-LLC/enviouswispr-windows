@@ -287,7 +287,8 @@ public sealed record DictationPreferences(
     string PasteLastGesture = DictationPreferences.DefaultPasteLastGesture,
     string CopyLastGesture = "",
     bool CasualModeEnabled = false,
-    bool LearnFromEditsEnabled = true)
+    bool LearnFromEditsEnabled = true,
+    bool FixLearnedWordsEnabled = true)
 {
     /// <summary>Paste Last Dictation's default: Wispr Flow's Windows binding for the same action. Ref: #206.</summary>
     /// <remarks>

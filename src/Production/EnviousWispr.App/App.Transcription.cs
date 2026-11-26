@@ -483,13 +483,42 @@ public partial class App
                                     AppErrorStage.FinalAsr,
                                     CanRetry: true)))
                             .TranscribeAsync(audio, token),
-                        Finish: async (transcript, token) => (await _deterministicTextPipeline.ProcessAsync(
+                        Finish: async (transcript, token) =>
+                        {
+                            var customWords = _settings.UserData.CustomWords;
+                            var fileTextOptions = _deterministicTextOptions with { CasualModeEnabled = false };
+                            var processed = await _deterministicTextPipeline.ProcessAsync(
                                 new DeterministicTextRequest(
                                     transcript,
-                                    _settings.UserData.CustomWords,
-                                    _deterministicTextOptions with { CasualModeEnabled = false },
+                                    customWords,
+                                    fileTextOptions,
                                     EnabledVocabularyPackIds: _settings.UserData.EnabledVocabularyPackIds),
-                                token).ConfigureAwait(false)).Output.Text);
+                                token).ConfigureAwait(false);
+                            var text = processed.Output.Text;
+                            if (fileTextOptions.WordCorrectionEnabled &&
+                                fileTextOptions.FixLearnedWordsEnabled &&
+                                !string.IsNullOrWhiteSpace(text))
+                            {
+                                var checkOutcome = await EnsureLearnedWordCheckStep().ProcessAsync(
+                                    text,
+                                    customWords,
+                                    transcript.DetectedLanguage ?? transcript.RecognitionLanguage,
+                                    token).ConfigureAwait(false);
+                                if (checkOutcome.Flagged > 0)
+                                {
+                                    _logger.Write(new AppLogEntry(
+                                        DateTimeOffset.UtcNow,
+                                        AppEventCode.LearnedWordChecked,
+                                        ElapsedMilliseconds: checkOutcome.ElapsedMilliseconds,
+                                        Provider: DiagnosticProviderIds.FromProviderId(checkOutcome.ProviderId),
+                                        Changed: checkOutcome.Applied > 0));
+                                }
+
+                                text = checkOutcome.Text;
+                            }
+
+                            return text;
+                        });
                     result = await Task.Run(
                         () => FileTranscriptionJob.RunAsync(source, environment, progress, run.Token),
                         run.Token).ConfigureAwait(false);

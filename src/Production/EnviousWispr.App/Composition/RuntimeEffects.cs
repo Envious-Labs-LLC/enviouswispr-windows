@@ -46,6 +46,8 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 
     public bool WordCorrectionEnabled => shell.Dictation?.Invoke().WordCorrectionEnabled ?? false;
 
+    public bool FixLearnedWordsEnabled => shell.Dictation?.Invoke().FixLearnedWordsEnabled ?? true;
+
     public IReadOnlyList<CustomWordEntry> CustomWords => shell.CustomWords();
 
     public IReadOnlyList<string> EnabledVocabularyPackIds => shell.EnabledVocabularyPackIds?.Invoke() ?? [];
@@ -156,6 +158,14 @@ internal sealed class TranscriptFinalizationEffects(IAppLogger logger, SessionPe
             // BACK, and either provider can produce it. Attributing it to one would make the log
             // claim a cause it does not know.
             AppFailureCategory.InvalidData));
+
+    public void RecordLearnedWordCheck(long elapsedMilliseconds, DiagnosticProvider? provider, bool changed) =>
+        logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.LearnedWordChecked,
+            ElapsedMilliseconds: elapsedMilliseconds,
+            Provider: provider,
+            Changed: changed));
 
     public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false) =>
         logger.Write(new AppLogEntry(

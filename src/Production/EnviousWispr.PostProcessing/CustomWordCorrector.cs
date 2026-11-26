@@ -67,12 +67,20 @@ public static partial class CustomWordCorrector
     public static WordCorrectionResult Correct(
         string text,
         IReadOnlyList<CustomWordEntry> customWords) =>
-        Correct(text, customWords, packWords: null);
+        Correct(text, customWords, packWords: null, excludeLearnedAliases: false);
 
     public static WordCorrectionResult Correct(
         string text,
         IReadOnlyList<CustomWordEntry> customWords,
-        IReadOnlyList<CustomWordEntry>? packWords)
+        IReadOnlyList<CustomWordEntry>? packWords) =>
+        Correct(text, customWords, packWords, excludeLearnedAliases: false);
+
+    public static WordCorrectionResult Correct(
+        string text,
+        IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<CustomWordEntry>? packWords,
+        bool excludeLearnedAliases,
+        bool reserveExcludedLearnedAliases = false)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(customWords);
@@ -89,15 +97,19 @@ public static partial class CustomWordCorrector
         // so a person moving between the two would see different text from the same list.
         var usable = customWords.Where(IsUsable).ToArray();
         var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
-        RegisterEntries(usable, owners, overwriteExistingAliases: true);
+        RegisterEntries(usable, owners, overwriteExistingAliases: true, excludeLearnedAliases: excludeLearnedAliases);
 
         if (packWords is { Count: > 0 })
         {
             var usablePacks = packWords.Where(IsUsable).ToArray();
             if (usablePacks.Length > 0)
             {
-                // Isolated toggleable pack layer: pack entries never overwrite user-defined entries.
-                RegisterEntries(usablePacks, owners, overwriteExistingAliases: false);
+                var reservedLearned = excludeLearnedAliases && reserveExcludedLearnedAliases
+                    ? CollectReservedLearnedSurfaces(usable)
+                    : null;
+                // Isolated toggleable pack layer: pack entries never overwrite user-defined entries
+                // or active auto-learned aliases still awaiting contextual verification.
+                RegisterEntries(usablePacks, owners, overwriteExistingAliases: false, excludeLearnedAliases: false, skipSurfaces: reservedLearned);
             }
         }
 
@@ -492,16 +504,61 @@ public static partial class CustomWordCorrector
     public static double LengthAwareAdjustment(int candidateLength) =>
         Math.Min(0.04, Math.Max(0, candidateLength - 8) * 0.005);
 
+    private static HashSet<string>? CollectReservedLearnedSurfaces(CustomWordEntry[] entries)
+    {
+        HashSet<string>? reserved = null;
+        foreach (var entry in entries)
+        {
+            if (!entry.IsAutoLearned)
+            {
+                continue;
+            }
+
+            foreach (var alias in entry.EffectiveLearnedAliases())
+            {
+                var surface = CollapseSpaces(alias);
+                if (!string.IsNullOrEmpty(surface) && !ContainsReservedTrigger(surface))
+                {
+                    reserved ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    reserved.Add(surface);
+                }
+            }
+        }
+
+        return reserved;
+    }
+
     private static void RegisterEntries(
         CustomWordEntry[] entries,
         Dictionary<string, Candidate> owners,
-        bool overwriteExistingAliases)
+        bool overwriteExistingAliases,
+        bool excludeLearnedAliases = false,
+        HashSet<string>? skipSurfaces = null)
     {
         foreach (var entry in entries)
         {
+            if (excludeLearnedAliases && entry.IsPureAutoLearned)
+            {
+                continue;
+            }
+
+            var effectiveLearned = excludeLearnedAliases ? entry.EffectiveLearnedAliases() : [];
+            HashSet<string>? learnedAliases = effectiveLearned.Count > 0
+                ? effectiveLearned.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
             foreach (var alias in entry.Aliases)
             {
+                if (learnedAliases is not null && learnedAliases.Contains(alias))
+                {
+                    continue;
+                }
+
                 var surface = CollapseSpaces(alias);
+                if (skipSurfaces is not null && skipSurfaces.Contains(surface))
+                {
+                    continue;
+                }
+
                 if (!ContainsReservedTrigger(surface) &&
                     (overwriteExistingAliases || !owners.ContainsKey(surface)))
                 {
@@ -512,7 +569,17 @@ public static partial class CustomWordCorrector
 
         foreach (var entry in entries)
         {
+            if (excludeLearnedAliases && entry.IsPureAutoLearned)
+            {
+                continue;
+            }
+
             var surface = CollapseSpaces(entry.Replacement);
+            if (skipSurfaces is not null && skipSurfaces.Contains(surface))
+            {
+                continue;
+            }
+
             if ((WordCount(surface) == 1 || entry.Aliases.Count == 0) &&
                 !ContainsReservedTrigger(surface) &&
                 !owners.ContainsKey(surface))
@@ -534,10 +601,10 @@ public static partial class CustomWordCorrector
     private static int WordCount(string value) =>
         value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
 
-    private static string CollapseSpaces(string value) =>
+    internal static string CollapseSpaces(string value) =>
         WhitespaceRegex().Replace(value.Trim(), " ");
 
-    private static string SurfacePattern(string surface) =>
+    internal static string SurfacePattern(string surface) =>
         $@"(?<![\p{{L}}\p{{N}}]){string.Join(@"[\s,.!?\u2014\u2013-]+", surface.Split(' ').Select(Regex.Escape))}(?![\p{{L}}\p{{N}}])";
 
     private static bool IsClaimed(List<Span> claimed, int start, int length) =>

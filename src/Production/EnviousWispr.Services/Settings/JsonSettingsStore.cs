@@ -87,6 +87,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 24 => MigrateFromV24(json),
                 25 => MigrateFromV25(json),
                 26 => MigrateFromV26(json),
+                27 => MigrateFromV27(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -626,6 +627,30 @@ public sealed class JsonSettingsStore : ISettingsStore
                     Dictation = legacy.Preferences.Dictation with
                     {
                         LearnFromEditsEnabled = true,
+                        FixLearnedWordsEnabled = true,
+                    },
+                },
+            };
+    }
+
+    /// <summary>Takes a settings file written before runtime Fix words it learned toggle existed (schema v27).</summary>
+    /// <remarks>
+    /// Enables <see cref="DictationPreferences.FixLearnedWordsEnabled"/> by default to match macOS,
+    /// preserving every prior word, shortcut, and preference while bumping the schema version.
+    /// </remarks>
+    private static AppSettings? MigrateFromV27(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        FixLearnedWordsEnabled = true,
                     },
                 },
             };
@@ -649,6 +674,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                     Dictation = legacy.Preferences.Dictation with
                     {
                         LearnFromEditsEnabled = true,
+                        FixLearnedWordsEnabled = true,
                     },
                 },
             };

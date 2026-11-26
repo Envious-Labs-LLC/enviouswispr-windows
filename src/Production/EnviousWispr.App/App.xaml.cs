@@ -147,7 +147,8 @@ public partial class App : Application, IAsyncDisposable
                 ClipboardText: WindowsClipboardText.TryReadAsync,
                 Dictation: () => _settings.Preferences.Dictation),
             TimeProvider.System,
-            _dictationAudioArchive));
+            _dictationAudioArchive,
+            EnsureLearnedWordCheckStep()));
         _sessionPersistence = _runtime.Persistence;
         _livePreview = _runtime.Preview;
         _streaming = _runtime.Streaming;

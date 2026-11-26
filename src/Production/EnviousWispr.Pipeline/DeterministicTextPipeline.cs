@@ -16,7 +16,8 @@ public sealed record DeterministicTextOptions(
     bool EmojiFormatterEnabled,
     bool SpokenPunctuationEnabled,
     EnglishSpelling EnglishSpelling = EnglishSpelling.American,
-    bool CasualModeEnabled = false)
+    bool CasualModeEnabled = false,
+    bool FixLearnedWordsEnabled = true)
 {
     public static DeterministicTextOptions From(DictationPreferences preferences)
     {
@@ -27,7 +28,8 @@ public sealed record DeterministicTextOptions(
             preferences.EmojiFormatterEnabled,
             preferences.SpokenPunctuationEnabled,
             preferences.EnglishSpelling,
-            preferences.CasualModeEnabled);
+            preferences.CasualModeEnabled,
+            preferences.FixLearnedWordsEnabled);
     }
 }
 
@@ -362,7 +364,12 @@ public sealed class DeterministicTextPipeline
             var packEntries = VocabularyPacks.ResolveEntries(context.EnabledVocabularyPackIds);
             return context with
             {
-                Text = CustomWordCorrector.Correct(context.Text, context.CustomWords, packEntries).Text,
+                Text = CustomWordCorrector.Correct(
+                    context.Text,
+                    context.CustomWords,
+                    packEntries,
+                    excludeLearnedAliases: true,
+                    reserveExcludedLearnedAliases: context.Options.FixLearnedWordsEnabled).Text,
             };
         }
     }
