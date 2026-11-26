@@ -14,7 +14,8 @@ public sealed record EgOneServerOptions(
     int ContextTokens = 16_384,
     int? GpuLayers = null,
     TimeSpan? StartupTimeout = null,
-    int? Threads = null)
+    int? Threads = null,
+    bool AllowCpuFallback = false)
 {
     public TimeSpan EffectiveStartupTimeout => StartupTimeout ?? TimeSpan.FromSeconds(60);
 }
@@ -143,6 +144,15 @@ public sealed class EgOneServerManager : IEgOneRuntime
         return arguments;
     }
 
+    internal static bool ShouldRetryOnCpuFallback(
+        EgOneServerOptions options,
+        EgOneEndpoint? gpuEndpoint,
+        bool isCancellationRequested) =>
+        gpuEndpoint is null &&
+        !isCancellationRequested &&
+        options.AllowCpuFallback &&
+        options.GpuLayers is > 0;
+
     private async Task<EgOneEndpoint?> StartCoreAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_options.ServerExecutable) || !File.Exists(_options.ModelFile))
@@ -150,16 +160,30 @@ public sealed class EgOneServerManager : IEgOneRuntime
             return null;
         }
 
+        var endpoint = await StartWithOptionsAsync(_options, cancellationToken).ConfigureAwait(false);
+        if (ShouldRetryOnCpuFallback(_options, endpoint, cancellationToken.IsCancellationRequested))
+        {
+            var cpuOptions = _options with { GpuLayers = 0, AllowCpuFallback = false };
+            endpoint = await StartWithOptionsAsync(cpuOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        return endpoint;
+    }
+
+    private async Task<EgOneEndpoint?> StartWithOptionsAsync(
+        EgOneServerOptions attemptOptions,
+        CancellationToken cancellationToken)
+    {
         var port = FindFreePort();
         var authToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var startInfo = new ProcessStartInfo
         {
-            FileName = _options.ServerExecutable,
+            FileName = attemptOptions.ServerExecutable,
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
         };
-        foreach (var argument in CreateArguments(_options, port, authToken))
+        foreach (var argument in CreateArguments(attemptOptions, port, authToken))
         {
             startInfo.ArgumentList.Add(argument);
         }
@@ -184,10 +208,10 @@ public sealed class EgOneServerManager : IEgOneRuntime
 
             _process = process;
             _processJob = processJob;
-            var endpoint = new EgOneEndpoint(port, authToken, _options.ContextTokens);
+            var endpoint = new EgOneEndpoint(port, authToken, attemptOptions.ContextTokens);
             var ready = await AwaitReadyAsync(
                 endpoint,
-                _options.EffectiveStartupTimeout,
+                attemptOptions.EffectiveStartupTimeout,
                 cancellationToken).ConfigureAwait(false);
             if (!ready)
             {

@@ -56,6 +56,19 @@ public sealed class EgOnePolishProviderTests
         Assert.Contains("--gpu-layers", arguments);
         Assert.Contains("--threads", arguments);
         Assert.Contains("8", arguments);
+
+        Assert.True(EgOneServerManager.ShouldRetryOnCpuFallback(
+            options with { AllowCpuFallback = true },
+            gpuEndpoint: null,
+            isCancellationRequested: false));
+        Assert.False(EgOneServerManager.ShouldRetryOnCpuFallback(
+            options with { AllowCpuFallback = false },
+            gpuEndpoint: null,
+            isCancellationRequested: false));
+        Assert.False(EgOneServerManager.ShouldRetryOnCpuFallback(
+            options with { AllowCpuFallback = true, GpuLayers = 0 },
+            gpuEndpoint: null,
+            isCancellationRequested: false));
     }
 
     [Fact]

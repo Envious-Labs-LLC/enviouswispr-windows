@@ -10,7 +10,7 @@ if (!arguments.TryGetValue("server", out var server) ||
     !arguments.TryGetValue("model", out var model))
 {
     Console.Error.WriteLine(
-        "Usage: EnviousWispr.Polish.Uat --server <llama-server.exe> --model <eg-1.gguf> [--gpu-layers <count>] [--threads <count>] [--context <tokens>]");
+        "Usage: EnviousWispr.Polish.Uat --server <llama-server.exe> --model <eg-1.gguf> [--model-id <eg-1|eg-1-mini|eg-1-micro>] [--gpu-layers <count>] [--threads <count>] [--context <tokens>]");
     return 2;
 }
 
@@ -29,7 +29,17 @@ if (arguments.TryGetValue("threads", out var configuredThreads) &&
     threads = parsedThreads;
 }
 
-var contextTokens = EgOneModelCatalog.DefaultContextTokens(arguments.GetValueOrDefault("model-id"));
+var inferredModelId = arguments.GetValueOrDefault("model-id");
+if (string.IsNullOrWhiteSpace(inferredModelId))
+{
+    inferredModelId = model.Contains("micro", StringComparison.OrdinalIgnoreCase)
+        ? EgOneModelCatalog.MicroId
+        : model.Contains("mini", StringComparison.OrdinalIgnoreCase)
+            ? EgOneModelCatalog.MiniId
+            : EgOneModelCatalog.FullId;
+}
+
+var contextTokens = EgOneModelCatalog.DefaultContextTokens(inferredModelId);
 if (arguments.TryGetValue("context", out var configuredContext) &&
     int.TryParse(configuredContext, CultureInfo.InvariantCulture, out var parsedContext) &&
     parsedContext >= 1_024)
@@ -38,8 +48,7 @@ if (arguments.TryGetValue("context", out var configuredContext) &&
 }
 
 await using var provider = new EgOnePolishProvider(new EgOnePolishOptions(
-    new EgOneServerOptions(server, model, ContextTokens: contextTokens, GpuLayers: gpuLayers, Threads: threads),
-    InferenceTimeout: TimeSpan.FromSeconds(45)));
+    new EgOneServerOptions(server, model, ContextTokens: contextTokens, GpuLayers: gpuLayers, Threads: threads)));
 var totalTimer = Stopwatch.StartNew();
 var health = await provider.ProbeHealthAsync();
 long peakWorkingSetBytes = 0;

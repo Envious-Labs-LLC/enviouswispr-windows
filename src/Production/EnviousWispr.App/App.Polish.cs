@@ -319,6 +319,7 @@ public partial class App
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
 
         int? gpuLayers = null;
+        var allowCpuFallback = false;
         if (int.TryParse(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_GPU_LAYERS"),
                 System.Globalization.NumberStyles.Integer,
@@ -336,6 +337,7 @@ public partial class App
                  EnviousWispr.Services.Diagnostics.HardwareProfileSummary.GetCurrent().HasNvidiaGpu)
         {
             gpuLayers = 99;
+            allowCpuFallback = true;
             _polishResource = RuntimeResourceKind.Accelerator;
         }
 
@@ -352,7 +354,13 @@ public partial class App
 
         _configuredEgOneModelPath = modelFile;
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
-            new EgOneServerOptions(serverExecutable, modelFile, ContextTokens: contextTokens, GpuLayers: gpuLayers, Threads: threads),
+            new EgOneServerOptions(
+                serverExecutable,
+                modelFile,
+                ContextTokens: contextTokens,
+                GpuLayers: gpuLayers,
+                Threads: threads,
+                AllowCpuFallback: allowCpuFallback),
             modelId));
         _polishUsesLocalRuntime = true;
     }
