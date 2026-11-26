@@ -469,6 +469,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// word every snippet has always needed. The constructor's parameter is named for the member so
     /// the settings file binds to it.
     /// </param>
+    /// <param name="enabledVocabularyPackIds">IDs of toggleable vocabulary packs active for deterministic correction.</param>
+    /// <param name="hasSeededStarterSnippets">Whether one-time seeding of starter example snippets has been applied.</param>
     /// <remarks>
     /// THE KEYWORD LIVES WITH THE SNIPPETS, as it does on macOS (<c>SnippetVocabulary.keyword</c>, saved
     /// in the snippet store), so a portable profile carries it with the snippets it belongs to. A change
@@ -480,7 +482,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         IReadOnlyList<CustomWordEntry> customWords,
         IReadOnlyList<SnippetEntry> snippets,
         string? snippetKeyword = null,
-        IReadOnlyList<string>? enabledVocabularyPackIds = null)
+        IReadOnlyList<string>? enabledVocabularyPackIds = null,
+        bool hasSeededStarterSnippets = false)
     {
         ArgumentNullException.ThrowIfNull(customWords);
         ArgumentNullException.ThrowIfNull(snippets);
@@ -490,6 +493,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
             ? SnippetVocabulary.DefaultKeyword
             : snippetKeyword;
         EnabledVocabularyPackIds = NormalizePackIds(enabledVocabularyPackIds);
+        HasSeededStarterSnippets = hasSeededStarterSnippets;
     }
 
     public IReadOnlyList<CustomWordEntry> CustomWords { get; }
@@ -502,21 +506,28 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// <summary>IDs of toggleable vocabulary packs active for deterministic correction.</summary>
     public IReadOnlyList<string> EnabledVocabularyPackIds { get; }
 
-    /// <summary>The same data with other words, keeping the snippets, keyword, and enabled packs.</summary>
+    /// <summary>Whether starter example snippets have already been evaluated for one-time seeding.</summary>
+    public bool HasSeededStarterSnippets { get; }
+
+    /// <summary>The same data with other words, keeping the snippets, keyword, packs, and seeding flag.</summary>
     public ReusableUserData WithCustomWords(IReadOnlyList<CustomWordEntry> customWords) =>
-        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds);
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
 
-    /// <summary>The same data with other snippets, keeping the words, keyword, and enabled packs.</summary>
+    /// <summary>The same data with other snippets, keeping the words, keyword, packs, and seeding flag.</summary>
     public ReusableUserData WithSnippets(IReadOnlyList<SnippetEntry> snippets) =>
-        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds);
+        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
 
-    /// <summary>The same data with another keyword, keeping the words, snippets, and enabled packs.</summary>
+    /// <summary>The same data with another keyword, keeping the words, snippets, packs, and seeding flag.</summary>
     public ReusableUserData WithSnippetKeyword(string snippetKeyword) =>
-        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds);
+        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
 
     /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords untouched.</summary>
     public ReusableUserData WithEnabledVocabularyPackIds(IReadOnlyList<string>? enabledVocabularyPackIds) =>
-        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds);
+        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets);
+
+    /// <summary>The same data with an updated starter-snippet seeding flag.</summary>
+    public ReusableUserData WithHasSeededStarterSnippets(bool hasSeededStarterSnippets) =>
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets);
 
     public static ReusableUserData Empty { get; } = new(
         Array.Empty<CustomWordEntry>(),
@@ -527,7 +538,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         CustomWords.SequenceEqual(other.CustomWords) &&
         Snippets.SequenceEqual(other.Snippets) &&
         string.Equals(SnippetKeyword, other.SnippetKeyword, StringComparison.Ordinal) &&
-        EnabledVocabularyPackIds.SequenceEqual(other.EnabledVocabularyPackIds, StringComparer.OrdinalIgnoreCase);
+        EnabledVocabularyPackIds.SequenceEqual(other.EnabledVocabularyPackIds, StringComparer.OrdinalIgnoreCase) &&
+        HasSeededStarterSnippets == other.HasSeededStarterSnippets;
 
     public override bool Equals(object? obj) => Equals(obj as ReusableUserData);
 
@@ -550,6 +562,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
             hash.Add(packId, StringComparer.OrdinalIgnoreCase);
         }
 
+        hash.Add(HasSeededStarterSnippets);
         return hash.ToHashCode();
     }
 
@@ -582,5 +595,5 @@ public sealed record PortableProfile(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, LearnMemoryEntry>? LearnMemory = null)
 {
-    public const int CurrentSchemaVersion = 21;
+    public const int CurrentSchemaVersion = 22;
 }

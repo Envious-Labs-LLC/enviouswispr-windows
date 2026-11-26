@@ -78,7 +78,6 @@ public sealed partial class MainWindow : Window, IDisposable
         new("Updates & Licenses", "settings-app", "updates-licenses", "version release notes third party licenses"),
         new("Diagnostics", "settings-diagnostics", null, "logs telemetry troubleshooting reports"),
         new("History", "history", null, "diary transcripts search dictations"),
-        new("Help & Documentation", "help", null, "guide support faq readme"),
         new("What's New", "whats-new", null, "release notes updates changelog features"),
     ];
 
@@ -527,6 +526,12 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         _currentOverlayState = overlayState;
+        if (RecordToolbarButton is not null)
+        {
+            var isRecording = overlayState == DictationOverlayState.Recording;
+            RecordToolbarButton.Style = (Style)Application.Current.Resources[
+                isRecording ? "BrandStopToolbarButtonStyle" : "BrandRecordToolbarButtonStyle"];
+        }
         if (RecordToolbarButtonText is not null)
         {
             RecordToolbarButtonText.Text = overlayState == DictationOverlayState.Recording ? "Stop" : "Record";
@@ -1331,7 +1336,6 @@ public sealed partial class MainWindow : Window, IDisposable
             : new Thickness(0, 12, 0, 0);
 
         var settingsPage = resolvedTag.StartsWith("settings-", StringComparison.Ordinal);
-        var helpPage = resolvedTag == "help" || resolvedTag.StartsWith("help-", StringComparison.Ordinal);
         HistoryPage.Visibility = isHistoryPage ? Visibility.Visible : Visibility.Collapsed;
         if (resolvedTag == "history")
         {
@@ -1343,22 +1347,24 @@ public sealed partial class MainWindow : Window, IDisposable
             _ = MarkReleaseNotesSeenAsync();
         }
         DictionaryPage.Visibility = resolvedTag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
-        if (resolvedTag == "dictionary" && !string.IsNullOrWhiteSpace(targetTab))
+        if (resolvedTag == "dictionary")
         {
-            SelectDictionaryTab(targetTab);
+            if (!string.IsNullOrWhiteSpace(targetTab))
+            {
+                SelectDictionaryTab(targetTab);
+            }
+
+            if (DictionaryTabStrip is not null)
+            {
+                ApplyResponsiveTabStripLayout(DictionaryTabStrip);
+            }
         }
         SnippetsPage.Visibility = resolvedTag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
-        HelpPage.Visibility = helpPage ? Visibility.Visible : Visibility.Collapsed;
 
         if (settingsPage)
         {
             ConfigureSettingsPage(resolvedTag, targetTab);
-        }
-        else if (helpPage)
-        {
-            ConfigureHelpPage(resolvedTag);
-            ScrollPageToTop(HelpPage);
         }
 
         if (SettingsPage.Visibility != Visibility.Visible || KeybindsSection.Visibility != Visibility.Visible)
@@ -1391,7 +1397,6 @@ public sealed partial class MainWindow : Window, IDisposable
         DictionaryPage,
         SnippetsPage,
         SettingsPage,
-        HelpPage,
     ];
 
     /// <summary>The glyph a page header shows, read from that page's own sidebar row.</summary>
@@ -1421,20 +1426,25 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         if (tag == "settings-dictation")
         {
+            SettingsTabStrip.Visibility = Visibility.Visible;
             DictationTabStrip.Visibility = Visibility.Visible;
             AppTabStrip.Visibility = Visibility.Collapsed;
+            ApplyResponsiveTabStripLayout(DictationTabStrip);
             SelectDictationTab(tabKey ?? "engine");
             return;
         }
 
         if (tag == "settings-app")
         {
+            SettingsTabStrip.Visibility = Visibility.Visible;
             DictationTabStrip.Visibility = Visibility.Collapsed;
             AppTabStrip.Visibility = Visibility.Visible;
+            ApplyResponsiveTabStripLayout(AppTabStrip);
             SelectAppTab(tabKey ?? "appearance");
             return;
         }
 
+        SettingsTabStrip.Visibility = Visibility.Collapsed;
         DictationTabStrip.Visibility = Visibility.Collapsed;
         AppTabStrip.Visibility = Visibility.Collapsed;
 
@@ -1510,12 +1520,14 @@ public sealed partial class MainWindow : Window, IDisposable
     private void SelectDictationTab(string tabKey)
     {
         CommitNavigationRouteState(SettingsRoute.Normalize("settings-dictation", tabKey));
-        DictationTabEngine.Style = (Style)Application.Current.Resources[tabKey == "engine" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictationTabMicrophone.Style = (Style)Application.Current.Resources[tabKey == "microphone" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictationTabLivePreview.Style = (Style)Application.Current.Resources[tabKey == "live-preview" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictationTabPill.Style = (Style)Application.Current.Resources[tabKey == "pill" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictationTabSounds.Style = (Style)Application.Current.Resources[tabKey == "sounds" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictationTabClipboard.Style = (Style)Application.Current.Resources[tabKey == "clipboard" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        var active = (Style)Application.Current.Resources["BrandTopTabActiveButtonStyle"];
+        var normal = (Style)Application.Current.Resources["BrandTopTabButtonStyle"];
+        DictationTabEngine.Style = tabKey == "engine" ? active : normal;
+        DictationTabMicrophone.Style = tabKey == "microphone" ? active : normal;
+        DictationTabLivePreview.Style = tabKey == "live-preview" ? active : normal;
+        DictationTabPill.Style = tabKey == "pill" ? active : normal;
+        DictationTabSounds.Style = tabKey == "sounds" ? active : normal;
+        DictationTabClipboard.Style = tabKey == "clipboard" ? active : normal;
 
         ShowSettingsSectionForDictationTab(tabKey);
     }
@@ -1560,11 +1572,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void SelectAppTab(string tabKey)
     {
-        AppTabAppearance.Style = (Style)Application.Current.Resources[tabKey == "appearance" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        AppTabPermissions.Style = (Style)Application.Current.Resources[tabKey == "permissions" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        AppTabPrivacy.Style = (Style)Application.Current.Resources[tabKey == "privacy" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        AppTabBackup.Style = (Style)Application.Current.Resources[tabKey == "backup" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        AppTabUpdatesLicenses.Style = (Style)Application.Current.Resources[tabKey == "updates-licenses" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        var active = (Style)Application.Current.Resources["BrandTopTabActiveButtonStyle"];
+        var normal = (Style)Application.Current.Resources["BrandTopTabButtonStyle"];
+        AppTabAppearance.Style = tabKey == "appearance" ? active : normal;
+        AppTabPermissions.Style = tabKey == "permissions" ? active : normal;
+        AppTabPrivacy.Style = tabKey == "privacy" ? active : normal;
+        AppTabBackup.Style = tabKey == "backup" ? active : normal;
+        AppTabUpdatesLicenses.Style = tabKey == "updates-licenses" ? active : normal;
 
         ShowSettingsSectionForAppTab(tabKey);
     }
@@ -1597,42 +1611,6 @@ public sealed partial class MainWindow : Window, IDisposable
         ScrollPageToTop(SettingsPage);
     }
 
-    private void ConfigureHelpPage(string tag)
-    {
-        var (title, description) = tag switch
-        {
-            "help" => (
-                "Help and privacy",
-                "Find keyboard guidance, privacy details, updates, and licenses."),
-            _ => (
-                "Help and privacy",
-                "Find keyboard guidance, privacy details, updates, and licenses."),
-        };
-
-        HelpPageTitle.Text = title;
-        HelpPageDescription.Text = description;
-
-        var section = HelpSectionFor(tag);
-        var showAll = section is null;
-        foreach (var candidate in HelpSections())
-        {
-            candidate.Visibility = showAll || ReferenceEquals(candidate, section)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
-
-        var visible = HelpSections()
-            .Where(candidate => candidate.Visibility == Visibility.Visible)
-            .ToArray();
-        CollapseEyebrowThatRepeatsTheTitle(HelpSections(), visible, title);
-    }
-
-    private Border[] HelpSections() =>
-    [
-        KeyboardGuideSection,
-        LanguageSupportSection,
-    ];
-
     private Border[] SettingsSections() =>
     [
         MicrophoneSection,
@@ -1654,14 +1632,6 @@ public sealed partial class MainWindow : Window, IDisposable
         UpdatesSection,
         LicensesSection,
     ];
-
-    private Border? HelpSectionFor(string tag) => tag switch
-    {
-        "help-permissions" => PermissionsSection,
-        "help-updates" => UpdatesSection,
-        "help-licenses" => LicensesSection,
-        _ => null,
-    };
 
     /// <summary>
     /// Returns a page to the top after navigation. Best effort: never worth a crash.

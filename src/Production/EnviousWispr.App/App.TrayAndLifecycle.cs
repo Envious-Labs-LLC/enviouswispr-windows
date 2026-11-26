@@ -279,7 +279,6 @@ public partial class App
         _trayIcon.CopyLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Copy);
         _trayIcon.TranscribeFileRequested += () => ShowWindowOnPage("settings-transcribe-file");
         _trayIcon.AddToDictionaryRequested += () => ShowWindowOnPage("dictionary", "your-words");
-        _trayIcon.HelpCenterRequested += () => ShowWindowOnPage("help");
         _trayIcon.CheckForUpdatesRequested += () => ShowWindowOnPage("settings-app", "updates-licenses");
         _trayIcon.LastDictationPreviewRequested += RefreshLastDictationPreview;
         _trayIcon.MicrophoneMenuOpeningRequested += RefreshTrayMicrophones;

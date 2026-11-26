@@ -154,7 +154,7 @@ public sealed partial class MainWindow
                 CheckUndeliverableFeedback)
             {
                 XamlRoot = WindowRoot.XamlRoot,
-                RequestedTheme = WindowRoot.RequestedTheme,
+                RequestedTheme = WindowRoot.ActualTheme,
             };
             await dialog.ShowAsync();
         }

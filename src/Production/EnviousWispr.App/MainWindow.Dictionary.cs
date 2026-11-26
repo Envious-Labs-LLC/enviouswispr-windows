@@ -791,15 +791,22 @@ public sealed partial class MainWindow
 
     private void SelectDictionaryTab(string tabKey)
     {
-        DictTabYourWords.Style = (Style)Application.Current.Resources[tabKey == "your-words" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictTabPacks.Style = (Style)Application.Current.Resources[tabKey == "packs" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictTabLearnFrom.Style = (Style)Application.Current.Resources[tabKey == "learn-from" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        DictTabQuickAdd.Style = (Style)Application.Current.Resources[tabKey == "quick-add" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        var active = (Style)Application.Current.Resources["BrandTopTabActiveButtonStyle"];
+        var normal = (Style)Application.Current.Resources["BrandTopTabButtonStyle"];
+        DictTabYourWords.Style = tabKey == "your-words" ? active : normal;
+        DictTabPacks.Style = tabKey == "packs" ? active : normal;
+        DictTabLearnFrom.Style = tabKey == "learn-from" ? active : normal;
+        DictTabQuickAdd.Style = tabKey == "quick-add" ? active : normal;
 
         DictPanelYourWords.Visibility = tabKey == "your-words" ? Visibility.Visible : Visibility.Collapsed;
         DictPanelPacks.Visibility = tabKey == "packs" ? Visibility.Visible : Visibility.Collapsed;
         DictPanelLearnFrom.Visibility = tabKey == "learn-from" ? Visibility.Visible : Visibility.Collapsed;
         DictPanelQuickAdd.Visibility = tabKey == "quick-add" ? Visibility.Visible : Visibility.Collapsed;
+
+        if (DictionaryTabStrip is not null)
+        {
+            ApplyResponsiveTabStripLayout(DictionaryTabStrip);
+        }
     }
 
     private string _wordFilterCategory = "all";
@@ -818,7 +825,78 @@ public sealed partial class MainWindow
             WordFilterBrandChip.Style = tag == "brand" ? active : normal;
             WordFilterAcronymChip.Style = tag == "acronym" ? active : normal;
             WordFilterDomainChip.Style = tag == "domain" ? active : normal;
+            WordFilterAutoLearnedChip.Style = tag == "auto-learned" ? active : normal;
             RefreshDictionaryView();
+        }
+    }
+
+    private void WordFilterChipsContainer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (WordFilterChipsPrimaryRow is null || WordFilterChipsOverflowRow is null || e.NewSize.Width <= 0)
+        {
+            return;
+        }
+
+        Button[] allChips =
+        [
+            WordFilterAllChip,
+            WordFilterGeneralChip,
+            WordFilterPersonChip,
+            WordFilterBrandChip,
+            WordFilterAcronymChip,
+            WordFilterDomainChip,
+            WordFilterAutoLearnedChip,
+        ];
+        if (allChips.Any(c => c is null))
+        {
+            return;
+        }
+
+        var available = e.NewSize.Width;
+        var spacing = LayoutDouble("BrandSpacingXs");
+        foreach (var chip in allChips)
+        {
+            WordFilterChipsPrimaryRow.Children.Remove(chip);
+            WordFilterChipsOverflowRow.Children.Remove(chip);
+            chip.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        }
+
+        var usedWidth = 0.0;
+        var overflowed = false;
+        foreach (var chip in allChips)
+        {
+            var chipWidth = Math.Max(64, chip.DesiredSize.Width);
+            var nextWidth = usedWidth == 0 ? chipWidth : usedWidth + spacing + chipWidth;
+            if (!overflowed && nextWidth <= available)
+            {
+                WordFilterChipsPrimaryRow.Children.Add(chip);
+                usedWidth = nextWidth;
+            }
+            else
+            {
+                overflowed = true;
+                WordFilterChipsOverflowRow.Children.Add(chip);
+            }
+        }
+
+        WordFilterChipsOverflowRow.Visibility = WordFilterChipsOverflowRow.Children.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void QuickAddStepsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ApplyResponsiveThreeCardGridLayout(
+            QuickAddStepsGrid,
+            e.NewSize.Width,
+            stackThreshold: 640,
+            [QuickAddStep1Card, QuickAddStep2Card, QuickAddStep3Card]);
+
+    private void DictionarySearchClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DictionarySearchBox is not null)
+        {
+            DictionarySearchBox.Text = string.Empty;
+            DictionarySearchBox.Focus(FocusState.Programmatic);
         }
     }
 
@@ -839,8 +917,17 @@ public sealed partial class MainWindow
         UpdateSelectionDependentButtons();
     }
 
-    private void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
+    private void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (DictionarySearchClearButton is not null)
+        {
+            DictionarySearchClearButton.Visibility = string.IsNullOrWhiteSpace(DictionarySearchBox?.Text)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
         RefreshDictionaryView();
+    }
 
     private void RefreshDictionaryView()
     {

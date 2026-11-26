@@ -259,6 +259,38 @@ public sealed class VocabularyPresenterTests
         Assert.Empty((store.Saved?.UserData ?? ReusableUserData.Empty).Snippets);
     }
 
+    [Fact]
+    public void FilterWordsSupportsAutoLearnedCategory()
+    {
+        var manual = new CustomWordEntry(["kuber netes"], "Kubernetes", category: WordCategory.Domain);
+        var learned = new CustomWordEntry(
+            ["anthropicc"],
+            "Anthropic",
+            category: WordCategory.Brand,
+            learnedAliases: ["anthropicc"],
+            learnedAt: DateTimeOffset.UtcNow);
+
+        var filtered = VocabularyPresenter.FilterWords([manual, learned], "auto-learned");
+
+        var only = Assert.Single(filtered);
+        Assert.Equal("Anthropic", only.Replacement);
+    }
+
+    [Fact]
+    public async Task RestoreStarterSnippetsAddsMissingExamplesWithoutClobberingCustomOnes()
+    {
+        var custom = new SnippetEntry("my custom", "Custom expansion");
+        var (presenter, store) = Build(snippets: [custom]);
+
+        var result = await presenter.RestoreStarterSnippetsAsync().WaitAsync(Patience);
+
+        Assert.True(result.Saved);
+        Assert.Equal(SnippetStarters.All.Count, result.Value);
+        Assert.True(store.Saved!.UserData.HasSeededStarterSnippets);
+        Assert.Contains(custom, store.Saved.UserData.Snippets);
+        Assert.Equal(SnippetStarters.All.Count + 1, store.Saved.UserData.Snippets.Count);
+    }
+
     /// <summary>
     /// The keyword is stored in its comparison form, a cleared box stores the default, two words are
     /// refused before anything is written, and a later word or snippet change keeps the keyword.

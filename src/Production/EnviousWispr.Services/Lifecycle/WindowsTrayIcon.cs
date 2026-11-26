@@ -114,7 +114,6 @@ public sealed class WindowsTrayIcon : IDisposable
         // 4. App surfaces & exit.
         _menu.Items.Add(CreateActionItem("Open EnviousWispr", () => ShowWindowRequested?.Invoke()));
         _menu.Items.Add(CreateActionItem("Settings", () => OpenSettingsRequested?.Invoke()));
-        _menu.Items.Add(CreateActionItem("Help Center", () => HelpCenterRequested?.Invoke()));
         _menu.Items.Add(CreateActionItem("Check for Updates...", () => CheckForUpdatesRequested?.Invoke()));
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(CreateActionItem("Exit EnviousWispr", () => ExitRequested?.Invoke()));
@@ -177,9 +176,6 @@ public sealed class WindowsTrayIcon : IDisposable
 
     /// <summary>The user selected an <see cref="AppTheme"/> from the Appearance submenu.</summary>
     public event Action<AppTheme>? AppearanceSelected;
-
-    /// <summary>The user clicked Help Center in the tray menu.</summary>
-    public event Action? HelpCenterRequested;
 
     /// <summary>The user clicked Check for Updates... in the tray menu.</summary>
     public event Action? CheckForUpdatesRequested;

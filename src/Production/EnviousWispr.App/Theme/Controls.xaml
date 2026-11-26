@@ -1456,4 +1456,293 @@
             </Setter.Value>
         </Setter>
     </Style>
+
+    <!-- Top-right titlebar 32x32 soft-lavender rounded icon tile buttons (What's New / Feedback) -->
+    <Style x:Key="BrandToolbarIconButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Width" Value="{StaticResource BrandToolbarControlHeight}" />
+        <Setter Property="Height" Value="{StaticResource BrandToolbarControlHeight}" />
+        <Setter Property="MinWidth" Value="{StaticResource BrandToolbarControlHeight}" />
+        <Setter Property="MinHeight" Value="{StaticResource BrandToolbarControlHeight}" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
+        <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="RootGrid"
+                          Width="{TemplateBinding Width}"
+                          Height="{TemplateBinding Height}"
+                          CornerRadius="{TemplateBinding CornerRadius}"
+                          Background="{TemplateBinding Background}"
+                          BorderBrush="{TemplateBinding BorderBrush}"
+                          BorderThickness="{TemplateBinding BorderThickness}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+                                        <Setter Target="HoverWash.Opacity" Value="0.10" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+                                        <Setter Target="HoverWash.Opacity" Value="0.18" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Opacity" Value="0.45" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="HoverWash"
+                                CornerRadius="{TemplateBinding CornerRadius}"
+                                Background="{ThemeResource BrandAccentBrush}"
+                                Opacity="0"
+                                IsHitTestVisible="False" />
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Padding="{TemplateBinding Padding}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          AutomationProperties.AccessibilityView="Raw" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Record / Stop top-right toolbar pill button: single ControlTemplate shared via BasedOn so clicking never swaps templates mid-click. -->
+    <Style x:Key="BrandRecordToolbarButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandPrimaryButtonStyle}">
+        <Setter Property="Height" Value="{StaticResource BrandToolbarControlHeight}" />
+        <Setter Property="MinHeight" Value="{StaticResource BrandToolbarControlHeight}" />
+        <Setter Property="Padding" Value="{StaticResource BrandRecordToolbarButtonPadding}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="RootGrid"
+                          Height="{TemplateBinding Height}"
+                          CornerRadius="{TemplateBinding CornerRadius}"
+                          Background="{TemplateBinding Background}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="HoverWash.Opacity" Value="0.14" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Opacity" Value="0.86" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Opacity" Value="0.45" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="HoverWash"
+                                CornerRadius="{TemplateBinding CornerRadius}"
+                                Background="{ThemeResource BrandOnAccentBrush}"
+                                Opacity="0"
+                                IsHitTestVisible="False" />
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Padding="{TemplateBinding Padding}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          AutomationProperties.AccessibilityView="Raw" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="BrandStopToolbarButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandRecordToolbarButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandErrorBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandErrorBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandOnAccentBrush}" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandErrorBrush}" />
+    </Style>
+
+    <!-- Elevated macOS-parity top tab strip container & buttons (Dictation Settings, App Settings, Your Words) -->
+    <Style x:Key="BrandTabStripContainerStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource BrandTabStripRadius}" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="BrandTopTabButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="Background" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="{StaticResource BrandTopTabPadding}" />
+        <Setter Property="MinHeight" Value="{StaticResource BrandTopTabMinHeight}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="RootGrid"
+                          Background="{TemplateBinding Background}"
+                          MinHeight="{TemplateBinding MinHeight}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="HoverPill.Opacity" Value="1" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="HoverPill.Opacity" Value="0.85" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="RootGrid.Opacity" Value="0.45" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="HoverPill"
+                                Margin="{StaticResource BrandTopTabHoverMargin}"
+                                CornerRadius="{ThemeResource BrandButtonRadius}"
+                                Background="{ThemeResource BrandAccentLightBrush}"
+                                Opacity="0"
+                                IsHitTestVisible="False" />
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Padding="{TemplateBinding Padding}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          AutomationProperties.AccessibilityView="Raw" />
+                        <Border x:Name="IndicatorBar"
+                                Height="3"
+                                Margin="14,0,14,0"
+                                CornerRadius="{StaticResource BrandTopTabIndicatorRadius}"
+                                Background="{TemplateBinding BorderBrush}"
+                                VerticalAlignment="Bottom"
+                                IsHitTestVisible="False" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="BrandTopTabActiveButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandTopTabButtonStyle}">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
+    </Style>
+    <Style x:Key="BrandTopTabVerticalSeparatorStyle" TargetType="Border">
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Height" Value="{StaticResource BrandTopTabDividerHeight}" />
+        <Setter Property="Background" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+    </Style>
+    <Style x:Key="BrandTopTabHorizontalSeparatorStyle" TargetType="Border">
+        <Setter Property="Height" Value="1" />
+        <Setter Property="Background" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="VerticalAlignment" Value="Bottom" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+    </Style>
+
+    <!-- Theme-aware chime card styles for Dictation Settings > Sounds -->
+    <Style x:Key="BrandChimeCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource BrandChimeCardRadius}" />
+        <Setter Property="Padding" Value="12,10" />
+    </Style>
+    <Style x:Key="BrandChimeCardSelectedStyle" TargetType="Border" BasedOn="{StaticResource BrandChimeCardStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+    <Style x:Key="BrandChimeCardFocusedStyle" TargetType="Border" BasedOn="{StaticResource BrandChimeCardStyle}">
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+    <Style x:Key="BrandChimeCardHoverStyle" TargetType="Border" BasedOn="{StaticResource BrandChimeCardStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
+    <Style x:Key="BrandChimeIconBadgeStyle" TargetType="Border">
+        <Setter Property="Width" Value="28" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
+        <Setter Property="Background" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="BrandChimeIconBadgeGlyphStyle" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandOnAccentBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="BrandChimeWaveActiveStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="CornerRadius" Value="2" />
+    </Style>
+    <Style x:Key="BrandChimeWaveInactiveStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandTextSecondaryBrush}" />
+        <Setter Property="CornerRadius" Value="2" />
+    </Style>
+    <Style x:Key="BrandChimeSelectButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="{StaticResource BrandChimeCardRadius}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+                        <ContentPresenter
+                            Padding="{TemplateBinding Padding}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>

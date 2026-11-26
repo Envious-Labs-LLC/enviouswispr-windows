@@ -34,7 +34,7 @@ public sealed record AppSettings(
     /// <summary>Up to five recently selected picker languages (e.g. "ja", "en-gb"), newest first.</summary>
     IReadOnlyList<string>? RecentLanguages = null)
 {
-    public const int CurrentSchemaVersion = 28;
+    public const int CurrentSchemaVersion = 29;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,
@@ -53,7 +53,7 @@ public sealed record AppSettings(
     /// </remarks>
     public static AppSettings FreshInstall { get; } = Default with
     {
-        UserData = ReusableUserData.Empty.WithSnippets(SnippetStarters.All),
+        UserData = ReusableUserData.Empty.WithSnippets(SnippetStarters.All).WithHasSeededStarterSnippets(true),
     };
 
     public PortableProfile ToPortableProfile() => new(

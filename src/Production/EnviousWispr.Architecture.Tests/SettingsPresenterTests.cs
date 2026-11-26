@@ -255,7 +255,13 @@ public sealed class SettingsPresenterTests
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
         {
             var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
-            var before = AppSettings.Default with { LaunchCount = 4, HasCompletedOnboarding = true, LastSeenReleaseNotes = "0.18.0" };
+            var before = AppSettings.Default with
+            {
+                LaunchCount = 4,
+                HasCompletedOnboarding = true,
+                LastSeenReleaseNotes = "0.18.0",
+                UserData = ReusableUserData.Empty.WithHasSeededStarterSnippets(true),
+            };
             using var presenter = new SettingsPresenter(store, before);
             var input = General() with
             {
@@ -526,7 +532,11 @@ public sealed class SettingsPresenterTests
         {
             var path = Path.Combine(directory, "settings.json");
             var store = new JsonSettingsStore(path);
-            var before = AppSettings.Default with { LaunchCount = 3 };
+            var before = AppSettings.Default with
+            {
+                LaunchCount = 3,
+                UserData = ReusableUserData.Empty.WithHasSeededStarterSnippets(true),
+            };
             await store.SaveAsync(before);
             using var presenter = new SettingsPresenter(new FailingStore(store), before);
 

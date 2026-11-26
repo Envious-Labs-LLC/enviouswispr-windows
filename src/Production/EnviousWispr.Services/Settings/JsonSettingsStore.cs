@@ -88,6 +88,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 25 => MigrateFromV25(json),
                 26 => MigrateFromV26(json),
                 27 => MigrateFromV27(json),
+                28 => MigrateFromV28(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -134,6 +135,14 @@ public sealed class JsonSettingsStore : ISettingsStore
                 {
                     settings = settings with { UserData = userData.WithCustomWords(normalized) };
                 }
+            }
+
+            if (settings?.UserData is { HasSeededStarterSnippets: false } unseededUserData)
+            {
+                var seededUserData = unseededUserData.Snippets.Count == 0
+                    ? unseededUserData.WithSnippets(SnippetStarters.All).WithHasSeededStarterSnippets(true)
+                    : unseededUserData.WithHasSeededStarterSnippets(true);
+                settings = settings with { UserData = seededUserData };
             }
 
             var validationError = AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad);
@@ -630,6 +639,18 @@ public sealed class JsonSettingsStore : ISettingsStore
                         FixLearnedWordsEnabled = true,
                     },
                 },
+            };
+    }
+
+    /// <summary>Takes a settings file written before starter snippet seeding tracking existed (schema v28).</summary>
+    private static AppSettings? MigrateFromV28(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
             };
     }
 

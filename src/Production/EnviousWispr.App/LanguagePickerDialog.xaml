@@ -5,6 +5,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     CloseButtonText="Cancel"
     DefaultButton="Close"
+    Background="{ThemeResource BrandCardBgBrush}"
+    BorderBrush="{ThemeResource BrandDividerBrush}"
+    CloseButtonStyle="{StaticResource BrandQuietButtonStyle}"
     Opened="LanguagePickerDialog_Opened">
     <ContentDialog.Resources>
         <DataTemplate x:Key="LanguagePickerOptionTemplate">

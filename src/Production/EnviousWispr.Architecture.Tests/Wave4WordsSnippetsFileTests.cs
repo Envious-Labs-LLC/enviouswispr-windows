@@ -189,19 +189,31 @@ public sealed class Wave4WordsSnippetsFileTests
         Assert.DoesNotContain("Founder build", whatsNew!.ToString(), StringComparison.Ordinal);
         Assert.Contains("Version 0.19.0", whatsNew.ToString(), StringComparison.Ordinal);
 
-        // 2. Your Words header Add button & Quick Add shortcut badge.
+        // 2. Your Words header Add button, top tab bar & Quick Add 3-step cards + shortcut badge.
         Assert.NotNull(FindByName("OpenAddWordDialogButton"));
+        Assert.NotNull(FindByName("DictionaryTabStrip"));
+        Assert.NotNull(FindByName("WordFilterAutoLearnedChip"));
         Assert.NotNull(FindByName("QuickAddCurrentShortcutText"));
+        Assert.NotNull(FindByName("QuickAddStep1Card"));
+        Assert.NotNull(FindByName("QuickAddStep2Card"));
+        Assert.NotNull(FindByName("QuickAddStep3Card"));
         var quickAdd = FindByName("DictPanelQuickAdd");
         Assert.NotNull(quickAdd);
         Assert.Contains("Quick Add from anywhere", quickAdd!.ToString(), StringComparison.Ordinal);
         Assert.Contains("GoToQuickAddKeybindButton_Click", quickAdd.ToString(), StringComparison.Ordinal);
 
-        // 3. Dictionary & Snippet row Edit buttons.
+        // 3. Dictionary & Snippet row Edit buttons + reimagined Snippets card & modal editor (no inline form / bottom remove).
         var dictList = FindByName("DictionaryList");
         Assert.Contains("EditWordRowButton_Click", dictList!.ToString(), StringComparison.Ordinal);
         var snippetList = FindByName("SnippetList");
         Assert.Contains("EditSnippetRowButton_Click", snippetList!.ToString(), StringComparison.Ordinal);
+        Assert.NotNull(FindByName("AddSnippetToolbarButton"));
+        Assert.NotNull(FindByName("LoadExampleSnippetsButton"));
+        Assert.Null(FindByName("SnippetNameBox"));
+        Assert.Null(FindByName("SnippetBodyBox"));
+        Assert.Null(FindByName("RemoveSnippetButton"));
+        Assert.Null(FindByName("HelpNavItem"));
+        Assert.Null(FindByName("HelpPage"));
 
         // 4. Transcribe a File 3-step strip + AAC format pill.
         Assert.Equal("Choose file", (string?)FindByName("TranscribeStep1Label")?.Attribute("Text"));

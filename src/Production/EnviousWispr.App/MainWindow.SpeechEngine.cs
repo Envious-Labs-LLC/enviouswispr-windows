@@ -906,7 +906,7 @@ public sealed partial class MainWindow
             _settings?.RecentLanguages)
         {
             XamlRoot = xamlRoot,
-            RequestedTheme = (Content as FrameworkElement)?.RequestedTheme ?? ElementTheme.Default,
+            RequestedTheme = WindowRoot.ActualTheme,
         };
 
         await dialog.ShowAsync();

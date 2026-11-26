@@ -7,7 +7,10 @@
     CloseButtonText="Close"
     DefaultButton="Primary"
     IsPrimaryButtonEnabled="False"
+    Background="{ThemeResource BrandCardBgBrush}"
+    BorderBrush="{ThemeResource BrandDividerBrush}"
     PrimaryButtonStyle="{StaticResource BrandPrimaryButtonStyle}"
+    CloseButtonStyle="{StaticResource BrandQuietButtonStyle}"
     PrimaryButtonClick="FeedbackDialog_PrimaryButtonClick"
     CloseButtonClick="FeedbackDialog_CloseButtonClick">
     <ScrollViewer
@@ -47,7 +50,7 @@
                 Background="{ThemeResource BrandPageBgBrush}"
                 BorderBrush="{ThemeResource BrandDividerBrush}"
                 BorderThickness="1"
-                CornerRadius="{StaticResource BrandSectionRadius}"
+                CornerRadius="{ThemeResource BrandButtonRadius}"
                 Padding="4">
                 <Grid ColumnDefinitions="*,*,*" ColumnSpacing="{StaticResource BrandSpacingXs}">
                     <Button

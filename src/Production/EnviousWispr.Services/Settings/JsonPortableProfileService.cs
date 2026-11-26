@@ -94,6 +94,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 18 => MigrateFromV18(json),
                 19 => MigrateFromV19(json),
                 20 => MigrateFromV20(json),
+                21 => MigrateFromV21(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -402,6 +403,20 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                         FixLearnedWordsEnabled = true,
                     },
                 },
+            };
+    }
+
+    /// <summary>Takes a portable profile written before starter snippet seeding tracking existed (v21).</summary>
+    private static PortableProfile? MigrateFromV21(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
             };
     }
 

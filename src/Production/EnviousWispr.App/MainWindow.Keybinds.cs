@@ -123,40 +123,8 @@ public sealed partial class MainWindow
     private void UpdateRecordingModeButtons()
     {
         var pttSelected = _recordingModeIndex == 0;
-        var accentBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
-        var accentFgBrush = (Brush)Application.Current.Resources["BrandOnAccentBrush"];
-
-        if (PushToTalkSegmentButton is not null)
-        {
-            if (pttSelected)
-            {
-                PushToTalkSegmentButton.Background = accentBrush;
-                PushToTalkSegmentButton.Foreground = accentFgBrush;
-                PushToTalkSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
-            }
-            else
-            {
-                PushToTalkSegmentButton.ClearValue(Button.BackgroundProperty);
-                PushToTalkSegmentButton.ClearValue(Button.ForegroundProperty);
-                PushToTalkSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
-            }
-        }
-
-        if (ToggleSegmentButton is not null)
-        {
-            if (!pttSelected)
-            {
-                ToggleSegmentButton.Background = accentBrush;
-                ToggleSegmentButton.Foreground = accentFgBrush;
-                ToggleSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
-            }
-            else
-            {
-                ToggleSegmentButton.ClearValue(Button.BackgroundProperty);
-                ToggleSegmentButton.ClearValue(Button.ForegroundProperty);
-                ToggleSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
-            }
-        }
+        ApplySegmentButtonState(PushToTalkSegmentButton, pttSelected);
+        ApplySegmentButtonState(ToggleSegmentButton, !pttSelected);
     }
 
     private void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)
