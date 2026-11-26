@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using EnviousWispr.App.Services;
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Dictation;
@@ -259,6 +260,9 @@ public sealed partial class MainWindow : Window, IDisposable
         InitializeChimeCards();
         SetTranscribeFileStep(1);
         _overlayWindow = new DictationOverlayWindow();
+        _audioPlayback = new WindowsAudioPlaybackService(DispatcherQueue);
+        _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
+        _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
         _historyAnnounceDebounce.Tick += OnHistoryAnnounceDue;
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.ApplyPreferences(
@@ -723,6 +727,9 @@ public sealed partial class MainWindow : Window, IDisposable
         // an announcement for a window that is going away.
         _historyAnnounceDebounce.Stop();
         _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
+        _audioPlayback.StateChanged -= OnAudioPlaybackStateChanged;
+        _audioPlayback.PlaybackFailed -= OnAudioPlaybackFailed;
+        _audioPlayback.Dispose();
         StopOllamaLivePollTimer();
         // THE WRITER IS NOT DISPOSED HERE, AND THAT IS DELIBERATE. Shutdown is synchronous and a
         // save may still be inside it; disposing its gate makes the release throw. The session that

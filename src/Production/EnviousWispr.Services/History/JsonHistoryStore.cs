@@ -21,12 +21,19 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     };
 
     private readonly string _historyPath;
+    private readonly string _recordingsDirectory;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonHistoryStore(string historyPath)
+    public JsonHistoryStore(string historyPath, string? recordingsDirectory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(historyPath);
         _historyPath = Path.GetFullPath(historyPath);
+        _recordingsDirectory = !string.IsNullOrWhiteSpace(recordingsDirectory)
+            ? Path.GetFullPath(recordingsDirectory)
+            : Path.Combine(
+                Path.GetDirectoryName(_historyPath) ?? AppContext.BaseDirectory,
+                "recordings",
+                "dictations");
     }
 
     public async Task<HistoryLoadResult> LoadAsync(
@@ -48,6 +55,7 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             if (retained.Length != loaded.Entries.Count)
             {
                 await WriteAsync(retained, cancellationToken).ConfigureAwait(false);
+                DeleteRemovedAudioFiles(loaded.Entries, retained);
             }
 
             return loaded with { Entries = retained };
@@ -87,6 +95,7 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
                 .Take(MaximumEntries)
                 .ToArray();
             await WriteAsync(entries, cancellationToken).ConfigureAwait(false);
+            DeleteRemovedAudioFiles(loaded.Entries, entries);
             return new HistoryOperationResult(true);
         }
         catch (IOException)
@@ -244,13 +253,14 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             cancellationToken);
 
     public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) =>
-        MutateAsync(_ => Array.Empty<DictationHistoryEntry>(), cancellationToken);
+        MutateAsync(_ => Array.Empty<DictationHistoryEntry>(), cancellationToken, clearAllAudio: true);
 
     public void Dispose() => _gate.Dispose();
 
     private async Task<HistoryOperationResult> MutateAsync(
         Func<IReadOnlyList<DictationHistoryEntry>, IReadOnlyList<DictationHistoryEntry>> mutation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool clearAllAudio = false)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -261,7 +271,13 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
                 return new HistoryOperationResult(false, loaded.Error);
             }
 
-            await WriteAsync(mutation(loaded.Entries), cancellationToken).ConfigureAwait(false);
+            var updated = mutation(loaded.Entries);
+            await WriteAsync(updated, cancellationToken).ConfigureAwait(false);
+            DeleteRemovedAudioFiles(loaded.Entries, updated);
+            if (clearAllAudio)
+            {
+                ClearAllAudioFiles();
+            }
             return new HistoryOperationResult(true);
         }
         catch (IOException)
@@ -399,6 +415,89 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     private static HistoryOperationResult Failure(AppErrorCode code, bool canRetry = true) => new(
         false,
         new AppError(code, AppErrorStage.HistorySave, canRetry));
+
+    private void DeleteRemovedAudioFiles(
+        IReadOnlyList<DictationHistoryEntry> before,
+        IReadOnlyList<DictationHistoryEntry> after)
+    {
+        if (before.Count == 0)
+        {
+            return;
+        }
+
+        var survivingFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in after)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.AudioFileName))
+            {
+                survivingFiles.Add(entry.AudioFileName);
+            }
+        }
+
+        foreach (var entry in before)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.AudioFileName)
+                && !survivingFiles.Contains(entry.AudioFileName))
+            {
+                TryDeleteAudioFile(entry.AudioFileName);
+            }
+        }
+    }
+
+    private void ClearAllAudioFiles()
+    {
+        if (!Directory.Exists(_recordingsDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(_recordingsDirectory, "*.wav"))
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or SecurityException)
+                {
+                }
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+        }
+    }
+
+    private void TryDeleteAudioFile(string audioFileName)
+    {
+        if (string.IsNullOrWhiteSpace(audioFileName)
+            || Path.IsPathRooted(audioFileName)
+            || !string.Equals(Path.GetFileName(audioFileName), audioFileName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var full = Path.GetFullPath(Path.Combine(_recordingsDirectory, audioFileName));
+        var rootWithSep = _recordingsDirectory.EndsWith(Path.DirectorySeparatorChar)
+            ? _recordingsDirectory
+            : _recordingsDirectory + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(full);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+        }
+    }
 
     private sealed record HistoryDocument(
         int SchemaVersion,

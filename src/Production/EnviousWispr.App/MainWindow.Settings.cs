@@ -515,7 +515,7 @@ public sealed partial class MainWindow
             SendCrashReportsToggle.IsOn = observability.SendCrashReports;
             UpdateDiagnosticsStatusText(observability.SendCrashReports);
             RefreshReusableUserDataViews();
-            UpdateHistoryStatusCards();
+            UpdateHistoryPolishState();
         }
         finally
         {

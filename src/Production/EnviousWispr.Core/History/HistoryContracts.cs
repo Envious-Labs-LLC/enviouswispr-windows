@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 
 namespace EnviousWispr.Core.History;
@@ -13,7 +14,9 @@ public sealed record DictationHistoryEntry(
     string? OriginalText = null,
     string? LanguageCode = null,
     string? PolishProviderId = null,
-    string? PolishModelId = null)
+    string? PolishModelId = null,
+    string? AudioFileName = null,
+    long? AudioDurationMs = null)
 {
     public const int MaximumTextLength = 100_000;
 
@@ -27,7 +30,9 @@ public sealed record DictationHistoryEntry(
         string? originalText = null,
         string? languageCode = null,
         string? polishProviderId = null,
-        string? polishModelId = null) => new(
+        string? polishModelId = null,
+        string? audioFileName = null,
+        long? audioDurationMs = null) => new(
             Guid.NewGuid(),
             createdAt,
             text,
@@ -38,7 +43,9 @@ public sealed record DictationHistoryEntry(
             originalText,
             languageCode,
             polishProviderId,
-            polishModelId);
+            polishModelId,
+            audioFileName,
+            audioDurationMs);
 
     public bool IsValid =>
         Id != Guid.Empty &&
@@ -51,7 +58,24 @@ public sealed record DictationHistoryEntry(
         (OriginalText is null || (OriginalText.Length <= MaximumTextLength && !string.IsNullOrWhiteSpace(OriginalText))) &&
         (LanguageCode is null || LanguageCode.Length <= 64) &&
         (PolishProviderId is null || PolishProviderId.Length <= 128) &&
-        (PolishModelId is null || PolishModelId.Length <= 128);
+        (PolishModelId is null || PolishModelId.Length <= 128) &&
+        (AudioFileName is null || (
+            !string.IsNullOrWhiteSpace(AudioFileName) &&
+            AudioFileName.Length <= 256 &&
+            !Path.IsPathRooted(AudioFileName) &&
+            string.Equals(Path.GetFileName(AudioFileName), AudioFileName, StringComparison.Ordinal))) &&
+        (AudioDurationMs is null or >= 0);
+}
+
+/// <summary>Metadata for a locally archived dictation recording paired with a history entry.</summary>
+public sealed record ArchivedDictationAudio(string FileName, long DurationMs);
+
+/// <summary>Local-only dictation recording archive paired with History entries.</summary>
+public interface IDictationAudioArchive
+{
+    ArchivedDictationAudio? SaveForEntry(Guid entryId, CapturedAudio audio);
+
+    void DeleteFile(string? fileName);
 }
 
 public enum HistoryLoadStatus

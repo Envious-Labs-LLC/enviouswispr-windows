@@ -64,4 +64,231 @@ public static class WaveFile
 
         return file;
     }
+
+    /// <summary>Computes duration in whole milliseconds for a captured sample count and sample rate.</summary>
+    public static long ComputeDurationMs(int sampleCount, int sampleRate)
+    {
+        if (sampleCount <= 0 || sampleRate <= 0)
+        {
+            return 0;
+        }
+
+        return (long)Math.Round(sampleCount * 1000.0 / sampleRate);
+    }
+
+    /// <summary>
+    /// Reads a local WAV file's duration and downsampled normalized waveform peak bars in [0..1].
+    /// </summary>
+    public static bool TryAnalyzeFile(string path, int barCount, out float[] bars, out long durationMs)
+    {
+        bars = [];
+        durationMs = 0;
+        if (string.IsNullOrWhiteSpace(path) || barCount <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return TryAnalyzeStream(stream, barCount, out bars, out durationMs);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            bars = [];
+            durationMs = 0;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Parses WAV bytes and extracts duration in milliseconds and normalized waveform peaks in [0..1].
+    /// </summary>
+    public static bool TryAnalyze(ReadOnlySpan<byte> wavBytes, int barCount, out float[] bars, out long durationMs)
+    {
+        bars = [];
+        durationMs = 0;
+        if (barCount <= 0 || wavBytes.Length < HeaderBytes)
+        {
+            return false;
+        }
+
+        using var stream = new MemoryStream(wavBytes.ToArray(), writable: false);
+        return TryAnalyzeStream(stream, barCount, out bars, out durationMs);
+    }
+
+    private static bool TryAnalyzeStream(Stream stream, int barCount, out float[] bars, out long durationMs)
+    {
+        bars = [];
+        durationMs = 0;
+        if (!stream.CanRead || !stream.CanSeek || stream.Length < HeaderBytes)
+        {
+            return false;
+        }
+
+        Span<byte> header = stackalloc byte[12];
+        if (!TryReadExact(stream, header)
+            || !header[..4].SequenceEqual("RIFF"u8)
+            || !header[8..12].SequenceEqual("WAVE"u8))
+        {
+            return false;
+        }
+
+        short audioFormat = 0;
+        short channels = 0;
+        int sampleRate = 0;
+        short bitsPerSample = 0;
+        bool hasFormat = false;
+
+        long dataOffset = -1;
+        long dataBytes = 0;
+
+        Span<byte> chunkHeader = stackalloc byte[8];
+        Span<byte> fmt = stackalloc byte[16];
+        while (stream.Position + 8 <= stream.Length)
+        {
+            if (!TryReadExact(stream, chunkHeader))
+            {
+                break;
+            }
+
+            var chunkId = chunkHeader[..4];
+            var chunkSize = BinaryPrimitives.ReadUInt32LittleEndian(chunkHeader[4..]);
+            var payloadStart = stream.Position;
+            var remaining = Math.Max(0L, stream.Length - payloadStart);
+            var availableSize = (long)Math.Min(chunkSize, (ulong)remaining);
+
+            if (chunkId.SequenceEqual("fmt "u8) && availableSize >= 16)
+            {
+                if (!TryReadExact(stream, fmt))
+                {
+                    return false;
+                }
+
+                audioFormat = BinaryPrimitives.ReadInt16LittleEndian(fmt[0..2]);
+                channels = BinaryPrimitives.ReadInt16LittleEndian(fmt[2..4]);
+                sampleRate = BinaryPrimitives.ReadInt32LittleEndian(fmt[4..8]);
+                bitsPerSample = BinaryPrimitives.ReadInt16LittleEndian(fmt[14..16]);
+                hasFormat = true;
+            }
+            else if (chunkId.SequenceEqual("data"u8))
+            {
+                dataOffset = payloadStart;
+                dataBytes = availableSize;
+                if (hasFormat)
+                {
+                    break;
+                }
+            }
+
+            var paddedSize = (long)chunkSize + (chunkSize % 2);
+            var nextPos = payloadStart + paddedSize;
+            if (nextPos <= payloadStart || nextPos > stream.Length)
+            {
+                break;
+            }
+
+            stream.Position = nextPos;
+        }
+
+        if (!hasFormat || dataOffset < 0 || channels <= 0 || sampleRate <= 0)
+        {
+            return false;
+        }
+
+        var isPcm16 = audioFormat == PcmFormat && bitsPerSample == 16;
+        var isFloat32 = audioFormat == 3 && bitsPerSample == 32;
+        if (!isPcm16 && !isFloat32)
+        {
+            return false;
+        }
+
+        var bytesPerSample = bitsPerSample / 8;
+        var blockAlign = bytesPerSample * channels;
+        if (blockAlign <= 0)
+        {
+            return false;
+        }
+
+        var frameCount = dataBytes / blockAlign;
+        if (frameCount <= 0)
+        {
+            bars = new float[barCount];
+            durationMs = 0;
+            return true;
+        }
+
+        durationMs = (long)Math.Round(frameCount * 1000.0 / sampleRate);
+        var peaks = new float[barCount];
+
+        stream.Position = dataOffset;
+        const int bufferFrames = 2048;
+        var readBuffer = new byte[bufferFrames * blockAlign];
+        long frameIndex = 0;
+        var bytesLeft = frameCount * blockAlign;
+        while (bytesLeft > 0)
+        {
+            var toRead = (int)Math.Min(readBuffer.Length, bytesLeft);
+            toRead -= toRead % blockAlign;
+            if (toRead <= 0)
+            {
+                break;
+            }
+
+            var read = stream.Read(readBuffer, 0, toRead);
+            read -= read % blockAlign;
+            if (read <= 0)
+            {
+                break;
+            }
+
+            var framesInChunk = read / blockAlign;
+            for (var f = 0; f < framesInChunk; f++)
+            {
+                var bucket = (int)Math.Min(barCount - 1, frameIndex * barCount / frameCount);
+                var frameBase = f * blockAlign;
+                var frameAmp = 0f;
+                for (var ch = 0; ch < channels; ch++)
+                {
+                    var sampleOffset = frameBase + (ch * bytesPerSample);
+                    var amplitude = isPcm16
+                        ? Math.Abs(BinaryPrimitives.ReadInt16LittleEndian(readBuffer.AsSpan(sampleOffset, 2)) / 32768f)
+                        : Math.Clamp(Math.Abs(BitConverter.ToSingle(readBuffer, sampleOffset)), 0f, 1f);
+                    if (amplitude > frameAmp)
+                    {
+                        frameAmp = amplitude;
+                    }
+                }
+
+                if (frameAmp > peaks[bucket])
+                {
+                    peaks[bucket] = frameAmp;
+                }
+
+                frameIndex++;
+            }
+
+            bytesLeft -= read;
+        }
+
+        bars = peaks;
+        return true;
+    }
+
+    private static bool TryReadExact(Stream stream, Span<byte> destination)
+    {
+        var total = 0;
+        while (total < destination.Length)
+        {
+            var read = stream.Read(destination[total..]);
+            if (read <= 0)
+            {
+                return false;
+            }
+
+            total += read;
+        }
+
+        return true;
+    }
 }

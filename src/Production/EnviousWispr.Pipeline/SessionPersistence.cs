@@ -97,6 +97,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
     private readonly TimeProvider _clock;
     private readonly Func<HistoryPreferences> _historyPreferences;
     private readonly ISessionPersistenceEffects _effects;
+    private readonly IDictationAudioArchive? _audioArchive;
 
     /// <param name="historyPreferences">Read at each write, so a switch flipped mid-session takes effect on the next entry.</param>
     public SessionPersistence(
@@ -105,7 +106,8 @@ public sealed class SessionPersistence : ISessionRecoveryState
         IAppLogger logger,
         TimeProvider clock,
         Func<HistoryPreferences> historyPreferences,
-        ISessionPersistenceEffects effects)
+        ISessionPersistenceEffects effects,
+        IDictationAudioArchive? audioArchive = null)
     {
         ArgumentNullException.ThrowIfNull(recovery);
         ArgumentNullException.ThrowIfNull(history);
@@ -119,6 +121,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
         _clock = clock;
         _historyPreferences = historyPreferences;
         _effects = effects;
+        _audioArchive = audioArchive;
     }
 
     /// <summary>Recovered text is waiting on Home; the next press clears it before recording.</summary>
@@ -286,7 +289,8 @@ public sealed class SessionPersistence : ISessionRecoveryState
         string? originalText = null,
         string? languageCode = null,
         string? polishProviderId = null,
-        string? polishModelId = null)
+        string? polishModelId = null,
+        CapturedAudio? audio = null)
     {
         ArgumentNullException.ThrowIfNull(transcript);
         ArgumentNullException.ThrowIfNull(intent);
@@ -299,23 +303,31 @@ public sealed class SessionPersistence : ISessionRecoveryState
         // TWO READS OF THE CLOCK, AS THE SHELL MADE THEM. The entry's own timestamp and the moment the
         // store prunes against are separate samples; collapsing them moves a retention decision that
         // lands exactly on an expiry boundary, and equivalence here means the same decisions.
-        var entry = DictationHistoryEntry.Create(
+        var entryId = Guid.NewGuid();
+        var archivedAudio = audio is not null
+            ? _audioArchive?.SaveForEntry(entryId, audio)
+            : null;
+        var entry = new DictationHistoryEntry(
+            entryId,
             _clock.GetUtcNow(),
             text,
             transcript.EngineId,
             intent.WasPolished,
             intent.WasDelivered,
             intent.ExpiresAt,
-            originalText: originalText ?? (intent.WasPolished ? null : text),
-            languageCode: languageCode ?? DeliveryLanguagePolicy.For(transcript),
-            polishProviderId: polishProviderId,
-            polishModelId: polishModelId);
+            OriginalText: originalText ?? (intent.WasPolished ? null : text),
+            LanguageCode: languageCode ?? DeliveryLanguagePolicy.For(transcript),
+            PolishProviderId: polishProviderId,
+            PolishModelId: polishModelId,
+            AudioFileName: archivedAudio?.FileName,
+            AudioDurationMs: archivedAudio?.DurationMs);
         var result = await _history.AddAsync(
             entry,
             preferences.RetentionDays,
             _clock.GetUtcNow()).ConfigureAwait(false);
         if (!result.Succeeded)
         {
+            _audioArchive?.DeleteFile(archivedAudio?.FileName);
             return null;
         }
 

@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:settings="using:EnviousWispr.Core.Settings"
     xmlns:local="using:EnviousWispr.App"
+    xmlns:controls="using:EnviousWispr.App.Controls"
     Title="EnviousWispr">
     <Window.SystemBackdrop>
         <MicaBackdrop Kind="Base" />
@@ -879,21 +880,41 @@
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
-                            <!-- Header: Recovery banner, tabs, search, filter controls, and bulk selection toolbar -->
+                            <!-- Header: Compact recovery row, tabs, search, filter controls, and bulk selection toolbar -->
                             <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingM}" Margin="0,0,0,12">
-                                <Border x:Name="RecoveryCard" AutomationProperties.Name="Recovered unfinished dictation" Margin="0" Padding="20" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Visibility="Collapsed">
-                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                        <TextBlock x:Name="RecoveryTitleText" Style="{StaticResource BrandRowTitleStyle}" Text="Recovered unfinished dictation" />
-                                        <TextBlock x:Name="RecoveryBodyText" Text="EnviousWispr found text that had not reached its destination before the previous run ended. Review it here; it will never be pasted automatically." TextWrapping="Wrap" />
-                                        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
-                                            <TextBlock x:Name="RecoveryTextBox" AutomationProperties.Name="Recovered dictation text" IsTextSelectionEnabled="True" Foreground="{ThemeResource BrandTextPrimaryBrush}" Style="{StaticResource BrandBodyStyle}" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
-                                        </ScrollViewer>
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                            <Button x:Name="UndoRecoveryButton" AutomationProperties.AutomationId="UndoRecoveryButton" AutomationProperties.HelpText="Pastes the cancelled dictation back where you were dictating." Click="UndoRecoveryButton_Click" Content="Undo" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
-                                            <Button Click="CopyRecoveryButton_Click" Content="Copy recovered text" Style="{StaticResource BrandQuietButtonStyle}" />
-                                            <Button Click="DeleteRecoveryButton_Click" Content="Delete recovery copy" Style="{StaticResource BrandQuietButtonStyle}" />
+                                <Border x:Name="RecoveryCard" AutomationProperties.Name="Recovered unfinished dictation" Margin="0" Padding="14,10" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Visibility="Collapsed">
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="3" CornerRadius="2" Background="{ThemeResource BrandWarningBrush}" Margin="0,2" IsHitTestVisible="False" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="RecoveryTitleText" Style="{StaticResource BrandRowLabelStyle}" Text="Recovered unfinished dictation" />
+                                                    <TextBlock x:Name="RecoveryBodyText" Style="{StaticResource BrandHelperStyle}" Text="Review it here; it will never be pasted automatically." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                    <Button x:Name="UndoRecoveryButton" AutomationProperties.AutomationId="UndoRecoveryButton" AutomationProperties.HelpText="Pastes the cancelled dictation back where you were dictating." Click="UndoRecoveryButton_Click" Content="Undo" Padding="10,4" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                                    <Button x:Name="CopyRecoveryButton" Click="CopyRecoveryButton_Click" Padding="10,4" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.Name="Copy recovered text">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                            <FontIcon x:Name="CopyRecoveryIcon" FontSize="14" Glyph="&#xE8C8;" />
+                                                            <TextBlock x:Name="CopyRecoveryLabel" Text="Copy recovered text" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button Click="DeleteRecoveryButton_Click" Content="Delete" Padding="10,4" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.Name="Delete recovery copy" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <ScrollViewer MaxHeight="72" VerticalScrollBarVisibility="Auto">
+                                                <TextBlock x:Name="RecoveryTextBox" AutomationProperties.Name="Recovered dictation text" IsTextSelectionEnabled="True" Foreground="{ThemeResource BrandTextPrimaryBrush}" Style="{StaticResource BrandBodyStyle}" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
+                                            </ScrollViewer>
                                         </StackPanel>
-                                    </StackPanel>
+                                    </Grid>
                                 </Border>
 
                                 <!-- Tab strip + active engine / polish summary + matching item count badge -->
@@ -903,8 +924,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                        <Button x:Name="HistoryFilterAllButton" Content="All" ToolTipService.ToolTip="All history (A)" Click="HistoryFilterButton_Click" Tag="All" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="12,6" />
-                                        <Button x:Name="HistoryFilterDictationButton" Content="Dictations" ToolTipService.ToolTip="Dictations only (D)" Click="HistoryFilterButton_Click" Tag="Dictation" Style="{StaticResource BrandTabStripButtonStyle}" Padding="12,6" />
+                                        <Button x:Name="HistoryFilterDictationButton" Content="Dictations" ToolTipService.ToolTip="Dictations (D)" Click="HistoryFilterButton_Click" Tag="Dictation" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="12,6" />
                                         <Button x:Name="HistoryFilterTranscribeButton" Content="Transcribed Files" ToolTipService.ToolTip="Transcribed files (T)" Click="HistoryFilterButton_Click" Tag="TranscribeFile" Style="{StaticResource BrandTabStripButtonStyle}" Padding="12,6" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
@@ -1033,115 +1053,144 @@
 
                             <!-- Chronological Day-Grouped Card Diary & Empty/Error States -->
                             <Grid Grid.Row="1">
-                                <ListView x:Name="HistoryList" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Local dictation history" SelectionMode="Single" Padding="0,0,16,32">
+                                <ListView x:Name="HistoryList" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Local dictation history" SelectionMode="None" IsItemClickEnabled="False" ItemContainerStyle="{StaticResource BrandHistoryListItemStyle}" Padding="0,0,16,32">
                                     <ListView.ItemContainerTransitions>
                                         <TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection>
                                     </ListView.ItemContainerTransitions>
-                                    <ListView.ItemContainerStyle>
-                                        <Style TargetType="ListViewItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                            <Setter Property="Padding" Value="0" />
-                                            <Setter Property="Margin" Value="0" />
-                                            <Setter Property="MinHeight" Value="0" />
-                                            <Setter Property="CornerRadius" Value="{StaticResource BrandSectionRadius}" />
-                                        </Style>
-                                    </ListView.ItemContainerStyle>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Margin="0,0,0,10">
-                                                <!-- Optional Day Section Header -->
-                                                <Grid Visibility="{Binding DayHeaderVisibility}" Margin="2,10,2,8" ColumnSpacing="{StaticResource BrandSpacingS}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding DayHeaderTitle}" VerticalAlignment="Center" />
-                                                        <TextBlock Visibility="{Binding DayHeaderSubtitleVisibility}" Style="{StaticResource BrandHelperStyle}" Text="{Binding DayHeaderSubtitle}" VerticalAlignment="Center" />
-                                                    </StackPanel>
-                                                    <Border Grid.Column="1" Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
-                                                        <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="{Binding DayCountText}" />
-                                                    </Border>
-                                                </Grid>
-
-                                                <!-- Dictation Card -->
-                                                <Border Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}" Padding="16">
-                                                    <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                                        <!-- Card Header Row -->
+                                    <ListView.ItemTemplateSelector>
+                                        <local:HistoryDiaryRowTemplateSelector>
+                                            <local:HistoryDiaryRowTemplateSelector.DayHeaderTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}" Margin="2,14,2,6" AutomationProperties.Name="{Binding AccessibilityLabel}">
                                                         <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
                                                             <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="Auto" />
                                                                 <ColumnDefinition Width="*" />
                                                                 <ColumnDefinition Width="Auto" />
                                                             </Grid.ColumnDefinitions>
-                                                            <CheckBox Grid.Column="0" Visibility="{Binding SelectionCheckBoxVisibility}" IsChecked="{Binding IsSelected, Mode=OneWay}" Click="CardSelectCheckBox_Click" MinWidth="0" Padding="4,0,6,0" VerticalAlignment="Center" AutomationProperties.Name="{Binding SelectionCheckBoxLabel}" />
-                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                                                <Border Visibility="{Binding SelectedAccentVisibility}" Width="4" Height="16" CornerRadius="2" Background="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" />
-                                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding TimeDisplay}" VerticalAlignment="Center" />
-                                                                <Border Visibility="{Binding FileChipVisibility}" Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
-                                                                    <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="File" />
-                                                                </Border>
-                                                                <Border Visibility="{Binding RecoveryChipVisibility}" Style="{StaticResource BrandWarningChipStyle}" VerticalAlignment="Center">
-                                                                    <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandWarningBrush}" Text="{Binding RecoveryChipText}" />
-                                                                </Border>
-                                                                <Border Visibility="{Binding HeldSafelyChipVisibility}" Style="{StaticResource BrandAccentChipStyle}" VerticalAlignment="Center">
-                                                                    <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Held safely" />
-                                                                </Border>
+                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                <TextBlock Style="{StaticResource BrandDayTitleStyle}" Text="{Binding DayHeaderTitle}" VerticalAlignment="Center" />
+                                                                <TextBlock Visibility="{Binding DayHeaderSubtitleVisibility}" Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="{Binding DayHeaderSubtitle}" VerticalAlignment="Center" />
                                                             </StackPanel>
-                                                            <Button Grid.Column="2" Visibility="{Binding HasPolishEditsVisibility}" Content="{Binding ShowEditsButtonText}" Click="CardShowEditsToggle_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4" VerticalAlignment="Center" />
-                                                        </Grid>
-
-                                                        <!-- AI Polish View Switcher (shown when Show edits is open) -->
-                                                        <StackPanel Visibility="{Binding ShowEditsPanelVisibility}" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                                            <Border CornerRadius="9" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3">
-                                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                                                    <Button Content="Polished" Visibility="{Binding PolishedActiveVisibility}" Click="CardShowPolished_Click" Style="{StaticResource BrandSegmentedActiveButtonStyle}" Padding="10,4" />
-                                                                    <Button Content="Polished" Visibility="{Binding PolishedInactiveVisibility}" Click="CardShowPolished_Click" Style="{StaticResource BrandSegmentedButtonStyle}" Padding="10,4" />
-                                                                    <Button Content="Original" Visibility="{Binding OriginalActiveVisibility}" Click="CardShowOriginal_Click" Style="{StaticResource BrandSegmentedActiveButtonStyle}" Padding="10,4" />
-                                                                    <Button Content="Original" Visibility="{Binding OriginalInactiveVisibility}" Click="CardShowOriginal_Click" Style="{StaticResource BrandSegmentedButtonStyle}" Padding="10,4" />
-                                                                </StackPanel>
+                                                            <Border Grid.Column="1" Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
+                                                                <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="{Binding DayCountText}" />
                                                             </Border>
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding ComparisonStatusText}" VerticalAlignment="Center" />
-                                                        </StackPanel>
-
-                                                        <!-- Transcript Text -->
-                                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                            <TextBlock FontSize="15" MaxLines="{Binding TranscriptMaxLines}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="{Binding DisplayText}" IsTextSelectionEnabled="True" TextAlignment="DetectFromContent" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" IsTextTrimmedChanged="CardTranscriptText_IsTextTrimmedChanged" />
-                                                            <HyperlinkButton Visibility="{Binding ShowMoreToggleVisibility}" Content="{Binding ShowMoreButtonText}" Click="CardShowMoreToggle_Click" Style="{StaticResource BrandHyperlinkButtonStyle}" HorizontalAlignment="Left" Padding="0,2" />
-                                                        </StackPanel>
-
-                                                        <!-- Alternate Version Comparison Reference (when Show edits is active) -->
-                                                        <Border Visibility="{Binding ShowEditsPanelVisibility}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
-                                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                        </Grid>
+                                                        <Border Height="1" Background="{ThemeResource BrandDividerBrush}" IsHitTestVisible="False" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </local:HistoryDiaryRowTemplateSelector.DayHeaderTemplate>
+                                            <local:HistoryDiaryRowTemplateSelector.CardTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,10">
+                                                        <Border Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}" Padding="16">
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                                                <!-- Card Header Row -->
                                                                 <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
                                                                     <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="Auto" />
                                                                         <ColumnDefinition Width="*" />
                                                                         <ColumnDefinition Width="Auto" />
                                                                     </Grid.ColumnDefinitions>
-                                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding ComparisonOtherHeader}" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                                                    <Button Grid.Column="1" Content="{Binding CopyAlternateButtonLabel}" Click="CardCopyAlternateButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,3" AutomationProperties.Name="{Binding CopyAlternateButtonLabel}" VerticalAlignment="Center" />
+                                                                    <CheckBox Grid.Column="0" Visibility="{Binding SelectionCheckBoxVisibility}" IsChecked="{Binding IsSelected, Mode=OneWay}" Click="CardSelectCheckBox_Click" MinWidth="0" Padding="4,0,6,0" VerticalAlignment="Center" AutomationProperties.Name="{Binding SelectionCheckBoxLabel}" />
+                                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                        <Border Visibility="{Binding SelectedAccentVisibility}" Width="4" Height="16" CornerRadius="2" Background="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" />
+                                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding TimeDisplay}" VerticalAlignment="Center" />
+                                                                        <Border Visibility="{Binding FileChipVisibility}" Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="File" />
+                                                                        </Border>
+                                                                        <Border Visibility="{Binding RecoveryChipVisibility}" Style="{StaticResource BrandWarningChipStyle}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandWarningBrush}" Text="{Binding RecoveryChipText}" />
+                                                                        </Border>
+                                                                        <Border Visibility="{Binding HeldSafelyChipVisibility}" Style="{StaticResource BrandAccentChipStyle}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Held safely" />
+                                                                        </Border>
+                                                                    </StackPanel>
+                                                                    <Button Grid.Column="2" Visibility="{Binding HasPolishEditsVisibility}" Content="{Binding ShowEditsButtonText}" Click="CardShowEditsToggle_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4" VerticalAlignment="Center" />
                                                                 </Grid>
-                                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding ComparisonOtherText}" IsTextSelectionEnabled="True" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
+
+                                                                <!-- AI Polish View Switcher (shown when Show edits is open) -->
+                                                                <StackPanel Visibility="{Binding ShowEditsPanelVisibility}" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                    <Border CornerRadius="9" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3">
+                                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                                            <Button Content="Polished" Visibility="{Binding PolishedActiveVisibility}" Click="CardShowPolished_Click" Style="{StaticResource BrandSegmentedActiveButtonStyle}" Padding="10,4" />
+                                                                            <Button Content="Polished" Visibility="{Binding PolishedInactiveVisibility}" Click="CardShowPolished_Click" Style="{StaticResource BrandSegmentedButtonStyle}" Padding="10,4" />
+                                                                            <Button Content="Original" Visibility="{Binding OriginalActiveVisibility}" Click="CardShowOriginal_Click" Style="{StaticResource BrandSegmentedActiveButtonStyle}" Padding="10,4" />
+                                                                            <Button Content="Original" Visibility="{Binding OriginalInactiveVisibility}" Click="CardShowOriginal_Click" Style="{StaticResource BrandSegmentedButtonStyle}" Padding="10,4" />
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding ComparisonStatusText}" VerticalAlignment="Center" />
+                                                                </StackPanel>
+
+                                                                <!-- Transcript Text -->
+                                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                    <TextBlock FontSize="15" MaxLines="{Binding TranscriptMaxLines}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="{Binding DisplayText}" IsTextSelectionEnabled="True" TextAlignment="DetectFromContent" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" IsTextTrimmedChanged="CardTranscriptText_IsTextTrimmedChanged" />
+                                                                    <HyperlinkButton Visibility="{Binding ShowMoreToggleVisibility}" Content="{Binding ShowMoreButtonText}" Click="CardShowMoreToggle_Click" Style="{StaticResource BrandHyperlinkButtonStyle}" HorizontalAlignment="Left" Padding="0,2" />
+                                                                </StackPanel>
+
+                                                                <!-- Alternate Version Comparison Reference (when Show edits is active) -->
+                                                                <Border Visibility="{Binding ShowEditsPanelVisibility}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                                                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="*" />
+                                                                                <ColumnDefinition Width="Auto" />
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding ComparisonOtherHeader}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                                            <Button Grid.Column="1" Click="CardCopyAlternateButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,3" AutomationProperties.Name="{Binding CopyAlternateButtonLabel}" VerticalAlignment="Center">
+                                                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                                                    <FontIcon FontSize="14" Glyph="{Binding CopyAlternateButtonGlyph}" />
+                                                                                    <TextBlock Text="{Binding CopyAlternateButtonLabel}" VerticalAlignment="Center" />
+                                                                                </StackPanel>
+                                                                            </Button>
+                                                                        </Grid>
+                                                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding ComparisonOtherText}" IsTextSelectionEnabled="True" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
+                                                                    </StackPanel>
+                                                                </Border>
+
+                                                                <!-- Inline Audio Recording Playback & Scrubbable Waveform -->
+                                                                <Border Visibility="{Binding PlaybackRowVisibility}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="8" Padding="10,6">
+                                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <Button Grid.Column="0" Width="32" Height="32" Padding="0" Style="{StaticResource BrandQuietButtonStyle}" Click="CardPlayPauseButton_Click" IsEnabled="{Binding CanTogglePlayback}" AutomationProperties.Name="{Binding PlaybackButtonAutomationName}" ToolTipService.ToolTip="{Binding PlaybackButtonAutomationName}">
+                                                                            <FontIcon FontSize="14" Glyph="{Binding PlaybackButtonGlyph}" />
+                                                                        </Button>
+                                                                        <controls:HistoryWaveformScrubber Grid.Column="1" Height="24" MinWidth="100" VerticalAlignment="Center" Peaks="{Binding WaveformPeaks}" ProgressFraction="{Binding PlaybackProgress}" PlayedBrush="{ThemeResource BrandAccentSolidBrush}" UnplayedBrush="{ThemeResource BrandTextTertiaryBrush}" SeekRequested="CardWaveform_SeekRequested" AutomationProperties.Name="{Binding PlaybackScrubberLabel}" ToolTipService.ToolTip="Click or drag to jump in recording" />
+                                                                        <TextBlock Grid.Column="2" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding PlaybackClockText}" VerticalAlignment="Center" />
+                                                                    </Grid>
+                                                                </Border>
+
+                                                                <!-- Inline Paste or Playback Notice -->
+                                                                <TextBlock Visibility="{Binding InlineNoticeVisibility}" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding InlineNoticeText}" TextWrapping="Wrap" />
+
+                                                                <!-- Card Footer: Provenance stacked cleanly above compact actions so 480 DIP windows never clip -->
+                                                                <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding ProvenanceText}" TextWrapping="Wrap" />
+                                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                                        <ProgressRing Width="16" Height="16" IsActive="{Binding IsRepolishing}" Visibility="{Binding RepolishingVisibility}" VerticalAlignment="Center" />
+                                                                        <Button Content="Paste" Click="CardPasteButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandPrimaryButtonStyle}" Padding="9,4" AutomationProperties.AutomationId="{Binding PasteButtonAutomationId}" AutomationProperties.Name="Paste saved dictation" AutomationProperties.HelpText="Pastes the saved dictation into the app you were using before EnviousWispr." />
+                                                                        <Button Click="CardCopyButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,4" AutomationProperties.Name="Copy saved dictation">
+                                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                                                <FontIcon FontSize="14" Glyph="{Binding CopyButtonGlyph}" />
+                                                                                <TextBlock Text="{Binding CopyButtonText}" VerticalAlignment="Center" />
+                                                                            </StackPanel>
+                                                                        </Button>
+                                                                        <Button Content="Keep" Click="CardKeepButton_Click" IsEnabled="{Binding CanRunCardActions}" Visibility="{Binding KeepButtonVisibility}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,4" AutomationProperties.Name="Keep recovery entry" />
+                                                                        <Button Content="Re-polish" Click="CardRepolishButton_Click" Visibility="{Binding RepolishButtonVisibility}" IsEnabled="{Binding CanRepolish}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,4" AutomationProperties.Name="Re-polish dictation" />
+                                                                        <Button Content="Delete" Click="CardDeleteButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandDestructiveButtonStyle}" Padding="9,4" AutomationProperties.Name="Delete dictation" />
+                                                                    </StackPanel>
+                                                                </StackPanel>
                                                             </StackPanel>
                                                         </Border>
-
-                                                        <!-- Card Footer: Provenance stacked cleanly above compact actions so 480 DIP windows never clip -->
-                                                        <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding ProvenanceText}" TextWrapping="Wrap" />
-                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                                                <ProgressRing Width="16" Height="16" IsActive="{Binding IsRepolishing}" Visibility="{Binding RepolishingVisibility}" VerticalAlignment="Center" />
-                                                                <Button Content="Paste" Click="CardPasteButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandPrimaryButtonStyle}" Padding="9,4" AutomationProperties.AutomationId="{Binding PasteButtonAutomationId}" AutomationProperties.Name="Paste saved dictation" AutomationProperties.HelpText="Pastes the saved dictation into the app you were using before EnviousWispr." />
-                                                                <Button Content="Copy" Click="CardCopyButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,4" AutomationProperties.Name="Copy saved dictation" />
-                                                                <Button Content="Keep" Click="CardKeepButton_Click" IsEnabled="{Binding CanRunCardActions}" Visibility="{Binding KeepButtonVisibility}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,4" AutomationProperties.Name="Keep recovery entry" />
-                                                                <Button Content="Re-polish" Click="CardRepolishButton_Click" IsEnabled="{Binding CanRepolish}" Style="{StaticResource BrandQuietButtonStyle}" Padding="9,4" AutomationProperties.Name="Re-polish dictation" />
-                                                                <Button Content="Delete" Click="CardDeleteButton_Click" IsEnabled="{Binding CanRunCardActions}" Style="{StaticResource BrandDestructiveButtonStyle}" Padding="9,4" AutomationProperties.Name="Delete dictation" />
-                                                            </StackPanel>
-                                                        </StackPanel>
-                                                    </StackPanel>
-                                                </Border>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
+                                                        <Border Visibility="{Binding ActiveCardOutlineVisibility}" BorderBrush="{ThemeResource BrandAccentBrush}" BorderThickness="2" CornerRadius="{StaticResource BrandSectionRadius}" IsHitTestVisible="False" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </local:HistoryDiaryRowTemplateSelector.CardTemplate>
+                                        </local:HistoryDiaryRowTemplateSelector>
+                                    </ListView.ItemTemplateSelector>
                                     <ListView.Footer>
                                         <Border x:Name="HistoryLoadMoreContainer" Padding="0,6,0,18" Visibility="Collapsed">
                                             <Button x:Name="LoadMoreHistoryButton" HorizontalAlignment="Center" Click="LoadMoreHistoryButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Content="Show older dictations" />

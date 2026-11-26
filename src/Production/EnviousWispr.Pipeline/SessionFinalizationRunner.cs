@@ -415,7 +415,8 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                             originalText: finalized.Processed.DeterministicText,
                             languageCode: language,
                             polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
-                            polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null)
+                            polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
+                            audio: audio)
                         .ConfigureAwait(false);
                     await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
                     _effects.ReportDelivery(result, language);
@@ -442,7 +443,8 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     originalText: finalized.Processed.DeterministicText,
                     languageCode: DeliveryLanguagePolicy.For(transcript),
                     polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
-                    polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null)
+                    polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
+                    audio: audio)
                 .ConfigureAwait(false);
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
 
