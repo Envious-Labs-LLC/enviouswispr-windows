@@ -547,7 +547,8 @@ public sealed class SelfLearningDictionaryTests : IDisposable
             UserData = new ReusableUserData([entry1, entry2], []),
         });
 
-        var vocabulary = new VocabularyPresenter(new SettingsPresenter(store, store.Current));
+        var settingsPresenter = new SettingsPresenter(store, store.Current);
+        var vocabulary = new VocabularyPresenter(settingsPresenter);
         var editSameCanonical = await vocabulary.UpdateMultiAliasWordAsync(
             entry1,
             ["sarab", "sorab", "saurav"],
@@ -593,6 +594,24 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         }
 
         Assert.False(tracker.HasEnded);
+
+        // Toggle off before/inside SaveLearnedWordAsync returns NoLongerWanted without saving.
+        await settingsPresenter.SaveAsync(current => current with
+        {
+            Preferences = current.Preferences with
+            {
+                Dictation = current.Preferences.Dictation with { LearnFromEditsEnabled = false },
+            },
+        });
+        var disabledSave = await vocabulary.SaveLearnedWordAsync(
+            "saurab",
+            "SaurabhNew",
+            LearnTargetState.New,
+            [],
+            DateTimeOffset.UtcNow);
+        Assert.True(disabledSave.Saved);
+        Assert.Equal(LearnedSaveStatus.NoLongerWanted, disabledSave.Value.Status);
+        Assert.DoesNotContain(store.Current.UserData.CustomWords, w => w.Replacement == "SaurabhNew");
     }
 
     private sealed class InMemorySettingsStore : ISettingsStore

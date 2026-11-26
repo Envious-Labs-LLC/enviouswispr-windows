@@ -1006,7 +1006,41 @@ public sealed partial class DictationOverlayWindow : Window
         var message = string.IsNullOrWhiteSpace(canonical)
             ? "Couldn\u2019t save learned word"
             : $"Couldn\u2019t save \u201C{canonical}\u201D";
-        ShowState(DictationStatus.Error(message));
+        StopLearnedCountdown(notifyEnded: _learnedModel is not null);
+        _hideTimer.Stop();
+        _learnedModel = new LearnedCorrectionPillModel(
+            Guid.NewGuid(),
+            string.Empty,
+            string.IsNullOrWhiteSpace(canonical) ? "learned word" : canonical,
+            LearnedCorrectionPillKind.Added,
+            LearnedCorrectionPillPhase.UndoError);
+        _state = DictationOverlayState.CorrectionLearned;
+        _preWarmed = true;
+
+        ContentPanel.Visibility = Visibility.Collapsed;
+        LearnedPillPanel.Visibility = Visibility.Visible;
+        ApplySurface("PillLearnedSurfaceStyle", LearnedCapsuleRadius);
+        ApplySeverity(DictationOverlayState.CorrectionLearned);
+
+        LearnedPillTitle.Text = message;
+        LearnedPillTitle.Style = GetPillStyle("PillLearnedErrorTitleStyle");
+        LearnedPillSubtitle.Text = "Your pasted text is safe.";
+        LearnedPillSubtitle.Visibility = Visibility.Visible;
+        LearnedPillControls.Visibility = Visibility.Collapsed;
+        LearnedCountdownRail.Visibility = Visibility.Collapsed;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            LearnedPillTitle,
+            $"{message}. Your pasted text is safe.");
+
+        LearnedPillPanel.InvalidateMeasure();
+        LearnedPillPanel.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var desiredW = LearnedPillPanel.DesiredSize.Width > 0 ? LearnedPillPanel.DesiredSize.Width : 300;
+        var width = Math.Clamp((int)Math.Ceiling(FrameBorderThickness * 2 + desiredW + 24), 240, 520);
+        Resize(width, (int)Math.Ceiling(LearnedPillHeight));
+        PositionOnForegroundMonitor();
+        AppWindow.Show(activateWindow: false);
+        AnnounceStateChange(LearnedPillTitle, DictationOverlayState.CorrectionLearned);
+        StartLearnedCountdown(LearnedErrorDwellSeconds);
     }
 
     private void RenderLearnedPill(LearnedCorrectionPillModel model, bool announceNow = true)

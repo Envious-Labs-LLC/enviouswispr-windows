@@ -35,6 +35,7 @@ public enum LearnedSaveStatus
     AlreadyCovered,
     TargetGone,
     AliasOwnedElsewhere,
+    NoLongerWanted,
     Refused,
 }
 
@@ -422,7 +423,8 @@ public sealed class VocabularyPresenter
         string corrected,
         Core.Learning.LearnTargetState expectedTarget,
         IReadOnlyList<CustomWordEntry> packTerms,
-        DateTimeOffset learnedAt)
+        DateTimeOffset learnedAt,
+        Func<bool>? stillWanted = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(original);
         ArgumentException.ThrowIfNullOrWhiteSpace(corrected);
@@ -434,8 +436,15 @@ public sealed class VocabularyPresenter
         var originalKey = Core.Learning.CorrectionPairKey.Normalise(trimmedOriginal);
         var correctedKey = Core.Learning.CorrectionPairKey.Normalise(trimmedCorrected);
 
-        return ChangeAsync(data =>
+        return _settings.SaveAsync(current =>
         {
+            if (!current.Preferences.Dictation.LearnFromEditsEnabled ||
+                (stillWanted is not null && !stillWanted()))
+            {
+                return (current, new LearnedSaveOutcome(LearnedSaveStatus.NoLongerWanted, null, null));
+            }
+
+            var data = current.UserData;
             var liveWords = data.CustomWords;
             var userTarget = liveWords.FirstOrDefault(w =>
                 string.Equals(Core.Learning.CorrectionPairKey.Normalise(w.Replacement), correctedKey, StringComparison.Ordinal));
@@ -449,7 +458,7 @@ public sealed class VocabularyPresenter
             {
                 if (target is null || !string.Equals(target.Id, expected.WordId, StringComparison.Ordinal))
                 {
-                    return (data, new LearnedSaveOutcome(LearnedSaveStatus.TargetGone, null, null));
+                    return (current, new LearnedSaveOutcome(LearnedSaveStatus.TargetGone, null, null));
                 }
             }
 
@@ -457,7 +466,7 @@ public sealed class VocabularyPresenter
                 (string.Equals(Core.Learning.CorrectionPairKey.Normalise(target.Replacement), originalKey, StringComparison.Ordinal) ||
                  target.Aliases.Any(a => string.Equals(Core.Learning.CorrectionPairKey.Normalise(a), originalKey, StringComparison.Ordinal))))
             {
-                return (data, new LearnedSaveOutcome(LearnedSaveStatus.AlreadyCovered, target, target));
+                return (current, new LearnedSaveOutcome(LearnedSaveStatus.AlreadyCovered, target, target));
             }
 
             // Verify neither the original trigger nor corrected replacement is owned by another entry.
@@ -472,7 +481,7 @@ public sealed class VocabularyPresenter
                     string.Equals(Core.Learning.CorrectionPairKey.Normalise(a), originalKey, StringComparison.Ordinal) ||
                     string.Equals(Core.Learning.CorrectionPairKey.Normalise(a), correctedKey, StringComparison.Ordinal)))
                 {
-                    return (data, new LearnedSaveOutcome(LearnedSaveStatus.AliasOwnedElsewhere, null, null));
+                    return (current, new LearnedSaveOutcome(LearnedSaveStatus.AliasOwnedElsewhere, null, null));
                 }
 
                 var entryCanonKey = Core.Learning.CorrectionPairKey.Normalise(entry.Replacement);
@@ -480,7 +489,7 @@ public sealed class VocabularyPresenter
                     (string.Equals(entryCanonKey, originalKey, StringComparison.Ordinal) ||
                      string.Equals(entryCanonKey, correctedKey, StringComparison.Ordinal)))
                 {
-                    return (data, new LearnedSaveOutcome(LearnedSaveStatus.AliasOwnedElsewhere, null, null));
+                    return (current, new LearnedSaveOutcome(LearnedSaveStatus.AliasOwnedElsewhere, null, null));
                 }
             }
 
@@ -497,7 +506,7 @@ public sealed class VocabularyPresenter
                     LearnedAt = userTarget.LearnedAt ?? learnedAt,
                 };
                 var nextList = ReplaceWord(liveWords, userTarget, updated);
-                return (data.WithCustomWords(nextList), new LearnedSaveOutcome(LearnedSaveStatus.Saved, userTarget, updated));
+                return (current with { UserData = data.WithCustomWords(nextList) }, new LearnedSaveOutcome(LearnedSaveStatus.Saved, userTarget, updated));
             }
 
             var category = packTarget?.Category ?? WordCategoryFormatting.Classify(trimmedCorrected);
@@ -530,7 +539,7 @@ public sealed class VocabularyPresenter
                 .Append(created)
                 .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
-            return (data.WithCustomWords(addedList), new LearnedSaveOutcome(LearnedSaveStatus.Saved, null, created));
+            return (current with { UserData = data.WithCustomWords(addedList) }, new LearnedSaveOutcome(LearnedSaveStatus.Saved, null, created));
         });
     }
 

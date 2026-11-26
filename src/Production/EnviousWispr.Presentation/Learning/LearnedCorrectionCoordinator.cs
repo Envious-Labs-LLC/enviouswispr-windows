@@ -101,7 +101,8 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
             trimmedCorrected,
             expectedTarget,
             _packTerms(),
-            _clock()).ConfigureAwait(false);
+            _clock(),
+            stillWanted).ConfigureAwait(false);
 
         if (!saveResult.Saved)
         {
@@ -113,6 +114,8 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
         var outcome = saveResult.Value;
         switch (outcome.Status)
         {
+            case LearnedSaveStatus.NoLongerWanted:
+                return new LearnedCorrectionOutcome.NoLongerWanted();
             case LearnedSaveStatus.AlreadyCovered:
                 return new LearnedCorrectionOutcome.AlreadyCovered();
             case LearnedSaveStatus.TargetGone:

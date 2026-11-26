@@ -204,6 +204,11 @@ public sealed class PastedRegionTracker
             return new LocateResult(LocateKind.RegionRemoved, null);
         }
 
+        if (string.Equals(region, target.PastedText, StringComparison.Ordinal))
+        {
+            return new LocateResult(LocateKind.Located, region);
+        }
+
         if (Math.Abs(region.Length - target.PastedText.Length) > editDistanceLimit ||
             BandedEditDistance(target.PastedText, region, editDistanceLimit) > editDistanceLimit)
         {
