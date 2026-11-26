@@ -215,11 +215,12 @@ public sealed class HistoryDiaryLayoutTests
         var itemStyle = controlsDoc
             .Descendants(XName.Get("Style", PresentationNamespace))
             .Single(style => string.Equals((string?)style.Attribute(XName.Get("Key", XamlNamespace)), "BrandHistoryListItemStyle", StringComparison.Ordinal));
-        var presenter = itemStyle.Descendants(XName.Get("ContentPresenter", PresentationNamespace)).Single();
+        var presenter = itemStyle.Descendants(XName.Get("ListViewItemPresenter", PresentationNamespace)).Single();
 
-        Assert.Equal("{TemplateBinding Content}", (string?)presenter.Attribute("Content"));
-        Assert.Equal("{TemplateBinding ContentTemplate}", (string?)presenter.Attribute("ContentTemplate"));
-        Assert.Equal("{TemplateBinding ContentTemplateSelector}", (string?)presenter.Attribute("ContentTemplateSelector"));
+        Assert.Equal("Transparent", (string?)presenter.Attribute("PointerOverBackground"));
+        Assert.Equal("Transparent", (string?)presenter.Attribute("PressedBackground"));
+        Assert.Equal("Transparent", (string?)presenter.Attribute("SelectedBackground"));
+        Assert.Equal("False", (string?)presenter.Attribute("SelectionCheckMarkVisualEnabled"));
 
         var mainDoc = LoadMainWindow(repositoryRoot);
         var historyList = FindNamed(mainDoc, "HistoryList");

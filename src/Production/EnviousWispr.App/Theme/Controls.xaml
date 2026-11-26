@@ -1371,16 +1371,24 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListViewItem">
-                    <ContentPresenter
-                        x:Name="ContentPresenter"
-                        Margin="{TemplateBinding Padding}"
-                        HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                        VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                        Background="{TemplateBinding Background}"
-                        Content="{TemplateBinding Content}"
-                        ContentTemplate="{TemplateBinding ContentTemplate}"
-                        ContentTemplateSelector="{TemplateBinding ContentTemplateSelector}"
-                        ContentTransitions="{TemplateBinding ContentTransitions}" />
+                    <ListViewItemPresenter
+                        x:Name="Root"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        ContentMargin="0"
+                        Padding="0"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                        PointerOverBackground="Transparent"
+                        PressedBackground="Transparent"
+                        SelectedBackground="Transparent"
+                        SelectedPointerOverBackground="Transparent"
+                        SelectedPressedBackground="Transparent"
+                        PointerOverForeground="{TemplateBinding Foreground}"
+                        SelectedForeground="{TemplateBinding Foreground}"
+                        FocusBorderBrush="Transparent"
+                        FocusSecondaryBorderBrush="Transparent"
+                        SelectionCheckMarkVisualEnabled="False"
+                        CheckMode="Inline" />
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
