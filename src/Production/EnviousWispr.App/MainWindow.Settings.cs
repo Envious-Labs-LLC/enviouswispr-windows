@@ -70,7 +70,8 @@ public sealed partial class MainWindow
             EgOneModelId: _selectedEgOneModelId,
             PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex ?? 0,
             ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn ?? true,
-            LearnFromEdits: LearnFromEditsToggle?.IsOn ?? true);
+            LearnFromEdits: LearnFromEditsToggle?.IsOn ?? true,
+            FixLearnedWords: FixLearnedWordsToggle?.IsOn ?? true);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -137,6 +138,10 @@ public sealed partial class MainWindow
                 RefreshLearnMemoryUi();
                 _ = TriggerAutoSaveAsync();
             };
+        }
+        if (FixLearnedWordsToggle is not null)
+        {
+            FixLearnedWordsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         }
         LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         ShareUsageMetricsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -492,6 +497,10 @@ public sealed partial class MainWindow
             if (LearnFromEditsToggle is not null)
             {
                 LearnFromEditsToggle.IsOn = preferences.Dictation.LearnFromEditsEnabled;
+            }
+            if (FixLearnedWordsToggle is not null)
+            {
+                FixLearnedWordsToggle.IsOn = preferences.Dictation.FixLearnedWordsEnabled;
             }
             RefreshLearnMemoryUi();
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;

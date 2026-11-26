@@ -1472,6 +1472,18 @@
                                                             <TextBlock x:Name="LearnMemorySummaryText" Style="{StaticResource BrandHelperStyle}" Text="Learning memory: 0 blocked" VerticalAlignment="Center" TextWrapping="Wrap" />
                                                             <Button x:Name="ForgetLearnMemoryButton" Grid.Column="1" Click="ForgetLearnMemoryButton_Click" Content="Forget" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Forget what EnviousWispr remembers about your fixes so blocked words may be learned again." />
                                                         </Grid>
+                                                        <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                                        <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                <TextBlock x:Name="FixLearnedWordsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Fix words it learned" />
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Use learned words in new recordings and imports. Turn this off to keep using words you added yourself without applying learned corrections." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                            <ToggleSwitch x:Name="FixLearnedWordsToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind FixLearnedWordsToggleLabel, Mode=OneTime}" OnContent="" OffContent="" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" />
+                                                        </Grid>
                                                     </StackPanel>
                                                 </Border>
                                                 <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">

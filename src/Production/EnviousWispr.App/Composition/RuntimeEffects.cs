@@ -157,6 +157,14 @@ internal sealed class TranscriptFinalizationEffects(IAppLogger logger, SessionPe
             // claim a cause it does not know.
             AppFailureCategory.InvalidData));
 
+    public void RecordLearnedWordCheck(long elapsedMilliseconds, DiagnosticProvider? provider, bool changed) =>
+        logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.LearnedWordChecked,
+            ElapsedMilliseconds: elapsedMilliseconds,
+            Provider: provider,
+            Changed: changed));
+
     public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false) =>
         logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,

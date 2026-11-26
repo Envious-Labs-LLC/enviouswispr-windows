@@ -455,7 +455,7 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         var writer = new JsonSettingsStore(settingsPath);
         await writer.SaveAsync(AppSettings.Default);
         var currentJson = await File.ReadAllTextAsync(settingsPath);
-        var v26Json = currentJson.Replace("\"schemaVersion\": 27", "\"schemaVersion\": 26", StringComparison.Ordinal);
+        var v26Json = currentJson.Replace($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", "\"schemaVersion\": 26", StringComparison.Ordinal);
         Assert.NotEqual(currentJson, v26Json);
         await File.WriteAllTextAsync(settingsPath, v26Json);
 
@@ -500,7 +500,7 @@ public sealed class SelfLearningDictionaryTests : IDisposable
             profilePath);
         Assert.True(exported.Succeeded);
         var exportedJson = await File.ReadAllTextAsync(profilePath);
-        var v19Json = exportedJson.Replace("\"schemaVersion\": 20", "\"schemaVersion\": 19", StringComparison.Ordinal);
+        var v19Json = exportedJson.Replace($"\"schemaVersion\": {PortableProfile.CurrentSchemaVersion}", "\"schemaVersion\": 19", StringComparison.Ordinal);
         Assert.NotEqual(exportedJson, v19Json);
         await File.WriteAllTextAsync(profilePath, v19Json);
         var imported = await portableService.ImportAsync(profilePath);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.PostProcessing;
@@ -21,6 +22,10 @@ public interface ITranscriptFinalizationEffects : IPolishAttemptEffects
 
     /// <summary>What came back from polish was not worth showing anyone.</summary>
     void RecordPolishRefused();
+
+    void RecordLearnedWordCheck(long elapsedMilliseconds, DiagnosticProvider? provider, bool changed)
+    {
+    }
 
     void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false);
 }
@@ -74,12 +79,14 @@ public sealed class TranscriptFinalizer
     private readonly PolishExecutor _polish;
     private readonly ITranscriptFinalizationEffects _effects;
     private readonly SnippetExpansionStage _snippets;
+    private readonly LearnedWordCheckStep? _learnedWordCheck;
 
     public TranscriptFinalizer(
         DeterministicTextPipeline pipeline,
         PolishExecutor polish,
         ITranscriptFinalizationEffects effects,
-        SnippetExpansionStage snippets)
+        SnippetExpansionStage snippets,
+        LearnedWordCheckStep? learnedWordCheck = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(polish);
@@ -89,6 +96,7 @@ public sealed class TranscriptFinalizer
         _polish = polish;
         _effects = effects;
         _snippets = snippets;
+        _learnedWordCheck = learnedWordCheck;
     }
 
     public Task<FinalizedTranscript> FinalizeAsync(
@@ -175,6 +183,36 @@ public sealed class TranscriptFinalizer
         processingTimer.Stop();
         var deterministicMilliseconds = processingTimer.ElapsedMilliseconds;
         _effects.EmitStageReceipts(processed.Receipts, emojiRestorationOnly: false);
+
+        if (_learnedWordCheck is not null &&
+            options.WordCorrectionEnabled &&
+            options.FixLearnedWordsEnabled &&
+            !expansion.IsDegraded &&
+            !rolledBack)
+        {
+            var checkOutcome = await _learnedWordCheck.ProcessAsync(
+                processed.Output.Text,
+                customWords,
+                transcript.DetectedLanguage ?? transcript.RecognitionLanguage,
+                cancellationToken).ConfigureAwait(false);
+            if (checkOutcome.Flagged > 0)
+            {
+                _effects.RecordLearnedWordCheck(
+                    checkOutcome.ElapsedMilliseconds,
+                    DiagnosticProviderIds.FromProviderId(checkOutcome.ProviderId),
+                    checkOutcome.Applied > 0);
+            }
+
+            if (checkOutcome.Applied > 0)
+            {
+                processed = processed with
+                {
+                    Output = processed.Output with { Text = checkOutcome.Text },
+                    DeterministicText = checkOutcome.Text,
+                };
+            }
+        }
+
         var deterministic = SnippetFinalizer.Resolve(processed.DeterministicText, null, records).Text;
         await _effects.SaveRecoveryTextAsync(processed.Output with { Text = deterministic }, cancellationToken)
             .ConfigureAwait(false);

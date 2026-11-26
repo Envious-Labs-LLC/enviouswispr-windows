@@ -423,4 +423,7 @@ public enum AppEventCode
 
     /// <summary>User cleared all remembered refusals and blocks from learning memory.</summary>
     LearnMemoryForgotten,
+
+    /// <summary>Runtime contextual checker evaluated flagged learned-word aliases before delivery (counts/timing only, never user text).</summary>
+    LearnedWordChecked,
 }

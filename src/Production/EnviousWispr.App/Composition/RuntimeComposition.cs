@@ -72,7 +72,8 @@ public sealed record RuntimeCompositionParts(
     IAppLogger Logger,
     RuntimeShell Shell,
     TimeProvider Clock,
-    IDictationAudioArchive? AudioArchive = null);
+    IDictationAudioArchive? AudioArchive = null,
+    LearnedWordCheckStep? LearnedWordCheck = null);
 
 /// <summary>The shared queue as the hook and the timers reach it: one method to submit a key, one for the watchdog's timeout.</summary>
 internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
@@ -221,7 +222,8 @@ public static class RuntimeComposition
                 parts.Clock,
                 () => CultureInfo.CurrentCulture,
                 parts.Shell.ClipboardText,
-                SnippetExpansionStage.Timeout));
+                SnippetExpansionStage.Timeout),
+            parts.LearnedWordCheck);
         var preview = new LivePreviewController(new LivePreviewEffects(parts.Shell), parts.Logger, parts.Clock);
         var streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(parts.Shell), parts.Logger, parts.Clock);
         var queue = new SessionQueue(parts.Shell, parts.Logger);

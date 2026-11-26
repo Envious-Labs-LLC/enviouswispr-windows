@@ -67,12 +67,19 @@ public static partial class CustomWordCorrector
     public static WordCorrectionResult Correct(
         string text,
         IReadOnlyList<CustomWordEntry> customWords) =>
-        Correct(text, customWords, packWords: null);
+        Correct(text, customWords, packWords: null, excludeLearnedAliases: false);
 
     public static WordCorrectionResult Correct(
         string text,
         IReadOnlyList<CustomWordEntry> customWords,
-        IReadOnlyList<CustomWordEntry>? packWords)
+        IReadOnlyList<CustomWordEntry>? packWords) =>
+        Correct(text, customWords, packWords, excludeLearnedAliases: false);
+
+    public static WordCorrectionResult Correct(
+        string text,
+        IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<CustomWordEntry>? packWords,
+        bool excludeLearnedAliases)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(customWords);
@@ -89,7 +96,7 @@ public static partial class CustomWordCorrector
         // so a person moving between the two would see different text from the same list.
         var usable = customWords.Where(IsUsable).ToArray();
         var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
-        RegisterEntries(usable, owners, overwriteExistingAliases: true);
+        RegisterEntries(usable, owners, overwriteExistingAliases: true, excludeLearnedAliases: excludeLearnedAliases);
 
         if (packWords is { Count: > 0 })
         {
@@ -97,7 +104,7 @@ public static partial class CustomWordCorrector
             if (usablePacks.Length > 0)
             {
                 // Isolated toggleable pack layer: pack entries never overwrite user-defined entries.
-                RegisterEntries(usablePacks, owners, overwriteExistingAliases: false);
+                RegisterEntries(usablePacks, owners, overwriteExistingAliases: false, excludeLearnedAliases: false);
             }
         }
 
@@ -495,12 +502,26 @@ public static partial class CustomWordCorrector
     private static void RegisterEntries(
         CustomWordEntry[] entries,
         Dictionary<string, Candidate> owners,
-        bool overwriteExistingAliases)
+        bool overwriteExistingAliases,
+        bool excludeLearnedAliases = false)
     {
         foreach (var entry in entries)
         {
+            if (excludeLearnedAliases && entry.LearnedAt.HasValue)
+            {
+                continue;
+            }
+
+            HashSet<string>? learnedAliases = excludeLearnedAliases && entry.LearnedAliases.Count > 0
+                ? entry.LearnedAliases.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
             foreach (var alias in entry.Aliases)
             {
+                if (learnedAliases is not null && learnedAliases.Contains(alias))
+                {
+                    continue;
+                }
+
                 var surface = CollapseSpaces(alias);
                 if (!ContainsReservedTrigger(surface) &&
                     (overwriteExistingAliases || !owners.ContainsKey(surface)))
@@ -512,6 +533,11 @@ public static partial class CustomWordCorrector
 
         foreach (var entry in entries)
         {
+            if (excludeLearnedAliases && entry.LearnedAt.HasValue)
+            {
+                continue;
+            }
+
             var surface = CollapseSpaces(entry.Replacement);
             if ((WordCount(surface) == 1 || entry.Aliases.Count == 0) &&
                 !ContainsReservedTrigger(surface) &&
@@ -534,10 +560,10 @@ public static partial class CustomWordCorrector
     private static int WordCount(string value) =>
         value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
 
-    private static string CollapseSpaces(string value) =>
+    internal static string CollapseSpaces(string value) =>
         WhitespaceRegex().Replace(value.Trim(), " ");
 
-    private static string SurfacePattern(string surface) =>
+    internal static string SurfacePattern(string surface) =>
         $@"(?<![\p{{L}}\p{{N}}]){string.Join(@"[\s,.!?\u2014\u2013-]+", surface.Split(' ').Select(Regex.Escape))}(?![\p{{L}}\p{{N}}])";
 
     private static bool IsClaimed(List<Span> claimed, int start, int length) =>

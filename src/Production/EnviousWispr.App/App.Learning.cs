@@ -15,6 +15,7 @@ public partial class App
     private RulesCorrectionJudge? _rulesCorrectionJudge;
     private EgOneCorrectionJudge? _egOneCorrectionJudge;
     private FallbackCorrectionJudge? _correctionJudge;
+    private ILearnedWordChecker? _learnedWordChecker;
     private WindowsPastedRegionObserver? _pastedRegionObserver;
     private LearnedCorrectionCoordinator? _learnedCoordinator;
     private ObservedCorrectionWatcher? _correctionWatcher;
@@ -65,6 +66,11 @@ public partial class App
         _learnedPresenter = presenter;
         _correctionWatcher = watcher;
     }
+
+    private ILearnedWordChecker EnsureLearnedWordChecker() =>
+        _learnedWordChecker ??= new FallbackLearnedWordChecker(
+            () => new EgOneLearnedWordChecker(() => !Leaving ? _polishProvider as EgOnePolishProvider : null),
+            new DeterministicLearnedWordChecker());
 
     private void AttachSelfLearningToWindow(MainWindow window)
     {

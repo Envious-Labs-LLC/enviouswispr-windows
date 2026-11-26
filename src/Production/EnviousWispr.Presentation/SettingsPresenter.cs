@@ -111,7 +111,8 @@ public sealed record GeneralSettingsInput(
     string? EgOneModelId = null,
     int PolishUnloadPolicyIndex = 0,
     bool ReturnToStartWindow = true,
-    bool LearnFromEdits = true);
+    bool LearnFromEdits = true,
+    bool FixLearnedWords = true);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -337,7 +338,8 @@ public sealed class SettingsPresenter : IDisposable
             pasteLast.Gesture?.ToString() ?? string.Empty,
             copyLast.Gesture?.ToString() ?? string.Empty,
             input.CasualMode,
-            input.LearnFromEdits);
+            input.LearnFromEdits,
+            input.FixLearnedWords);
         var polishProvider = PolishProviderFromIndex(Chosen(input.PolishProviderIndex));
         var normalizedEgOneModelId = EnginePolishPresentation.NormalizeOptionalEgOneModelId(input.EgOneModelId);
         if (normalizedEgOneModelId is null &&
