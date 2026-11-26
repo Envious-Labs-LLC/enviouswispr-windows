@@ -122,22 +122,25 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 }
             }
 
-            if (profile is { Preferences: not null } && schemaVersion < PortableProfile.CurrentSchemaVersion)
+            if (profile is not null && schemaVersion < PortableProfile.CurrentSchemaVersion)
             {
-                profile = profile with
+                if (profile.Preferences is not null)
                 {
-                    Preferences = JsonSettingsStore.SeedEgOneModelIdIfMissing(profile.Preferences)!,
-                };
-            }
+                    profile = profile with
+                    {
+                        Preferences = JsonSettingsStore.SeedEgOneModelIdIfMissing(profile.Preferences)!,
+                    };
+                }
 
-            // Importing a profile adopts the user's explicit snippet list (including empty); it must
-            // never cause one-time starter seeding to inject examples on the next settings load.
-            if (profile?.UserData is { HasSeededStarterSnippets: false } importedUserData)
-            {
-                profile = profile with
+                // Importing an older profile adopts its explicit snippet list (including empty); it must
+                // never cause one-time starter seeding to inject examples on the next settings load.
+                if (profile.UserData is { HasSeededStarterSnippets: false } importedUserData)
                 {
-                    UserData = importedUserData.WithHasSeededStarterSnippets(true),
-                };
+                    profile = profile with
+                    {
+                        UserData = importedUserData.WithHasSeededStarterSnippets(true),
+                    };
+                }
             }
 
             // A PROFILE CANNOT BRING IN A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN: the hook refuses both, and with
