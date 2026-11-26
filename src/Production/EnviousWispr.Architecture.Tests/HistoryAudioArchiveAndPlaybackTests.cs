@@ -489,7 +489,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
 
         // Routine copy & polish notice paths must not pop OperationInfoBar via ShowMessage,
         // and Copy click handlers must never swap Button.Style across ControlTemplates.
-        foreach (var methodName in new[] { "CardCopyButton_Click", "CardCopyAlternateButton_Click", "CopyRecoveryButton_Click" })
+        foreach (var methodName in new[] { "CardCopyButton_Click", "CardCopyOriginalMenuItem_Click", "CopyRecoveryButton_Click" })
         {
             var body = ExtractMethodBody(historyCs, methodName);
             Assert.DoesNotContain("ShowMessage(", body, StringComparison.Ordinal);

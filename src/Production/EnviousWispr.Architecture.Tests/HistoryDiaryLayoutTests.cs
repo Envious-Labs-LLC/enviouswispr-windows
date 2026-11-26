@@ -130,26 +130,41 @@ public sealed class HistoryDiaryLayoutTests
         Assert.Contains("BrandWarningChipStyle", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("BrandAccentChipStyle", templateMarkup, StringComparison.Ordinal);
 
+        Assert.Contains("HistoryTranscriptView", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("ActiveTranscriptViewMode", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("MarkedUpRuns", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandSuccessSoftBrush", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandErrorBrush", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("TranscriptMaxLines", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardShowMoreToggle_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardShowEditsToggle_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandQuietActiveButtonStyle", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardShowPolished_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardShowMarkedUp_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardShowOriginal_Click", templateMarkup, StringComparison.Ordinal);
-        Assert.Contains("ComparisonOtherText", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("MarkedUpLegendVisibility", templateMarkup, StringComparison.Ordinal);
+        Assert.DoesNotContain("ComparisonOtherText", templateMarkup, StringComparison.Ordinal);
 
+        Assert.Contains("BrandPlaybackCircleButtonStyle", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardPlayPauseButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardWaveform_SeekRequested", templateMarkup, StringComparison.Ordinal);
-        Assert.Contains("PlaybackClockText", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("PlaybackCurrentClockText", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("PlaybackTotalClockText", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandAccentSolidBrush", templateMarkup, StringComparison.Ordinal);
 
         Assert.Contains("ProvenanceText", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardPasteButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardCopyButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardKeepButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardRepolishButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardCopyOriginalMenuItem_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardSaveAsTextMenuItem_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("RepolishButtonVisibility", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CanRepolish", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardDeleteButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("PasteButtonAutomationId", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardBorder_PointerEntered", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardHoverOutline", templateMarkup, StringComparison.Ordinal);
 
         var loadMoreButton = FindNamed(document, "LoadMoreHistoryButton");
         Assert.Equal("Show older dictations", (string?)loadMoreButton.Attribute("Content"));
@@ -177,7 +192,7 @@ public sealed class HistoryDiaryLayoutTests
     }
 
     [Fact]
-    public void HistoryCardsSeparateProvenanceFromActionsOfferExplicitAlternateCopyAndResetSelectionLabel()
+    public void HistoryCardsSeparateProvenanceFromActionsOfferMoreMenuCopyDisplayedTextAndConfirmDelete()
     {
         var repositoryRoot = FindRepositoryRoot();
         var document = LoadMainWindow(repositoryRoot);
@@ -187,22 +202,29 @@ public sealed class HistoryDiaryLayoutTests
             .Last();
         var templateMarkup = template.ToString();
 
-        Assert.Contains("CardCopyAlternateButton_Click", templateMarkup, StringComparison.Ordinal);
-        Assert.Contains("CopyAlternateButtonLabel", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardCopyOriginalMenuItem_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("MenuFlyout", templateMarkup, StringComparison.Ordinal);
 
         var footerActionButtonCount = template
             .Descendants(XName.Get("Button", PresentationNamespace))
             .Count(button => (string?)button.Attribute("Click") is "CardPasteButton_Click"
                 or "CardCopyButton_Click"
-                or "CardKeepButton_Click"
-                or "CardRepolishButton_Click"
+                or "CardKeepButton_Click");
+        Assert.Equal(3, footerActionButtonCount);
+
+        var flyoutActionCount = template
+            .Descendants(XName.Get("MenuFlyoutItem", PresentationNamespace))
+            .Count(item => (string?)item.Attribute("Click") is "CardRepolishButton_Click"
+                or "CardCopyOriginalMenuItem_Click"
+                or "CardSaveAsTextMenuItem_Click"
                 or "CardDeleteButton_Click");
-        Assert.Equal(5, footerActionButtonCount);
+        Assert.Equal(4, flyoutActionCount);
 
         var historyCode = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
-        Assert.Contains("package.SetText(card.Text);", historyCode, StringComparison.Ordinal);
-        Assert.Contains("package.SetText(card.ComparisonOtherText);", historyCode, StringComparison.Ordinal);
+        Assert.Contains("package.SetText(card.DisplayedCopyText);", historyCode, StringComparison.Ordinal);
+        Assert.Contains("SecondaryDateLabel", historyCode, StringComparison.Ordinal);
+        Assert.Contains("Title = \"Delete dictation?\"", historyCode, StringComparison.Ordinal);
         Assert.Contains("SetHistorySelectionMode(false);", historyCode, StringComparison.Ordinal);
         Assert.Contains("\"Select dictations\"", historyCode, StringComparison.Ordinal);
     }

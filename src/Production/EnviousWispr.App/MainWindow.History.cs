@@ -16,7 +16,9 @@ using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage.Pickers;
 
 namespace EnviousWispr.App;
 
@@ -465,46 +467,98 @@ public sealed partial class MainWindow
         UpdateHistorySelectionDependentButtons();
     }
 
-    private void CardShowEditsToggle_Click(object sender, RoutedEventArgs e)
+    private static HistoryItemViewModel? ResolveCardDataContext(object sender) =>
+        sender is FrameworkElement element
+            ? element.DataContext as HistoryItemViewModel ?? element.Tag as HistoryItemViewModel
+            : null;
+
+    private void CardBorder_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        SetCardHoverOutline(sender, isHovered: true);
+    }
+
+    private void CardBorder_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        SetCardHoverOutline(sender, isHovered: false);
+    }
+
+    private void CardBorder_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        SetCardHoverOutline(sender, isHovered: false);
+    }
+
+    private static void SetCardHoverOutline(object sender, bool isHovered)
+    {
+        if (sender is not FrameworkElement element)
         {
             return;
         }
 
-        if (!_showingEditsIds.Remove(card.Id))
+        var outline = (element.Parent as FrameworkElement)?.FindName("CardHoverOutline") as UIElement
+            ?? element.FindName("CardHoverOutline") as UIElement;
+        if (outline is not null)
         {
-            _showingEditsIds.Add(card.Id);
+            outline.Opacity = isHovered ? 0.45 : 0.0;
+        }
+    }
+
+    private void CardShowEditsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResolveCardDataContext(sender) is not { } card)
+        {
+            return;
         }
 
-        card.SetShowingEdits(_showingEditsIds.Contains(card.Id));
+        if (_showingEditsIds.Remove(card.Id))
+        {
+            card.SetShowingEdits(false);
+            return;
+        }
+
+        _showingEditsIds.Add(card.Id);
+        _editsViewModes[card.Id] = HistoryEditsViewMode.MarkedUp;
+        var diffResult = card.HasPolishEdits
+            ? _historyDiffCache.GetOrCompute(card.OriginalText, card.Text)
+            : HistoryDiffResult.Empty;
+        card.SetShowingEdits(true, HistoryEditsViewMode.MarkedUp, diffResult);
     }
 
     private void CardShowPolished_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        if (ResolveCardDataContext(sender) is not { } card)
         {
             return;
         }
 
-        _showingOriginalIds.Remove(card.Id);
-        card.SetShowingOriginal(false);
+        _editsViewModes[card.Id] = HistoryEditsViewMode.Polished;
+        card.SetEditsViewMode(HistoryEditsViewMode.Polished);
+    }
+
+    private void CardShowMarkedUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResolveCardDataContext(sender) is not { } card)
+        {
+            return;
+        }
+
+        _editsViewModes[card.Id] = HistoryEditsViewMode.MarkedUp;
+        card.SetEditsViewMode(HistoryEditsViewMode.MarkedUp);
     }
 
     private void CardShowOriginal_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        if (ResolveCardDataContext(sender) is not { } card)
         {
             return;
         }
 
-        _showingOriginalIds.Add(card.Id);
-        card.SetShowingOriginal(true);
+        _editsViewModes[card.Id] = HistoryEditsViewMode.Original;
+        card.SetEditsViewMode(HistoryEditsViewMode.Original);
     }
 
     private void CardShowMoreToggle_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel card)
+        if (ResolveCardDataContext(sender) is not { } card)
         {
             return;
         }
@@ -521,7 +575,7 @@ public sealed partial class MainWindow
         "Performance",
         "CA1822:Mark members as static",
         Justification = "WinUI XAML generated event connector attaches this handler via an instance reference.")]
-    private void CardTranscriptText_IsTextTrimmedChanged(TextBlock sender, IsTextTrimmedChangedEventArgs args)
+    private void CardTranscriptText_IsTextTrimmedChanged(RichTextBlock sender, IsTextTrimmedChangedEventArgs args)
     {
         if (sender.IsTextTrimmed && sender.DataContext is HistoryItemViewModel card)
         {
@@ -532,8 +586,7 @@ public sealed partial class MainWindow
     private void CardPasteButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isRepolishing || _isBulkDeletingHistory
-            || sender is not FrameworkElement element
-            || element.DataContext is not HistoryItemViewModel card)
+            || ResolveCardDataContext(sender) is not { } card)
         {
             return;
         }
@@ -548,14 +601,13 @@ public sealed partial class MainWindow
     private void CardCopyButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isRepolishing || _isBulkDeletingHistory
-            || sender is not FrameworkElement element
-            || element.DataContext is not HistoryItemViewModel card)
+            || ResolveCardDataContext(sender) is not { } card)
         {
             return;
         }
 
         var package = new DataPackage();
-        package.SetText(card.Text);
+        package.SetText(card.DisplayedCopyText);
         Clipboard.SetContent(package);
         Clipboard.Flush();
 
@@ -568,28 +620,54 @@ public sealed partial class MainWindow
         _ = ResetPrimaryCopyBadgeAfterDelayAsync(card.Id, version);
     }
 
-    private void CardCopyAlternateButton_Click(object sender, RoutedEventArgs e)
+    private void CardCopyOriginalMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (_isRepolishing || _isBulkDeletingHistory
-            || sender is not FrameworkElement element
-            || element.DataContext is not HistoryItemViewModel card
-            || string.IsNullOrWhiteSpace(card.ComparisonOtherText))
+            || ResolveCardDataContext(sender) is not { } card
+            || string.IsNullOrWhiteSpace(card.OriginalText))
         {
             return;
         }
 
         var package = new DataPackage();
-        package.SetText(card.ComparisonOtherText);
+        package.SetText(card.OriginalText);
         Clipboard.SetContent(package);
         Clipboard.Flush();
 
         _activeHistoryCardId = card.Id;
-        var version = _copyAlternateResetVersions.TryGetValue(card.Id, out var existing)
-            ? existing + 1
-            : 1;
-        _copyAlternateResetVersions[card.Id] = version;
-        card.SetCopiedAlternate(true);
-        _ = ResetAlternateCopyBadgeAfterDelayAsync(card.Id, version);
+        SetCardInlineNotice(card.Id, "Original words copied to clipboard.");
+    }
+
+    private async void CardSaveAsTextMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRepolishing || _isBulkDeletingHistory
+            || ResolveCardDataContext(sender) is not { } card)
+        {
+            return;
+        }
+
+        var picker = new FileSavePicker
+        {
+            SuggestedFileName = "Dictation",
+            DefaultFileExtension = ".txt",
+        };
+        picker.FileTypeChoices.Add("Text", [".txt"]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSaveFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await File.WriteAllTextAsync(file.Path, card.DisplayedCopyText).ConfigureAwait(true);
+            SetCardInlineNotice(card.Id, "Saved transcript to text file.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ShowMessage("Not saved", "The transcript could not be written there. Choose another place.", InfoBarSeverity.Error);
+        }
     }
 
     private void CardPlayPauseButton_Click(object sender, RoutedEventArgs e)
@@ -664,21 +742,6 @@ public sealed partial class MainWindow
         _copyPrimaryResetVersions.Remove(entryId);
         var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
         card?.SetCopiedPrimary(false);
-    }
-
-    private async Task ResetAlternateCopyBadgeAfterDelayAsync(Guid entryId, int expectedVersion)
-    {
-        await Task.Delay(2000).ConfigureAwait(true);
-        if (_shuttingDownProductWindows
-            || !_copyAlternateResetVersions.TryGetValue(entryId, out var current)
-            || current != expectedVersion)
-        {
-            return;
-        }
-
-        _copyAlternateResetVersions.Remove(entryId);
-        var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
-        card?.SetCopiedAlternate(false);
     }
 
     private bool _copyingRecovery;
@@ -820,7 +883,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (sender is not FrameworkElement element || element.DataContext is not HistoryItemViewModel selected)
+        if (ResolveCardDataContext(sender) is not { } selected)
         {
             return;
         }
@@ -859,7 +922,7 @@ public sealed partial class MainWindow
 
             if (result.Succeeded)
             {
-                _showingOriginalIds.Remove(selected.Id);
+                _editsViewModes.Remove(selected.Id);
                 if (result.View is not null)
                 {
                     ShowHistory(result.View);
@@ -890,8 +953,23 @@ public sealed partial class MainWindow
     private async void CardDeleteButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isRepolishing || _isBulkDeletingHistory
-            || sender is not FrameworkElement element
-            || element.DataContext is not HistoryItemViewModel selected)
+            || ResolveCardDataContext(sender) is not { } selected)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = WindowRoot.XamlRoot,
+            RequestedTheme = WindowRoot.ActualTheme,
+            Title = "Delete dictation?",
+            Content = "This permanently removes this dictation and its saved audio recording from local history.",
+            PrimaryButtonText = "Delete dictation",
+            PrimaryButtonStyle = Application.Current.Resources["BrandDestructiveButtonStyle"] as Style,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
         {
             return;
         }
@@ -1057,9 +1135,8 @@ public sealed partial class MainWindow
         {
             _expandedTranscriptIds.Clear();
             _showingEditsIds.Clear();
-            _showingOriginalIds.Clear();
+            _editsViewModes.Clear();
             _copyPrimaryResetVersions.Clear();
-            _copyAlternateResetVersions.Clear();
             _cardInlineNotices.Clear();
             _inlineNoticeVersions.Clear();
             _waveformCache.Clear();
@@ -1149,9 +1226,9 @@ public sealed partial class MainWindow
     private readonly HashSet<Guid> _selectedHistoryIds = [];
     private readonly HashSet<Guid> _expandedTranscriptIds = [];
     private readonly HashSet<Guid> _showingEditsIds = [];
-    private readonly HashSet<Guid> _showingOriginalIds = [];
+    private readonly Dictionary<Guid, HistoryEditsViewMode> _editsViewModes = [];
+    private readonly HistoryDiffCache _historyDiffCache = new();
     private readonly Dictionary<Guid, int> _copyPrimaryResetVersions = [];
-    private readonly Dictionary<Guid, int> _copyAlternateResetVersions = [];
     private readonly Dictionary<Guid, string> _cardInlineNotices = [];
     private readonly Dictionary<Guid, int> _inlineNoticeVersions = [];
     private readonly Dictionary<Guid, (string FileName, IReadOnlyList<float> Peaks, long DurationMs)> _waveformCache = [];
@@ -1249,13 +1326,20 @@ public sealed partial class MainWindow
                     }
                 }
 
+                var isShowingEdits = _showingEditsIds.Contains(entry.Id);
+                var diffResult = isShowingEdits && HistoryDiaryPresentation.HasPolishEdits(entry)
+                    ? _historyDiffCache.GetOrCompute(entry.OriginalText, entry.Text)
+                    : HistoryDiffResult.Empty;
+                var editsViewMode = _editsViewModes.GetValueOrDefault(entry.Id, HistoryEditsViewMode.MarkedUp);
+
                 var vm = new HistoryItemViewModel(
                     entry,
                     isSelectionMode: _isHistorySelectionMode,
                     isSelected: _selectedHistoryIds.Contains(entry.Id),
                     isTranscriptExpanded: _expandedTranscriptIds.Contains(entry.Id),
-                    isShowingEdits: _showingEditsIds.Contains(entry.Id),
-                    isShowingOriginal: _showingOriginalIds.Contains(entry.Id),
+                    isShowingEdits: isShowingEdits,
+                    editsViewMode: editsViewMode,
+                    diffResult: diffResult,
                     isGlobalBusy: busy,
                     isRepolishingThisCard: _repolishingHistoryEntryId == entry.Id,
                     isPrimaryPasteTarget: false,
@@ -1265,7 +1349,6 @@ public sealed partial class MainWindow
                     waveformPeaks: cachedPeaks,
                     playbackSnapshot: _lastPlaybackSnapshot,
                     isCopiedPrimary: _copyPrimaryResetVersions.ContainsKey(entry.Id),
-                    isCopiedAlternate: _copyAlternateResetVersions.ContainsKey(entry.Id),
                     inlineNotice: _cardInlineNotices.GetValueOrDefault(entry.Id));
                 renderedCards.Add(vm);
                 renderedRows.Add(vm);
@@ -1658,9 +1741,8 @@ public sealed partial class MainWindow
         _selectedHistoryIds.Remove(entryId);
         _expandedTranscriptIds.Remove(entryId);
         _showingEditsIds.Remove(entryId);
-        _showingOriginalIds.Remove(entryId);
+        _editsViewModes.Remove(entryId);
         _copyPrimaryResetVersions.Remove(entryId);
-        _copyAlternateResetVersions.Remove(entryId);
         _cardInlineNotices.Remove(entryId);
         _inlineNoticeVersions.Remove(entryId);
         _waveformCache.Remove(entryId);
@@ -1679,7 +1761,9 @@ public sealed partial class MainWindow
     {
         public HistoryDayHeaderViewModel(HistoryDayHeader header, int dayEntryCount)
         {
-            DayHeaderTitle = header.PrimaryTitle;
+            DayHeaderTitle = !string.IsNullOrWhiteSpace(header.SecondaryDateLabel)
+                ? header.SecondaryDateLabel
+                : header.PrimaryTitle;
             DayHeaderSubtitle = !string.IsNullOrWhiteSpace(header.RelativeLabel)
                 ? header.RelativeLabel.ToUpper(CultureInfo.CurrentCulture)
                 : string.Empty;
@@ -1706,11 +1790,12 @@ public sealed partial class MainWindow
     public sealed class HistoryItemViewModel : INotifyPropertyChanged
     {
         private readonly DictationHistoryEntry _entry;
+        private HistoryDiffResult _diffResult;
         private bool _isSelectionMode;
         private bool _isSelected;
         private bool _isTranscriptExpanded;
         private bool _isShowingEdits;
-        private bool _isShowingOriginal;
+        private HistoryEditsViewMode _editsViewMode;
         private bool _hasOverflow;
         private bool _isGlobalBusy;
         private bool _isRepolishingThisCard;
@@ -1723,7 +1808,6 @@ public sealed partial class MainWindow
         private bool _isPlaying;
         private long _playbackPositionMs;
         private bool _isCopiedPrimary;
-        private bool _isCopiedAlternate;
         private string? _inlineNotice;
 
         public HistoryItemViewModel(
@@ -1732,7 +1816,8 @@ public sealed partial class MainWindow
             bool isSelected,
             bool isTranscriptExpanded,
             bool isShowingEdits,
-            bool isShowingOriginal,
+            HistoryEditsViewMode editsViewMode,
+            HistoryDiffResult diffResult,
             bool isGlobalBusy,
             bool isRepolishingThisCard,
             bool isPrimaryPasteTarget,
@@ -1742,15 +1827,15 @@ public sealed partial class MainWindow
             IReadOnlyList<float>? waveformPeaks,
             HistoryPlaybackSnapshot playbackSnapshot,
             bool isCopiedPrimary,
-            bool isCopiedAlternate,
             string? inlineNotice)
         {
             _entry = entry;
+            _diffResult = diffResult ?? HistoryDiffResult.Empty;
             _isSelectionMode = isSelectionMode;
             _isSelected = isSelected;
             _isTranscriptExpanded = isTranscriptExpanded;
             _isShowingEdits = isShowingEdits;
-            _isShowingOriginal = isShowingOriginal;
+            _editsViewMode = editsViewMode;
             _isGlobalBusy = isGlobalBusy;
             _isRepolishingThisCard = isRepolishingThisCard;
             _isPrimaryPasteTarget = isPrimaryPasteTarget;
@@ -1759,11 +1844,11 @@ public sealed partial class MainWindow
             _audioDurationMs = Math.Max(0L, audioDurationMs);
             _waveformPeaks = HistoryPlaybackPresentation.NormalizeOrFallbackPeaks(waveformPeaks);
             _isCopiedPrimary = isCopiedPrimary;
-            _isCopiedAlternate = isCopiedAlternate;
             _inlineNotice = inlineNotice;
 
             Id = entry.Id;
             Text = entry.Text;
+            OriginalText = entry.OriginalText ?? string.Empty;
             var localCreated = entry.CreatedAt.ToLocalTime();
             CreatedDisplay = localCreated.ToString("f", CultureInfo.CurrentCulture);
             TimeDisplay = localCreated.ToString("t", CultureInfo.CurrentCulture);
@@ -1777,7 +1862,7 @@ public sealed partial class MainWindow
                 : string.Empty;
             HeldSafelyChipVisibility = !entry.WasDelivered ? Visibility.Visible : Visibility.Collapsed;
 
-            _hasOverflow = ShouldOfferShowMore(DisplayText);
+            _hasOverflow = ShouldOfferShowMore(DisplayedCopyText);
             ApplySnapshotFields(playbackSnapshot);
         }
 
@@ -1788,6 +1873,8 @@ public sealed partial class MainWindow
         public Guid Id { get; }
 
         public string Text { get; }
+
+        public string OriginalText { get; }
 
         public string CreatedDisplay { get; }
 
@@ -1807,7 +1894,7 @@ public sealed partial class MainWindow
 
         public Visibility HeldSafelyChipVisibility { get; }
 
-        public string ProvenanceText => BuildProvenanceText(_entry, _hasAudioRecording);
+        public string ProvenanceText => BuildProvenanceText(_entry, _hasAudioRecording, _audioDurationMs);
 
         public Visibility KeepButtonVisibility => IsTemporary ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1825,45 +1912,66 @@ public sealed partial class MainWindow
         public Visibility ActiveCardOutlineVisibility =>
             (_isSelectionMode && _isSelected) || _isPlaying ? Visibility.Visible : Visibility.Collapsed;
 
-        public string ShowEditsButtonText => _isShowingEdits ? "Hide edits" : "Show edits";
+        public Visibility ShowEditsInactiveVisibility =>
+            HasPolishEdits && !_isShowingEdits ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility ShowEditsActiveVisibility =>
+            HasPolishEdits && _isShowingEdits ? Visibility.Visible : Visibility.Collapsed;
 
         public Visibility ShowEditsPanelVisibility =>
             HasPolishEdits && _isShowingEdits ? Visibility.Visible : Visibility.Collapsed;
 
-        public Visibility PolishedActiveVisibility => !_isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility PolishedActiveVisibility =>
+            _editsViewMode == HistoryEditsViewMode.Polished ? Visibility.Visible : Visibility.Collapsed;
 
-        public Visibility PolishedInactiveVisibility => _isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility PolishedInactiveVisibility =>
+            _editsViewMode != HistoryEditsViewMode.Polished ? Visibility.Visible : Visibility.Collapsed;
 
-        public Visibility OriginalActiveVisibility => _isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility MarkedUpActiveVisibility =>
+            _editsViewMode == HistoryEditsViewMode.MarkedUp ? Visibility.Visible : Visibility.Collapsed;
 
-        public Visibility OriginalInactiveVisibility => !_isShowingOriginal ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility MarkedUpInactiveVisibility =>
+            _editsViewMode != HistoryEditsViewMode.MarkedUp ? Visibility.Visible : Visibility.Collapsed;
 
-        public bool IsShowingOriginalView => _isShowingOriginal;
+        public Visibility OriginalActiveVisibility =>
+            _editsViewMode == HistoryEditsViewMode.Original ? Visibility.Visible : Visibility.Collapsed;
 
-        public string ComparisonStatusText =>
-            _isShowingOriginal ? "Speech engine words before AI Polish" : "AI-polished transcript";
+        public Visibility OriginalInactiveVisibility =>
+            _editsViewMode != HistoryEditsViewMode.Original ? Visibility.Visible : Visibility.Collapsed;
 
-        public string ComparisonOtherHeader =>
-            _isShowingOriginal ? "AI-polished version" : "Before AI Polish (speech engine output)";
+        public HistoryEditsViewMode ActiveTranscriptViewMode =>
+            HasPolishEdits && _isShowingEdits ? _editsViewMode : HistoryEditsViewMode.Polished;
 
-        public string CopyAlternateButtonGlyph => _isCopiedAlternate ? "\uE73E" : "\uE8C8";
+        public IReadOnlyList<MarkedUpRun> MarkedUpRuns => _diffResult.Runs;
 
-        public string CopyAlternateButtonLabel =>
-            _isCopiedAlternate
-                ? "Copied"
-                : (_isShowingOriginal ? "Copy polished" : "Copy original");
+        public Visibility MarkedUpLegendVisibility =>
+            HasPolishEdits
+            && _isShowingEdits
+            && _editsViewMode == HistoryEditsViewMode.MarkedUp
+            && _diffResult.ChangeCount > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        public bool IsShowingOriginalView =>
+            HasPolishEdits && _isShowingEdits && _editsViewMode == HistoryEditsViewMode.Original;
+
+        public string ComparisonStatusText => _editsViewMode switch
+        {
+            HistoryEditsViewMode.Original => HistoryEditsPresentation.BeforePolishStatusText,
+            HistoryEditsViewMode.MarkedUp => _diffResult.SummaryText,
+            _ => HistoryEditsPresentation.PolishedStatusText,
+        };
 
         public string CopyButtonGlyph => _isCopiedPrimary ? "\uE73E" : "\uE8C8";
 
         public string CopyButtonText => _isCopiedPrimary ? "Copied" : "Copy";
 
-        public string ComparisonOtherText =>
-            (_isShowingOriginal ? _entry.Text : _entry.OriginalText) ?? string.Empty;
-
-        public string DisplayText =>
-            HasPolishEdits && _isShowingEdits && _isShowingOriginal && !string.IsNullOrWhiteSpace(_entry.OriginalText)
+        public string DisplayedCopyText =>
+            IsShowingOriginalView && !string.IsNullOrWhiteSpace(_entry.OriginalText)
                 ? _entry.OriginalText
                 : _entry.Text;
+
+        public string DisplayText => DisplayedCopyText;
 
         public int TranscriptMaxLines => _isTranscriptExpanded || (_isShowingEdits && HasPolishEdits) ? 0 : 4;
 
@@ -1886,10 +1994,18 @@ public sealed partial class MainWindow
 
         public IReadOnlyList<float> WaveformPeaks => _waveformPeaks;
 
+        public bool IsPlaybackActive => _isPlaybackActive;
+
         public double PlaybackProgress =>
             _isPlaybackActive && _audioDurationMs > 0
                 ? Math.Clamp((double)_playbackPositionMs / _audioDurationMs, 0.0, 1.0)
                 : 0.0;
+
+        public string PlaybackCurrentClockText =>
+            HistoryPlaybackPresentation.FormatClock(
+                _isPlaybackActive ? Math.Clamp(_playbackPositionMs, 0L, Math.Max(0L, _audioDurationMs)) : 0L);
+
+        public string PlaybackTotalClockText => HistoryPlaybackPresentation.FormatClock(_audioDurationMs);
 
         public string PlaybackClockText =>
             HistoryPlaybackPresentation.FormatClockDisplay(_playbackPositionMs, _audioDurationMs, _isPlaybackActive);
@@ -1950,17 +2066,6 @@ public sealed partial class MainWindow
             Notify(nameof(CopyButtonGlyph), nameof(CopyButtonText));
         }
 
-        public void SetCopiedAlternate(bool isCopied)
-        {
-            if (_isCopiedAlternate == isCopied)
-            {
-                return;
-            }
-
-            _isCopiedAlternate = isCopied;
-            Notify(nameof(CopyAlternateButtonGlyph), nameof(CopyAlternateButtonLabel));
-        }
-
         public void SetInlineNotice(string? notice)
         {
             var normalized = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
@@ -1984,8 +2089,11 @@ public sealed partial class MainWindow
             Notify(
                 nameof(WaveformPeaks),
                 nameof(PlaybackProgress),
+                nameof(PlaybackCurrentClockText),
+                nameof(PlaybackTotalClockText),
                 nameof(PlaybackClockText),
-                nameof(PlaybackScrubberLabel));
+                nameof(PlaybackScrubberLabel),
+                nameof(ProvenanceText));
         }
 
         public void MarkRecordingMissing()
@@ -2002,6 +2110,7 @@ public sealed partial class MainWindow
             Notify(
                 nameof(PlaybackRowVisibility),
                 nameof(CanTogglePlayback),
+                nameof(IsPlaybackActive),
                 nameof(ActiveCardOutlineVisibility),
                 nameof(ProvenanceText));
         }
@@ -2026,7 +2135,10 @@ public sealed partial class MainWindow
                 nameof(PlaybackButtonGlyph),
                 nameof(PlaybackButtonAutomationName),
                 nameof(CanTogglePlayback),
+                nameof(IsPlaybackActive),
                 nameof(PlaybackProgress),
+                nameof(PlaybackCurrentClockText),
+                nameof(PlaybackTotalClockText),
                 nameof(PlaybackClockText),
                 nameof(PlaybackScrubberLabel),
                 nameof(ActiveCardOutlineVisibility));
@@ -2044,42 +2156,72 @@ public sealed partial class MainWindow
             }
         }
 
-        public void SetShowingEdits(bool isShowingEdits)
+        public void SetShowingEdits(
+            bool isShowingEdits,
+            HistoryEditsViewMode? initialMode = null,
+            HistoryDiffResult? diffResult = null)
         {
-            if (_isShowingEdits == isShowingEdits)
+            var modeChanged = initialMode is { } mode && _editsViewMode != mode;
+            var diffChanged = diffResult is not null && !ReferenceEquals(_diffResult, diffResult);
+            if (_isShowingEdits == isShowingEdits && !modeChanged && !diffChanged)
             {
                 return;
             }
 
             _isShowingEdits = isShowingEdits;
-            _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayText);
+            if (initialMode is { } nextMode)
+            {
+                _editsViewMode = nextMode;
+            }
+
+            if (diffResult is not null)
+            {
+                _diffResult = diffResult;
+            }
+
+            _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayedCopyText);
             Notify(
-                nameof(ShowEditsButtonText),
+                nameof(ShowEditsInactiveVisibility),
+                nameof(ShowEditsActiveVisibility),
                 nameof(ShowEditsPanelVisibility),
+                nameof(ActiveTranscriptViewMode),
+                nameof(PolishedActiveVisibility),
+                nameof(PolishedInactiveVisibility),
+                nameof(MarkedUpActiveVisibility),
+                nameof(MarkedUpInactiveVisibility),
+                nameof(OriginalActiveVisibility),
+                nameof(OriginalInactiveVisibility),
+                nameof(ComparisonStatusText),
+                nameof(MarkedUpRuns),
+                nameof(MarkedUpLegendVisibility),
+                nameof(IsShowingOriginalView),
+                nameof(DisplayedCopyText),
                 nameof(DisplayText),
                 nameof(TranscriptMaxLines),
                 nameof(ShowMoreToggleVisibility));
         }
 
-        public void SetShowingOriginal(bool isShowingOriginal)
+        public void SetEditsViewMode(HistoryEditsViewMode viewMode)
         {
-            if (_isShowingOriginal == isShowingOriginal)
+            if (_editsViewMode == viewMode)
             {
                 return;
             }
 
-            _isShowingOriginal = isShowingOriginal;
-            _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayText);
+            _editsViewMode = viewMode;
+            _hasOverflow = _hasOverflow || ShouldOfferShowMore(DisplayedCopyText);
             Notify(
+                nameof(ActiveTranscriptViewMode),
                 nameof(PolishedActiveVisibility),
                 nameof(PolishedInactiveVisibility),
+                nameof(MarkedUpActiveVisibility),
+                nameof(MarkedUpInactiveVisibility),
                 nameof(OriginalActiveVisibility),
                 nameof(OriginalInactiveVisibility),
                 nameof(ComparisonStatusText),
-                nameof(ComparisonOtherHeader),
-                nameof(CopyAlternateButtonGlyph),
-                nameof(CopyAlternateButtonLabel),
-                nameof(ComparisonOtherText),
+                nameof(MarkedUpLegendVisibility),
+                nameof(IsShowingOriginalView),
+                nameof(DisplayedCopyText),
                 nameof(DisplayText),
                 nameof(ShowMoreToggleVisibility));
         }
@@ -2150,13 +2292,19 @@ public sealed partial class MainWindow
             return $"Recovery · expires {localExpiry.ToString(pattern, CultureInfo.CurrentCulture)}";
         }
 
-        private static string BuildProvenanceText(DictationHistoryEntry entry, bool hasAudioRecording)
+        private static string BuildProvenanceText(
+            DictationHistoryEntry entry,
+            bool hasAudioRecording,
+            long audioDurationMs)
         {
-            var engineName = HistoryDiaryPresentation.FormatEngineDisplayName(entry.EngineId);
-            var parts = new List<string>(4)
+            var parts = new List<string>(5);
+
+            if (hasAudioRecording && audioDurationMs > 0)
             {
-                engineName,
-            };
+                parts.Add(HistoryPlaybackPresentation.FormatClock(audioDurationMs));
+            }
+
+            parts.Add(HistoryDiaryPresentation.FormatEngineDisplayName(entry.EngineId));
 
             if (entry.WasPolished)
             {
@@ -2166,7 +2314,7 @@ public sealed partial class MainWindow
             }
             else
             {
-                parts.Add("Deterministic cleanup");
+                parts.Add("Text cleanup");
             }
 
             if (!string.IsNullOrWhiteSpace(entry.LanguageCode))
