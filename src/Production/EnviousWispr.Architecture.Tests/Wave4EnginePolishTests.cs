@@ -26,6 +26,19 @@ public sealed class Wave4EnginePolishTests
     }
 
     [Theory]
+    [InlineData(32d, true, true, "This PC: 32 GB RAM · NVIDIA GPU")]
+    [InlineData(32d, false, true, "This PC: 32 GB RAM · Vulkan GPU")]
+    [InlineData(16d, false, false, "This PC: 16 GB RAM")]
+    public void HardwareProfileSummaryFormatsVulkanGpuWhenNoNvidiaPresent(
+        double totalRamGb,
+        bool hasNvidiaGpu,
+        bool hasVulkanGpu,
+        string expected)
+    {
+        Assert.Equal(expected, HardwareProfileSummary.FormatSummary(totalRamGb, hasNvidiaGpu, hasVulkanGpu));
+    }
+
+    [Theory]
     [InlineData(64d, "eg-1")]
     [InlineData(24d, "eg-1")]
     [InlineData(23.9d, "eg-1-mini")]
@@ -37,6 +50,30 @@ public sealed class Wave4EnginePolishTests
     public void RecommendEgOneModelIdFollowsRamThresholds(double totalRamGb, string expectedModelId)
     {
         Assert.Equal(expectedModelId, HardwareProfileSummary.RecommendEgOneModelId(totalRamGb));
+    }
+
+    [Theory]
+    [InlineData(64d, true, "eg-1")]
+    [InlineData(64d, false, "eg-1-mini")]
+    [InlineData(24d, false, "eg-1-mini")]
+    [InlineData(16d, false, "eg-1-mini")]
+    [InlineData(8d, true, "eg-1-micro")]
+    [InlineData(8d, false, "eg-1-micro")]
+    public void RecommendEgOneModelIdRequiresGpuAccelerationForFullSize(
+        double totalRamGb,
+        bool hasGpuAcceleration,
+        string expectedModelId)
+    {
+        Assert.Equal(expectedModelId, HardwareProfileSummary.RecommendEgOneModelId(totalRamGb, hasGpuAcceleration));
+    }
+
+    [Fact]
+    public void HardwareProfileSummaryChooseCpuThreadCountsPinsPerformanceCoresSafely()
+    {
+        Assert.Equal((8, 16), HardwareProfileSummary.ChooseCpuThreadCounts(performanceCores: 8, physicalCores: 24));
+        Assert.Equal((6, 14), HardwareProfileSummary.ChooseCpuThreadCounts(performanceCores: 6, physicalCores: 14));
+        Assert.Equal((4, 4), HardwareProfileSummary.ChooseCpuThreadCounts(performanceCores: 4, physicalCores: 4));
+        Assert.Equal((2, 2), HardwareProfileSummary.ChooseCpuThreadCounts(performanceCores: 1, physicalCores: 1));
     }
 
     [Fact]

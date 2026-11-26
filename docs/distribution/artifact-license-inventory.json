@@ -53,33 +53,33 @@
     {
       "id": "eg1-model",
       "artifactClass": "model",
-      "plannedPayload": "Envious Labs EG-1 Qwen3-4B derivative GGUF model pack",
-      "upstreamIdentity": "Qwen/Qwen3-4B-Instruct-2507 plus Envious Labs fine-tune",
+      "plannedPayload": "Envious Labs EG-1 Qwen3.5 derivative GGUF model packs (eg-1 Full Q5_K_M, eg-1-mini Mini Q5_K_M, eg-1-micro Micro Q4_K_M; sharded <=512 MiB on models.enviouswispr.com/eg1/)",
+      "upstreamIdentity": "Qwen/Qwen3-4B-Instruct-2507 and Qwen3.5 (4B/2B/0.8B) plus Envious Labs fine-tunes",
       "observedLicense": "UPSTREAM-APACHE-2.0-DERIVATIVE-TERMS-PENDING",
       "sourceUrl": "https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "eg1-1.3-intl-1c-20261109-gguf-q5km (14 shards), eg1-mini-1.0-g3onestage-gguf-q5km (7 shards), eg1-micro-1.0-g3d-gguf-q4km (3 shards); hashes pinned in models/manifests/eg-1*.json",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
         "Confirm the exact base revision, training inputs, and Envious Labs ownership chain.",
         "Choose and approve the EG-1 derivative license and attribution notice.",
-        "Record every GGUF shard name, size, and hash in the signed manifest."
+        "Approve the published EG-1 Community Model License v1.0 notice for public Microsoft Store release."
       ]
     },
     {
       "id": "llama-server-windows",
       "artifactClass": "native-runtime",
-      "plannedPayload": "Pinned Windows llama.cpp server used only for local EG-1",
+      "plannedPayload": "Pinned Windows llama.cpp server (Vulkan + CPU backends) used only for local EG-1",
       "upstreamIdentity": "ggml-org/llama.cpp",
       "observedLicense": "MIT",
       "sourceUrl": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
-      "sourceRevision": "ggml-org/llama.cpp build b10615 commit f280b2698 (Clang 20.1.8 win-cpu-x64; llama-server.exe SHA-256 ba3d12e43cc2867d977dfa0501a8487561a6490833da05a98318900c7584ea1f, llama-server-impl.dll SHA-256 2e20b3f59c6a9ef091421e05ee3faa3a5f7823013fc5d89f8fc4033521f126e3)",
+      "sourceRevision": "ggml-org/llama.cpp build b10615 commit f280b2698 (Clang 20.1.8 win-vulkan-x64; llama-server.exe SHA-256 ba3d12e43cc2867d977dfa0501a8487561a6490833da05a98318900c7584ea1f, llama-server-impl.dll SHA-256 2e20b3f59c6a9ef091421e05ee3faa3a5f7823013fc5d89f8fc4033521f126e3, ggml-vulkan.dll SHA-256 6df2ece02584d5fc33b6db7fb8dfb0637dfa30549a73f9213073f03152757b22)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Inventory and verify notices for every bundled runtime DLL in the b10615 win-cpu-x64 distribution, including libomp.dll (Apache-2.0 WITH LLVM-exception in LICENSE-LLVM-OpenMP).",
+        "Inventory and verify notices for every bundled runtime DLL in the b10615 win-vulkan-x64 distribution, including ggml-vulkan.dll (MIT) and libomp.dll (Apache-2.0 WITH LLVM-exception in LICENSE-LLVM-OpenMP).",
         "Approve the complete native notice bundle for MSIX packaging under Store policy 10.2.2."
       ]
     },

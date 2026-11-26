@@ -185,13 +185,13 @@ public sealed class AiPolishEgOneParityTests
         Assert.True(selectedUnavailable.IsSelected);
         Assert.True(selectedUnavailable.CanSelect);
         Assert.Equal("Fast all-rounder", selectedUnavailable.Tagline);
-        Assert.Contains("~2.3 GB memory", selectedUnavailable.SpecsSummary, StringComparison.Ordinal);
+        Assert.Contains("~1.6 GB memory", selectedUnavailable.SpecsSummary, StringComparison.Ordinal);
         Assert.Contains("~1.4 GB disk", selectedUnavailable.SpecsSummary, StringComparison.Ordinal);
         Assert.DoesNotContain("Weaker on long dictations", selectedUnavailable.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("Not available yet", selectedUnavailable.StatusText);
-        Assert.Equal(16_384, EgOneModelCatalog.DefaultContextTokens(EgOneModelCatalog.FullId));
-        Assert.Equal(16_384, EgOneModelCatalog.DefaultContextTokens(EgOneModelCatalog.MiniId));
-        Assert.Equal(8_192, EgOneModelCatalog.DefaultContextTokens(EgOneModelCatalog.MicroId));
+        Assert.Equal(8_192, EgOneModelCatalog.DefaultContextTokens(EgOneModelCatalog.FullId));
+        Assert.Equal(4_096, EgOneModelCatalog.DefaultContextTokens(EgOneModelCatalog.MiniId));
+        Assert.Equal(4_096, EgOneModelCatalog.DefaultContextTokens(EgOneModelCatalog.MicroId));
         Assert.False(selectedUnavailable.ShowDownloadButton);
         Assert.False(selectedUnavailable.ShowRemoveButton);
         Assert.True(selectedUnavailable.ShowChooseProviderButton);
@@ -251,7 +251,10 @@ public sealed class AiPolishEgOneParityTests
         Assert.Equal(
             EnginePolishPresentation.DescribeEgOneUnavailableNotice(EgOneModelCatalog.MiniId),
             cannotDownloadAttempted.StatusDetail);
-        Assert.Null(BundledModelManifests.TryRead(EgOneModelCatalog.FullId));
+        foreach (var egOneId in EgOneModelCatalog.AllIds)
+        {
+            Assert.NotNull(BundledModelManifests.TryRead(egOneId));
+        }
 
         var installed = EnginePolishPresentation.DescribeEgOneCard(
             EgOneModelCatalog.FullId,

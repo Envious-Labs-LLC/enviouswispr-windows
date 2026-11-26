@@ -11,11 +11,12 @@ namespace EnviousWispr.LLM;
 public sealed record EgOneServerOptions(
     string ServerExecutable,
     string ModelFile,
-    int ContextTokens = 16_384,
+    int ContextTokens = 8_192,
     int? GpuLayers = null,
     TimeSpan? StartupTimeout = null,
     int? Threads = null,
-    bool AllowCpuFallback = false)
+    bool AllowCpuFallback = false,
+    int? BatchThreads = null)
 {
     public TimeSpan EffectiveStartupTimeout => StartupTimeout ?? TimeSpan.FromSeconds(60);
 }
@@ -128,6 +129,8 @@ public sealed class EgOneServerManager : IEgOneRuntime
             "--host", "127.0.0.1",
             "--port", port.ToString(CultureInfo.InvariantCulture),
             "-c", options.ContextTokens.ToString(CultureInfo.InvariantCulture),
+            "-np", "1",
+            "--no-warmup",
             "--api-key", authToken,
             "-fa", "on",
             "--cache-type-k", "q8_0",
@@ -145,6 +148,12 @@ public sealed class EgOneServerManager : IEgOneRuntime
             arguments.Add(threads.ToString(CultureInfo.InvariantCulture));
         }
 
+        if (options.BatchThreads is { } batchThreads && batchThreads > 0)
+        {
+            arguments.Add("--threads-batch");
+            arguments.Add(batchThreads.ToString(CultureInfo.InvariantCulture));
+        }
+
         return arguments;
     }
 
@@ -157,6 +166,17 @@ public sealed class EgOneServerManager : IEgOneRuntime
         options.AllowCpuFallback &&
         options.GpuLayers is > 0;
 
+    internal static TimeSpan ResolveInitialAttemptTimeout(EgOneServerOptions options)
+    {
+        var effective = options.EffectiveStartupTimeout;
+        if (options.AllowCpuFallback && options.GpuLayers is > 0 && effective > TimeSpan.FromSeconds(30))
+        {
+            return TimeSpan.FromSeconds(30);
+        }
+
+        return effective;
+    }
+
     private async Task<EgOneEndpoint?> StartCoreAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_options.ServerExecutable) || !File.Exists(_options.ModelFile))
@@ -164,7 +184,8 @@ public sealed class EgOneServerManager : IEgOneRuntime
             return null;
         }
 
-        var endpoint = await StartWithOptionsAsync(_options, cancellationToken).ConfigureAwait(false);
+        var initialOptions = _options with { StartupTimeout = ResolveInitialAttemptTimeout(_options) };
+        var endpoint = await StartWithOptionsAsync(initialOptions, cancellationToken).ConfigureAwait(false);
         if (ShouldRetryOnCpuFallback(_options, endpoint, cancellationToken.IsCancellationRequested))
         {
             var cpuOptions = _options with { GpuLayers = 0, AllowCpuFallback = false };

@@ -1564,6 +1564,9 @@ public partial class App
         ParakeetTranscriptionEngine.ModelId => "the Parakeet speech model",
         WhisperTranscriptionEngine.ModelId => "the Whisper speech model",
         WhisperTranscriptionEngine.PreviewModelId => "the Live Preview model",
+        EgOneModelCatalog.FullId => "EG-1",
+        EgOneModelCatalog.MiniId => "EG-1 Mini",
+        EgOneModelCatalog.MicroId => "EG-1 Micro",
         _ => modelId,
     };
 

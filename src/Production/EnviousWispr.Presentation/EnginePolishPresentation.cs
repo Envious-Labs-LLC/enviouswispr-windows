@@ -288,10 +288,10 @@ public static class EnginePolishPresentation
                 ModelId: EgOneMiniModelId,
                 Title: "EG-1 Mini",
                 Tagline: "Fast all-rounder",
-                Description: "High accuracy at roughly half the size of EG-1. Ideal for everyday laptops and fast graphics-card polish.",
+                Description: "High accuracy at roughly half the size of EG-1. Ideal for everyday laptops and fast GPU-accelerated polish.",
                 QualityText: "High accuracy",
                 SpeedText: "Fast",
-                MemoryText: "~2.3 GB memory",
+                MemoryText: "~1.6 GB memory",
                 DefaultDiskSizeText: "~1.4 GB disk"),
             EgOneMicroModelId => new EgOneTierFacts(
                 ModelId: EgOneMicroModelId,
@@ -300,16 +300,16 @@ public static class EnginePolishPresentation
                 Description: "Ultra-lightweight model built for fast local polish on CPU-only laptops and PCs with tighter memory.",
                 QualityText: "Fast lightweight polish",
                 SpeedText: "Fastest",
-                MemoryText: "~1.4 GB memory",
+                MemoryText: "~1.0 GB memory",
                 DefaultDiskSizeText: "~520 MB disk"),
             _ => new EgOneTierFacts(
                 ModelId: EgOneFullModelId,
                 Title: "EG-1",
                 Tagline: "Best quality",
-                Description: "The most accurate offline model. Best on NVIDIA graphics cards and PCs with 24 GB+ RAM for long dictation and multilingual cleanup.",
+                Description: "The most accurate offline model. Best on PCs with 24 GB+ RAM and GPU acceleration for long dictation and multilingual cleanup.",
                 QualityText: "Best accuracy",
                 SpeedText: "Standard speed",
-                MemoryText: "~4.0 GB memory",
+                MemoryText: "~3.4 GB memory",
                 DefaultDiskSizeText: "~3.0 GB disk"),
         };
 

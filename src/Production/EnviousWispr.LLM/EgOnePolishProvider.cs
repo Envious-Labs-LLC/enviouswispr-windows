@@ -285,7 +285,8 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                 AliasSuggestionPrompt.SystemPrompt,
                 AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
                 maximumOutputTokens: 256,
-                timeoutCancellation.Token).ConfigureAwait(false);
+                timeoutCancellation.Token,
+                cachePrompt: false).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is HttpRequestException or OperationCanceledException or JsonException)
@@ -317,7 +318,8 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         string systemPrompt,
         string userMessage,
         int maximumOutputTokens,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool cachePrompt = true)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint.ChatCompletionsUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", endpoint.AuthToken);
@@ -331,6 +333,8 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             },
             max_tokens = maximumOutputTokens,
             temperature = 0,
+            cache_prompt = cachePrompt,
+            id_slot = 0,
         });
         using var response = await _httpClient.SendAsync(
             request,

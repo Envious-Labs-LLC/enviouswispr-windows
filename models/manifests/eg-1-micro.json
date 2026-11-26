@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "modelId": "eg-1-micro",
+  "version": "1.0.0",
+  "minimumAppVersion": "0.19.0",
+  "license": {
+    "name": "EG-1 Community Model License v1.0",
+    "url": "https://models.enviouswispr.com/eg1/EG-1-MODEL-LICENSE.txt",
+    "notice": "EG-1 Community Model License v1.0 (derived from Qwen3.5, Apache-2.0). Permitted for in-app, personal, research, and benchmarking use; redistribution or commercial embedding is prohibited."
+  },
+  "files": [
+    {
+      "relativePath": "eg1-micro-1.0-g3d-q4km-00001-of-00003.gguf",
+      "sizeBytes": 250285952,
+      "sha256": "c5fc4db95e1d33e03ecc459d492c12fa079446f87084c585c122593eceefdf3a",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-micro-1.0-g3d-gguf-q4km/eg1-micro-1.0-g3d-q4km-00001-of-00003.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-micro-1.0-g3d-q4km-00002-of-00003.gguf",
+      "sizeBytes": 239203648,
+      "sha256": "11430840f9f5a9241eb602f15a0df9356265c483496d92c5af69d6b5cb0ff4df",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-micro-1.0-g3d-gguf-q4km/eg1-micro-1.0-g3d-q4km-00002-of-00003.gguf"
+      ]
+    },
+    {
+      "relativePath": "eg1-micro-1.0-g3d-q4km-00003-of-00003.gguf",
+      "sizeBytes": 52408736,
+      "sha256": "504a276ebd299a28919aff7132b930af4f60dd134bb4b7b36f58af06fd3a75ff",
+      "sources": [
+        "https://models.enviouswispr.com/eg1/eg1-micro-1.0-g3d-gguf-q4km/eg1-micro-1.0-g3d-q4km-00003-of-00003.gguf"
+      ]
+    }
+  ],
+  "manifestDigest": "d8c78653b49a10e5ae756125232c9042bf6e6ac632b405ca02bb5912d1200062"
+}

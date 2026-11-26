@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -42,20 +43,31 @@ public sealed class EgOnePolishProviderTests
     [Fact]
     public void WindowsServerArgumentsPinRuntimeContract()
     {
-        var options = Options.Server with { ContextTokens = 16_384, GpuLayers = 99, Threads = 8 };
+        var options = Options.Server with { ContextTokens = 8_192, GpuLayers = 99, Threads = 8, BatchThreads = 12 };
         var arguments = EgOneServerManager.CreateArguments(options, 18_082, "secret-token");
 
         Assert.Equal("--model", arguments[0]);
         Assert.Equal("model.gguf", arguments[1]);
         Assert.Contains("127.0.0.1", arguments);
         Assert.Contains("18082", arguments);
-        Assert.Contains("16384", arguments);
+        Assert.Contains("8192", arguments);
+        Assert.Contains("-np", arguments);
+        Assert.Contains("--no-warmup", arguments);
         Assert.Contains("secret-token", arguments);
         Assert.Contains("-fa", arguments);
         Assert.Contains("q8_0", arguments);
         Assert.Contains("--gpu-layers", arguments);
         Assert.Contains("--threads", arguments);
         Assert.Contains("8", arguments);
+        Assert.Contains("--threads-batch", arguments);
+        Assert.Contains("12", arguments);
+
+        Assert.Equal(
+            TimeSpan.FromSeconds(30),
+            EgOneServerManager.ResolveInitialAttemptTimeout(options with { AllowCpuFallback = true, StartupTimeout = TimeSpan.FromSeconds(60) }));
+        Assert.Equal(
+            TimeSpan.FromSeconds(60),
+            EgOneServerManager.ResolveInitialAttemptTimeout(options with { AllowCpuFallback = false, StartupTimeout = TimeSpan.FromSeconds(60) }));
 
         Assert.True(EgOneServerManager.ShouldRetryOnCpuFallback(
             options with { AllowCpuFallback = true },
@@ -114,6 +126,8 @@ public sealed class EgOnePolishProviderTests
                 messages[1].GetProperty("content").GetString());
             Assert.Equal(0, root.GetProperty("temperature").GetInt32());
             Assert.Equal(256, root.GetProperty("max_tokens").GetInt32());
+            Assert.True(root.GetProperty("cache_prompt").GetBoolean());
+            Assert.Equal(0, root.GetProperty("id_slot").GetInt32());
             Assert.Equal("Bearer test-token", request.Headers.Authorization?.ToString());
             return JsonResponse("Hello there.");
         });
@@ -230,6 +244,29 @@ public sealed class EgOnePolishProviderTests
         Assert.Equal(2, runtime.EnsureReadyCalls);
         Assert.True(runtime.Disposed);
         Assert.True(runtime.TerminatedImmediately);
+    }
+
+    [Fact]
+    public async Task SuggestAsyncDisablesPromptCachingToPreservePolishSlot()
+    {
+        var runtime = new FakeRuntime();
+        bool? observedCachePrompt = null;
+        int? observedSlot = null;
+        var handler = new StubHandler(async (request, cancellationToken) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            observedCachePrompt = document.RootElement.GetProperty("cache_prompt").GetBoolean();
+            observedSlot = document.RootElement.GetProperty("id_slot").GetInt32();
+            return JsonResponse("envious wispr\nenvious whisper");
+        });
+        await using var provider = new EgOnePolishProvider(runtime, Options, handler);
+
+        var advice = await provider.SuggestAsync("EnviousWispr", []);
+
+        Assert.Equal(MishearingAdviceStatus.Suggested, advice.Status);
+        Assert.False(observedCachePrompt);
+        Assert.Equal(0, observedSlot);
     }
 
     [Fact]

@@ -122,8 +122,14 @@ public sealed class ModelProvisioningTests
         }
     }
 
-    /// <summary>Packs with no upstream that serves the raw file, so the mirror is their only source.</summary>
-    private static readonly HashSet<string> MirrorOnlyPacks = new(StringComparer.Ordinal) { CudaRuntimeDirectory.PackId };
+    /// <summary>Packs with no external upstream that serves the raw files, so the Envious Labs mirror is their only source.</summary>
+    private static readonly HashSet<string> MirrorOnlyPacks = new(StringComparer.Ordinal)
+    {
+        CudaRuntimeDirectory.PackId,
+        EnviousWispr.Core.Polish.EgOneModelCatalog.FullId,
+        EnviousWispr.Core.Polish.EgOneModelCatalog.MiniId,
+        EnviousWispr.Core.Polish.EgOneModelCatalog.MicroId,
+    };
 
     [Fact]
     public void TheGraphicsRuntimePackCarriesExactlyTheFilesTheProbeRequiresFromOnePinnedRelease()
@@ -206,15 +212,17 @@ public sealed class ModelProvisioningTests
             Assert.Equal(modelId, loaded.Manifest!.Payload.ModelId);
             if (MirrorOnlyPacks.Contains(modelId))
             {
-                // NO BYTE-IDENTICAL UPSTREAM EXISTS TO NAME AS A BACKUP. NVIDIA publishes these libraries only
-                // inside archives (Python wheels, redistributable zips), and a source must serve the file
-                // itself. So the mirror is the only source, every file is whole and under the edge-cache
-                // ceiling, and the prefix pins the upstream release it was taken from.
+                // NO EXTERNAL UPSTREAM SERVES THESE FILES: NVIDIA CUDA redistributables ship inside archives
+                // and first-party EG-1 models are hosted solely on our own R2 bucket. Every file is whole
+                // (or a native GGUF shard), under the edge-cache ceiling, and pinned under its own prefix.
+                var isEgOne = EnviousWispr.Core.Polish.EgOneModelCatalog.IsKnown(modelId);
+                var expectedHost = isEgOne ? "models.enviouswispr.com" : "models.enviouslabs.co";
+                var expectedPrefix = isEgOne ? "/eg1/" : $"/{modelId}/";
                 foreach (var file in loaded.Manifest.Payload.Files)
                 {
                     var source = Assert.Single(file.Sources);
-                    Assert.Equal("models.enviouslabs.co", source.Host);
-                    Assert.StartsWith($"/{modelId}/", source.AbsolutePath, StringComparison.Ordinal);
+                    Assert.Equal(expectedHost, source.Host);
+                    Assert.StartsWith(expectedPrefix, source.AbsolutePath, StringComparison.Ordinal);
                     Assert.EndsWith("/" + file.RelativePath, source.AbsolutePath, StringComparison.Ordinal);
                     Assert.False(file.IsSharded, $"{modelId}/{file.RelativePath} is sharded with no whole-file source to fall back to");
                     Assert.True(file.SizeBytes <= 512L * 1024 * 1024, $"{modelId}/{file.RelativePath} is over the edge-cache ceiling");
