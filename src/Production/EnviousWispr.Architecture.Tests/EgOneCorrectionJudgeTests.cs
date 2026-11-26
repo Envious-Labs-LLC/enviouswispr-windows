@@ -334,56 +334,74 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         var judged2 = Assert.Single(events, e => e.Event == AppEventCode.LearnJudged);
         Assert.Null(judged2.Provider);
 
-        // 2. In-flight judge is cancelled immediately on OnRecordingStarted() and OnLearnFromEditsChanged(false).
-        foreach (var cancelByRecording in new[] { true, false })
+        // 2. Pending flushed edits survive OnRecordingStarted() when observing (macOS NextDictationStarted contract),
+        // while OnLearnFromEditsChanged(false) cancels an in-flight judge immediately.
+        var flushStore = new InMemorySettingsStore();
+        var flushVocab = new VocabularyPresenter(new SettingsPresenter(flushStore, AppSettings.Default));
+        var flushCoord = new LearnedCorrectionCoordinator(flushVocab, memory, () => [], logger);
+        var flushPresenter = new FakePresenter();
+        flushCoord.AttachPresenter(flushPresenter);
+        var flushObserver = new FakeObserver
         {
-            var judgeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var judgeCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var cancellingJudge = new DelegateJudge(async (_, ct) =>
+            OnFinishFlush = (_, emit) =>
+                emit(new PastedRegionEvent.Settled("Hello Zxywo.", SettleEvidence.Strong)),
+        };
+        var flushJudge = new RulesCorrectionJudge();
+        var flushWatcher = new ObservedCorrectionWatcher(
+            () => true,
+            () => flushJudge,
+            flushObserver,
+            () => flushStore.Current.UserData.CustomWords,
+            () => [],
+            flushCoord,
+            memory,
+            logger);
+
+        flushWatcher.OnPasteCompleted(new PasteCompletedEvent("Hello zxyw.", new TargetWindowId(1, 2, "notepad"), "en", DateTimeOffset.UtcNow));
+        await flushObserver.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        flushWatcher.OnRecordingStarted();
+        var flushedPill = await flushPresenter.Shown.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("Zxywo", flushedPill.Canonical);
+
+        // Toggle off cancels an in-flight judge immediately.
+        var judgeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var judgeCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellingJudge = new DelegateJudge(async (_, ct) =>
+        {
+            judgeStarted.TrySetResult();
+            try
             {
-                judgeStarted.TrySetResult();
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    judgeCancelled.TrySetResult();
-                    return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Cancelled);
-                }
-
-                return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Unavailable);
-            });
-
-            var obs2 = new FakeObserver();
-            var enabled2 = true;
-            var w2 = new ObservedCorrectionWatcher(
-                () => enabled2,
-                () => cancellingJudge,
-                obs2,
-                () => [],
-                () => [],
-                coordinator,
-                memory,
-                logger);
-
-            w2.OnPasteCompleted(new PasteCompletedEvent("Hello zxyw.", new TargetWindowId(1, 2, "notepad"), "en", DateTimeOffset.UtcNow));
-            await obs2.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            obs2.Emit(new PastedRegionEvent.Settled("Hello Zxywo.", SettleEvidence.Strong));
-            await judgeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-            if (cancelByRecording)
-            {
-                w2.OnRecordingStarted();
+                await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
             }
-            else
+            catch (OperationCanceledException)
             {
-                enabled2 = false;
-                w2.OnLearnFromEditsChanged(false);
+                judgeCancelled.TrySetResult();
+                return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Cancelled);
             }
 
-            await judgeCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        }
+            return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Unavailable);
+        });
+
+        var obs2 = new FakeObserver();
+        var enabled2 = true;
+        var w2 = new ObservedCorrectionWatcher(
+            () => enabled2,
+            () => cancellingJudge,
+            obs2,
+            () => [],
+            () => [],
+            coordinator,
+            memory,
+            logger);
+
+        w2.OnPasteCompleted(new PasteCompletedEvent("Hello qwertz.", new TargetWindowId(1, 2, "notepad"), "en", DateTimeOffset.UtcNow));
+        await obs2.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        obs2.Emit(new PastedRegionEvent.Settled("Hello Qwertzo.", SettleEvidence.Strong));
+        await judgeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        enabled2 = false;
+        w2.OnLearnFromEditsChanged(false);
+        await judgeCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static HttpResponseMessage JsonReply(string contentJson)
@@ -506,6 +524,7 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
     private sealed class FakeObserver : IPastedRegionObserver
     {
         private Action<PastedRegionEvent>? _onEvent;
+        public Action<PastedRegionEndReason, Action<PastedRegionEvent>>? OnFinishFlush { get; init; }
         public bool IsObserving { get; private set; }
         public TaskCompletionSource Started { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -529,7 +548,11 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
         public void Finish(PastedRegionEndReason reason)
         {
             IsObserving = false;
-            _onEvent?.Invoke(new PastedRegionEvent.Ended(reason));
+            if (_onEvent is { } cb)
+            {
+                OnFinishFlush?.Invoke(reason, cb);
+                cb(new PastedRegionEvent.Ended(reason));
+            }
         }
         public void CancelObservation() => IsObserving = false;
     }

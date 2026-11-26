@@ -137,8 +137,6 @@ public sealed class ObservedCorrectionWatcher
             {
                 return;
             }
-
-            liveWatch.CancelJudge();
         }
 
         if (_observer.IsObserving)

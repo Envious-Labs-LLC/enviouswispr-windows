@@ -5,7 +5,13 @@ namespace EnviousWispr.Core.Learning;
 /// <summary>One changed run the user made inside a pasted dictation.</summary>
 public sealed record CorrectionCandidate(int Id, string Original, string Replacement);
 
-/// <summary>The mutually exclusive verdicts a correction judge assigns to a candidate.</summary>
+/// <summary>
+/// The mutually exclusive verdicts a correction judge assigns to a candidate.
+/// Mirrors macOS <c>CorrectionJudgeClass</c> (#996, #3101): every decision whose
+/// <see cref="CorrectionJudgeClassExtensions.IsVocabularyCorrection"/> is true
+/// (including <see cref="CorrectionButUnsafe"/>) is learned with its original text
+/// as an alias; <c>safeAlias</c> is advisory for structured schema parity and evaluation.
+/// </summary>
 public enum CorrectionJudgeClass
 {
     NotCorrection,
