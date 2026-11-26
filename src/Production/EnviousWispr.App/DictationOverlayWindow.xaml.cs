@@ -1902,7 +1902,6 @@ public sealed partial class DictationOverlayWindow : Window
         LeftSpectrumStripe.Visibility = isRichError ? Visibility.Visible : Visibility.Collapsed;
 
         var horizontalPad = isRichError ? 16 : CapsuleHorizontalPadding;
-        var verticalPad = isEscapeRecovery ? 6 : (isRichError || hasSubtitle ? 12 : 9);
         HeaderRow.ColumnSpacing = 0;
         HeaderLeading.Margin = HeaderLeading.Visibility == Visibility.Visible
             ? new Thickness(0, 0, _noticeColumnSpacing, 0)
@@ -1940,12 +1939,6 @@ public sealed partial class DictationOverlayWindow : Window
         StateTitle.MaxWidth = maxTextWidth;
         StateSubtitle.MaxWidth = maxTextWidth;
 
-        ContentPanel.Margin = new Thickness(
-            isRichError ? horizontalPad + 2 : horizontalPad,
-            verticalPad,
-            horizontalPad,
-            isEscapeRecovery ? verticalPad + 2 : verticalPad);
-
         StateTitle.InvalidateMeasure();
         StateTitle.Measure(new Windows.Foundation.Size(maxTextWidth, double.PositiveInfinity));
         StateSubtitle.InvalidateMeasure();
@@ -1956,6 +1949,14 @@ public sealed partial class DictationOverlayWindow : Window
 
         var textW = Math.Max(StateTitle.DesiredSize.Width, hasSubtitle ? StateSubtitle.DesiredSize.Width : 0);
         var textH = StateTitle.DesiredSize.Height + (hasSubtitle ? StateSubtitle.DesiredSize.Height + 2 : 0);
+        var isMultiLine = textH > 26;
+        var verticalPad = isEscapeRecovery ? 6 : (isRichError || hasSubtitle || isMultiLine ? 12 : 9);
+
+        ContentPanel.Margin = new Thickness(
+            isRichError ? horizontalPad + 2 : horizontalPad,
+            verticalPad,
+            horizontalPad,
+            isEscapeRecovery ? verticalPad + 2 : verticalPad);
         var computedWidth = (int)Math.Ceiling(FrameBorderThickness * 2 + horizontalPad * 2 + leadingReserved + textW + actionReserved + (isRichError ? 6 : 8));
         var width = isRichError
             ? RichErrorCardWidth
