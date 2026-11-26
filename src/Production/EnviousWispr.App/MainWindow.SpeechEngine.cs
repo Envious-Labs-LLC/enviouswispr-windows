@@ -126,12 +126,12 @@ public sealed partial class MainWindow
         ArgumentNullException.ThrowIfNull(offer);
         _offeredLanguageCode = offer.LanguageCode;
         var (question, action) = offer.Kind == LanguageOfferKind.AskToLock
-            ? ($"You keep speaking {offer.DisplayName}. Pin it so recognition stops guessing?",
+            ? ($"Detected {offer.DisplayName}. Lock it?",
                 new PillAction(
-                    $"Use {offer.DisplayName}",
+                    "Lock",
                     PillActionKind.LockDetectedLanguage,
                     $"Always use {offer.DisplayName} for speech recognition"))
-            : ($"You keep speaking {offer.DisplayName}. Pin it under Transcription whenever you like.",
+            : ($"Detected {offer.DisplayName}. This can be changed in Settings.",
                 new PillAction(
                     "Open settings",
                     PillActionKind.OpenTranscriptionSettings,

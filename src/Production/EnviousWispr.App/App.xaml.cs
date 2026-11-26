@@ -720,7 +720,10 @@ public partial class App : Application, IAsyncDisposable
 
         public void ReportDelivery(DeliveryReport delivered, string? detectedLanguage) =>
             app.PostToLiveWindow(window =>
-                window.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
+            {
+                window.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage);
+                app.MaybeShowPolishSetupCard(delivered, window);
+            });
 
         public void CancelRecordingCue() =>
             app.PostToLiveWindow(window => window.CancelRecordingSoundCue());

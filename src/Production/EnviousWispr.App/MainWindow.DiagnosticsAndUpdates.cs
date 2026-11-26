@@ -444,6 +444,166 @@ public sealed partial class MainWindow
                 : "We never collect your audio, dictated or transcribed text, history, snippets, dictionary words, API keys, or any text on your screen.");
     }
 
+    private void InitializePillPreview()
+    {
+        if (PillPreviewComboBox is null || PillReviewModeToggle is null)
+        {
+            return;
+        }
+
+        PillPreviewComboBox.ItemsSource = PillPreviewCatalog.Entries;
+        PillPreviewComboBox.DisplayMemberPath = nameof(PillPreviewEntry.DisplayLabel);
+        if (PillPreviewCatalog.Entries.Count > 0)
+        {
+            PillPreviewComboBox.SelectedIndex = 0;
+        }
+
+        PillReviewModeToggle.IsOn = false;
+        PillPreviewHoldOpenToggle.IsOn = false;
+        PillReviewControlsPanel.Visibility = Visibility.Collapsed;
+        SetLiveText(PillPreviewStatusText, "Toggle Pill review mode on to inspect overlay pills.");
+        SetLiveRegion(PillPreviewActionEventText, string.Empty, Visibility.Collapsed);
+        PillPreviewExclusionsText.Text =
+            "Windows exclusions: " +
+            string.Join("; ", PillPreviewCatalog.ExcludedFromWindows.Select(item => $"{item.Title} ({item.Reason})"));
+
+        _overlayWindow.PreviewActionPressed += OnOverlayPreviewActionPressed;
+    }
+
+    private void PillReviewModeToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (PillReviewControlsPanel is null)
+        {
+            return;
+        }
+
+        if (!PillReviewModeToggle.IsOn)
+        {
+            _overlayWindow.DismissPreview();
+            PillReviewControlsPanel.Visibility = Visibility.Collapsed;
+            SetLiveRegion(PillPreviewActionEventText, string.Empty, Visibility.Collapsed);
+            SetLiveText(PillPreviewStatusText, "Pill review mode is off.");
+            return;
+        }
+
+        PillReviewControlsPanel.Visibility = Visibility.Visible;
+        UpdateSelectedPreviewDescription();
+    }
+
+    private void PillPreviewComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PillReviewModeToggle?.IsOn != true)
+        {
+            return;
+        }
+
+        SetLiveRegion(PillPreviewActionEventText, string.Empty, Visibility.Collapsed);
+        UpdateSelectedPreviewDescription();
+    }
+
+    private void PillPreviewPlayButton_Click(object sender, RoutedEventArgs e) =>
+        PlaySelectedPreviewPill();
+
+    private void PillPreviewNextButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryCanUsePillPreview())
+        {
+            return;
+        }
+
+        var current = PillPreviewComboBox.SelectedItem as PillPreviewEntry ?? PillPreviewCatalog.Entries[0];
+        var next = PillPreviewCatalog.NextAfter(current.Kind);
+        PillPreviewComboBox.SelectedItem = next;
+        PlaySelectedPreviewPill();
+    }
+
+    private void PillPreviewDismissButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_overlayWindow.IsActiveNonPreview)
+        {
+            SetLiveText(PillPreviewStatusText, "A live pill is active and was left untouched. Only preview pills can be dismissed here.");
+            return;
+        }
+
+        SetLiveText(
+            PillPreviewStatusText,
+            _overlayWindow.DismissPreview()
+                ? "Preview pill dismissed."
+                : "No preview pill is currently open.");
+    }
+
+    private void PillPreviewHoldOpenToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        var holdOpen = PillPreviewHoldOpenToggle.IsOn;
+        _overlayWindow.SetPreviewHoldOpen(holdOpen);
+        SetLiveText(
+            PillPreviewStatusText,
+            holdOpen
+                ? "Hold open enabled. Preview pills stay visible until dismissed."
+                : "Hold open disabled. Preview pills use their normal auto-dismiss dwell.");
+    }
+
+    private bool TryCanUsePillPreview()
+    {
+        if (PillReviewModeToggle?.IsOn != true)
+        {
+            SetLiveText(PillPreviewStatusText, "Turn Pill review mode on first.");
+            return false;
+        }
+
+        if (_currentOverlayState is DictationOverlayState.Recording or DictationOverlayState.Processing ||
+            _overlayWindow.IsActiveNonPreview)
+        {
+            SetLiveText(PillPreviewStatusText, "Preview paused while a live dictation or active pill is on screen.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private void PlaySelectedPreviewPill()
+    {
+        if (!TryCanUsePillPreview())
+        {
+            return;
+        }
+
+        if (PillPreviewComboBox.SelectedItem is not PillPreviewEntry entry)
+        {
+            return;
+        }
+
+        SetLiveRegion(PillPreviewActionEventText, string.Empty, Visibility.Collapsed);
+        _overlayWindow.ShowPreviewEntry(entry, PillPreviewHoldOpenToggle.IsOn);
+        SetLiveText(
+            PillPreviewStatusText,
+            $"Showing {entry.DisplayLabel} ({entry.DwellDescription}). {entry.Summary}");
+    }
+
+    private void UpdateSelectedPreviewDescription()
+    {
+        if (PillPreviewComboBox.SelectedItem is not PillPreviewEntry entry)
+        {
+            return;
+        }
+
+        SetLiveText(
+            PillPreviewStatusText,
+            $"Ready: {entry.DisplayLabel} ({entry.DwellDescription}). {entry.Summary}");
+    }
+
+    private void OnOverlayPreviewActionPressed(string readout)
+    {
+        void Apply() => SetLiveRegion(PillPreviewActionEventText, readout, Visibility.Visible);
+        if (DispatcherQueue is { HasThreadAccess: false } queue)
+        {
+            queue.TryEnqueue(Apply);
+            return;
+        }
+
+        Apply();
+    }
+
     private static string ImportFailureMessage(PortableProfileImportStatus status) => status switch
     {
         PortableProfileImportStatus.NewerVersion => "This profile was created by a newer EnviousWispr version. The file was left untouched.",

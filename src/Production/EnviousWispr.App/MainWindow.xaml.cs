@@ -260,6 +260,7 @@ public sealed partial class MainWindow : Window, IDisposable
         InitializeChimeCards();
         SetTranscribeFileStep(1);
         _overlayWindow = new DictationOverlayWindow();
+        InitializePillPreview();
         _audioPlayback = new WindowsAudioPlaybackService(DispatcherQueue);
         _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
@@ -591,6 +592,12 @@ public sealed partial class MainWindow : Window, IDisposable
             case PillActionKind.OpenTranscriptionSettings:
                 OpenPage("settings-transcription");
                 break;
+            case PillActionKind.OpenMicrophoneSettings:
+                OpenMicrophoneSettings();
+                break;
+            case PillActionKind.OpenMicrophonePrivacySettings:
+                OpenMicrophonePrivacySettings();
+                break;
             case PillActionKind.OpenFileTranscription:
                 OpenPage("settings-transcribe-file");
                 break;
@@ -617,9 +624,48 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    private void OpenMicrophoneSettings() => OpenPage("settings-dictation", "microphone");
+
+    private async void OpenMicrophonePrivacySettings()
+    {
+        try
+        {
+            var opened = await Windows.System.Launcher.LaunchUriAsync(
+                new Uri("ms-settings:privacy-microphone"));
+            if (!opened)
+            {
+                OpenMicrophoneSettings();
+            }
+        }
+        catch
+        {
+            OpenMicrophoneSettings();
+        }
+    }
+
     private void InvokeEscapeRecoveryUndo() => RecoveryUndoRequested?.Invoke();
 
     private void InvokeLearnedCorrectionUndo() => LearnedPillUndoActiveRequested?.Invoke();
+
+    public void TryShowBluetoothAwarenessCard()
+    {
+        if (_overlayWindow.IsActiveNonPreview || _overlayWindow.IsPreviewVisible)
+        {
+            return;
+        }
+
+        _overlayWindow.ShowState(DictationStatus.BluetoothCard());
+    }
+
+    public void TryShowPolishSetupCard(string title, string buttonLabel)
+    {
+        if (_overlayWindow.IsActiveNonPreview || _overlayWindow.IsPreviewVisible)
+        {
+            return;
+        }
+
+        _overlayWindow.ShowState(DictationStatus.PolishSetupCard(title, buttonLabel));
+    }
 
     public Func<(bool HasStoredMemory, int BlockedCount)>? QueryLearnMemoryState { get; set; }
 

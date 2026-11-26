@@ -1,0 +1,186 @@
+using System.Xml.Linq;
+using EnviousWispr.Core.Presentation;
+
+namespace EnviousWispr.Architecture.Tests;
+
+public sealed class PillCatalogParityTests
+{
+    private static readonly XNamespace XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+    [Fact]
+    public void CatalogGroupsAreCompleteAndOrdered()
+    {
+        Assert.Equal(
+            [
+                PillPreviewGroup.Recording,
+                PillPreviewGroup.ProcessingAndReadiness,
+                PillPreviewGroup.WarningsErrorsAndInterruptions,
+                PillPreviewGroup.UndoAndLearning,
+                PillPreviewGroup.CardsAndChips,
+            ],
+            PillPreviewCatalog.OrderedGroups);
+    }
+
+    [Fact]
+    public void EveryPreviewKindAppearsOnceAndCyclesCleanly()
+    {
+        var allKinds = Enum.GetValues<PillPreviewKind>();
+        var catalogKinds = PillPreviewCatalog.Entries.Select(entry => entry.Kind).ToArray();
+
+        Assert.Equal(allKinds.Length, catalogKinds.Length);
+        Assert.Equal(allKinds.Length, catalogKinds.Distinct().Count());
+
+        var entries = PillPreviewCatalog.Entries;
+        Assert.All(entries, entry =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(entry.Title));
+            Assert.False(string.IsNullOrWhiteSpace(entry.Summary));
+            Assert.False(string.IsNullOrWhiteSpace(entry.GroupTitle));
+            Assert.False(string.IsNullOrWhiteSpace(entry.DwellDescription));
+            Assert.Equal(entry, PillPreviewCatalog.Find(entry.Kind));
+        });
+
+        Assert.Equal(entries[0], PillPreviewCatalog.NextAfter(entries[^1].Kind));
+    }
+
+    [Fact]
+    public void EveryNonHiddenOverlayStateIsRepresentedInGallery()
+    {
+        var represented = PillPreviewCatalog.Entries
+            .Select(entry => entry.LearnedModel is not null
+                ? DictationOverlayState.CorrectionLearned
+                : entry.PreviewStatus().State)
+            .ToHashSet();
+
+        foreach (var state in Enum.GetValues<DictationOverlayState>())
+        {
+            if (state == DictationOverlayState.Hidden)
+            {
+                continue;
+            }
+
+            Assert.Contains(state, represented);
+        }
+    }
+
+    [Fact]
+    public void DeliberateMacExclusionsAreExplicitlyDocumented()
+    {
+        var titles = PillPreviewCatalog.ExcludedFromWindows
+            .Select(item => item.Title)
+            .ToArray();
+
+        Assert.Contains(titles, t => t.Contains("Accessibility", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(titles, t => t.Contains("Meeting Summary Limit", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(titles, t => t.Contains("Call Pop-ups", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(titles, t => t.Contains("Crash Recovery", StringComparison.OrdinalIgnoreCase));
+        Assert.All(PillPreviewCatalog.ExcludedFromWindows, exclusion =>
+            Assert.True(exclusion.Reason.Length >= 25, $"{exclusion.Title} exclusion needs rationale."));
+    }
+
+    [Fact]
+    public void CanonicalDwellTimesAndClipboardStatusTextHold()
+    {
+        Assert.Equal(2.5, PillPreviewCatalog.Find(PillPreviewKind.WarningPolishFailed).PreviewStatus().DwellSeconds);
+        Assert.Equal(3.0, PillPreviewCatalog.Find(PillPreviewKind.ErrorAudioCapture).PreviewStatus().DwellSeconds);
+        Assert.Equal(6.0, PillPreviewCatalog.Find(PillPreviewKind.ErrorPermissionDenied).PreviewStatus().DwellSeconds);
+        Assert.Equal(8.0, PillPreviewCatalog.Find(PillPreviewKind.ErrorMicNotResponding).PreviewStatus().DwellSeconds);
+        Assert.Equal(8.0, PillPreviewCatalog.Find(PillPreviewKind.AdvisoryZeroSignal).PreviewStatus().DwellSeconds);
+        Assert.Equal(2.0, PillPreviewCatalog.Find(PillPreviewKind.DistressDeviceDisconnected).PreviewStatus().DwellSeconds);
+        Assert.Equal(2.5, PillPreviewCatalog.Find(PillPreviewKind.ClipboardFallback).PreviewStatus().DwellSeconds);
+        Assert.Equal(3.0, PillPreviewCatalog.Find(PillPreviewKind.EscapeRecovery).PreviewStatus().DwellSeconds);
+        Assert.Equal(6.0, PillPreviewCatalog.Find(PillPreviewKind.LanguageChip).PreviewStatus().DwellSeconds);
+        Assert.Equal(1.5, PillPreviewCatalog.Find(PillPreviewKind.EngineReady).PreviewStatus().DwellSeconds);
+        Assert.Equal(3.0, PillPreviewCatalog.Find(PillPreviewKind.ImportStatus).PreviewStatus().DwellSeconds);
+
+        Assert.True(PillPreviewCatalog.Find(PillPreviewKind.EscapeRecovery).HoverPauses);
+        Assert.True(PillPreviewCatalog.Find(PillPreviewKind.LanguageChip).HoverPauses);
+        Assert.True(PillPreviewCatalog.Find(PillPreviewKind.CorrectionLearned).HoverPauses);
+        Assert.True(PillPreviewCatalog.Find(PillPreviewKind.BluetoothAwarenessCard).PersistsUntilDismissed);
+        Assert.True(PillPreviewCatalog.Find(PillPreviewKind.PolishSetupCard).PersistsUntilDismissed);
+
+        Assert.Equal("Copied. Press Ctrl+V to paste", PillPreviewCatalog.Find(PillPreviewKind.ClipboardFallback).PreviewStatus().Text);
+        Assert.Equal("Ready, press to dictate", DictationStatus.EngineReady().Text);
+    }
+
+    [Fact]
+    public void CatalogAndOverlayMarkupContainNoEmOrEnDashes()
+    {
+        var root = FindRepositoryRoot();
+        var targets = new[]
+        {
+            Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Presentation", "DictationStatus.cs"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Presentation", "PillPreviewCatalog.cs"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.DiagnosticsAndUpdates.cs"),
+        };
+
+        foreach (var path in targets)
+        {
+            var text = File.ReadAllText(path);
+            Assert.DoesNotContain('\u2014', text);
+            Assert.DoesNotContain('\u2013', text);
+        }
+
+        Assert.All(PillPreviewCatalog.Entries, entry =>
+        {
+            Assert.DoesNotContain('\u2014', entry.Title);
+            Assert.DoesNotContain('\u2013', entry.Title);
+            Assert.DoesNotContain('\u2014', entry.Summary);
+            Assert.DoesNotContain('\u2013', entry.Summary);
+            Assert.DoesNotContain('\u2014', entry.PreviewStatus().Text);
+            Assert.DoesNotContain('\u2013', entry.PreviewStatus().Text);
+        });
+    }
+
+    [Fact]
+    public void DiagnosticsSectionHostsAllPillPreviewControlsSafely()
+    {
+        var root = FindRepositoryRoot();
+        var mainWindowXaml = XDocument.Load(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var diagnostics = mainWindowXaml.Descendants()
+            .FirstOrDefault(el => (string?)el.Attribute(XamlNamespace + "Name") == "DiagnosticsSection");
+        Assert.NotNull(diagnostics);
+
+        var expectedControls = new[]
+        {
+            "PillReviewModeToggle",
+            "PillReviewControlsPanel",
+            "PillPreviewComboBox",
+            "PillPreviewPlayButton",
+            "PillPreviewNextButton",
+            "PillPreviewDismissButton",
+            "PillPreviewHoldOpenToggle",
+            "PillPreviewStatusText",
+            "PillPreviewActionEventText",
+            "PillPreviewExclusionsText",
+        };
+
+        var descendantNames = diagnostics!.Descendants()
+            .Select(el => (string?)el.Attribute(XamlNamespace + "Name"))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.All(expectedControls, control => Assert.Contains(control, descendantNames));
+
+        var overlayCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"));
+        Assert.Contains("if (_isPreviewSession)", overlayCode, StringComparison.Ordinal);
+        Assert.Contains("(preview only)", overlayCode, StringComparison.Ordinal);
+
+        var diagnosticsCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.DiagnosticsAndUpdates.cs"));
+        Assert.Contains("PillReviewModeToggle.IsOn = false;", diagnosticsCode, StringComparison.Ordinal);
+        Assert.Contains("_overlayWindow.IsActiveNonPreview", diagnosticsCode, StringComparison.Ordinal);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? throw new InvalidOperationException("Repository root not found.");
+    }
+}

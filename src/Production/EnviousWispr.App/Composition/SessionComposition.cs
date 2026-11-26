@@ -41,7 +41,8 @@ public sealed record SessionShell(
     Action DisposeDeliveryRoute,
     Action<bool>? DictationActivityChanged = null,
     Action<bool>? CancelArmed = null,
-    Action<PasteCompletedEvent>? OnPasteCompleted = null);
+    Action<PasteCompletedEvent>? OnPasteCompleted = null,
+    Func<bool, bool>? AutoStopUnavailable = null);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>

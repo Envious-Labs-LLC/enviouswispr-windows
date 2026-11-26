@@ -59,11 +59,84 @@
             <Color x:Key="PillCapsuleBadgeTextColor">#E0FFFFFF</Color>
             <SolidColorBrush x:Key="PillCapsuleBadgeTextBrush" Color="#E0FFFFFF" />
 
+            <!-- Theme-aware Escape Recovery PillPalette: Light #FAFAFC, Dark #14141C (EscapeRecoveryPillView.swift) -->
+            <Color x:Key="PillEscapeSurfaceColor">#FFFAFAFC</Color>
+            <SolidColorBrush x:Key="PillEscapeSurfaceBrush" Color="#FFFAFAFC" />
+            <Color x:Key="PillEscapeBorderColor">#290F0A1A</Color>
+            <SolidColorBrush x:Key="PillEscapeBorderBrush" Color="#290F0A1A" />
+            <Color x:Key="PillEscapeTextColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillEscapeTextBrush" Color="#FF14141C" />
+            <Color x:Key="PillEscapeButtonFillColor">#170F0A1A</Color>
+            <SolidColorBrush x:Key="PillEscapeButtonFillBrush" Color="#170F0A1A" />
+            <Color x:Key="PillEscapeButtonBorderColor">#260F0A1A</Color>
+            <SolidColorBrush x:Key="PillEscapeButtonBorderBrush" Color="#260F0A1A" />
+            <Color x:Key="PillEscapeButtonTextColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillEscapeButtonTextBrush" Color="#FF14141C" />
+
+            <!-- Crisp macOS notification icon badges, red distress pulse, and language chip buttons -->
+            <Color x:Key="PillWarningGlyphColor">#FFFF9F0A</Color>
+            <SolidColorBrush x:Key="PillWarningGlyphBrush" Color="#FFFF9F0A" />
+            <Color x:Key="PillWarningGlyphInkColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillWarningGlyphInkBrush" Color="#FF14141C" />
+            <Color x:Key="PillErrorGlyphFillColor">#FFFF3B30</Color>
+            <SolidColorBrush x:Key="PillErrorGlyphFillBrush" Color="#FFFF3B30" />
+            <Color x:Key="PillErrorGlyphInkColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillErrorGlyphInkBrush" Color="#FF14141C" />
+            <Color x:Key="PillReadyGlyphFillColor">#FF30D158</Color>
+            <SolidColorBrush x:Key="PillReadyGlyphFillBrush" Color="#FF30D158" />
+            <Color x:Key="PillReadyGlyphInkColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillReadyGlyphInkBrush" Color="#FF14141C" />
+            <Color x:Key="PillMutedIconColor">#FF9E9BA8</Color>
+            <SolidColorBrush x:Key="PillMutedIconBrush" Color="#FF9E9BA8" />
+            <Color x:Key="PillSubtitleTextColor">#A6FFFFFF</Color>
+            <SolidColorBrush x:Key="PillSubtitleTextBrush" Color="#A6FFFFFF" />
+            <Color x:Key="PillRichErrorBadgeFillColor">#2EE84855</Color>
+            <SolidColorBrush x:Key="PillRichErrorBadgeFillBrush" Color="#2EE84855" />
+            <Color x:Key="PillRichErrorBadgeBorderColor">#52E84855</Color>
+            <SolidColorBrush x:Key="PillRichErrorBadgeBorderBrush" Color="#52E84855" />
+            <Color x:Key="PillRichErrorIconColor">#FFEF6B78</Color>
+            <SolidColorBrush x:Key="PillRichErrorIconBrush" Color="#FFEF6B78" />
+            <Color x:Key="PillDistressRedColor">#FFFF3B30</Color>
+            <SolidColorBrush x:Key="PillDistressRedBrush" Color="#FFFF3B30" />
+            <Color x:Key="PillDistressRedFadeColor">#00FF3B30</Color>
+            <Color x:Key="PillDistressTextColor">#FFFF9F0A</Color>
+            <SolidColorBrush x:Key="PillDistressTextBrush" Color="#FFFF9F0A" />
+            <Color x:Key="PillLanguageLockFillColor">#FF0A84FF</Color>
+            <SolidColorBrush x:Key="PillLanguageLockFillBrush" Color="#FF0A84FF" />
+            <Color x:Key="PillLanguageLockTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillLanguageLockTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillSaveErrorTextColor">#FFFF5E57</Color>
+            <SolidColorBrush x:Key="PillSaveErrorTextBrush" Color="#FFFF5E57" />
+
+            <!-- Theme-aware floating cards (Bluetooth awareness and Polish setup) -->
+            <Color x:Key="PillCardSurfaceColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCardSurfaceBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillCardBorderColor">#387C3AED</Color>
+            <SolidColorBrush x:Key="PillCardBorderBrush" Color="#387C3AED" />
+            <Color x:Key="PillCardCloseFillColor">#177C3AED</Color>
+            <SolidColorBrush x:Key="PillCardCloseFillBrush" Color="#177C3AED" />
+            <Color x:Key="PillCardCloseIconColor">#FF6D28D9</Color>
+            <SolidColorBrush x:Key="PillCardCloseIconBrush" Color="#FF6D28D9" />
+            <Color x:Key="PillCardTipCircleColor">#177C3AED</Color>
+            <SolidColorBrush x:Key="PillCardTipCircleBrush" Color="#177C3AED" />
+            <Color x:Key="PillCardTipIconColor">#FF7C3AED</Color>
+            <SolidColorBrush x:Key="PillCardTipIconBrush" Color="#FF7C3AED" />
+            <Color x:Key="PillCardPrimaryFillColor">#FF7C3AED</Color>
+            <SolidColorBrush x:Key="PillCardPrimaryFillBrush" Color="#FF7C3AED" />
+            <Color x:Key="PillCardPrimaryTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCardPrimaryTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillCardLinkTextColor">#FF6D28D9</Color>
+            <SolidColorBrush x:Key="PillCardLinkTextBrush" Color="#FF6D28D9" />
+            <Color x:Key="PillCardTitleColor">#FF120D1F</Color>
+            <SolidColorBrush x:Key="PillCardTitleBrush" Color="#FF120D1F" />
+            <Color x:Key="PillCardBodyColor">#FF3A3150</Color>
+            <SolidColorBrush x:Key="PillCardBodyBrush" Color="#FF3A3150" />
+            <Color x:Key="PillCardFooterColor">#FF52476B</Color>
+            <SolidColorBrush x:Key="PillCardFooterBrush" Color="#FF52476B" />
+
             <!--
                 THE READING WELL FOLLOWS THE APP'S THEME, and Light is not an inversion of Dark.
                 PreviewPillPalette.swift, light column: a warm near-white surface with violet-black ink.
-                The quiet ink is 0.60 rather than the 0.45 that would mirror Dark, because 0.45 measured
-                3.10:1 on this surface and 0.60 measures 5.09:1.
             -->
             <Color x:Key="PillWellSurfaceColor">#F0FCFAFF</Color>
             <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="#F0FCFAFF" />
@@ -105,10 +178,10 @@
             <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="#FFBF5AF2" />
 
             <!-- Self-Learning Dictionary Undo pill: Light theme matches macOS atlas notice-correction-learned-light.png -->
-            <Color x:Key="PillLearnedSurfaceColor">#F5FCFAFF</Color>
-            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="#F5FCFAFF" />
-            <Color x:Key="PillLearnedBorderColor">#1F0F0A1A</Color>
-            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="#1F0F0A1A" />
+            <Color x:Key="PillLearnedSurfaceColor">#FAFCFAFF</Color>
+            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="#FAFCFAFF" />
+            <Color x:Key="PillLearnedBorderColor">#330F0A1A</Color>
+            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="#330F0A1A" />
             <Color x:Key="PillLearnedTextColor">#FF0F0A1A</Color>
             <SolidColorBrush x:Key="PillLearnedTextBrush" Color="#FF0F0A1A" />
             <Color x:Key="PillLearnedSecondaryTextColor">#FF4A3D60</Color>
@@ -176,6 +249,81 @@
             <Color x:Key="PillCapsuleBadgeTextColor">#E0FFFFFF</Color>
             <SolidColorBrush x:Key="PillCapsuleBadgeTextBrush" Color="#E0FFFFFF" />
 
+            <!-- Theme-aware Escape Recovery PillPalette: Dark #14141C (EscapeRecoveryPillView.swift) -->
+            <Color x:Key="PillEscapeSurfaceColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillEscapeSurfaceBrush" Color="#FF14141C" />
+            <Color x:Key="PillEscapeBorderColor">#2EFFFFFF</Color>
+            <SolidColorBrush x:Key="PillEscapeBorderBrush" Color="#2EFFFFFF" />
+            <Color x:Key="PillEscapeTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillEscapeTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillEscapeButtonFillColor">#26FFFFFF</Color>
+            <SolidColorBrush x:Key="PillEscapeButtonFillBrush" Color="#26FFFFFF" />
+            <Color x:Key="PillEscapeButtonBorderColor">#33FFFFFF</Color>
+            <SolidColorBrush x:Key="PillEscapeButtonBorderBrush" Color="#33FFFFFF" />
+            <Color x:Key="PillEscapeButtonTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillEscapeButtonTextBrush" Color="#FFFFFFFF" />
+
+            <!-- Crisp macOS notification icon badges, red distress pulse, and language chip buttons -->
+            <Color x:Key="PillWarningGlyphColor">#FFFF9F0A</Color>
+            <SolidColorBrush x:Key="PillWarningGlyphBrush" Color="#FFFF9F0A" />
+            <Color x:Key="PillWarningGlyphInkColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillWarningGlyphInkBrush" Color="#FF14141C" />
+            <Color x:Key="PillErrorGlyphFillColor">#FFFF3B30</Color>
+            <SolidColorBrush x:Key="PillErrorGlyphFillBrush" Color="#FFFF3B30" />
+            <Color x:Key="PillErrorGlyphInkColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillErrorGlyphInkBrush" Color="#FF14141C" />
+            <Color x:Key="PillReadyGlyphFillColor">#FF30D158</Color>
+            <SolidColorBrush x:Key="PillReadyGlyphFillBrush" Color="#FF30D158" />
+            <Color x:Key="PillReadyGlyphInkColor">#FF14141C</Color>
+            <SolidColorBrush x:Key="PillReadyGlyphInkBrush" Color="#FF14141C" />
+            <Color x:Key="PillMutedIconColor">#FF9E9BA8</Color>
+            <SolidColorBrush x:Key="PillMutedIconBrush" Color="#FF9E9BA8" />
+            <Color x:Key="PillSubtitleTextColor">#A6FFFFFF</Color>
+            <SolidColorBrush x:Key="PillSubtitleTextBrush" Color="#A6FFFFFF" />
+            <Color x:Key="PillRichErrorBadgeFillColor">#2EE84855</Color>
+            <SolidColorBrush x:Key="PillRichErrorBadgeFillBrush" Color="#2EE84855" />
+            <Color x:Key="PillRichErrorBadgeBorderColor">#52E84855</Color>
+            <SolidColorBrush x:Key="PillRichErrorBadgeBorderBrush" Color="#52E84855" />
+            <Color x:Key="PillRichErrorIconColor">#FFEF6B78</Color>
+            <SolidColorBrush x:Key="PillRichErrorIconBrush" Color="#FFEF6B78" />
+            <Color x:Key="PillDistressRedColor">#FFFF3B30</Color>
+            <SolidColorBrush x:Key="PillDistressRedBrush" Color="#FFFF3B30" />
+            <Color x:Key="PillDistressRedFadeColor">#00FF3B30</Color>
+            <Color x:Key="PillDistressTextColor">#FFFF9F0A</Color>
+            <SolidColorBrush x:Key="PillDistressTextBrush" Color="#FFFF9F0A" />
+            <Color x:Key="PillLanguageLockFillColor">#FF0A84FF</Color>
+            <SolidColorBrush x:Key="PillLanguageLockFillBrush" Color="#FF0A84FF" />
+            <Color x:Key="PillLanguageLockTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillLanguageLockTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillSaveErrorTextColor">#FFFF5E57</Color>
+            <SolidColorBrush x:Key="PillSaveErrorTextBrush" Color="#FFFF5E57" />
+
+            <!-- Theme-aware floating cards (Bluetooth awareness and Polish setup) -->
+            <Color x:Key="PillCardSurfaceColor">#FF1B1628</Color>
+            <SolidColorBrush x:Key="PillCardSurfaceBrush" Color="#FF1B1628" />
+            <Color x:Key="PillCardBorderColor">#47A78BFA</Color>
+            <SolidColorBrush x:Key="PillCardBorderBrush" Color="#47A78BFA" />
+            <Color x:Key="PillCardCloseFillColor">#26A78BFA</Color>
+            <SolidColorBrush x:Key="PillCardCloseFillBrush" Color="#26A78BFA" />
+            <Color x:Key="PillCardCloseIconColor">#FFC4B5FD</Color>
+            <SolidColorBrush x:Key="PillCardCloseIconBrush" Color="#FFC4B5FD" />
+            <Color x:Key="PillCardTipCircleColor">#29A78BFA</Color>
+            <SolidColorBrush x:Key="PillCardTipCircleBrush" Color="#29A78BFA" />
+            <Color x:Key="PillCardTipIconColor">#FFA78BFA</Color>
+            <SolidColorBrush x:Key="PillCardTipIconBrush" Color="#FFA78BFA" />
+            <Color x:Key="PillCardPrimaryFillColor">#FF8B5CF6</Color>
+            <SolidColorBrush x:Key="PillCardPrimaryFillBrush" Color="#FF8B5CF6" />
+            <Color x:Key="PillCardPrimaryTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCardPrimaryTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillCardLinkTextColor">#FFC4B5FD</Color>
+            <SolidColorBrush x:Key="PillCardLinkTextBrush" Color="#FFC4B5FD" />
+            <Color x:Key="PillCardTitleColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCardTitleBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillCardBodyColor">#D9EAE6F8</Color>
+            <SolidColorBrush x:Key="PillCardBodyBrush" Color="#D9EAE6F8" />
+            <Color x:Key="PillCardFooterColor">#FFAAA2BF</Color>
+            <SolidColorBrush x:Key="PillCardFooterBrush" Color="#FFAAA2BF" />
+
             <!-- PreviewPillPalette.swift, dark column. -->
             <Color x:Key="PillWellSurfaceColor">#E6110F18</Color>
             <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="#E6110F18" />
@@ -215,10 +363,10 @@
             <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="#FFBF5AF2" />
 
             <!-- Self-Learning Dictionary Undo pill: Dark theme matches macOS atlas notice-correction-learned-dark.png -->
-            <Color x:Key="PillLearnedSurfaceColor">#F014111C</Color>
-            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="#F014111C" />
-            <Color x:Key="PillLearnedBorderColor">#26FFFFFF</Color>
-            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="#26FFFFFF" />
+            <Color x:Key="PillLearnedSurfaceColor">#F514111C</Color>
+            <SolidColorBrush x:Key="PillLearnedSurfaceBrush" Color="#F514111C" />
+            <Color x:Key="PillLearnedBorderColor">#33FFFFFF</Color>
+            <SolidColorBrush x:Key="PillLearnedBorderBrush" Color="#33FFFFFF" />
             <Color x:Key="PillLearnedTextColor">#F7FFFFFF</Color>
             <SolidColorBrush x:Key="PillLearnedTextBrush" Color="#F7FFFFFF" />
             <Color x:Key="PillLearnedSecondaryTextColor">#FFAAA2BF</Color>
@@ -284,6 +432,78 @@
             <SolidColorBrush x:Key="PillCapsuleBadgeFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
             <StaticResource x:Key="PillCapsuleBadgeTextColor" ResourceKey="SystemColorHighlightTextColor" />
             <SolidColorBrush x:Key="PillCapsuleBadgeTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+
+            <StaticResource x:Key="PillEscapeSurfaceColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="PillEscapeSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="PillEscapeBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillEscapeBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillEscapeTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillEscapeTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillEscapeButtonFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillEscapeButtonFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillEscapeButtonBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillEscapeButtonBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillEscapeButtonTextColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillEscapeButtonTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+
+            <StaticResource x:Key="PillWarningGlyphColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillWarningGlyphBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillWarningGlyphInkColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillWarningGlyphInkBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillErrorGlyphFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillErrorGlyphFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillErrorGlyphInkColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillErrorGlyphInkBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillReadyGlyphFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillReadyGlyphFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillReadyGlyphInkColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillReadyGlyphInkBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillMutedIconColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillMutedIconBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillSubtitleTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillSubtitleTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillRichErrorBadgeFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillRichErrorBadgeFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillRichErrorBadgeBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillRichErrorBadgeBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillRichErrorIconColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillRichErrorIconBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillDistressRedColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillDistressRedBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <Color x:Key="PillDistressRedFadeColor">Transparent</Color>
+            <StaticResource x:Key="PillDistressTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillDistressTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillLanguageLockFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillLanguageLockFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillLanguageLockTextColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillLanguageLockTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillSaveErrorTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillSaveErrorTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+
+            <StaticResource x:Key="PillCardSurfaceColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="PillCardSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="PillCardBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillCardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillCardCloseFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillCardCloseFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillCardCloseIconColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillCardCloseIconBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillCardTipCircleColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillCardTipCircleBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillCardTipIconColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillCardTipIconBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillCardPrimaryFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillCardPrimaryFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillCardPrimaryTextColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillCardPrimaryTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillCardLinkTextColor" ResourceKey="SystemColorHotlightColor" />
+            <SolidColorBrush x:Key="PillCardLinkTextBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+            <StaticResource x:Key="PillCardTitleColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillCardTitleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillCardBodyColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillCardBodyBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillCardFooterColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillCardFooterBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
 
             <StaticResource x:Key="PillWellSurfaceColor" ResourceKey="SystemColorWindowColor" />
             <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
@@ -356,30 +576,40 @@
     </Style>
 
     <!--
-        macOS overlay-local gaps, kept here rather than in Layout.xaml so the main window's 4px
-        spacing scale stays untouched while the floating pill matches the atlas geometry.
+        macOS overlay-local gaps and bounds, kept here rather than in Layout.xaml so the main
+        window's 4px spacing scale stays untouched while floating overlays match the atlas geometry.
     -->
     <x:Double x:Key="PillHeaderSpacing">10</x:Double>
     <x:Double x:Key="PillRailBarSpacing">2</x:Double>
     <x:Double x:Key="PillWellMeterSpacing">1.5</x:Double>
     <x:Double x:Key="PillBadgeDotSpacing">6</x:Double>
     <x:Double x:Key="PillLearnedTextSpacing">1</x:Double>
+    <x:Double x:Key="PillLearnedTitleMaxWidth">320</x:Double>
+    <x:Double x:Key="PillNoticeMessageMaxWidth">320</x:Double>
+    <x:Double x:Key="PillAdvisoryMessageMaxWidth">360</x:Double>
+    <x:Double x:Key="PillLanguageChipMessageMaxWidth">340</x:Double>
+    <x:Double x:Key="PillRichErrorCardWidth">400</x:Double>
+    <x:Double x:Key="PillImportMessageMaxWidth">280</x:Double>
+    <x:Double x:Key="PillCardWidth">320</x:Double>
+    <x:Double x:Key="PillCardInnerMaxWidth">280</x:Double>
+    <x:Double x:Key="PillInPanelNoticeMaxWidth">260</x:Double>
+    <x:Double x:Key="PillCardSpacing">12</x:Double>
+    <x:Double x:Key="PillCardTipSpacing">10</x:Double>
+    <x:Double x:Key="PillCardTightSpacing">6</x:Double>
+    <x:Double x:Key="PillRichErrorSpacing">12</x:Double>
 
-    <!--
-        THE RECORDING DESIGNS' LOOKS, AS STYLES FOR THE SAME REASON AS THE SEVERITY SET BELOW. The
-        Reading Well follows the pill's own theme, and a brush read from the application dictionary in
-        code resolves against the machine's theme instead. A style's ThemeResource setters resolve
-        against the element they land on, so a Light pill on a Dark machine still draws Light.
-
-        Surface styles set Background ONLY (applied to OverlayRoot, including its 2px bleed zone);
-        edge styles set BorderBrush ONLY (applied to FrameBorder inside that bleed). Keeping the two
-        separate stops the semi-transparent fill from painting twice over the visible pill.
-    -->
+    <!-- Surface & Edge styles (Background on OverlayRoot, BorderBrush on FrameBorder) -->
     <Style x:Key="PillNoticeSurfaceStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource PillSurfaceBrush}" />
     </Style>
     <Style x:Key="PillCapsuleSurfaceStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource PillCapsuleSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillEscapeSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillEscapeSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillCardSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillCardSurfaceBrush}" />
     </Style>
     <Style x:Key="PillWellSurfaceStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource PillWellSurfaceBrush}" />
@@ -390,11 +620,38 @@
     <Style x:Key="PillCapsuleEdgeStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource PillCapsuleBorderBrush}" />
     </Style>
+    <Style x:Key="PillEscapeEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillEscapeBorderBrush}" />
+    </Style>
+    <Style x:Key="PillCardEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillCardBorderBrush}" />
+    </Style>
     <Style x:Key="PillWellEdgeStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource PillWellBorderBrush}" />
     </Style>
     <Style x:Key="PillCapsuleTimerTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{ThemeResource PillCapsuleTextBrush}" />
+    </Style>
+    <Style x:Key="PillEscapeTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillEscapeTextBrush}" />
+    </Style>
+    <Style x:Key="PillDistressMessageTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillDistressTextBrush}" />
+    </Style>
+    <Style x:Key="PillSaveErrorTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillSaveErrorTextBrush}" />
+    </Style>
+    <Style x:Key="PillSubtitleTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillSubtitleTextBrush}" />
+    </Style>
+    <Style x:Key="PillCardTitleTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillCardTitleBrush}" />
+    </Style>
+    <Style x:Key="PillCardBodyTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillCardBodyBrush}" />
+    </Style>
+    <Style x:Key="PillCardFooterTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillCardFooterBrush}" />
     </Style>
     <Style x:Key="PillWellTimerTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{ThemeResource PillWellTimerBrush}" />
@@ -421,61 +678,70 @@
         <Setter Property="Fill" Value="{ThemeResource PillWellBadgeTextBrush}" />
     </Style>
 
-    <!--
-        The pill's own button. It borrows the notice ink rather than the accent, because the pill
-        already carries a severity colour on its edge and its glyph, and a third colour on the one
-        control the user is meant to press would compete with the thing telling them why.
-    -->
     <Style x:Key="PillActionButtonStyle" TargetType="Button">
         <Setter Property="Background" Value="{ThemeResource PillBadgeFillBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <!--
-            THE PLATFORM'S OWN CONTROL RADIUS, NOT A BRAND NUMBER. This was BrandPillRadius, which
-            is 100 - far larger than the button is tall, so it rendered as a full ellipse. A
-            lozenge is an iOS and macOS shape; every button in Windows 11 is a rounded rectangle,
-            and photographed beside the system's own chrome the ellipse was the single most
-            obviously foreign thing on the screen. ControlCornerRadius is the value Windows itself
-            uses, so the button matches whatever the platform decides, now and after an update.
-        -->
         <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
-        <!--
-            THE BADGE INK, NOT THE NOTICE INK, AND THE PAIRING IS THE WHOLE REASON. The fill is
-            PillBadgeFill, which High Contrast resolves to SystemColorHighlight; the notice ink
-            resolves to SystemColorWindowText. Those two are not a pair, and a High Contrast theme
-            is free to make them the same colour - black text on a black button. PillBadgeText
-            resolves to SystemColorHighlightText, which is the colour the system guarantees is
-            legible ON that highlight.
-        -->
         <Setter Property="Foreground" Value="{ThemeResource PillBadgeTextBrush}" />
         <Setter Property="Padding" Value="14,6" />
     </Style>
 
-    <!-- Compact single-line inline button for the 44-tall Escape Recovery capsule. -->
     <Style x:Key="PillInlineActionButtonStyle" TargetType="Button">
         <Setter Property="Background" Value="{ThemeResource PillBadgeFillBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
+        <Setter Property="CornerRadius" Value="14" />
         <Setter Property="Foreground" Value="{ThemeResource PillBadgeTextBrush}" />
-        <Setter Property="Padding" Value="12,3" />
+        <Setter Property="Padding" Value="12,4" />
     </Style>
 
-    <!--
-        ONE STYLE FAMILY PER SEVERITY, AND A STYLE RATHER THAN A BRUSH SET FROM CODE.
-        The pill is a separate top-level window whose theme is set on its root, so a brush pulled
-        out of the application dictionary resolves against the MACHINE's theme while everything
-        around it follows the app's. Invisible while the two agree, wrong the moment somebody runs
-        the app in Light on a Dark machine. A style's ThemeResource setters resolve against the
-        element they land on, which is the property that makes them correct here, and it is why the
-        pill's text already works this way.
+    <Style x:Key="PillEscapeUndoButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillEscapeButtonFillBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource PillEscapeButtonBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Foreground" Value="{ThemeResource PillEscapeButtonTextBrush}" />
+        <Setter Property="Padding" Value="14,4" />
+    </Style>
 
-        Neutral is a member of the set rather than the absence of one: recording and processing are
-        states the pill can be in, and naming them here is what stops a future state rendering as a
-        plain capsule and looking like somebody meant it.
-    -->
+    <Style x:Key="PillLanguageLockButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillLanguageLockFillBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Foreground" Value="{ThemeResource PillLanguageLockTextBrush}" />
+        <Setter Property="Padding" Value="12,4" />
+    </Style>
+
+    <Style x:Key="PillCardPrimaryButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillCardPrimaryFillBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="Foreground" Value="{ThemeResource PillCardPrimaryTextBrush}" />
+        <Setter Property="Padding" Value="24,8" />
+    </Style>
+
+    <Style x:Key="PillCardLinkButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Foreground" Value="{ThemeResource PillCardLinkTextBrush}" />
+        <Setter Property="Padding" Value="10,4" />
+    </Style>
+
+    <Style x:Key="PillCardCloseButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillCardCloseFillBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Foreground" Value="{ThemeResource PillCardCloseIconBrush}" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
     <Style x:Key="PillNeutralIconStyle" TargetType="FontIcon">
         <Setter Property="Foreground" Value="{ThemeResource PillNoticeBrush}" />
+    </Style>
+    <Style x:Key="PillMutedIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillMutedIconBrush}" />
     </Style>
     <Style x:Key="PillNeutralEdgeStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
@@ -548,7 +814,7 @@
         <Setter Property="Foreground" Value="{ThemeResource PillLearnedTextBrush}" />
     </Style>
     <Style x:Key="PillLearnedErrorTitleStyle" TargetType="TextBlock">
-        <Setter Property="Foreground" Value="{ThemeResource PillErrorInkBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource PillSaveErrorTextBrush}" />
     </Style>
     <Style x:Key="PillLearnedSubtitleStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{ThemeResource PillLearnedSecondaryTextBrush}" />

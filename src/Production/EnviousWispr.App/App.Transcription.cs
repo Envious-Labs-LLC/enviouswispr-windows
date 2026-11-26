@@ -140,6 +140,16 @@ public partial class App
             return;
         }
 
+        var announceReadiness = _sessionController?.CurrentSession is null &&
+            string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE"));
+        if (announceReadiness && !Leaving)
+        {
+            var engineName = engine == FinalAsrEngine.Whisper ? "Whisper" : "Parakeet";
+            _window?.SetSessionStatus(
+                DictationStatus.ColdStart("Getting dictation ready...", $"{engineName} is warming up")
+                    .AboutTheTranscriptionEngine());
+        }
+
         var started = await _transcriptionEngine.StartAsync().ConfigureAwait(true);
         if (!started.Succeeded)
         {
@@ -207,7 +217,10 @@ public partial class App
 
         ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, parakeetPreviewDirectory, previewModelDirectory);
         _window?.SetSessionStatus(
-            DictationStatus.Quiet("Local transcription ready").AboutTheTranscriptionEngine());
+            (announceReadiness && !Leaving
+                ? DictationStatus.EngineReady()
+                : DictationStatus.Quiet("Local transcription ready"))
+            .AboutTheTranscriptionEngine());
         _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
         SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT");
     }
