@@ -421,6 +421,7 @@ public sealed class DictationSessionExecutorTests
         var releaseTask = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
 
         await effects.ProcessingShown.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await capture.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(releaseTask.IsCompleted);
         Assert.Equal("ShowProcessing", effects.Trace[0]);
         Assert.DoesNotContain("RecordTransition:FinalizeReady", effects.Trace);
@@ -1445,6 +1446,8 @@ public sealed class DictationSessionExecutorTests
 
         public TaskCompletionSource? HoldStop { get; set; }
 
+        public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public async Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
         {
             StartCount++;
@@ -1466,6 +1469,7 @@ public sealed class DictationSessionExecutorTests
             StopCount++;
             if (HoldStop is { } holdStop)
             {
+                StopEntered.TrySetResult();
                 await holdStop.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
 
