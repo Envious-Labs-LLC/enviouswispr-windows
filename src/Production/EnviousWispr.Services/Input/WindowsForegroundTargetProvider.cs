@@ -28,10 +28,15 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
         }
 
         _ = GetWindowThreadProcessId(handle, out var processId);
+        // Skip UI Automation upfront when the foreground window is elevated above us: UIPI blocks
+        // cross-integrity element queries, and probing on hotkey down would stall the hook for nothing.
+        var focusedElementId = WindowsWindowIdentity.TryIsHigherIntegrityProcess(processId) == true
+            ? null
+            : TryCaptureFocusedElementId(handle, processId);
         return new TargetWindowId(
             handle,
             processId,
-            TryCaptureFocusedElementId(handle, processId),
+            focusedElementId,
             WindowsWindowIdentity.TryGetProcessName(processId));
     }
 

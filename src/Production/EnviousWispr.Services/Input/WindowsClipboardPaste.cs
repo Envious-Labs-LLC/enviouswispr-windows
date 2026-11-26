@@ -42,6 +42,19 @@ internal static class WindowsClipboardPaste
     private const uint CfGdiObjFirst = 0x0300;
     private const uint CfGdiObjLast = 0x03FF;
     private const uint RegisteredFormatBase = 0xC000;
+    internal const string ExcludeMonitorFormatName = "ExcludeClipboardContentFromMonitorProcessing";
+    internal const string CanIncludeInClipboardHistoryFormatName = "CanIncludeInClipboardHistory";
+    internal const string CanUploadToCloudClipboardFormatName = "CanUploadToCloudClipboard";
+
+    private static readonly HashSet<string> TransientMarkerFormats = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ExcludeMonitorFormatName,
+        CanIncludeInClipboardHistoryFormatName,
+        CanUploadToCloudClipboardFormatName,
+    };
+
+    internal static bool IsTransientMarkerFormat(string? formatName) =>
+        !string.IsNullOrWhiteSpace(formatName) && TransientMarkerFormats.Contains(formatName.Trim());
 
     internal static int NativeInputSize => Marshal.SizeOf<NativeInput>();
     internal static int NativeKeyboardInputSize => Marshal.SizeOf<NativeKeyboardInput>();
@@ -135,7 +148,7 @@ internal static class WindowsClipboardPaste
     /// and a caller branching on the reason would be inventing distinctions it cannot act on.
     /// </remarks>
     public static Task<string?> TryReadSelectionAsync(CancellationToken cancellationToken) =>
-        TryReadSelectionAsync(SetClipboardTextOrThrow, SendCtrlC, cancellationToken);
+        TryReadSelectionAsync(SetTemporaryClipboardTextOrThrow, SendCtrlC, cancellationToken);
 
     /// <summary>The selection read with its clipboard writer and its Copy named: production passes the real ones; a test passes a writer that fails after changing the clipboard, and a Copy answered by a stand-in app.</summary>
     /// <remarks>
@@ -339,7 +352,8 @@ internal static class WindowsClipboardPaste
         bool restoreClipboard,
         PasteKeystrokeKind keystroke,
         Func<TextDeliveryRefusalReason> preflight,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? settleDelay = null)
     {
         ArgumentNullException.ThrowIfNull(preflight);
         return PasteAsync(
@@ -347,9 +361,10 @@ internal static class WindowsClipboardPaste
             fallbackText,
             restoreClipboard,
             preflight,
-            SetClipboardTextOrThrow,
+            SetTemporaryClipboardTextOrThrow,
             keystroke == PasteKeystrokeKind.ShiftInsert ? SendShiftInsert : SendCtrlV,
-            cancellationToken);
+            cancellationToken,
+            settleDelay);
     }
 
     /// <summary>The paste with its clipboard writer named: production passes <see cref="SetClipboardTextOrThrow"/>; a test passes a writer that fails the way the clipboard can, after changing it.</summary>
@@ -374,7 +389,8 @@ internal static class WindowsClipboardPaste
         Func<TextDeliveryRefusalReason> preflight,
         Action<string> writeText,
         Func<bool> sendPaste,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? settleDelay = null)
     {
         ArgumentNullException.ThrowIfNull(preflight);
         ArgumentNullException.ThrowIfNull(writeText);
@@ -387,6 +403,7 @@ internal static class WindowsClipboardPaste
                 preflight,
                 writeText,
                 sendPaste,
+                settleDelay ?? PasteSettle,
                 cancellationToken),
             cancellationToken);
     }
@@ -398,6 +415,7 @@ internal static class WindowsClipboardPaste
         Func<TextDeliveryRefusalReason> preflight,
         Action<string> writeText,
         Func<bool> sendPaste,
+        TimeSpan settleDelay,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -493,7 +511,7 @@ internal static class WindowsClipboardPaste
         // flushed, so no format is rendered on request), but anybody who writes to the clipboard meanwhile - the person
         // copying - sends us WM_DESTROYCLIPBOARD and waits for the answer. A sleep that does not pump holds their copy
         // until it ends, and then the give-back below can see the clipboard still ours and restore over it (#247).
-        PumpingWait(PasteSettle);
+        PumpingWait(settleDelay > TimeSpan.Zero ? settleDelay : TimeSpan.Zero);
         var (pastedRestored, pastedUncertain) = GiveBack(snapshot, ourSequence);
         return new TextCommitResult(
             TextDeliveryRoute.ClipboardPaste,
@@ -584,7 +602,37 @@ internal static class WindowsClipboardPaste
             return;
         }
 
-        Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0);
+        Clipboard.SetDataObject(BuildMarkedRestoreDataObject(snapshot.Data!), copy: true, retryTimes: 0, retryDelay: 0);
+    }
+
+    private static DataObject BuildMarkedRestoreDataObject(DataObject source)
+    {
+        var copy = new DataObject();
+        foreach (var format in source.GetFormats(autoConvert: false) ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(format) || IsTransientMarkerFormat(format))
+            {
+                continue;
+            }
+
+            var value = ((System.Windows.Forms.IDataObject)source).GetData(format, autoConvert: false);
+            if (value is not null)
+            {
+                copy.SetData(format, autoConvert: false, CloneClipboardValue(value) ?? value);
+            }
+        }
+
+        AttachTransientMarkers(copy);
+        return copy;
+    }
+
+    private static void AttachTransientMarkers(DataObject data)
+    {
+        // Zero DWORDs signal to Windows Clipboard History (Win+V) and Cloud Clipboard to exclude
+        // temporary paste transfers and restored snapshots from recording duplicate history entries.
+        data.SetData(ExcludeMonitorFormatName, autoConvert: false, new MemoryStream([0, 0, 0, 0]));
+        data.SetData(CanIncludeInClipboardHistoryFormatName, autoConvert: false, new MemoryStream([0, 0, 0, 0]));
+        data.SetData(CanUploadToCloudClipboardFormatName, autoConvert: false, new MemoryStream([0, 0, 0, 0]));
     }
 
     private static bool IsClipboardStillOurs(uint expectedSequence) =>
@@ -650,6 +698,22 @@ internal static class WindowsClipboardPaste
     /// <summary>The production writer: the text on the clipboard, flushed so it outlives this thread; throws what the clipboard refuses.</summary>
     internal static void SetClipboardTextOrThrow(string text) =>
         WithPumpingRetry(() => Clipboard.SetDataObject(text, copy: true, retryTimes: 0, retryDelay: 0));
+
+    /// <summary>
+    /// Atomic temporary clipboard write for paste transfers and selection probes: publishes the text
+    /// together with Windows history/monitor/cloud exclusion markers in one <see cref="DataObject"/>.
+    /// </summary>
+    internal static void SetTemporaryClipboardTextOrThrow(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        WithPumpingRetry(() =>
+        {
+            var data = new DataObject();
+            data.SetData(DataFormats.UnicodeText, autoConvert: true, text);
+            AttachTransientMarkers(data);
+            Clipboard.SetDataObject(data, copy: true, retryTimes: 0, retryDelay: 0);
+        });
+    }
 
     /// <summary>One write of a borrowing paste, and the sequence number that is ours after it.</summary>
     /// <remarks>
@@ -810,7 +874,7 @@ internal static class WindowsClipboardPaste
                         return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
                     }
 
-                    if (IsOleWrapperFormat(formatName))
+                    if (IsOleWrapperFormat(formatName) || IsTransientMarkerFormat(formatName))
                     {
                         continue;
                     }
@@ -1074,7 +1138,8 @@ internal static class WindowsClipboardPaste
 
     private static PreparedNativeHandle[] PrepareNativeHandles(IReadOnlyList<NativeClipboardEntry> entries)
     {
-        var prepared = new PreparedNativeHandle[entries.Count];
+        var prepared = new List<PreparedNativeHandle>(entries.Count + TransientMarkerFormats.Count);
+        var presentNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             for (var i = 0; i < entries.Count; i++)
@@ -1083,6 +1148,7 @@ internal static class WindowsClipboardPaste
                 var formatId = entry.FormatId;
                 if (entry.FormatName is not null)
                 {
+                    presentNames.Add(entry.FormatName);
                     formatId = RegisterClipboardFormat(entry.FormatName);
                     if (formatId == 0)
                     {
@@ -1091,14 +1157,35 @@ internal static class WindowsClipboardPaste
                 }
 
                 var handle = AllocateNativeHandle(entry);
-                prepared[i] = new PreparedNativeHandle(formatId, entry.Kind, handle);
+                prepared.Add(new PreparedNativeHandle(formatId, entry.Kind, handle));
             }
 
-            return prepared;
+            foreach (var markerName in TransientMarkerFormats)
+            {
+                if (presentNames.Contains(markerName))
+                {
+                    continue;
+                }
+
+                var markerFormatId = RegisterClipboardFormat(markerName);
+                if (markerFormatId == 0)
+                {
+                    continue;
+                }
+
+                var markerHandle = AllocateNativeHandle(new NativeClipboardEntry(
+                    markerFormatId,
+                    markerName,
+                    NativeClipboardEntryKind.HGlobal,
+                    [0, 0, 0, 0]));
+                prepared.Add(new PreparedNativeHandle(markerFormatId, NativeClipboardEntryKind.HGlobal, markerHandle));
+            }
+
+            return prepared.ToArray();
         }
         catch
         {
-            FreePreparedHandles(prepared);
+            FreePreparedHandles(prepared.ToArray());
             throw;
         }
     }
@@ -1281,7 +1368,7 @@ internal static class WindowsClipboardPaste
 
         foreach (var format in formats)
         {
-            if (string.IsNullOrWhiteSpace(format) || IsOleWrapperFormat(format))
+            if (string.IsNullOrWhiteSpace(format) || IsOleWrapperFormat(format) || IsTransientMarkerFormat(format))
             {
                 continue;
             }

@@ -146,7 +146,9 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             commit.RefusalReason,
             repair.Disposition,
             commit.ClipboardRestored,
-            ClipboardUncertain: commit.ClipboardUncertain);
+            ClipboardUncertain: commit.ClipboardUncertain,
+            ArrivalStatus: commit.ArrivalStatus,
+            ArrivalElapsedMilliseconds: commit.ArrivalElapsedMilliseconds);
     }
 
     private static TextDeliveryRefusalReason RefusalFor(TargetContextResult capture) =>
