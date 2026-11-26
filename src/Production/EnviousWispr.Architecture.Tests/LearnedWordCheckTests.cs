@@ -78,6 +78,15 @@ public sealed class LearnedWordCheckTests : IDisposable
             EnglishSpelling.American,
             excludeLearnedAliases: true);
         Assert.Equal("Use ManualWord, MixedWord, learned mix, and saurab.", previewOff);
+
+        var packEntry = new CustomWordEntry("saurab", "PackWord");
+        var reservedForCheck = CustomWordCorrector.Correct(
+            "Ask saurab.",
+            [autoLearned],
+            [packEntry],
+            excludeLearnedAliases: true,
+            reserveExcludedLearnedAliases: true);
+        Assert.Equal("Ask saurab.", reservedForCheck.Text);
     }
 
     [Fact]

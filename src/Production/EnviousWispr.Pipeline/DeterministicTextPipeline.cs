@@ -368,7 +368,8 @@ public sealed class DeterministicTextPipeline
                     context.Text,
                     context.CustomWords,
                     packEntries,
-                    excludeLearnedAliases: true).Text,
+                    excludeLearnedAliases: true,
+                    reserveExcludedLearnedAliases: context.Options.FixLearnedWordsEnabled).Text,
             };
         }
     }
