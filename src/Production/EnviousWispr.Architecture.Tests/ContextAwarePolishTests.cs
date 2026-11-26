@@ -216,7 +216,7 @@ public sealed class ContextAwarePolishTests
     [Fact]
     public void EgOnePromptRemainsUntouched()
     {
-        Assert.Equal("eg1-v1", EgOnePrompt.TemplateId);
+        Assert.Equal("eg1-v2-named-language", EgOnePrompt.TemplateId);
         Assert.Contains("Copy-edit the dictated transcript into clean text", EgOnePrompt.SystemPrompt, StringComparison.Ordinal);
 
         var repoRoot = RepositoryRoot();

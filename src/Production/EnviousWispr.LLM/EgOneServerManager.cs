@@ -13,7 +13,8 @@ public sealed record EgOneServerOptions(
     string ModelFile,
     int ContextTokens = 16_384,
     int? GpuLayers = null,
-    TimeSpan? StartupTimeout = null)
+    TimeSpan? StartupTimeout = null,
+    int? Threads = null)
 {
     public TimeSpan EffectiveStartupTimeout => StartupTimeout ?? TimeSpan.FromSeconds(60);
 }
@@ -131,6 +132,12 @@ public sealed class EgOneServerManager : IEgOneRuntime
         {
             arguments.Add("--gpu-layers");
             arguments.Add(gpuLayers.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (options.Threads is { } threads && threads > 0)
+        {
+            arguments.Add("--threads");
+            arguments.Add(threads.ToString(CultureInfo.InvariantCulture));
         }
 
         return arguments;

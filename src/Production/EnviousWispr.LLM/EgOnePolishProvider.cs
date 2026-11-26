@@ -91,9 +91,10 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                 timer);
         }
 
+        var systemPrompt = EgOnePrompt.BuildSystemPrompt(request.DetectedLanguage ?? request.RecognitionLanguage);
         var userMessage = EgOnePrompt.BuildUserMessage(input.Text);
         var maximumOutputTokens = Math.Max(input.Text.Length, 256);
-        if (!FitsContext(endpoint.ContextTokens, userMessage, maximumOutputTokens))
+        if (!FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
         {
             return Fallback(
                 input,
@@ -125,6 +126,7 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                 {
                     var parsed = await SendAsync(
                         endpoint,
+                        systemPrompt,
                         userMessage,
                         maximumOutputTokens,
                         timeoutCancellation.Token).ConfigureAwait(false);
@@ -212,9 +214,12 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             : new EgOneHealthResult(EgOneHealth.Green, "ready", result.ElapsedMilliseconds);
     }
 
-    internal static bool FitsContext(int contextTokens, string userMessage, int outputTokens)
+    internal static bool FitsContext(int contextTokens, string userMessage, int outputTokens) =>
+        FitsContext(contextTokens, EgOnePrompt.SystemPrompt, userMessage, outputTokens);
+
+    internal static bool FitsContext(int contextTokens, string systemPrompt, string userMessage, int outputTokens)
     {
-        var promptCharacters = EgOnePrompt.SystemPrompt.Length + userMessage.Length;
+        var promptCharacters = systemPrompt.Length + userMessage.Length;
         var estimatedPromptTokens = (promptCharacters + 3) / 4;
         return estimatedPromptTokens + outputTokens + 256 <= contextTokens;
     }
@@ -294,18 +299,6 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
             : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
     }
-
-    private async Task<string?> SendAsync(
-        EgOneEndpoint endpoint,
-        string userMessage,
-        int maximumOutputTokens,
-        CancellationToken cancellationToken) =>
-        await SendAsync(
-            endpoint,
-            EgOnePrompt.SystemPrompt,
-            userMessage,
-            maximumOutputTokens,
-            cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// One call to the built-in model, with the instruction supplied by the caller.

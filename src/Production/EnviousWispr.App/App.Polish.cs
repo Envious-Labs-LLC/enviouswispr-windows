@@ -312,6 +312,7 @@ public partial class App
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
 
         var modelId = ConfiguredEgOneModelId(preferences);
+        var contextTokens = EgOneModelCatalog.DefaultContextTokens(modelId);
         var modelFile = resolvedEgOneModelFile ?? EgOneRuntimeLocator.ResolveModelFile(
             _dataDirectory,
             modelId,
@@ -325,12 +326,33 @@ public partial class App
                 out var parsedGpuLayers))
         {
             gpuLayers = parsedGpuLayers;
+            if (parsedGpuLayers > 0)
+            {
+                _polishResource = RuntimeResourceKind.Accelerator;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(serverExecutable) &&
+                 File.Exists(Path.Combine(Path.GetDirectoryName(serverExecutable) ?? string.Empty, "ggml-cuda.dll")) &&
+                 EnviousWispr.Services.Diagnostics.HardwareProfileSummary.GetCurrent().HasNvidiaGpu)
+        {
+            gpuLayers = 99;
             _polishResource = RuntimeResourceKind.Accelerator;
+        }
+
+        int? threads = null;
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_THREADS"),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedThreads) &&
+            parsedThreads > 0)
+        {
+            threads = parsedThreads;
         }
 
         _configuredEgOneModelPath = modelFile;
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
-            new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
+            new EgOneServerOptions(serverExecutable, modelFile, ContextTokens: contextTokens, GpuLayers: gpuLayers, Threads: threads),
             modelId));
         _polishUsesLocalRuntime = true;
     }
