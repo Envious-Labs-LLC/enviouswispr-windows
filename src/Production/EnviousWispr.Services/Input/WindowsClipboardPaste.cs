@@ -794,7 +794,7 @@ internal static class WindowsClipboardPaste
                         continue;
                     }
                 }
-                else if (ShouldOmitSynthesizedOrDisplayFormat(formatId, hasUnicodeText, hasDib, hasEnhMetaFile))
+                else if (ShouldOmitSynthesizedFormat(formatId, hasUnicodeText, hasDib, hasEnhMetaFile))
                 {
                     continue;
                 }
@@ -843,7 +843,7 @@ internal static class WindowsClipboardPaste
         return length > 0 ? new string(buffer, 0, length) : null;
     }
 
-    private static bool ShouldOmitSynthesizedOrDisplayFormat(
+    internal static bool ShouldOmitSynthesizedFormat(
         uint formatId,
         bool hasUnicodeText,
         bool hasDib,
@@ -852,17 +852,16 @@ internal static class WindowsClipboardPaste
         CfText or CfOemText or CfLocale when hasUnicodeText => true,
         CfBitmap or CfPalette when hasDib => true,
         CfMetaFilePict when hasEnhMetaFile => true,
-        CfOwnerDisplay => true,
         _ => false,
     };
 
-    private static bool TryCaptureNativeEntry(
+    internal static bool TryCaptureNativeEntry(
         uint formatId,
         string? formatName,
         out NativeClipboardEntry? entry)
     {
         entry = null;
-        if (formatId is CfDspText or CfDspBitmap or CfDspMetaFilePict or CfDspEnhMetaFile ||
+        if (formatId is CfOwnerDisplay or CfDspText or CfDspBitmap or CfDspMetaFilePict or CfDspEnhMetaFile ||
             (formatId >= CfGdiObjFirst && formatId <= CfGdiObjLast))
         {
             return false;

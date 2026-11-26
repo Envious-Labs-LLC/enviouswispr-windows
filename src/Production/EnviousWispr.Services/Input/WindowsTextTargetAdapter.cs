@@ -137,16 +137,28 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
+        var keystroke = ResolveCommitKeystroke(current.Context, commitRule);
         return await WindowsClipboardPaste.PasteAsync(
             request.Text.Text,
             request.FallbackText.Text,
             request.Options.RestoreClipboardAfterPaste,
-            commitRule.Keystroke,
+            keystroke,
             () => GuardedPreflight(() => PreflightInput(
                 request.Target,
                 request.ExpectedContext,
                 request.Options)),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static PasteKeystrokeKind ResolveCommitKeystroke(
+        CaretContext context,
+        WindowsPasteRule commitRule)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(commitRule);
+        return context.TargetKind == TextTargetKind.Terminal
+            ? PasteKeystrokeKind.ShiftInsert
+            : commitRule.Keystroke;
     }
 
     /// <summary>What the commit refuses with when the target, read again just before the write, is not the one the context was captured from - or cannot be read.</summary>

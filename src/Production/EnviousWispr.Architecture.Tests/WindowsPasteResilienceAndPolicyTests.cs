@@ -468,6 +468,61 @@ public sealed class WindowsPasteResilienceAndPolicyTests
         Assert.False(WindowsTextTargetAdapter.CanUseDirectValueWrite(standardContext, standardRequest, terminalRule));
     }
 
+    [Fact]
+    public void CommitKeystrokePreservesTerminalShiftInsertForEmbeddedTerminalControl()
+    {
+        var unknownHostTarget = new TargetWindowId(0x1234, 42, "42.7.1", ProcessName: "custom-ide-host");
+        var captureRule = WindowsPastePolicy.Resolve(
+            "custom-ide-host",
+            windowClassName: "CustomHostWindow",
+            elementClassName: "CASCADIA_HOSTING_WINDOW_CLASS",
+            isControlEdit: false);
+        Assert.Equal(TextTargetKind.Terminal, captureRule.TargetKind);
+
+        var capturedContext = new CaretContext(
+            unknownHostTarget,
+            "42.7.1",
+            captureRule.TargetKind,
+            Left: string.Empty,
+            Selection: string.Empty,
+            Right: string.Empty,
+            LeftReachedDocumentStart: false,
+            RightReachedDocumentEnd: false,
+            HasTextContext: false,
+            SupportsDirectValueWrite: false,
+            DirectValueWriteAtEnd: false,
+            IsScreenDerived: true);
+
+        // CommitAsync re-resolves window-level policy with elementClassName: null;
+        // captured TargetKind.Terminal must still preserve Shift+Insert.
+        var commitRule = WindowsPastePolicy.Resolve(
+            "custom-ide-host",
+            windowClassName: "CustomHostWindow",
+            elementClassName: null,
+            isControlEdit: false);
+        Assert.Equal(PasteKeystrokeKind.CtrlV, commitRule.Keystroke);
+        Assert.Equal(
+            PasteKeystrokeKind.ShiftInsert,
+            WindowsTextTargetAdapter.ResolveCommitKeystroke(capturedContext, commitRule));
+    }
+
+    [Fact]
+    public void OwnerDisplayClipboardFormatIsNotOmittedAndFailsSnapshotCapture()
+    {
+        const uint cfOwnerDisplay = 0x0080;
+
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(
+            cfOwnerDisplay,
+            hasUnicodeText: true,
+            hasDib: true,
+            hasEnhMetaFile: true));
+        Assert.False(WindowsClipboardPaste.TryCaptureNativeEntry(
+            cfOwnerDisplay,
+            formatName: null,
+            out var entry));
+        Assert.Null(entry);
+    }
+
     [Theory]
     [InlineData("Shell_TrayWnd", true, false, true, 1920, 48, true)]
     [InlineData("Shell_SecondaryTrayWnd", true, false, true, 1920, 48, true)]
