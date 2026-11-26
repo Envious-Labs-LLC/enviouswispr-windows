@@ -29,6 +29,7 @@ public partial class App
     private Task? _polishWarmup;
     private string? _configuredEgOneModelPath;
     private PolishModelSource? _polishModelSource;
+    private bool _polishSetupCardShownThisLaunch;
 
     /// <summary>
     /// Asks the user's chosen polish model what a word is likely to be misheard as.
@@ -530,6 +531,34 @@ public partial class App
         _polishProvider is { } provider
             ? new PolishSetup(provider, _polishUsesLocalRuntime, EffectivePolishResource(provider))
             : null;
+
+    internal void MaybeShowPolishSetupCard(DeliveryReport delivered, MainWindow window)
+    {
+        if (_polishSetupCardShownThisLaunch ||
+            delivered.Landing != DeliveryLanding.Landed ||
+            CurrentPolishSetup() is not null ||
+            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE")))
+        {
+            return;
+        }
+
+        var provider = EffectivePolishProvider(_settings.Preferences.Polish);
+        if (provider == PolishProvider.None)
+        {
+            return;
+        }
+
+        var (title, button) = provider switch
+        {
+            PolishProvider.Ollama => ("Choose a model for Ollama.", "Open AI polish settings"),
+            PolishProvider.EgOne => ("Local AI polish needs setup.", "Set up AI polish"),
+            _ => ("Finish AI polish setup.", "Set up AI polish"),
+        };
+        if (window.TryShowPolishSetupCard(title, button))
+        {
+            _polishSetupCardShownThisLaunch = true;
+        }
+    }
 
     private RuntimeResourceKind EffectivePolishResource(IPolishProvider provider) =>
         provider is EgOnePolishProvider { UsesAccelerator: { } usesAccelerator }

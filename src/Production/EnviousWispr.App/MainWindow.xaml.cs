@@ -260,6 +260,7 @@ public sealed partial class MainWindow : Window, IDisposable
         InitializeChimeCards();
         SetTranscribeFileStep(1);
         _overlayWindow = new DictationOverlayWindow();
+        InitializePillPreview();
         _audioPlayback = new WindowsAudioPlaybackService(DispatcherQueue);
         _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
@@ -511,7 +512,10 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var sentence = status.Text;
         var overlayState = status.State;
-        _overlayWindow.ShowState(status);
+        if (!PillPreviewCatalog.ShouldSuppressStatusForPreview(_overlayWindow.IsPreviewVisible, overlayState))
+        {
+            _overlayWindow.ShowState(status);
+        }
         HandleRecordingSoundTransition(overlayState);
         SessionStatusChanged?.Invoke(status);
         if (overlayState is DictationOverlayState.Recording or DictationOverlayState.Processing)
@@ -591,6 +595,12 @@ public sealed partial class MainWindow : Window, IDisposable
             case PillActionKind.OpenTranscriptionSettings:
                 OpenPage("settings-transcription");
                 break;
+            case PillActionKind.OpenMicrophoneSettings:
+                OpenMicrophoneSettings();
+                break;
+            case PillActionKind.OpenMicrophonePrivacySettings:
+                OpenMicrophonePrivacySettings();
+                break;
             case PillActionKind.OpenFileTranscription:
                 OpenPage("settings-transcribe-file");
                 break;
@@ -617,9 +627,50 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    private void OpenMicrophoneSettings() => OpenPage("settings-dictation", "microphone");
+
+    private async void OpenMicrophonePrivacySettings()
+    {
+        try
+        {
+            var opened = await Windows.System.Launcher.LaunchUriAsync(
+                new Uri("ms-settings:privacy-microphone"));
+            if (!opened)
+            {
+                OpenMicrophoneSettings();
+            }
+        }
+        catch
+        {
+            OpenMicrophoneSettings();
+        }
+    }
+
     private void InvokeEscapeRecoveryUndo() => RecoveryUndoRequested?.Invoke();
 
     private void InvokeLearnedCorrectionUndo() => LearnedPillUndoActiveRequested?.Invoke();
+
+    public bool TryShowBluetoothAwarenessCard()
+    {
+        if (_overlayWindow.IsActiveNonPreview || _overlayWindow.IsPreviewVisible)
+        {
+            return false;
+        }
+
+        _overlayWindow.ShowState(DictationStatus.BluetoothCard());
+        return true;
+    }
+
+    public bool TryShowPolishSetupCard(string title, string buttonLabel)
+    {
+        if (_overlayWindow.IsActiveNonPreview || _overlayWindow.IsPreviewVisible)
+        {
+            return false;
+        }
+
+        _overlayWindow.ShowState(DictationStatus.PolishSetupCard(title, buttonLabel));
+        return true;
+    }
 
     public Func<(bool HasStoredMemory, int BlockedCount)>? QueryLearnMemoryState { get; set; }
 

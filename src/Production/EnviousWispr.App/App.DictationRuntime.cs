@@ -30,6 +30,8 @@ public partial class App
     private LastDictationReuse? _lastDictation;
     private SavedDictationPaste? _savedDictationPaste;
     private int _lastDictationPreviewVersion;
+    private volatile bool _bluetoothAwarenessShownThisLaunch;
+    private volatile bool _bluetoothMicDetectedPending;
 
     /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
     private Guid? _lastDictationPreviewEntry;
@@ -135,6 +137,25 @@ public partial class App
             // The tray and the pill are driven from the same status, so the two surfaces cannot
             // disagree about whether a recording is live.
             _trayIcon?.SetState(TrayIconStates.For(status.State));
+            if (status.State == DictationOverlayState.Hidden &&
+                _bluetoothMicDetectedPending &&
+                !_bluetoothAwarenessShownThisLaunch &&
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE")))
+            {
+                PostToLiveWindow(window =>
+                {
+                    if (_bluetoothAwarenessShownThisLaunch || !_bluetoothMicDetectedPending)
+                    {
+                        return;
+                    }
+
+                    if (window.TryShowBluetoothAwarenessCard())
+                    {
+                        _bluetoothMicDetectedPending = false;
+                        _bluetoothAwarenessShownThisLaunch = true;
+                    }
+                });
+            }
         }
         catch (ObjectDisposedException)
         {
@@ -307,7 +328,11 @@ public partial class App
                     SetPolishSessionActive(active);
                     PostToLiveWindow(window => window.SetDictationActive(active));
                 },
-                OnPasteCompleted: OnSelfLearningPasteCompleted),
+                OnPasteCompleted: OnSelfLearningPasteCompleted,
+                AutoStopUnavailable: isHandsFree =>
+                    _settings.Preferences.Dictation.AutoStopEnabled &&
+                    (isHandsFree || _settings.Preferences.Dictation.RecordingMode == DictationRecordingMode.Toggle) &&
+                    _audioCapture is not IAudioSnapshotSource),
             TimeProvider.System));
         if (_pushToTalkHook is not null)
         {
@@ -365,6 +390,11 @@ public partial class App
                 .GetCaptureDevicesAsync(cancellationToken)
                 .ConfigureAwait(false);
             var resolution = InputDeviceResolver.Resolve(devices, preferredId);
+            if (resolution.SelectedDevice?.Transport == AudioDeviceTransport.Bluetooth &&
+                !_bluetoothAwarenessShownThisLaunch)
+            {
+                _bluetoothMicDetectedPending = true;
+            }
             return resolution.SelectedDeviceId ?? fallback;
         }
         catch (OperationCanceledException)

@@ -754,8 +754,10 @@ public sealed partial class DesignSystemTokenTests
     /// (wave 5, issue #334). Sources, all under macos-source/Sources/EnviousWisprAppKit/App/Overlay/Views:
     /// RecordingOverlayView.swift:431 and :495 (13pt monospaced clock, Reading Well and Level Rail),
     /// :548 (13pt clock, Capsule), :449, :457 and :530 (11pt state word and hands-free badge),
-    /// PolishingOverlayView.swift:26 (13pt processing label). A new small text is not excused by
-    /// being added here without a macOS line to cite.
+    /// ColdStartNoticeView.swift:52 (11pt subtitle) and NotificationOverlayView.swift:98 (12pt subtitle -> 12px StateSubtitle),
+    /// RecordingOverlayView.swift:563 (11pt in-panel notice -> 11px InPanelNoticeText), and
+    /// BluetoothAwarenessCardView.swift:115 (12pt footer note -> 12px BluetoothFooterText).
+    /// A new small text is not excused by being added here without a macOS line to cite.
     /// </remarks>
     private static readonly Dictionary<string, double> OverlayMacSizedText = new(StringComparer.Ordinal)
     {
@@ -764,6 +766,9 @@ public sealed partial class DesignSystemTokenTests
         ["ModeLabel"] = 11,
         ["RailHandsFreeText"] = 11,
         ["WellHandsFreeText"] = 11,
+        ["StateSubtitle"] = 12,
+        ["InPanelNoticeText"] = 11,
+        ["BluetoothFooterText"] = 12,
     };
 
     /// <summary>

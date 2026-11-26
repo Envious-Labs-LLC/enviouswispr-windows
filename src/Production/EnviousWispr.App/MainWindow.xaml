@@ -3048,6 +3048,50 @@
                                             <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE896;" /><Button Grid.Column="1" Click="ExportDiagnosticsButton_Click" Content="Export privacy-safe diagnostics" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid>
                                         </StackPanel>
                                     </Border>
+                                    <Border Style="{StaticResource BrandSettingsCardStyle}">
+                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE771;" />
+                                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="PillReviewModeToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Pill review mode" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Inspect every overlay pill, notice, chip, and card on demand without affecting live dictation." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <ToggleSwitch Grid.Column="2" x:Name="PillReviewModeToggle" AutomationProperties.LabeledBy="{x:Bind PillReviewModeToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" Toggled="PillReviewModeToggle_Toggled" />
+                                            </Grid>
+                                            <StackPanel x:Name="PillReviewControlsPanel" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                                                <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8FD;" />
+                                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}">
+                                                        <TextBlock x:Name="PillPreviewPickerLabel" Style="{StaticResource BrandRowLabelStyle}" Text="Overlay surface" TextWrapping="Wrap" />
+                                                        <ComboBox x:Name="PillPreviewComboBox" AutomationProperties.LabeledBy="{x:Bind PillPreviewPickerLabel, Mode=OneTime}" HorizontalAlignment="Stretch" SelectionChanged="PillPreviewComboBox_SelectionChanged" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <Button x:Name="PillPreviewPlayButton" Click="PillPreviewPlayButton_Click" Content="Play" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                                            <Button x:Name="PillPreviewNextButton" Click="PillPreviewNextButton_Click" Content="Next" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                            <Button x:Name="PillPreviewDismissButton" Click="PillPreviewDismissButton_Click" Content="Dismiss" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Grid>
+                                                <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                                <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE718;" />
+                                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                        <TextBlock x:Name="PillPreviewHoldOpenToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Hold open" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Keep the preview pill visible while inspecting instead of auto-dismissing." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <ToggleSwitch Grid.Column="2" x:Name="PillPreviewHoldOpenToggle" AutomationProperties.LabeledBy="{x:Bind PillPreviewHoldOpenToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" Toggled="PillPreviewHoldOpenToggle_Toggled" />
+                                                </Grid>
+                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                    <TextBlock x:Name="PillPreviewStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" />
+                                                    <TextBlock x:Name="PillPreviewActionEventText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                                                    <TextBlock x:Name="PillPreviewExclusionsText" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                             <Border x:Name="PortableProfileSection" Style="{StaticResource BrandSettingsSectionStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="PortableprofileEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="PortableprofileEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsProfileNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Portable profile" /></StackPanel><Border Style="{StaticResource BrandSettingsCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><TextBlock Text="Export or import settings, dictionary entries, and snippets. Machine-specific microphone choices, API keys, history, audio, and lifecycle state are never included." TextWrapping="Wrap" /><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B5;" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button Click="ExportProfileButton_Click" Content="Export profile" Style="{StaticResource BrandQuietButtonStyle}" /><Button Click="ImportProfileButton_Click" Content="Import profile" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></Grid></StackPanel></Border></StackPanel></Border>

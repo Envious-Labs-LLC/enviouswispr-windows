@@ -98,8 +98,14 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
                 ? "Windows is suspending. Captured audio is being preserved"
                 : "Windows locked. Captured audio is being preserved"));
 
-    public void ShowTransitionStatus(SessionTransitionResult result) =>
-        _view.ShowStatus(SessionStatus(result));
+    public void ShowTransitionStatus(SessionTransitionResult result)
+    {
+        var notice = result.Kind == SessionTransitionKind.Started &&
+                     parts.Shell.AutoStopUnavailable?.Invoke(result.IsHandsFree) == true
+            ? RecordingNoticeKind.AutoStopUnavailable
+            : RecordingNoticeKind.None;
+        _view.ShowStatus(SessionStatus(result, notice));
+    }
 
     public void ShowProcessing() =>
         _view.ShowStatus(DictationStatus.Processing("Transcribing locally..."));
@@ -246,18 +252,41 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
             AppFailureCategory.RuntimeWorker,
             ErrorCode: AppErrorCode.RuntimeResourceBusy));
 
-    private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
+    private static DictationStatus SessionStatus(
+        SessionTransitionResult result,
+        RecordingNoticeKind notice = RecordingNoticeKind.None) => result.Kind switch
     {
         SessionTransitionKind.Started => DictationStatus.Recording(
             result.IsHandsFree
                 ? "Recording hands-free. Press again to finish, Escape to cancel"
                 : "Recording. Release to finish, Escape to cancel",
-            result.IsHandsFree),
+            result.IsHandsFree,
+            notice),
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
             DictationStatus.Quiet("Capture preserved after a microphone interruption"),
         SessionTransitionKind.FinalizeReady =>
             DictationStatus.Quiet("Capture complete. Transcribing locally"),
         SessionTransitionKind.Cancelled => DictationStatus.Quiet("Cancelled. Nothing will be delivered"),
+        SessionTransitionKind.Failed when result.Error?.Code == AppErrorCode.AccessDenied =>
+            DictationStatus.RichError(
+                "Microphone access is blocked",
+                "Allow EnviousWispr to use your microphone in Windows Settings.",
+                new PillAction(
+                    "Open Settings",
+                    PillActionKind.OpenMicrophonePrivacySettings,
+                    "Open Windows microphone privacy settings"),
+                RichErrorVariant.PermissionDenied),
+        SessionTransitionKind.Failed when result.Error?.Code == AppErrorCode.AudioDeviceLost =>
+            DictationStatus.Distress("Microphone disconnected."),
+        SessionTransitionKind.Failed when result.Error?.Code == AppErrorCode.AudioDeviceUnavailable =>
+            DictationStatus.RichError(
+                "Microphone not responding",
+                "No audio was received from your selected microphone. Check mute switches or pick another device.",
+                new PillAction(
+                    "How to fix",
+                    PillActionKind.OpenMicrophoneSettings,
+                    "Open microphone settings to troubleshoot"),
+                RichErrorVariant.MicNotResponding),
         SessionTransitionKind.Failed => DictationStatus.Error("Session failed safely"),
         _ => DictationStatus.Quiet("Idle"),
     };

@@ -135,21 +135,34 @@ public partial class App
             "recording-hands-free" =>
                 DictationStatus.Recording("Hands-free recording. Tap twice to stop, Escape to cancel", isHandsFree: true),
             "processing" => DictationStatus.Processing("Transcribing locally..."),
+            "cold-start" => DictationStatus.ColdStart("Getting dictation ready...", "Parakeet is warming up after a restart"),
+            "engine-ready" => DictationStatus.EngineReady("Ready, press to dictate"),
+            "import-status" => DictationStatus.ImportStatus("Importing your words now. Check progress on the Dictionary page."),
             "success" => DictationStatus.Success("Copied to your clipboard"),
             "warning" =>
                 DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
-            // THE TWO NEW SEVERITIES ARE DRIVABLE FROM HERE OR THEY ARE NOT TESTABLE AT ALL. An
-            // advisory needs a provider to be misconfigured and a distress needs Windows to
-            // interrupt a dictation, neither of which a person can arrange on demand. The advisory
-            // carries its button, because the thing most worth looking at on a real screen is
-            // whether a button on a window shown without activation can actually be pressed.
             "advisory" => DictationStatus.Advisory(
                 "Ollama is offline. Cleaned text will still be preserved", OpenPolish),
+            "suggestion" => DictationStatus.Suggestion(
+                "Detected Spanish. Lock it?",
+                new PillAction("Lock", PillActionKind.LockDetectedLanguage, "Lock Spanish for dictation")),
             "distress" => DictationStatus.Distress(
-                "Windows interrupted the active dictation; recovery is still pending"),
+                "Microphone disconnected."),
             "escape-recovery" => DictationStatus.EscapeRecovery(
                 "Dictation cancelled", EnviousWispr.App.Composition.StatusActions.UndoEscapeRecovery),
-            "error" => DictationStatus.Error("Local transcription failed safely"),
+            "error" => DictationStatus.Error("Audio capture error. Try again."),
+            "rich-error-permission" => DictationStatus.RichError(
+                "Microphone access is blocked",
+                "Allow EnviousWispr to use your microphone in Windows Settings.",
+                new PillAction("Open Settings", PillActionKind.OpenMicrophonePrivacySettings, "Open Windows microphone privacy settings"),
+                RichErrorVariant.PermissionDenied),
+            "rich-error-mic" => DictationStatus.RichError(
+                "Microphone not responding",
+                "No audio was received from your selected microphone. Check mute switches or pick another device.",
+                new PillAction("How to fix", PillActionKind.OpenMicrophoneSettings, "Open microphone settings"),
+                RichErrorVariant.MicNotResponding),
+            "bluetooth-card" => DictationStatus.BluetoothCard(),
+            "polish-setup-card" => DictationStatus.PolishSetupCard("Choose a model for Claude.", "Select a new cloud model"),
             _ => null,
         };
         if (status.HasValue)

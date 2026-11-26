@@ -7,54 +7,31 @@ public enum DictationOverlayState
     Hidden,
     Recording,
     Processing,
+    ColdStart,
+    EngineReady,
+    ImportStatus,
     Success,
 
     /// <summary>
     /// The user's setup needs attention. Deliberately NOT an error.
     /// </summary>
-    /// <remarks>
-    /// AN ERROR'S RED MARK SAYS OUR SOFTWARE BROKE, AND A SETUP PROBLEM IS NOT THAT. Ollama being
-    /// switched off, or a model not installed yet, is the user's machine telling them something
-    /// they can fix. Shown as an error it blames the wrong party; shown as nothing at all, which is
-    /// what the Windows app did, it leaves the user with a feature that silently does less than
-    /// they think. macOS separates the two for exactly this reason and writes the reason down.
-    /// </remarks>
     Advisory,
 
     /// <summary>
     /// The app noticed something it could do better, and is asking.
     /// </summary>
-    /// <remarks>
-    /// NOT AN ADVISORY, BECAUSE NOTHING NEEDS ATTENTION. An advisory says the setup is incomplete and
-    /// heads its pill that way; this says the app has been listening and has a suggestion, which
-    /// reads as an accusation under that heading. It takes the advisory PALETTE deliberately - the
-    /// violet already means "this is about your setup and nothing is broken" - and differs only in
-    /// what it calls itself.
-    /// </remarks>
     Suggestion,
     Warning,
 
     /// <summary>
     /// Something outside the app interrupted a live dictation.
     /// </summary>
-    /// <remarks>
-    /// THE INTERRUPTION LOOK. Windows suspending, the machine running out of memory, a session
-    /// stopped mid-sentence by something the user did not do. It carries the error red with a
-    /// deeper wash and a pulse rather than a colour of its own, because it is the same bad news
-    /// arriving louder, not a different kind of bad news.
-    /// </remarks>
     Distress,
     Error,
 
     /// <summary>
     /// A record press was refused because something else has the session - a file being transcribed.
     /// </summary>
-    /// <remarks>
-    /// NOT A WARNING, BECAUSE NO TEXT WAS AT RISK, AND NOT AN ADVISORY, BECAUSE NOTHING IN THE SETUP IS WRONG.
-    /// Under either heading the pill would say something untrue. It takes the warning PALETTE deliberately -
-    /// amber says "this did not happen the way you asked" without saying anything broke - and differs only
-    /// in what it calls itself, as Suggestion does beside Advisory. macOS shows the same refusal. Ref: #211.
-    /// </remarks>
     Busy,
 
     /// <summary>An Escape Recovery copy is waiting and the pill offers a one-shot Undo button.</summary>
@@ -62,8 +39,29 @@ public enum DictationOverlayState
 
     /// <summary>The Self-Learning Dictionary just learned a correction and offers an Undo pill.</summary>
     CorrectionLearned,
+
+    /// <summary>Floating theme-aware awareness card explaining Bluetooth microphone cold starts.</summary>
+    BluetoothCard,
+
+    /// <summary>Floating theme-aware card inviting the user to finish AI polish setup.</summary>
+    PolishSetupCard,
 }
 
+/// <summary>Inline notice shown inside an active recording overlay surface.</summary>
+public enum RecordingNoticeKind
+{
+    None,
+    ApproachingCap,
+    AutoStopUnavailable,
+}
+
+/// <summary>Visual variant for rich error capsules that offer a recovery action.</summary>
+public enum RichErrorVariant
+{
+    None,
+    PermissionDenied,
+    MicNotResponding,
+}
 
 /// <summary>What pressing a pill's button asks the app to do.</summary>
 /// <remarks>
@@ -80,17 +78,13 @@ public enum PillActionKind
     /// <summary>Show the page where the speech engine is chosen and installed.</summary>
     OpenTranscriptionSettings,
 
+    /// <summary>Show the Microphone and Input tab in Dictation Settings.</summary>
+    OpenMicrophoneSettings,
+
+    /// <summary>Open Windows Microphone privacy settings to restore mic access.</summary>
+    OpenMicrophonePrivacySettings,
+
     /// <summary>Pin recognition to the language the app keeps hearing.</summary>
-    /// <remarks>
-    /// THE ONE ACTION HERE THAT CHANGES A SETTING RATHER THAN SHOWING ONE, and it is safe to do from
-    /// a pill for the same reason the offer exists: recognition has heard the same language three
-    /// times running, the change is one the person can undo in the same place they would have made
-    /// it, and nothing happens at all unless they press it.
-    ///
-    /// WHICH language is not carried here, and that is on purpose. This enum names an intent, so a
-    /// language code in it would make the vocabulary of the pill depend on the list of languages the
-    /// settings page happens to hold. The window that made the offer remembers what it offered.
-    /// </remarks>
     LockDetectedLanguage,
 
     /// <summary>Show the Transcribe a File page, where the job that has the session can be watched or stopped.</summary>
@@ -104,16 +98,6 @@ public enum PillActionKind
 }
 
 /// <summary>The one button a notice may carry.</summary>
-/// <remarks>
-/// WHERE macOS LETS A USER FIX THE THING FROM THE NOTICE, WINDOWS TOLD THEM AND LEFT THEM TO FIND
-/// THE SETTING. The macOS pill offers Discard on a recovery and Grant on a permission toast; the
-/// Windows overlay markup contained zero buttons, counted rather than assumed.
-///
-/// A SPOKEN LABEL SEPARATE FROM THE PRINTED ONE, because a button on a pill has room for two words
-/// and a screen reader has no surrounding context to lend them meaning. macOS learned this the
-/// expensive way: its Discard button spelled its accessibility label as a bare literal inside the
-/// view, with no field behind it, so nothing could read it and nothing could check it.
-/// </remarks>
 /// <param name="Label">What is printed on the button.</param>
 /// <param name="Kind">What pressing it asks for.</param>
 /// <param name="AccessibilityLabel">
@@ -129,49 +113,25 @@ public sealed record PillAction(string Label, PillActionKind Kind, string? Acces
 /// <summary>
 /// One sentence for the user, carrying the pill it is meant to appear on.
 /// </summary>
-/// <remarks>
-/// THE STATE TRAVELS WITH THE TEXT, because the alternative was reading the text back to find it.
-/// The shipped code picked the pill by matching the status sentence - <c>StartsWith("Recording")</c>,
-/// <c>Contains("copied only")</c> - so rewording a sentence changed what the user saw. Rewriting
-/// "Recording. Release to finish" as "Listening..." dropped through every branch to
-/// <see cref="DictationOverlayState.Hidden"/> and removed the pill from a live recording, with no
-/// code change and nothing able to report it. The macOS app carries the same warning in its own
-/// source, one line long: inferring a visual from a string is how a copy edit silently changes an
-/// icon.
-///
-/// A value type in Core rather than a field on the window, deliberately and for the same reason
-/// macOS keeps its overlay vocabulary free of AppKit: every status the app can produce is then
-/// reachable from a test with no windowing present.
-///
-/// Statuses that are only ever read on the settings line, never announced on a pill, say so by
-/// naming <see cref="Quiet"/>. That is a decision at the call site rather than a fall-through, so a
-/// status added later cannot go quiet by accident.
-/// </remarks>
-/// <param name="Text">The sentence shown to the user.</param>
-/// <param name="State">The pill that carries it.</param>
-/// <param name="Action">The one thing the user can do about it, or null.</param>
-/// <param name="DescribesTranscriptionEngine">
-/// Whether this sentence is about the speech engine's own readiness, and therefore belongs on the
-/// Transcription card and the onboarding line as well as the status line.
-/// </param>
-/// <param name="IsHandsFree">Whether a live recording is hands-free (locked), so the pill shows its locked look.</param>
 public readonly record struct DictationStatus(
     string Text,
     DictationOverlayState State,
     PillAction? Action = null,
     bool DescribesTranscriptionEngine = false,
-    bool IsHandsFree = false)
+    bool IsHandsFree = false,
+    string? Subtitle = null,
+    RecordingNoticeKind RecordingNotice = RecordingNoticeKind.None,
+    RichErrorVariant ErrorVariant = RichErrorVariant.None,
+    double? DwellSeconds = null,
+    PillAction? SecondaryAction = null)
 {
     /// <summary>Marks a status as one the Transcription card should show.</summary>
-    /// <remarks>
-    /// SAID AT THE CALL SITE, NOT READ OUT OF THE WORDS. The card that names the loaded speech engine
-    /// is reached by this flag, not by matching phrases in the sentence: a phrase match let unrelated
-    /// lines that happened to contain "ready" or "not installed" (a resume notice, a recovery notice,
-    /// the cleanup provider's health) overwrite it, and let an engine sentence without one of the
-    /// phrases miss it. A flag on the status is the one form a reword cannot break.
-    /// </remarks>
     public DictationStatus AboutTheTranscriptionEngine() =>
         this with { DescribesTranscriptionEngine = true };
+
+    /// <summary>Attaches an in-panel notice to a live recording status.</summary>
+    public DictationStatus WithRecordingNotice(RecordingNoticeKind notice) =>
+        this with { RecordingNotice = notice };
 
     /// <summary>Shown on the settings status line only. No pill.</summary>
     public static DictationStatus Quiet(string text) => new(text, DictationOverlayState.Hidden);
@@ -180,49 +140,108 @@ public readonly record struct DictationStatus(
     public static DictationStatus Recording(string text, bool isHandsFree = false) =>
         new(text, DictationOverlayState.Recording, IsHandsFree: isHandsFree);
 
+    /// <summary>A recording is live with an in-panel status notice.</summary>
+    public static DictationStatus Recording(
+        string text,
+        bool isHandsFree,
+        RecordingNoticeKind notice) =>
+        new(text, DictationOverlayState.Recording, IsHandsFree: isHandsFree, RecordingNotice: notice);
+
     /// <summary>Work is under way and the user is waiting on it.</summary>
     public static DictationStatus Processing(string text) =>
         new(text, DictationOverlayState.Processing);
 
-    /// <summary>The dictation arrived where it was meant to go.</summary>
+    /// <summary>The local engine is warming up or downloading before dictation is ready.</summary>
+    public static DictationStatus ColdStart(
+        string text = "Getting dictation ready...",
+        string? subtitle = null) =>
+        new(text, DictationOverlayState.ColdStart, Subtitle: subtitle);
+
+    /// <summary>The speech engine finished warming up and is ready for dictation.</summary>
+    public static DictationStatus EngineReady(string text = "Ready, press to dictate") =>
+        new(text, DictationOverlayState.EngineReady, DwellSeconds: 1.5);
+
+    /// <summary>A dictionary or profile import notice is shown temporarily.</summary>
+    public static DictationStatus ImportStatus(string text) =>
+        new(text, DictationOverlayState.ImportStatus, DwellSeconds: 3.0);
+
+    /// <summary>The dictation arrived where it was meant to go (or copied to clipboard).</summary>
     public static DictationStatus Success(string text) =>
-        new(text, DictationOverlayState.Success);
+        new(text, DictationOverlayState.Success, DwellSeconds: 2.5);
 
     /// <summary>The user's setup needs attention, and the app is not what broke.</summary>
-    /// <remarks>
-    /// AN ADVISORY IS THE SEVERITY MOST WORTH A BUTTON, because it is the one whose whole content
-    /// is a thing the user could go and change. Telling someone their cleanup provider is switched
-    /// off and leaving them to find the page is the behaviour this overload exists to replace.
-    /// </remarks>
     public static DictationStatus Advisory(string text, PillAction? action = null) =>
-        new(text, DictationOverlayState.Advisory, action);
+        new(text, DictationOverlayState.Advisory, action, DwellSeconds: 8.0);
 
     /// <summary>The app has a suggestion about how it is being used, and is asking.</summary>
-    /// <remarks>
-    /// ALWAYS CARRIES THE ONE THING IT IS SUGGESTING. A suggestion with no button is a remark, and a
-    /// remark on a pill that dismisses itself is noise. The action is required for that reason.
-    /// </remarks>
     public static DictationStatus Suggestion(string text, PillAction action) =>
-        new(text, DictationOverlayState.Suggestion, action);
+        new(text, DictationOverlayState.Suggestion, action, DwellSeconds: 6.0);
+
+    /// <summary>The app has a suggestion offering an affirmative action and an explicit dismiss button.</summary>
+    public static DictationStatus Suggestion(
+        string text,
+        PillAction action,
+        PillAction? secondaryAction) =>
+        new(
+            text,
+            DictationOverlayState.Suggestion,
+            action,
+            DwellSeconds: 6.0,
+            SecondaryAction: secondaryAction);
 
     /// <summary>The text is safe, but it did not arrive the way the user asked.</summary>
     public static DictationStatus Warning(string text) =>
-        new(text, DictationOverlayState.Warning);
+        new(text, DictationOverlayState.Warning, DwellSeconds: 2.5);
 
     /// <summary>A press was refused because something else has the session, and the pill says what.</summary>
     public static DictationStatus Busy(string text, PillAction? action = null) =>
-        new(text, DictationOverlayState.Busy, action);
+        new(text, DictationOverlayState.Busy, action, DwellSeconds: 6.0);
 
     /// <summary>Something outside the app interrupted a live dictation.</summary>
     public static DictationStatus Distress(string text) =>
-        new(text, DictationOverlayState.Distress);
+        new(text, DictationOverlayState.Distress, DwellSeconds: 2.0);
 
     /// <summary>A cancelled dictation was saved for recovery and offers one-shot Undo.</summary>
     public static DictationStatus EscapeRecovery(string text, PillAction action) =>
-        new(text, DictationOverlayState.EscapeRecovery, action);
+        new(text, DictationOverlayState.EscapeRecovery, action, DwellSeconds: 3.0);
 
     /// <summary>Something failed and the user has to know.</summary>
-    public static DictationStatus Error(string text) => new(text, DictationOverlayState.Error);
+    public static DictationStatus Error(string text) =>
+        new(text, DictationOverlayState.Error, DwellSeconds: 3.0);
+
+    /// <summary>An actionable error card with a soft-red icon badge, subtitle, and capsule button.</summary>
+    public static DictationStatus RichError(
+        string title,
+        string subtitle,
+        PillAction action,
+        RichErrorVariant variant,
+        double? dwellSeconds = null) =>
+        new(
+            title,
+            DictationOverlayState.Error,
+            action,
+            Subtitle: subtitle,
+            ErrorVariant: variant,
+            DwellSeconds: dwellSeconds ?? (variant == RichErrorVariant.MicNotResponding ? 8.0 : 6.0));
+
+    /// <summary>Floating educational card shown once per launch when a Bluetooth mic is selected.</summary>
+    public static DictationStatus BluetoothCard() =>
+        new(
+            "Bluetooth mic detected",
+            DictationOverlayState.BluetoothCard,
+            Action: new("Adjust settings", PillActionKind.OpenMicrophoneSettings, "Adjust microphone settings"),
+            Subtitle: "Bluetooth microphones can take a moment on a cold start.");
+
+    /// <summary>Floating prompt card shown when AI polish needs model setup or credentials.</summary>
+    public static DictationStatus PolishSetupCard(
+        string title = "Polish needs setup.",
+        string buttonLabel = "Set up AI polish",
+        string subtitle = "Pasted without AI polish.") =>
+        new(
+            title,
+            DictationOverlayState.PolishSetupCard,
+            Action: new(buttonLabel, PillActionKind.OpenPolishSettings, "Open AI polish settings"),
+            Subtitle: subtitle);
 
     /// <summary>The sentence, so a status can still be used where only words are wanted.</summary>
     public override string ToString() => Text;
