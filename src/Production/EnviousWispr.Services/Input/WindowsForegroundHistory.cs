@@ -11,8 +11,8 @@ namespace EnviousWispr.Services.Input;
 /// (`EVENT_SYSTEM_FOREGROUND`) and remembers the last one that could be a target. Ref: #206.
 ///
 /// The shell's own surfaces are skipped by window class - the taskbars, the overflow flyout, Start and search,
-/// the desktop, and a menu - because none of them is somewhere a person dictates, and every one of them sits
-/// between the person's window and the tray click.
+/// the desktop, Windows 11 XAML shell overlays, empty UWP frame overlays, and menus - because none of them
+/// is somewhere a person dictates, and every one of them sits between the person's window and the tray click.
 ///
 /// Must be created on a thread with a message loop (the UI thread): an out-of-context WinEvent hook delivers
 /// its callbacks through that thread's messages.
@@ -21,6 +21,8 @@ public sealed class WindowsForegroundHistory : IDisposable
 {
     private const uint EventSystemForeground = 0x0003;
     private const uint WinEventOutOfContext = 0x0000;
+    private const int DwmWindowCloakedAttribute = 14;
+    private const uint GetWindowChild = 5;
 
     private static readonly HashSet<string> ShellClasses = new(StringComparer.Ordinal)
     {
@@ -28,7 +30,13 @@ public sealed class WindowsForegroundHistory : IDisposable
         "Shell_SecondaryTrayWnd",
         "NotifyIconOverflowWindow",
         "TopLevelWindowForOverflowXamlIsland",
+        "XamlExplorerHostWindow",
         "XamlExplorerHostIslandWindow",
+        "Shell_InputSwitchTopLevelWindow",
+        "MultitaskingViewFrame",
+        "TaskListThumbnailWnd",
+        "ForegroundStaging",
+        "LockScreenControllerProxyWindow",
         "Windows.UI.Core.CoreWindow",
         "Progman",
         "WorkerW",
@@ -54,7 +62,7 @@ public sealed class WindowsForegroundHistory : IDisposable
         Consider(GetForegroundWindow());
     }
 
-    /// <summary>The last window that could take a paste, if it still exists.</summary>
+    /// <summary>The last window that could take a paste, if it still exists with its process.</summary>
     public TargetWindowId? LastTarget
     {
         get
@@ -67,7 +75,15 @@ public sealed class WindowsForegroundHistory : IDisposable
             }
 
             var last = _last;
-            return last is not null && IsWindow(last.Value.Value) ? last : null;
+            if (last is null || !IsWindow(last.Value.Value))
+            {
+                return null;
+            }
+
+            _ = GetWindowThreadProcessId(last.Value.Value, out var processId);
+            return processId != 0 && (last.Value.ProcessId == 0 || processId == last.Value.ProcessId)
+                ? last
+                : null;
         }
     }
 
@@ -91,7 +107,7 @@ public sealed class WindowsForegroundHistory : IDisposable
 
     private void Consider(nint window)
     {
-        if (window == 0)
+        if (window == 0 || !IsWindow(window))
         {
             return;
         }
@@ -102,32 +118,76 @@ public sealed class WindowsForegroundHistory : IDisposable
             return;
         }
 
-        _last = new TargetWindowId(window, processId, FocusedElementId: null, ProcessName: TryCaptureProcessName(processId));
+        _last = new TargetWindowId(
+            window,
+            processId,
+            FocusedElementId: null,
+            ProcessName: WindowsWindowIdentity.TryGetProcessName(processId));
     }
 
-    private static string? TryCaptureProcessName(uint processId)
+    internal static bool IsTransientShellWindow(
+        string? className,
+        bool isVisible,
+        bool isCloaked,
+        bool hasChildWindow,
+        int width,
+        int height)
     {
-        if (processId == 0)
+        if (!isVisible || isCloaked)
         {
-            return null;
+            return true;
         }
 
-        try
+        if (string.IsNullOrEmpty(className))
         {
-            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
-            return process.ProcessName;
+            return false;
         }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+
+        if (ShellClasses.Contains(className))
         {
-            return null;
+            return true;
         }
+
+        if (string.Equals(className, "ApplicationFrameWindow", StringComparison.Ordinal))
+        {
+            return !hasChildWindow || width <= 0 || height <= 0;
+        }
+
+        return false;
     }
 
     private static bool IsShellSurface(nint window)
     {
-        var name = new char[128];
-        var length = GetClassName(window, name, name.Length);
-        return length > 0 && ShellClasses.Contains(new string(name, 0, length));
+        var className = WindowsWindowIdentity.TryGetClassName(window);
+        var isVisible = IsWindowVisible(window);
+        var isCloaked = IsWindowCloaked(window);
+        var hasChild = GetWindow(window, GetWindowChild) != 0;
+        var (width, height) = GetWindowRect(window, out var rect)
+            ? (rect.Right - rect.Left, rect.Bottom - rect.Top)
+            : (0, 0);
+        return IsTransientShellWindow(className, isVisible, isCloaked, hasChild, width, height);
+    }
+
+    private static bool IsWindowCloaked(nint window)
+    {
+        try
+        {
+            return DwmGetWindowAttribute(window, DwmWindowCloakedAttribute, out var cloaked, sizeof(int)) == 0 &&
+                cloaked != 0;
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     private delegate void WinEventProcedure(
@@ -163,6 +223,21 @@ public sealed class WindowsForegroundHistory : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(nint window);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(nint window, [Out] char[] name, int capacity);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint window, uint command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint window, out Rect rect);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(
+        nint window,
+        int attribute,
+        out int value,
+        int size);
 }

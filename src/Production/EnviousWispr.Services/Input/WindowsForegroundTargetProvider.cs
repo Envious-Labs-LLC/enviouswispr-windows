@@ -31,79 +31,124 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
         return new TargetWindowId(
             handle,
             processId,
-            TryCaptureFocusedElementId(processId),
-            TryCaptureProcessName(processId));
+            TryCaptureFocusedElementId(handle, processId),
+            WindowsWindowIdentity.TryGetProcessName(processId));
     }
 
-    private static string? TryCaptureProcessName(uint processId)
-    {
-        if (processId == 0)
-        {
-            return null;
-        }
+    private static string? TryCaptureProcessName(uint processId) =>
+        WindowsWindowIdentity.TryGetProcessName(processId);
 
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
-            return process.ProcessName;
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            return null;
-        }
-    }
-
-    private static string? TryCaptureFocusedElementId(uint processId)
+    private static string? TryCaptureFocusedElementId(nint windowHandle, uint processId)
     {
+        var win32ChildFocusId = WindowsWindowIdentity.TryCaptureDistinctWin32ChildFocusId(windowHandle, processId);
         try
         {
             var focused = AutomationElement.FocusedElement;
-            return focused is not null && focused.Current.ProcessId == processId
-                ? string.Join('.', focused.GetRuntimeId())
-                : null;
+            if (focused is not null && focused.Current.ProcessId == processId)
+            {
+                var runtimeId = focused.GetRuntimeId();
+                if (runtimeId is { Length: > 0 })
+                {
+                    return string.Join('.', runtimeId);
+                }
+            }
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            // A focused-element runtime ID improves target-change detection, but it is optional.
-            // UI Automation can fail with provider-specific non-fatal exception types, especially
-            // across application/runtime boundaries. Preserve the frozen HWND/process target and
-            // let delivery fall back safely instead of aborting the recording before capture starts.
-            return null;
+            // UI Automation can fail across process/runtime boundaries; fall through to the
+            // distinct Win32 child HWND focus check below.
         }
+
+        // Only accept a distinct child control HWND (never top-level HWND); otherwise return null so
+        // live dictation fails closed rather than missing intra-window shifts.
+        return win32ChildFocusId;
     }
 
-    /// <summary>Brings a remembered window back and names the field Windows gives the focus to, as a key press would.</summary>
+    /// <summary>Brings a remembered window back (restoring it if minimized) and captures its focused field when available.</summary>
     /// <remarks>
-    /// FOR A TARGET REMEMBERED WITHOUT ITS FIELD - the window the person was in before they reached for the tray.
-    /// The delivery refuses a target whose focused field it was not told, because that id is how it notices the
-    /// person moved to another field; so the field is read HERE, after the window is back in front and Windows has
-    /// restored its focus, exactly as a dictation reads it at its key press - and every delivery check still runs.
-    /// Null when the window will not come forward or its focus does not come back inside it in time. Ref: #206.
+    /// FOR A TARGET REMEMBERED WITHOUT ITS FIELD - the window the person was in before they reached for History
+    /// or the tray. Restores minimized targets (<c>SW_RESTORE</c>), brings the window forward, and reads UIA
+    /// <see cref="TargetWindowId.FocusedElementId"/> when published. Chromium/Electron and similar hosts may omit
+    /// UIA focus across process/rendering boundaries: after a brief UIA wake-up grace window while the target
+    /// stays foreground, the confirmed HWND/process target is returned so window-level paste can proceed instead
+    /// of falsely refusing with <c>NoTarget</c>.
     /// </remarks>
-    public static async Task<TargetWindowId?> ReacquireAsync(
+    public static Task<TargetWindowId?> ReacquireAsync(
         TargetWindowId window,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        ReacquireCoreAsync(
+            window,
+            timeout,
+            isWindowValid: target =>
+            {
+                if (!IsWindow(target.Value))
+                {
+                    return false;
+                }
+
+                _ = GetWindowThreadProcessId(target.Value, out var ownerProcessId);
+                return ownerProcessId != 0 && (target.ProcessId == 0 || ownerProcessId == target.ProcessId);
+            },
+            restoreAndFocus: WindowsWindowIdentity.RestoreAndFocus,
+            isIconic: WindowsWindowIdentity.IsIconic,
+            getForegroundWindow: GetForegroundWindow,
+            captureCurrentTarget: () => new WindowsForegroundTargetProvider().CaptureForegroundTarget(),
+            getWindowClassName: WindowsWindowIdentity.TryGetClassName,
+            cancellationToken);
+
+    internal static async Task<TargetWindowId?> ReacquireCoreAsync(
+        TargetWindowId window,
+        TimeSpan timeout,
+        Func<TargetWindowId, bool> isWindowValid,
+        Action<nint> restoreAndFocus,
+        Func<nint, bool> isIconic,
+        Func<nint> getForegroundWindow,
+        Func<TargetWindowId?> captureCurrentTarget,
+        Func<nint, string?> getWindowClassName,
+        CancellationToken cancellationToken,
+        int pollIntervalMs = 25,
+        int focusedElementGraceMs = 200)
     {
-        if (!window.IsValid)
+        if (!window.IsValid || !isWindowValid(window))
         {
             return null;
         }
 
-        _ = SetForegroundWindow(window.Value);
-        var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+        restoreAndFocus(window.Value);
+        var deadline = Environment.TickCount64 + Math.Max(0, (long)timeout.TotalMilliseconds);
+        long? firstForegroundAt = null;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (GetForegroundWindow() == window.Value)
+            if (getForegroundWindow() == window.Value)
             {
-                var current = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
-                if (current is { FocusedElementId: not null } captured &&
+                var now = Environment.TickCount64;
+                firstForegroundAt ??= now;
+                var current = captureCurrentTarget();
+                if (current is { } captured &&
                     captured.Value == window.Value &&
-                    captured.ProcessId == window.ProcessId)
+                    (window.ProcessId == 0 || captured.ProcessId == window.ProcessId))
                 {
-                    return captured;
+                    var hasUiaFocus = captured.FocusedElementId is not null &&
+                        !captured.FocusedElementId.StartsWith(WindowsWindowIdentity.Win32FocusPrefix, StringComparison.Ordinal);
+                    if (hasUiaFocus)
+                    {
+                        return captured;
+                    }
+
+                    var graceElapsed = now - firstForegroundAt.Value >= focusedElementGraceMs || now >= deadline;
+                    if (graceElapsed &&
+                        (captured.FocusedElementId is not null ||
+                         CanFallbackWithoutFocusedElement(captured, getWindowClassName(captured.Value))))
+                    {
+                        return captured;
+                    }
                 }
+            }
+            else if (isIconic(window.Value))
+            {
+                restoreAndFocus(window.Value);
             }
 
             if (Environment.TickCount64 >= deadline)
@@ -111,9 +156,17 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
                 return null;
             }
 
-            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(pollIntervalMs, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    internal static bool CanFallbackWithoutFocusedElement(TargetWindowId target, string? windowClassName) =>
+        WindowsPastePolicy.Resolve(
+            target.ProcessName,
+            windowClassName,
+            elementClassName: null,
+            isControlEdit: false,
+            isFullscreen: false).AllowsWindowFallbackWithoutFocusedElement;
 
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
@@ -123,5 +176,5 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindow(nint window);
+    private static extern bool IsWindow(nint window);
 }

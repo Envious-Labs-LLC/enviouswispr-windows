@@ -1,19 +1,47 @@
-using EnviousWispr.Core.Dictation;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
 using System.Windows.Forms;
+using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Input;
 
 namespace EnviousWispr.Services.Input;
 
 internal static class WindowsClipboardPaste
 {
+    private const ushort VkShift = 0x10;
     private const ushort VkControl = 0x11;
+    private const ushort VkInsert = 0x2D;
     private const ushort VkV = 0x56;
     private const ushort VkC = 0x43;
     private const uint InputKeyboard = 1;
+    private const uint KeyEventExtendedKey = 0x0001;
     private const uint KeyEventKeyUp = 0x0002;
+    private const uint GmemMoveable = 0x0002;
+    private const int ClipboardOpenErrorHr = unchecked((int)0x800401D0);
+    private const int ClipboardSetErrorHr = unchecked((int)0x800401D2);
+    private const int ClipboardEmptyErrorHr = unchecked((int)0x800401D4);
+    private const uint CfText = 1;
+    private const uint CfBitmap = 2;
+    private const uint CfMetaFilePict = 3;
+    private const uint CfOemText = 7;
+    private const uint CfDib = 8;
+    private const uint CfPalette = 9;
+    private const uint CfUnicodeText = 13;
+    private const uint CfEnhMetaFile = 14;
+    private const uint CfLocale = 16;
+    private const uint CfDibV5 = 17;
+    private const uint CfOwnerDisplay = 0x0080;
+    private const uint CfDspText = 0x0081;
+    private const uint CfDspBitmap = 0x0082;
+    private const uint CfDspMetaFilePict = 0x0083;
+    private const uint CfDspEnhMetaFile = 0x008E;
+    private const uint CfGdiObjFirst = 0x0300;
+    private const uint CfGdiObjLast = 0x03FF;
+    private const uint RegisteredFormatBase = 0xC000;
 
     internal static int NativeInputSize => Marshal.SizeOf<NativeInput>();
     internal static int NativeKeyboardInputSize => Marshal.SizeOf<NativeKeyboardInput>();
@@ -148,7 +176,7 @@ internal static class WindowsClipboardPaste
 
         // Snapshot FIRST. A snapshot that fails means we cannot promise to give the clipboard back,
         // and taking it without that promise is the failure this whole method is shaped to avoid.
-        var snapshot = TrySnapshotClipboard();
+        var snapshot = TrySnapshotClipboard(cancellationToken);
         if (snapshot is null)
         {
             return null;
@@ -274,20 +302,15 @@ internal static class WindowsClipboardPaste
             onUnexpectedFailure: static _ => null,
             cancellationToken);
 
-    private static bool SendCtrlC()
-    {
-        var inputs = new[]
-        {
-            MakeInput(VkControl, keyUp: false),
-            MakeInput(VkC, keyUp: false),
-            MakeInput(VkC, keyUp: true),
-            MakeInput(VkControl, keyUp: true),
-        };
-        return SendInput(
-            checked((uint)inputs.Length),
-            inputs,
-            NativeInputSize) == inputs.Length;
-    }
+    private static bool SendCtrlC() => SendInputs(BuildCtrlCInputs());
+
+    internal static NativeInput[] BuildCtrlCInputs() =>
+    [
+        MakeInput(VkControl, keyUp: false),
+        MakeInput(VkC, keyUp: false),
+        MakeInput(VkC, keyUp: true),
+        MakeInput(VkControl, keyUp: true),
+    ];
 
     private static string? TryGetClipboardText()
     {
@@ -307,10 +330,26 @@ internal static class WindowsClipboardPaste
         string fallbackText,
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
+        CancellationToken cancellationToken) =>
+        PasteAsync(text, fallbackText, restoreClipboard, PasteKeystrokeKind.CtrlV, preflight, cancellationToken);
+
+    public static Task<TextCommitResult> PasteAsync(
+        string text,
+        string fallbackText,
+        bool restoreClipboard,
+        PasteKeystrokeKind keystroke,
+        Func<TextDeliveryRefusalReason> preflight,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(preflight);
-        return PasteAsync(text, fallbackText, restoreClipboard, preflight, SetClipboardTextOrThrow, cancellationToken);
+        return PasteAsync(
+            text,
+            fallbackText,
+            restoreClipboard,
+            preflight,
+            SetClipboardTextOrThrow,
+            keystroke == PasteKeystrokeKind.ShiftInsert ? SendShiftInsert : SendCtrlV,
+            cancellationToken);
     }
 
     /// <summary>The paste with its clipboard writer named: production passes <see cref="SetClipboardTextOrThrow"/>; a test passes a writer that fails the way the clipboard can, after changing it.</summary>
@@ -365,7 +404,7 @@ internal static class WindowsClipboardPaste
         ClipboardSnapshot? snapshot = null;
         if (restoreClipboard)
         {
-            snapshot = TrySnapshotClipboard();
+            snapshot = TrySnapshotClipboard(cancellationToken);
             if (snapshot is null)
             {
                 return new TextCommitResult(
@@ -492,30 +531,28 @@ internal static class WindowsClipboardPaste
     /// this thread) is their clipboard now, left alone - declined, not uncertain; moved by our own failed try
     /// is still ours, and the next try aims at it. Out of tries with the clipboard still ours is uncertain.
     /// </remarks>
-    private static (bool Restored, bool Uncertain) RestoreWhileOurs(ClipboardSnapshot snapshot, uint ourSequence)
+    internal static (bool Restored, bool Uncertain) RestoreWhileOurs(ClipboardSnapshot snapshot, uint ourSequence)
     {
+        using var owner = snapshot.NativeEntries is { Count: > 0 }
+            ? new ClipboardMessageWindow()
+            : null;
         var expected = ourSequence;
         for (var remaining = ClipboardWriteAttempts; ; remaining--)
         {
             try
             {
-                if (snapshot.IsEmpty)
-                {
-                    ClearOnce();
-                }
-                else
-                {
-                    Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0);
-                }
-
+                RestoreSnapshotOnce(snapshot, owner?.Handle ?? IntPtr.Zero);
                 return (true, false);
             }
             catch (Exception exception) when (
-                exception is ExternalException or ThreadStateException or ArgumentException)
+                exception is ExternalException or ThreadStateException or ArgumentException or InvalidOperationException)
             {
-                if (exception is not ExternalException || remaining <= 1)
+                var canRetryContention = exception is ExternalException && remaining > 1;
+                if (!canRetryContention)
                 {
-                    return (false, true);
+                    return IsClipboardStillOurs(expected)
+                        ? (false, true)
+                        : (false, false);
                 }
 
                 PumpingWait(ClipboardRetryDelay);
@@ -533,22 +570,54 @@ internal static class WindowsClipboardPaste
         }
     }
 
-    private static bool SendCtrlV()
+    private static void RestoreSnapshotOnce(ClipboardSnapshot snapshot, IntPtr ownerWindow)
     {
-        var inputs = new[]
+        if (snapshot.IsEmpty)
         {
-            MakeInput(VkControl, keyUp: false),
-            MakeInput(VkV, keyUp: false),
-            MakeInput(VkV, keyUp: true),
-            MakeInput(VkControl, keyUp: true),
-        };
-        return SendInput(
+            ClearOnce();
+            return;
+        }
+
+        if (snapshot.NativeEntries is { Count: > 0 } nativeEntries)
+        {
+            RestoreNativeEntriesOnce(nativeEntries, ownerWindow);
+            return;
+        }
+
+        Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0);
+    }
+
+    private static bool IsClipboardStillOurs(uint expectedSequence) =>
+        GetClipboardSequenceNumber() == expectedSequence || ClipboardOwnedByThisThread();
+
+    private static bool SendCtrlV() => SendInputs(BuildCtrlVInputs());
+
+    private static bool SendShiftInsert() => SendInputs(BuildShiftInsertInputs());
+
+    internal static NativeInput[] BuildCtrlVInputs() =>
+    [
+        MakeInput(VkControl, keyUp: false),
+        MakeInput(VkV, keyUp: false),
+        MakeInput(VkV, keyUp: true),
+        MakeInput(VkControl, keyUp: true),
+    ];
+
+    internal static NativeInput[] BuildShiftInsertInputs() =>
+    [
+        MakeInput(VkShift, keyUp: false),
+        MakeInput(VkInsert, keyUp: false, extended: true),
+        MakeInput(VkInsert, keyUp: true, extended: true),
+        MakeInput(VkShift, keyUp: true),
+    ];
+
+    private static bool SendInputs(NativeInput[] inputs) =>
+        NativeInputSize == 40 &&
+        SendInput(
             checked((uint)inputs.Length),
             inputs,
             NativeInputSize) == inputs.Length;
-    }
 
-    private static NativeInput MakeInput(ushort virtualKey, bool keyUp) => new()
+    private static NativeInput MakeInput(ushort virtualKey, bool keyUp, bool extended = false) => new()
     {
         Type = InputKeyboard,
         Union = new NativeInputUnion
@@ -556,7 +625,7 @@ internal static class WindowsClipboardPaste
             Keyboard = new NativeKeyboardInput
             {
                 VirtualKey = virtualKey,
-                Flags = keyUp ? KeyEventKeyUp : 0,
+                Flags = (extended ? KeyEventExtendedKey : 0u) | (keyUp ? KeyEventKeyUp : 0u),
                 // THE APP'S OWN KEYSTROKE, SO ITS OWN HOOK STEPS ASIDE. With a last-dictation shortcut bound to
                 // Ctrl+V or Ctrl+C, the hook would otherwise swallow the very paste or copy this sends. Ref: #206.
                 ExtraInfo = MenuKeyMask.Tag,
@@ -625,44 +694,629 @@ internal static class WindowsClipboardPaste
     /// <param name="OwnedSequence">The clipboard's sequence number when what is on it is our own change; null when nothing of ours is on it.</param>
     private readonly record struct ClipboardWrite(bool Written, uint? OwnedSequence);
 
-    /// <summary>Every format on the clipboard, copied; null when any format cannot be copied, in which case nothing that borrows the clipboard may proceed.</summary>
-    internal static ClipboardSnapshot? TrySnapshotClipboard()
+    private const int ClipboardReadAttempts = 8;
+
+    private static readonly TimeSpan ClipboardReadRetryDelay = TimeSpan.FromMilliseconds(25);
+
+    /// <summary>
+    /// Captures all user clipboard formats via native Win32 clipboard APIs with bounded STA pumping
+    /// retries on transient clipboard lock contention. Preserves custom binary Electron/Chromium
+    /// HGLOBAL blobs byte-for-byte, omits only explicit OLE wrapper artifacts and OS-synthesized
+    /// companions, and fails closed (returns null) if any user format cannot be captured intact.
+    /// </summary>
+    internal static ClipboardSnapshot? TrySnapshotClipboard() =>
+        TrySnapshotClipboard(CancellationToken.None);
+
+    internal static ClipboardSnapshot? TrySnapshotClipboard(CancellationToken cancellationToken) =>
+        TrySnapshotClipboardWithRetry(
+            TrySnapshotClipboardWin32Once,
+            PumpingWait,
+            cancellationToken);
+
+    internal static ClipboardSnapshot? TrySnapshotClipboardWithRetry(
+        Func<ClipboardSnapshot?> readOnce,
+        Action<TimeSpan> wait,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(readOnce);
+        ArgumentNullException.ThrowIfNull(wait);
+
+        for (var remaining = ClipboardReadAttempts; ; remaining--)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return readOnce();
+            }
+            catch (ExternalException) when (remaining > 1)
+            {
+                wait(ClipboardReadRetryDelay);
+            }
+            catch (Exception exception) when (
+                exception is ExternalException or ThreadStateException or
+                    InvalidOperationException or ArgumentException)
+            {
+                return null;
+            }
+        }
+    }
+
+    private static readonly HashSet<string> OleWrapperFormats = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DataObject",
+        "DataObjectAttributes",
+        "DataObjectAttributesRequiringElevation",
+        "Ole Private Data",
+        "OleClipboardPersistOnFlush",
+    };
+
+    internal static bool IsOleWrapperFormat(string? formatName) =>
+        !string.IsNullOrWhiteSpace(formatName) && OleWrapperFormats.Contains(formatName.Trim());
+
+    private static ClipboardSnapshot? TrySnapshotClipboardWin32Once()
+    {
+        var capture = TryCaptureNativeSnapshotInOpenClipboard();
+        if (!capture.RequiresManagedFallback)
+        {
+            return capture.Snapshot;
+        }
+
+        // OpenClipboard has been closed: registered OLE IStream-backed formats (such as FileContents)
+        // return NULL from GetClipboardData and must be read through OleGetClipboard / IDataObject.
+        return TrySnapshotRegisteredFallback(static () => Clipboard.GetDataObject());
+    }
+
+    internal static ClipboardSnapshot? TrySnapshotRegisteredFallback(Func<System.Windows.Forms.IDataObject?> getDataObject)
+    {
+        ArgumentNullException.ThrowIfNull(getDataObject);
+        return TrySnapshotDataObject(getDataObject());
+    }
+
+    private readonly record struct NativeCaptureAttempt(ClipboardSnapshot? Snapshot, bool RequiresManagedFallback);
+
+    private static NativeCaptureAttempt TryCaptureNativeSnapshotInOpenClipboard()
+    {
+        if (!OpenClipboard(IntPtr.Zero))
+        {
+            Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
+        }
+
         try
         {
-            var source = Clipboard.GetDataObject();
-            if (source is null)
+            var formatIds = EnumerateClipboardFormatIds();
+            if (formatIds is null)
             {
-                return new ClipboardSnapshot(IsEmpty: true, Data: null);
+                return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
             }
 
-            var copy = new DataObject();
-            foreach (var format in source.GetFormats(autoConvert: false))
+            if (formatIds.Count == 0)
             {
-                var value = source.GetData(format, autoConvert: false);
-                if (value is null)
+                return new NativeCaptureAttempt(
+                    new ClipboardSnapshot(IsEmpty: true, Data: null),
+                    RequiresManagedFallback: false);
+            }
+
+            var hasDib = formatIds.Contains(CfDib) || formatIds.Contains(CfDibV5);
+
+            var entries = new List<NativeClipboardEntry>(formatIds.Count);
+            foreach (var formatId in formatIds)
+            {
+                string? formatName = null;
+                if (formatId >= RegisteredFormatBase)
                 {
-                    return null;
+                    formatName = TryGetClipboardFormatName(formatId);
+                    if (formatName is null)
+                    {
+                        return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
+                    }
+
+                    if (IsOleWrapperFormat(formatName))
+                    {
+                        continue;
+                    }
+                }
+                else if (ShouldOmitSynthesizedFormat(formatId, hasDib))
+                {
+                    continue;
                 }
 
-                var cloned = CloneClipboardValue(value);
+                var result = TryCaptureNativeEntryCore(formatId, formatName, out var entry);
+                if (result == NativeEntryCaptureStatus.RequiresManagedFallback)
+                {
+                    return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: true);
+                }
+
+                if (result != NativeEntryCaptureStatus.Captured)
+                {
+                    return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
+                }
+
+                entries.Add(entry!);
+            }
+
+            return new NativeCaptureAttempt(
+                entries.Count == 0
+                    ? new ClipboardSnapshot(IsEmpty: true, Data: null)
+                    : new ClipboardSnapshot(IsEmpty: false, Data: null, NativeEntries: entries),
+                RequiresManagedFallback: false);
+        }
+        finally
+        {
+            _ = CloseClipboard();
+        }
+    }
+
+    private static List<uint>? EnumerateClipboardFormatIds()
+    {
+        var formatIds = new List<uint>();
+        uint current = 0;
+        while (true)
+        {
+            Marshal.SetLastPInvokeError(0);
+            current = EnumClipboardFormats(current);
+            if (current == 0)
+            {
+                return Marshal.GetLastPInvokeError() == 0
+                    ? formatIds
+                    : null;
+            }
+
+            formatIds.Add(current);
+        }
+    }
+
+    private static string? TryGetClipboardFormatName(uint formatId)
+    {
+        var buffer = new char[256];
+        var length = GetClipboardFormatName(formatId, buffer, buffer.Length);
+        return length > 0 ? new string(buffer, 0, length) : null;
+    }
+
+    internal static bool ShouldOmitSynthesizedFormat(
+        uint formatId,
+        bool hasDib) =>
+        formatId is CfBitmap or CfPalette && hasDib;
+
+    internal enum NativeEntryCaptureStatus
+    {
+        Captured,
+        Failed,
+        RequiresManagedFallback,
+    }
+
+    internal static bool TryCaptureNativeEntry(
+        uint formatId,
+        string? formatName,
+        out NativeClipboardEntry? entry) =>
+        TryCaptureNativeEntryCore(formatId, formatName, out entry) == NativeEntryCaptureStatus.Captured;
+
+    internal static NativeEntryCaptureStatus TryCaptureNativeEntryCore(
+        uint formatId,
+        string? formatName,
+        out NativeClipboardEntry? entry)
+    {
+        entry = null;
+        if (formatId is CfOwnerDisplay or CfDspText or CfDspBitmap or CfDspMetaFilePict or CfDspEnhMetaFile ||
+            (formatId >= CfGdiObjFirst && formatId <= CfGdiObjLast))
+        {
+            return NativeEntryCaptureStatus.Failed;
+        }
+
+        var handle = GetClipboardData(formatId);
+        if (handle == IntPtr.Zero)
+        {
+            return formatId >= RegisteredFormatBase
+                ? NativeEntryCaptureStatus.RequiresManagedFallback
+                : NativeEntryCaptureStatus.Failed;
+        }
+
+        if (formatId == CfEnhMetaFile)
+        {
+            var size = GetEnhMetaFileBits(handle, 0, null);
+            if (size == 0)
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+
+            var bytes = new byte[size];
+            if (GetEnhMetaFileBits(handle, size, bytes) != size)
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+
+            entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.EnhMetaFile, bytes);
+            return NativeEntryCaptureStatus.Captured;
+        }
+
+        if (formatId == CfBitmap)
+        {
+            try
+            {
+                using var bitmap = Image.FromHbitmap(handle);
+                using var ms = new MemoryStream();
+                bitmap.Save(ms, ImageFormat.Png);
+                var bytes = ms.ToArray();
+                if (bytes.Length == 0)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.BitmapPng, bytes);
+                return NativeEntryCaptureStatus.Captured;
+            }
+            catch (Exception exception) when (exception is ArgumentException or ExternalException or InvalidOperationException)
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+        }
+
+        if (formatId == CfPalette)
+        {
+            return NativeEntryCaptureStatus.Failed;
+        }
+
+        if (formatId == CfMetaFilePict)
+        {
+            var pictSize = GlobalSize(handle);
+            if (pictSize < (UIntPtr)Marshal.SizeOf<NativeMetaFilePict>())
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+
+            var lockedPict = GlobalLock(handle);
+            if (lockedPict == IntPtr.Zero)
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+
+            try
+            {
+                var pict = Marshal.PtrToStructure<NativeMetaFilePict>(lockedPict);
+                if (pict.MetaFile == IntPtr.Zero)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                var wmfSize = GetMetaFileBitsEx(pict.MetaFile, 0, null);
+                if (wmfSize == 0)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                var wmfBits = new byte[wmfSize];
+                if (GetMetaFileBitsEx(pict.MetaFile, wmfSize, wmfBits) != wmfSize)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                var packed = new byte[checked(12 + wmfBits.Length)];
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(packed.AsSpan(0, 4), pict.Mm);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(packed.AsSpan(4, 4), pict.XExt);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(packed.AsSpan(8, 4), pict.YExt);
+                Buffer.BlockCopy(wmfBits, 0, packed, 12, wmfBits.Length);
+
+                entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.MetaFilePict, packed);
+                return NativeEntryCaptureStatus.Captured;
+            }
+            finally
+            {
+                _ = GlobalUnlock(handle);
+            }
+        }
+
+        var hGlobalSize = GlobalSize(handle);
+        if (hGlobalSize == UIntPtr.Zero)
+        {
+            return NativeEntryCaptureStatus.Failed;
+        }
+
+        var rawSize = checked((int)hGlobalSize);
+        var locked = GlobalLock(handle);
+        if (locked == IntPtr.Zero)
+        {
+            return NativeEntryCaptureStatus.Failed;
+        }
+
+        try
+        {
+            var bytes = new byte[rawSize];
+            Marshal.Copy(locked, bytes, 0, rawSize);
+            entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.HGlobal, bytes);
+            return NativeEntryCaptureStatus.Captured;
+        }
+        finally
+        {
+            _ = GlobalUnlock(handle);
+        }
+    }
+
+    private static void RestoreNativeEntriesOnce(
+        IReadOnlyList<NativeClipboardEntry> entries,
+        IntPtr ownerWindow)
+    {
+        var prepared = PrepareNativeHandles(entries);
+        try
+        {
+            if (!OpenClipboard(ownerWindow))
+            {
+                Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
+            }
+
+            try
+            {
+                if (!EmptyClipboard())
+                {
+                    Marshal.ThrowExceptionForHR(ClipboardEmptyErrorHr);
+                }
+
+                for (var i = 0; i < prepared.Length; i++)
+                {
+                    var item = prepared[i];
+                    if (SetClipboardData(item.FormatId, item.Handle) == IntPtr.Zero)
+                    {
+                        Marshal.ThrowExceptionForHR(ClipboardSetErrorHr);
+                    }
+
+                    // SetClipboardData succeeded: Windows now owns the handle.
+                    prepared[i] = item with { Handle = IntPtr.Zero };
+                }
+            }
+            finally
+            {
+                _ = CloseClipboard();
+            }
+        }
+        finally
+        {
+            FreePreparedHandles(prepared);
+        }
+    }
+
+    private static PreparedNativeHandle[] PrepareNativeHandles(IReadOnlyList<NativeClipboardEntry> entries)
+    {
+        var prepared = new PreparedNativeHandle[entries.Count];
+        try
+        {
+            for (var i = 0; i < entries.Count; i++)
+            {
+                var entry = entries[i];
+                var formatId = entry.FormatId;
+                if (entry.FormatName is not null)
+                {
+                    formatId = RegisterClipboardFormat(entry.FormatName);
+                    if (formatId == 0)
+                    {
+                        throw new InvalidOperationException("Failed to register clipboard format during restore.");
+                    }
+                }
+
+                var handle = AllocateNativeHandle(entry);
+                prepared[i] = new PreparedNativeHandle(formatId, entry.Kind, handle);
+            }
+
+            return prepared;
+        }
+        catch
+        {
+            FreePreparedHandles(prepared);
+            throw;
+        }
+    }
+
+    private static IntPtr AllocateNativeHandle(NativeClipboardEntry entry)
+    {
+        switch (entry.Kind)
+        {
+            case NativeClipboardEntryKind.EnhMetaFile:
+            {
+                var emf = SetEnhMetaFileBits((uint)entry.Bytes.Length, entry.Bytes);
+                if (emf == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Failed to reconstruct clipboard enhanced metafile.");
+                }
+
+                return emf;
+            }
+            case NativeClipboardEntryKind.BitmapPng:
+            {
+                using var ms = new MemoryStream(entry.Bytes, writable: false);
+                using var bitmap = new Bitmap(ms);
+                var hBmp = bitmap.GetHbitmap();
+                if (hBmp == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Failed to reconstruct clipboard bitmap.");
+                }
+
+                return hBmp;
+            }
+            case NativeClipboardEntryKind.MetaFilePict:
+            {
+                if (entry.Bytes.Length < 13)
+                {
+                    throw new InvalidOperationException("Invalid clipboard metafile picture payload.");
+                }
+
+                var wmfBytes = entry.Bytes.AsSpan(12).ToArray();
+                var hMetaFile = SetMetaFileBitsEx((uint)wmfBytes.Length, wmfBytes);
+                if (hMetaFile == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Failed to reconstruct clipboard metafile.");
+                }
+
+                var hGlobal = GlobalAlloc(GmemMoveable, (UIntPtr)Marshal.SizeOf<NativeMetaFilePict>());
+                if (hGlobal == IntPtr.Zero)
+                {
+                    _ = DeleteMetaFile(hMetaFile);
+                    throw new InvalidOperationException("Failed to allocate clipboard metafile picture handle.");
+                }
+
+                var locked = GlobalLock(hGlobal);
+                if (locked == IntPtr.Zero)
+                {
+                    _ = GlobalFree(hGlobal);
+                    _ = DeleteMetaFile(hMetaFile);
+                    throw new InvalidOperationException("Failed to lock clipboard metafile picture handle.");
+                }
+
+                try
+                {
+                    var pict = new NativeMetaFilePict
+                    {
+                        Mm = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(entry.Bytes.AsSpan(0, 4)),
+                        XExt = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(entry.Bytes.AsSpan(4, 4)),
+                        YExt = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(entry.Bytes.AsSpan(8, 4)),
+                        MetaFile = hMetaFile,
+                    };
+                    Marshal.StructureToPtr(pict, locked, fDeleteOld: false);
+                }
+                finally
+                {
+                    _ = GlobalUnlock(hGlobal);
+                }
+
+                return hGlobal;
+            }
+            default:
+            {
+                var size = Math.Max(1, entry.Bytes.Length);
+                var hMem = GlobalAlloc(GmemMoveable, (UIntPtr)size);
+                if (hMem == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Failed to allocate global clipboard memory.");
+                }
+
+                var locked = GlobalLock(hMem);
+                if (locked == IntPtr.Zero)
+                {
+                    _ = GlobalFree(hMem);
+                    throw new InvalidOperationException("Failed to lock allocated clipboard memory.");
+                }
+
+                try
+                {
+                    if (entry.Bytes.Length > 0)
+                    {
+                        Marshal.Copy(entry.Bytes, 0, locked, entry.Bytes.Length);
+                    }
+                    else
+                    {
+                        Marshal.WriteByte(locked, 0);
+                    }
+                }
+                finally
+                {
+                    _ = GlobalUnlock(hMem);
+                }
+
+                return hMem;
+            }
+        }
+    }
+
+    private static void FreePreparedHandles(PreparedNativeHandle[] prepared)
+    {
+        foreach (var item in prepared)
+        {
+            if (item.Handle == IntPtr.Zero)
+            {
+                continue;
+            }
+
+            switch (item.Kind)
+            {
+                case NativeClipboardEntryKind.EnhMetaFile:
+                    _ = DeleteEnhMetaFile(item.Handle);
+                    break;
+                case NativeClipboardEntryKind.BitmapPng:
+                    _ = DeleteObject(item.Handle);
+                    break;
+                case NativeClipboardEntryKind.MetaFilePict:
+                {
+                    var locked = GlobalLock(item.Handle);
+                    if (locked != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            var pict = Marshal.PtrToStructure<NativeMetaFilePict>(locked);
+                            if (pict.MetaFile != IntPtr.Zero)
+                            {
+                                _ = DeleteMetaFile(pict.MetaFile);
+                            }
+                        }
+                        finally
+                        {
+                            _ = GlobalUnlock(item.Handle);
+                        }
+                    }
+
+                    _ = GlobalFree(item.Handle);
+                    break;
+                }
+                default:
+                    _ = GlobalFree(item.Handle);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fail-closed IDataObject snapshot helper (omits only explicit OLE wrapper bookkeeping formats).
+    /// Fails with null or rethrows ExternalException whenever any user format cannot be captured whole.
+    /// </summary>
+    internal static ClipboardSnapshot? TrySnapshotDataObject(System.Windows.Forms.IDataObject? source)
+    {
+        if (source is null)
+        {
+            return new ClipboardSnapshot(IsEmpty: true, Data: null);
+        }
+
+        var formats = source.GetFormats(autoConvert: false);
+        if (formats is null || formats.Length == 0)
+        {
+            return new ClipboardSnapshot(IsEmpty: true, Data: null);
+        }
+
+        var copy = new DataObject();
+        var copiedFormats = 0;
+
+        foreach (var format in formats)
+        {
+            if (string.IsNullOrWhiteSpace(format) || IsOleWrapperFormat(format))
+            {
+                continue;
+            }
+
+            try
+            {
+                var value = source.GetData(format, autoConvert: false);
+                var cloned = value is null ? null : CloneClipboardValue(value);
                 if (cloned is null)
                 {
                     return null;
                 }
 
                 copy.SetData(format, autoConvert: false, cloned);
+                copiedFormats++;
             }
+            catch (ExternalException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (IsClipboardFormatReadFailure(exception))
+            {
+                return null;
+            }
+        }
 
-            return new ClipboardSnapshot(IsEmpty: false, copy);
-        }
-        catch (Exception exception) when (
-            exception is ExternalException or ThreadStateException or
-                InvalidOperationException or ArgumentException)
-        {
-            return null;
-        }
+        return copiedFormats == 0
+            ? new ClipboardSnapshot(IsEmpty: true, Data: null)
+            : new ClipboardSnapshot(IsEmpty: false, Data: copy);
     }
+
+    private static bool IsClipboardFormatReadFailure(Exception exception) =>
+        exception is ExternalException or ThreadStateException or InvalidOperationException or
+            ArgumentException or NotSupportedException or InvalidCastException or
+            SerializationException or IOException;
 
     /// <summary>The whole of a seekable stream, from its start, with its position put back; null for a stream whose whole contents cannot be read without consuming it, or that fails to read.</summary>
     /// <remarks>
@@ -726,6 +1380,8 @@ internal static class WindowsClipboardPaste
                 clone.AddRange(strings.Cast<string>().ToArray());
                 return clone;
             }
+            case string[] stringArray:
+                return (string[])stringArray.Clone();
             case ICloneable cloneable:
                 return cloneable.Clone();
             case string or char or bool or byte or sbyte or short or ushort or int or uint or
@@ -812,13 +1468,16 @@ internal static class WindowsClipboardPaste
             }
             else
             {
-                WithPumpingRetry(() => Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0));
+                using var owner = snapshot.NativeEntries is { Count: > 0 }
+                    ? new ClipboardMessageWindow()
+                    : null;
+                WithPumpingRetry(() => RestoreSnapshotOnce(snapshot, owner?.Handle ?? IntPtr.Zero));
             }
 
             return true;
         }
         catch (Exception exception) when (
-            exception is ExternalException or ThreadStateException or ArgumentException)
+            exception is ExternalException or ThreadStateException or ArgumentException or InvalidOperationException)
         {
             return false;
         }
@@ -883,24 +1542,73 @@ internal static class WindowsClipboardPaste
         return completion.Task;
     }
 
-    internal sealed record ClipboardSnapshot(bool IsEmpty, DataObject? Data);
+    internal enum NativeClipboardEntryKind
+    {
+        HGlobal,
+        EnhMetaFile,
+        BitmapPng,
+        MetaFilePict,
+    }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeInput
+    private struct NativeMetaFilePict
+    {
+        public int Mm;
+        public int XExt;
+        public int YExt;
+        public IntPtr MetaFile;
+    }
+
+    internal sealed record NativeClipboardEntry(
+        uint FormatId,
+        string? FormatName,
+        NativeClipboardEntryKind Kind,
+        byte[] Bytes);
+
+    private struct PreparedNativeHandle(uint formatId, NativeClipboardEntryKind kind, IntPtr handle)
+    {
+        public uint FormatId { get; } = formatId;
+        public NativeClipboardEntryKind Kind { get; } = kind;
+        public IntPtr Handle { get; set; } = handle;
+    }
+
+    internal sealed record ClipboardSnapshot(
+        bool IsEmpty,
+        DataObject? Data,
+        IReadOnlyList<NativeClipboardEntry>? NativeEntries = null);
+
+    private sealed class ClipboardMessageWindow : NativeWindow, IDisposable
+    {
+        public ClipboardMessageWindow()
+        {
+            CreateHandle(new CreateParams { Parent = new IntPtr(-3) });
+        }
+
+        public void Dispose()
+        {
+            if (Handle != IntPtr.Zero)
+            {
+                DestroyHandle();
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeInput
     {
         public uint Type;
         public NativeInputUnion Union;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 32)]
-    private struct NativeInputUnion
+    internal struct NativeInputUnion
     {
         [FieldOffset(0)]
         public NativeKeyboardInput Keyboard;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeKeyboardInput
+    internal struct NativeKeyboardInput
     {
         public ushort VirtualKey;
         public ushort ScanCode;
@@ -927,6 +1635,73 @@ internal static class WindowsClipboardPaste
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenClipboard(IntPtr newOwner);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EmptyClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint EnumClipboardFormats(uint format);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetClipboardData(uint format);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetClipboardData(uint format, IntPtr memory);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClipboardFormatName(uint format, [Out] char[] formatName, int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint RegisterClipboardFormat(string formatName);
+
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalFree(IntPtr memory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalLock(IntPtr memory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalUnlock(IntPtr memory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern UIntPtr GlobalSize(IntPtr memory);
+
+    [DllImport("gdi32.dll")]
+    private static extern uint GetEnhMetaFileBits(IntPtr enhMetaFile, uint bufferSize, [Out] byte[]? buffer);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr SetEnhMetaFileBits(uint bufferSize, byte[] data);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteEnhMetaFile(IntPtr enhMetaFile);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr gdiObject);
+
+    [DllImport("gdi32.dll")]
+    private static extern uint GetMetaFileBitsEx(IntPtr metaFile, uint bufferSize, [Out] byte[]? buffer);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr SetMetaFileBitsEx(uint bufferSize, byte[] data);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteMetaFile(IntPtr metaFile);
 }

@@ -171,13 +171,15 @@ public sealed record TextDeliveryOptions(
     bool RestoreClipboardAfterPaste,
     int ContextWindowCharacters,
     int MaximumDirectValueCharacters,
-    bool CopyInsteadOfPaste = false)
+    bool CopyInsteadOfPaste = false,
+    bool IsExplicitHistoryPaste = false)
 {
     public static TextDeliveryOptions Default { get; } = new(
         RestoreClipboardAfterPaste: true,
         ContextWindowCharacters: 256,
         MaximumDirectValueCharacters: 16_384,
-        CopyInsteadOfPaste: false);
+        CopyInsteadOfPaste: false,
+        IsExplicitHistoryPaste: false);
 }
 
 /// <param name="SnippetExpanded">
