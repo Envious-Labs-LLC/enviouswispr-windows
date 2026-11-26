@@ -595,6 +595,8 @@ public sealed partial class MainWindow
     private void CardPlayPauseButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isBulkDeletingHistory
+            || _dictationActive
+            || IsSpeechEngineBusy?.Invoke() == true
             || sender is not FrameworkElement element
             || element.DataContext is not HistoryItemViewModel card)
         {
@@ -617,6 +619,8 @@ public sealed partial class MainWindow
     private void CardWaveform_SeekRequested(HistoryWaveformScrubber sender, double fraction)
     {
         if (_isBulkDeletingHistory
+            || _dictationActive
+            || IsSpeechEngineBusy?.Invoke() == true
             || sender.DataContext is not HistoryItemViewModel card
             || !card.CanTogglePlayback)
         {

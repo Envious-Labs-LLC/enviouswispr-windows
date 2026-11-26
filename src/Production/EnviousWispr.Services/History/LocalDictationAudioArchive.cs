@@ -155,7 +155,7 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
                 firstError ??= TryDeletePathOutcome(path);
             }
 
-            firstError ??= CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow);
+            firstError ??= CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow, includeDelTmp: true);
         }
         catch (IOException)
         {
@@ -289,7 +289,7 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
         {
             try
             {
-                _ = CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow);
+                _ = CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow, includeDelTmp: true);
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or SecurityException)
@@ -298,16 +298,100 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
         }
     }
 
+    internal static void RecoverStagedDeletes(
+        string recordingsDirectory,
+        IReadOnlySet<string> referencedAudioFileNames)
+    {
+        if (string.IsNullOrWhiteSpace(recordingsDirectory) || !Directory.Exists(recordingsDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var stagedPath in Directory.EnumerateFiles(recordingsDirectory, "*.deltmp"))
+            {
+                if (!TryExtractOriginalFileName(Path.GetFileName(stagedPath), out var originalFileName))
+                {
+                    continue;
+                }
+
+                if (referencedAudioFileNames.Contains(originalFileName))
+                {
+                    var originalPath = ResolveSafePath(recordingsDirectory, originalFileName);
+                    if (originalPath is not null)
+                    {
+                        try
+                        {
+                            if (!File.Exists(originalPath))
+                            {
+                                File.Move(stagedPath, originalPath, overwrite: false);
+                            }
+                            else
+                            {
+                                TryDeletePath(stagedPath);
+                            }
+                        }
+                        catch (Exception exception) when (
+                            exception is IOException or UnauthorizedAccessException or SecurityException)
+                        {
+                        }
+                    }
+                }
+                else
+                {
+                    TryDeletePath(stagedPath);
+                }
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+        }
+    }
+
+    internal static bool TryExtractOriginalFileName(string stagedFileName, out string originalFileName)
+    {
+        originalFileName = string.Empty;
+        const string marker = ".deltmp";
+        if (string.IsNullOrWhiteSpace(stagedFileName)
+            || !stagedFileName.EndsWith(marker, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var withoutExt = stagedFileName[..^marker.Length];
+        var lastDot = withoutExt.LastIndexOf('.');
+        if (lastDot <= 0 || withoutExt.Length - lastDot - 1 != 32)
+        {
+            return false;
+        }
+
+        var candidate = withoutExt[..lastDot];
+        if (!candidate.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        originalFileName = candidate;
+        return true;
+    }
+
     internal static AppErrorCode? TryDeleteNamedFileOutcome(string recordingsDirectory, string? fileName)
     {
         var path = ResolveSafePath(recordingsDirectory, fileName);
         return path is null ? null : TryDeletePathOutcome(path);
     }
 
-    private static AppErrorCode? CleanupTempFiles(string recordingsDirectory, TimeSpan? maxAge, DateTimeOffset now)
+    private static AppErrorCode? CleanupTempFiles(
+        string recordingsDirectory,
+        TimeSpan? maxAge,
+        DateTimeOffset now,
+        bool includeDelTmp = false)
     {
         AppErrorCode? firstError = null;
-        foreach (var pattern in new[] { "*.tmp", "*.deltmp" })
+        var patterns = includeDelTmp ? new[] { "*.tmp", "*.deltmp" } : new[] { "*.tmp" };
+        foreach (var pattern in patterns)
         {
             foreach (var path in Directory.EnumerateFiles(recordingsDirectory, pattern))
             {

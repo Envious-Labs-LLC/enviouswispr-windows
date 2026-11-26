@@ -53,9 +53,20 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             var loaded = await ReadAsync(cancellationToken).ConfigureAwait(false);
             if (loaded.Status is not HistoryLoadStatus.Loaded)
             {
+                if (loaded.Status is HistoryLoadStatus.Missing)
+                {
+                    LocalDictationAudioArchive.RecoverStagedDeletes(
+                        _recordingsDirectory,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                }
+
                 DrainPendingAudioDeletes([]);
                 return loaded;
             }
+
+            LocalDictationAudioArchive.RecoverStagedDeletes(
+                _recordingsDirectory,
+                BuildReferencedAudioSet(loaded.Entries));
 
             var retained = Retain(loaded.Entries, retentionDays, now);
             if (retained.Length != loaded.Entries.Count)
@@ -97,6 +108,10 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             {
                 return new HistoryOperationResult(false, loaded.Error);
             }
+
+            LocalDictationAudioArchive.RecoverStagedDeletes(
+                _recordingsDirectory,
+                BuildReferencedAudioSet(loaded.Entries));
 
             var entries = Retain(loaded.Entries, retentionDays, now)
                 .Where(existing => existing.Id != entry.Id)
@@ -290,6 +305,10 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
                 return new HistoryOperationResult(false, loaded.Error);
             }
 
+            LocalDictationAudioArchive.RecoverStagedDeletes(
+                _recordingsDirectory,
+                BuildReferencedAudioSet(loaded.Entries));
+
             var updated = mutation(loaded.Entries);
             if (verifyAudioDeletion)
             {
@@ -476,6 +495,20 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     private static HistoryOperationResult Failure(AppErrorCode code, bool canRetry = true) => new(
         false,
         new AppError(code, AppErrorStage.HistorySave, canRetry));
+
+    private static HashSet<string> BuildReferencedAudioSet(IReadOnlyList<DictationHistoryEntry> entries)
+    {
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.AudioFileName))
+            {
+                referenced.Add(entry.AudioFileName);
+            }
+        }
+
+        return referenced;
+    }
 
     private static List<string> CollectRemovedAudioFileNames(
         IReadOnlyList<DictationHistoryEntry> before,

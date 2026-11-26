@@ -821,6 +821,44 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         var retriedLoad = await store.LoadAsync(1, Now.AddMinutes(5));
         Assert.Equal(HistoryLoadStatus.Loaded, retriedLoad.Status);
         Assert.False(File.Exists(expiredWavPath));
+
+        // Simulate an interrupted deletion where .deltmp files remain while one entry is still in history.json and another is not.
+        var surviving = DictationHistoryEntry.Create(Now, "Surviving take", "parakeet", false, true);
+        var savedSurviving = archive.SaveForEntry(surviving.Id, audio)!;
+        await store.AddAsync(surviving with { AudioFileName = savedSurviving.FileName, AudioDurationMs = savedSurviving.DurationMs }, 30, Now);
+        var survivingWavPath = Path.Combine(recordingsDir, savedSurviving.FileName);
+        var interruptedStagedPath = $"{survivingWavPath}.{Guid.NewGuid():N}.deltmp";
+        File.Move(survivingWavPath, interruptedStagedPath);
+        var staleOrphanStagedPath = Path.Combine(recordingsDir, $"{Guid.NewGuid():D}.wav.{Guid.NewGuid():N}.deltmp");
+        File.WriteAllBytes(staleOrphanStagedPath, [1, 2, 3]);
+
+        // Even PruneRetention on an unrelated save must never destroy interrupted .deltmp files before JsonHistoryStore recovers them.
+        archive.PruneRetention();
+        Assert.True(File.Exists(interruptedStagedPath));
+
+        var recoveredLoad = await store.LoadAsync(30, Now.AddMinutes(6));
+        Assert.Equal(HistoryLoadStatus.Loaded, recoveredLoad.Status);
+        Assert.True(File.Exists(survivingWavPath));
+        Assert.False(File.Exists(interruptedStagedPath));
+        Assert.False(File.Exists(staleOrphanStagedPath));
+    }
+
+    [Fact]
+    public void DictationStartStopsHistoryPlaybackAndBlocksCardPlaybackWhileBusy()
+    {
+        var root = FindRepositoryRoot();
+        var onboardingCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Onboarding.cs"));
+        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+
+        var setDictationBody = ExtractMethodBody(onboardingCs, "public void SetDictationActive");
+        Assert.Contains("_audioPlayback.Stop();", setDictationBody, StringComparison.Ordinal);
+
+        foreach (var handler in new[] { "private void CardPlayPauseButton_Click", "private void CardWaveform_SeekRequested" })
+        {
+            var body = ExtractMethodBody(historyCs, handler);
+            Assert.Contains("_dictationActive", body, StringComparison.Ordinal);
+            Assert.Contains("IsSpeechEngineBusy?.Invoke() == true", body, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
