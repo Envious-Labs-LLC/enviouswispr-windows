@@ -256,6 +256,9 @@ public static class HistoryPlaybackPresentation
         return $"{current} / {total}";
     }
 
+    public static bool CanTogglePlayback(bool hasAudioRecording, bool isGlobalBusy, bool isPlaying) =>
+        hasAudioRecording && (!isGlobalBusy || isPlaying);
+
     public static int ComputePlayedBarCount(long positionMs, long durationMs, int barCount)
     {
         if (barCount <= 0 || durationMs <= 0 || positionMs <= 0)

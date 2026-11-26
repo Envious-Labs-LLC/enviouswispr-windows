@@ -1,3 +1,4 @@
+using System.Security;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.History;
@@ -10,6 +11,9 @@ namespace EnviousWispr.Services.History;
 /// </summary>
 public sealed class LocalDictationAudioArchive : IDictationAudioArchive
 {
+    /// <summary>Grace window protecting in-flight atomic temp writes from orphan cleanup during pruning.</summary>
+    public static readonly TimeSpan DefaultStaleTempFileAge = TimeSpan.FromMinutes(10);
+
     private readonly int _maxRecordings;
     private readonly long _maxTotalBytes;
 
@@ -56,7 +60,7 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
             return new ArchivedDictationAudio(fileName, durationMs);
         }
         catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or ArgumentException)
+            exception is IOException or UnauthorizedAccessException or SecurityException or ArgumentException)
         {
             return null;
         }
@@ -68,54 +72,89 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
 
     public void PruneRetention(string? keepFileName = null, long keepBytes = 0)
     {
-        if (!Directory.Exists(RecordingsDirectory))
+        try
+        {
+            if (!Directory.Exists(RecordingsDirectory))
+            {
+                return;
+            }
+
+            CleanupTempFiles(RecordingsDirectory, DefaultStaleTempFileAge, DateTimeOffset.UtcNow);
+
+            if (keepFileName is { Length: > 0 } keptName && keepBytes <= 0)
+            {
+                var keptPath = ResolveSafePath(keptName);
+                if (keptPath is not null && File.Exists(keptPath))
+                {
+                    try
+                    {
+                        keepBytes = new FileInfo(keptPath).Length;
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException or SecurityException)
+                    {
+                    }
+                }
+            }
+
+            var existing = new List<(string Path, DateTimeOffset Written, long Bytes)>();
+            foreach (var path in Directory.EnumerateFiles(RecordingsDirectory, "*.wav"))
+            {
+                var name = Path.GetFileName(path);
+                if (keepFileName is { Length: > 0 } protectedName
+                    && string.Equals(name, protectedName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var info = new FileInfo(path);
+                    existing.Add((path, info.LastWriteTimeUtc, info.Length));
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or SecurityException)
+                {
+                }
+            }
+
+            var hasProtected = keepFileName is { Length: > 0 };
+            var remainingCount = hasProtected ? _maxRecordings - 1 : _maxRecordings;
+            var remainingBytes = hasProtected
+                ? Math.Max(0L, _maxTotalBytes - Math.Max(0L, keepBytes))
+                : _maxTotalBytes;
+            foreach (var stale in DictationRecordingRetention.ToDelete(existing, remainingCount, remainingBytes))
+            {
+                TryDeletePath(stale);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+        }
+    }
+
+    public void ClearAll() => DeleteAllFiles(RecordingsDirectory);
+
+    public static void DeleteAllFiles(string recordingsDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(recordingsDirectory) || !Directory.Exists(recordingsDirectory))
         {
             return;
         }
 
-        if (keepFileName is { Length: > 0 } keptName && keepBytes <= 0)
+        try
         {
-            var keptPath = ResolveSafePath(keptName);
-            if (keptPath is not null && File.Exists(keptPath))
+            foreach (var path in Directory.EnumerateFiles(recordingsDirectory, "*.wav"))
             {
-                try
-                {
-                    keepBytes = new FileInfo(keptPath).Length;
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                }
+                TryDeletePath(path);
             }
+
+            CleanupTempFiles(recordingsDirectory, maxAge: null, DateTimeOffset.UtcNow);
         }
-
-        var existing = new List<(string Path, DateTimeOffset Written, long Bytes)>();
-        foreach (var path in Directory.EnumerateFiles(RecordingsDirectory, "*.wav"))
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
         {
-            var name = Path.GetFileName(path);
-            if (keepFileName is { Length: > 0 } protectedName
-                && string.Equals(name, protectedName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            try
-            {
-                var info = new FileInfo(path);
-                existing.Add((path, info.LastWriteTimeUtc, info.Length));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
-
-        var hasProtected = keepFileName is { Length: > 0 };
-        var remainingCount = hasProtected ? _maxRecordings - 1 : _maxRecordings;
-        var remainingBytes = hasProtected
-            ? Math.Max(0L, _maxTotalBytes - Math.Max(0L, keepBytes))
-            : _maxTotalBytes;
-        foreach (var stale in DictationRecordingRetention.ToDelete(existing, remainingCount, remainingBytes))
-        {
-            TryDeletePath(stale);
         }
     }
 
@@ -135,6 +174,31 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
     }
 
     public static string BuildFileName(Guid entryId) => $"{entryId:D}.wav";
+
+    private static void CleanupTempFiles(string recordingsDirectory, TimeSpan? maxAge, DateTimeOffset now)
+    {
+        foreach (var path in Directory.EnumerateFiles(recordingsDirectory, "*.tmp"))
+        {
+            if (maxAge is { } threshold)
+            {
+                try
+                {
+                    var info = new FileInfo(path);
+                    if (!info.Exists || now - info.LastWriteTimeUtc < threshold)
+                    {
+                        continue;
+                    }
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or SecurityException)
+                {
+                    continue;
+                }
+            }
+
+            TryDeletePath(path);
+        }
+    }
 
     private string? ResolveSafePath(string? fileName)
     {
@@ -161,7 +225,8 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
                 File.Delete(path);
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
         {
         }
     }

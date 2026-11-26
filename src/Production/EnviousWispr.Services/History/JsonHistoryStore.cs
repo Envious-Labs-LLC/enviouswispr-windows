@@ -444,32 +444,8 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
         }
     }
 
-    private void ClearAllAudioFiles()
-    {
-        if (!Directory.Exists(_recordingsDirectory))
-        {
-            return;
-        }
-
-        try
-        {
-            foreach (var path in Directory.EnumerateFiles(_recordingsDirectory, "*.wav"))
-            {
-                try
-                {
-                    File.Delete(path);
-                }
-                catch (Exception exception) when (
-                    exception is IOException or UnauthorizedAccessException or SecurityException)
-                {
-                }
-            }
-        }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or SecurityException)
-        {
-        }
-    }
+    private void ClearAllAudioFiles() =>
+        LocalDictationAudioArchive.DeleteAllFiles(_recordingsDirectory);
 
     private void TryDeleteAudioFile(string audioFileName)
     {

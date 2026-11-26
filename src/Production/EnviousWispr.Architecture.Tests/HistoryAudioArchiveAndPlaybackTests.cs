@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
@@ -507,6 +509,139 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         // Release audio archival must not carry Conditional("DEBUG").
         var archiveDecl = Regex.Match(runtimeCs, @"\[.*?\][\r\n\s]*private void ArchiveDictationAudio\(");
         Assert.False(archiveDecl.Success && archiveDecl.Value.Contains("Conditional(\"DEBUG\")", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PruneRetentionIsNonFatalWhenDirectoryEnumerationOrDeleteFails()
+    {
+        using var temp = new TempFolder();
+        var recordingsDir = Path.Combine(temp.Path, "recordings", "dictations");
+        Directory.CreateDirectory(recordingsDir);
+
+        var archive = new LocalDictationAudioArchive(recordingsDir, maxRecordings: 1, maxTotalBytes: 100_000);
+        var audio = new CapturedAudio(DictationSessionId.Create(), new float[1600], 16_000, 1);
+
+        var id1 = Guid.NewGuid();
+        var saved1 = archive.SaveForEntry(id1, audio);
+        Assert.NotNull(saved1);
+
+        var id2 = Guid.NewGuid();
+        var saved2 = archive.SaveForEntry(id2, audio);
+        Assert.NotNull(saved2);
+
+        // Part 1: Holding a stale WAV open with FileShare.None triggers IOException in Delete; PruneRetention must not throw.
+        var lockedPath = Path.Combine(recordingsDir, saved1!.FileName);
+        using (new FileStream(lockedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            archive.PruneRetention(saved2!.FileName);
+        }
+
+        // Part 2: Denying directory listing makes Directory.EnumerateFiles throw UnauthorizedAccessException;
+        // PruneRetention and SaveHistoryAsync must remain non-fatal.
+        var user = WindowsIdentity.GetCurrent().User!;
+        var denyRule = new FileSystemAccessRule(
+            user,
+            FileSystemRights.ListDirectory,
+            AccessControlType.Deny);
+        var dirInfo = new DirectoryInfo(recordingsDir);
+        var restricted = dirInfo.GetAccessControl();
+        restricted.AddAccessRule(denyRule);
+        dirInfo.SetAccessControl(restricted);
+
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() => Directory.EnumerateFiles(recordingsDir, "*.wav").ToArray());
+            archive.PruneRetention(saved2.FileName);
+
+            var persistence = new SessionPersistence(
+                new InMemoryRecoveryStore(),
+                new StubHistoryStore(),
+                new NoOpLogger(),
+                TimeProvider.System,
+                () => new HistoryPreferences(true, 30),
+                new NoOpPersistenceEffects(),
+                archive);
+            var savedId = await persistence.SaveHistoryAsync(
+                new Transcript(DictationSessionId.Create(), "still-saves", "parakeet"),
+                "still-saves",
+                HistoryWriteIntent.Delivered(false, true),
+                audio: audio);
+            Assert.NotNull(savedId);
+        }
+        finally
+        {
+            var restored = dirInfo.GetAccessControl();
+            restored.RemoveAccessRuleSpecific(denyRule);
+            dirInfo.SetAccessControl(restored);
+        }
+    }
+
+    [Fact]
+    public async Task ArchiveCleanupRemovesOrphanedTempFilesOnPruneAndClearAll()
+    {
+        using var temp = new TempFolder();
+        var historyPath = Path.Combine(temp.Path, "history.json");
+        var recordingsDir = Path.Combine(temp.Path, "recordings", "dictations");
+        Directory.CreateDirectory(recordingsDir);
+
+        var staleInternalTmp = Path.Combine(recordingsDir, $".stale.wav.{Guid.NewGuid():N}.tmp");
+        var staleWavTmp = Path.Combine(recordingsDir, "interrupted.wav.tmp");
+        var freshActiveTmp = Path.Combine(recordingsDir, $".inflight.wav.{Guid.NewGuid():N}.tmp");
+
+        File.WriteAllBytes(staleInternalTmp, [1, 2, 3]);
+        File.WriteAllBytes(staleWavTmp, [4, 5, 6]);
+        File.WriteAllBytes(freshActiveTmp, [7, 8, 9]);
+
+        var staleTimestamp = DateTime.UtcNow - LocalDictationAudioArchive.DefaultStaleTempFileAge - TimeSpan.FromMinutes(5);
+        File.SetLastWriteTimeUtc(staleInternalTmp, staleTimestamp);
+        File.SetLastWriteTimeUtc(staleWavTmp, staleTimestamp);
+        File.SetLastWriteTimeUtc(freshActiveTmp, DateTime.UtcNow);
+
+        var archive = new LocalDictationAudioArchive(recordingsDir, maxRecordings: 10, maxTotalBytes: 1_000_000);
+        archive.PruneRetention();
+
+        Assert.False(File.Exists(staleInternalTmp));
+        Assert.False(File.Exists(staleWavTmp));
+        Assert.True(File.Exists(freshActiveTmp));
+
+        // JsonHistoryStore.ClearAsync and archive.ClearAll must remove both *.wav and any remaining *.tmp files.
+        using var store = new JsonHistoryStore(historyPath, recordingsDir);
+        var entry = DictationHistoryEntry.Create(Now, "Clear test", "parakeet", false, true);
+        var saved = archive.SaveForEntry(entry.Id, new CapturedAudio(DictationSessionId.Create(), new float[1600], 16_000, 1));
+        await store.AddAsync(entry with { AudioFileName = saved!.FileName, AudioDurationMs = saved.DurationMs }, 30, Now);
+
+        var cleared = await store.ClearAsync();
+        Assert.True(cleared.Succeeded);
+        Assert.Empty(Directory.GetFiles(recordingsDir));
+
+        var extraWavTmp = Path.Combine(recordingsDir, "leftover.wav.tmp");
+        var extraWav = Path.Combine(recordingsDir, $"{Guid.NewGuid():D}.wav");
+        File.WriteAllBytes(extraWavTmp, [1]);
+        File.WriteAllBytes(extraWav, [2]);
+        archive.ClearAll();
+        Assert.Empty(Directory.GetFiles(recordingsDir));
+    }
+
+    [Fact]
+    public void CanTogglePlaybackAllowsPauseWhileBusyOnlyWhenCurrentlyPlaying()
+    {
+        Assert.True(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: true, isGlobalBusy: false, isPlaying: false));
+        Assert.True(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: true, isGlobalBusy: false, isPlaying: true));
+        Assert.True(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: true, isGlobalBusy: true, isPlaying: true));
+        Assert.False(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: true, isGlobalBusy: true, isPlaying: false));
+        Assert.False(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: false, isGlobalBusy: false, isPlaying: false));
+        Assert.False(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: false, isGlobalBusy: true, isPlaying: true));
+
+        var root = FindRepositoryRoot();
+        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        Assert.Contains("HistoryPlaybackPresentation.CanTogglePlayback(_hasAudioRecording, _isGlobalBusy, _isPlaying)", historyCs, StringComparison.Ordinal);
+
+        var setSnapshotStart = historyCs.IndexOf("public void SetPlaybackSnapshot(", StringComparison.Ordinal);
+        Assert.True(setSnapshotStart >= 0, "Method 'public void SetPlaybackSnapshot(' not found.");
+        var setSnapshotEnd = historyCs.IndexOf("private void ApplySnapshotFields(", setSnapshotStart, StringComparison.Ordinal);
+        Assert.True(setSnapshotEnd > setSnapshotStart, "End of 'SetPlaybackSnapshot' not found.");
+        var setSnapshotBody = historyCs[setSnapshotStart..setSnapshotEnd];
+        Assert.Contains("nameof(CanTogglePlayback)", setSnapshotBody, StringComparison.Ordinal);
     }
 
     private static string ExtractMethodBody(string source, string methodName)

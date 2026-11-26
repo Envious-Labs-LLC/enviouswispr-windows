@@ -588,7 +588,9 @@ public sealed partial class MainWindow
 
     private void CardWaveform_SeekRequested(HistoryWaveformScrubber sender, double fraction)
     {
-        if (_isBulkDeletingHistory || sender.DataContext is not HistoryItemViewModel card)
+        if (_isBulkDeletingHistory
+            || sender.DataContext is not HistoryItemViewModel card
+            || !card.CanTogglePlayback)
         {
             return;
         }
@@ -1840,7 +1842,8 @@ public sealed partial class MainWindow
 
         public Visibility PlaybackRowVisibility => _hasAudioRecording ? Visibility.Visible : Visibility.Collapsed;
 
-        public bool CanTogglePlayback => _hasAudioRecording && !_isGlobalBusy;
+        public bool CanTogglePlayback =>
+            HistoryPlaybackPresentation.CanTogglePlayback(_hasAudioRecording, _isGlobalBusy, _isPlaying);
 
         public string PlaybackButtonGlyph => _isPlaying ? "\uE769" : "\uE768";
 
@@ -1990,6 +1993,7 @@ public sealed partial class MainWindow
             Notify(
                 nameof(PlaybackButtonGlyph),
                 nameof(PlaybackButtonAutomationName),
+                nameof(CanTogglePlayback),
                 nameof(PlaybackProgress),
                 nameof(PlaybackClockText),
                 nameof(PlaybackScrubberLabel),

@@ -79,6 +79,10 @@ public interface IDictationAudioArchive
     {
     }
 
+    void ClearAll()
+    {
+    }
+
     void DeleteFile(string? fileName);
 }
 
