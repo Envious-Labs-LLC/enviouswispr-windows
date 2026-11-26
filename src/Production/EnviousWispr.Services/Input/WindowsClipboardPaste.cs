@@ -755,6 +755,27 @@ internal static class WindowsClipboardPaste
 
     private static ClipboardSnapshot? TrySnapshotClipboardWin32Once()
     {
+        var capture = TryCaptureNativeSnapshotInOpenClipboard();
+        if (!capture.RequiresManagedFallback)
+        {
+            return capture.Snapshot;
+        }
+
+        // OpenClipboard has been closed: registered OLE IStream-backed formats (such as FileContents)
+        // return NULL from GetClipboardData and must be read through OleGetClipboard / IDataObject.
+        return TrySnapshotRegisteredFallback(static () => Clipboard.GetDataObject());
+    }
+
+    internal static ClipboardSnapshot? TrySnapshotRegisteredFallback(Func<System.Windows.Forms.IDataObject?> getDataObject)
+    {
+        ArgumentNullException.ThrowIfNull(getDataObject);
+        return TrySnapshotDataObject(getDataObject());
+    }
+
+    private readonly record struct NativeCaptureAttempt(ClipboardSnapshot? Snapshot, bool RequiresManagedFallback);
+
+    private static NativeCaptureAttempt TryCaptureNativeSnapshotInOpenClipboard()
+    {
         if (!OpenClipboard(IntPtr.Zero))
         {
             Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
@@ -765,17 +786,17 @@ internal static class WindowsClipboardPaste
             var formatIds = EnumerateClipboardFormatIds();
             if (formatIds is null)
             {
-                return null;
+                return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
             }
 
             if (formatIds.Count == 0)
             {
-                return new ClipboardSnapshot(IsEmpty: true, Data: null);
+                return new NativeCaptureAttempt(
+                    new ClipboardSnapshot(IsEmpty: true, Data: null),
+                    RequiresManagedFallback: false);
             }
 
-            var hasUnicodeText = formatIds.Contains(CfUnicodeText);
             var hasDib = formatIds.Contains(CfDib) || formatIds.Contains(CfDibV5);
-            var hasEnhMetaFile = formatIds.Contains(CfEnhMetaFile);
 
             var entries = new List<NativeClipboardEntry>(formatIds.Count);
             foreach (var formatId in formatIds)
@@ -786,7 +807,7 @@ internal static class WindowsClipboardPaste
                     formatName = TryGetClipboardFormatName(formatId);
                     if (formatName is null)
                     {
-                        return null;
+                        return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
                     }
 
                     if (IsOleWrapperFormat(formatName))
@@ -794,22 +815,30 @@ internal static class WindowsClipboardPaste
                         continue;
                     }
                 }
-                else if (ShouldOmitSynthesizedFormat(formatId, hasUnicodeText, hasDib, hasEnhMetaFile))
+                else if (ShouldOmitSynthesizedFormat(formatId, hasDib))
                 {
                     continue;
                 }
 
-                if (!TryCaptureNativeEntry(formatId, formatName, out var entry))
+                var result = TryCaptureNativeEntryCore(formatId, formatName, out var entry);
+                if (result == NativeEntryCaptureStatus.RequiresManagedFallback)
                 {
-                    return null;
+                    return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: true);
+                }
+
+                if (result != NativeEntryCaptureStatus.Captured)
+                {
+                    return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
                 }
 
                 entries.Add(entry!);
             }
 
-            return entries.Count == 0
-                ? new ClipboardSnapshot(IsEmpty: true, Data: null)
-                : new ClipboardSnapshot(IsEmpty: false, Data: null, NativeEntries: entries);
+            return new NativeCaptureAttempt(
+                entries.Count == 0
+                    ? new ClipboardSnapshot(IsEmpty: true, Data: null)
+                    : new ClipboardSnapshot(IsEmpty: false, Data: null, NativeEntries: entries),
+                RequiresManagedFallback: false);
         }
         finally
         {
@@ -845,17 +874,23 @@ internal static class WindowsClipboardPaste
 
     internal static bool ShouldOmitSynthesizedFormat(
         uint formatId,
-        bool hasUnicodeText,
-        bool hasDib,
-        bool hasEnhMetaFile) => formatId switch
+        bool hasDib) =>
+        formatId is CfBitmap or CfPalette && hasDib;
+
+    internal enum NativeEntryCaptureStatus
     {
-        CfText or CfOemText or CfLocale when hasUnicodeText => true,
-        CfBitmap or CfPalette when hasDib => true,
-        CfMetaFilePict when hasEnhMetaFile => true,
-        _ => false,
-    };
+        Captured,
+        Failed,
+        RequiresManagedFallback,
+    }
 
     internal static bool TryCaptureNativeEntry(
+        uint formatId,
+        string? formatName,
+        out NativeClipboardEntry? entry) =>
+        TryCaptureNativeEntryCore(formatId, formatName, out entry) == NativeEntryCaptureStatus.Captured;
+
+    internal static NativeEntryCaptureStatus TryCaptureNativeEntryCore(
         uint formatId,
         string? formatName,
         out NativeClipboardEntry? entry)
@@ -864,13 +899,15 @@ internal static class WindowsClipboardPaste
         if (formatId is CfOwnerDisplay or CfDspText or CfDspBitmap or CfDspMetaFilePict or CfDspEnhMetaFile ||
             (formatId >= CfGdiObjFirst && formatId <= CfGdiObjLast))
         {
-            return false;
+            return NativeEntryCaptureStatus.Failed;
         }
 
         var handle = GetClipboardData(formatId);
         if (handle == IntPtr.Zero)
         {
-            return false;
+            return formatId >= RegisteredFormatBase
+                ? NativeEntryCaptureStatus.RequiresManagedFallback
+                : NativeEntryCaptureStatus.Failed;
         }
 
         if (formatId == CfEnhMetaFile)
@@ -878,17 +915,17 @@ internal static class WindowsClipboardPaste
             var size = GetEnhMetaFileBits(handle, 0, null);
             if (size == 0)
             {
-                return false;
+                return NativeEntryCaptureStatus.Failed;
             }
 
             var bytes = new byte[size];
             if (GetEnhMetaFileBits(handle, size, bytes) != size)
             {
-                return false;
+                return NativeEntryCaptureStatus.Failed;
             }
 
             entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.EnhMetaFile, bytes);
-            return true;
+            return NativeEntryCaptureStatus.Captured;
         }
 
         if (formatId == CfBitmap)
@@ -901,34 +938,83 @@ internal static class WindowsClipboardPaste
                 var bytes = ms.ToArray();
                 if (bytes.Length == 0)
                 {
-                    return false;
+                    return NativeEntryCaptureStatus.Failed;
                 }
 
                 entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.BitmapPng, bytes);
-                return true;
+                return NativeEntryCaptureStatus.Captured;
             }
             catch (Exception exception) when (exception is ArgumentException or ExternalException or InvalidOperationException)
             {
-                return false;
+                return NativeEntryCaptureStatus.Failed;
             }
         }
 
-        if (formatId is CfPalette or CfMetaFilePict)
+        if (formatId == CfPalette)
         {
-            return false;
+            return NativeEntryCaptureStatus.Failed;
+        }
+
+        if (formatId == CfMetaFilePict)
+        {
+            var pictSize = GlobalSize(handle);
+            if (pictSize < (UIntPtr)Marshal.SizeOf<NativeMetaFilePict>())
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+
+            var lockedPict = GlobalLock(handle);
+            if (lockedPict == IntPtr.Zero)
+            {
+                return NativeEntryCaptureStatus.Failed;
+            }
+
+            try
+            {
+                var pict = Marshal.PtrToStructure<NativeMetaFilePict>(lockedPict);
+                if (pict.MetaFile == IntPtr.Zero)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                var wmfSize = GetMetaFileBitsEx(pict.MetaFile, 0, null);
+                if (wmfSize == 0)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                var wmfBits = new byte[wmfSize];
+                if (GetMetaFileBitsEx(pict.MetaFile, wmfSize, wmfBits) != wmfSize)
+                {
+                    return NativeEntryCaptureStatus.Failed;
+                }
+
+                var packed = new byte[checked(12 + wmfBits.Length)];
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(packed.AsSpan(0, 4), pict.Mm);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(packed.AsSpan(4, 4), pict.XExt);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(packed.AsSpan(8, 4), pict.YExt);
+                Buffer.BlockCopy(wmfBits, 0, packed, 12, wmfBits.Length);
+
+                entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.MetaFilePict, packed);
+                return NativeEntryCaptureStatus.Captured;
+            }
+            finally
+            {
+                _ = GlobalUnlock(handle);
+            }
         }
 
         var hGlobalSize = GlobalSize(handle);
         if (hGlobalSize == UIntPtr.Zero)
         {
-            return false;
+            return NativeEntryCaptureStatus.Failed;
         }
 
         var rawSize = checked((int)hGlobalSize);
         var locked = GlobalLock(handle);
         if (locked == IntPtr.Zero)
         {
-            return false;
+            return NativeEntryCaptureStatus.Failed;
         }
 
         try
@@ -936,7 +1022,7 @@ internal static class WindowsClipboardPaste
             var bytes = new byte[rawSize];
             Marshal.Copy(locked, bytes, 0, rawSize);
             entry = new NativeClipboardEntry(formatId, formatName, NativeClipboardEntryKind.HGlobal, bytes);
-            return true;
+            return NativeEntryCaptureStatus.Captured;
         }
         finally
         {
@@ -1043,6 +1129,53 @@ internal static class WindowsClipboardPaste
 
                 return hBmp;
             }
+            case NativeClipboardEntryKind.MetaFilePict:
+            {
+                if (entry.Bytes.Length < 13)
+                {
+                    throw new InvalidOperationException("Invalid clipboard metafile picture payload.");
+                }
+
+                var wmfBytes = entry.Bytes.AsSpan(12).ToArray();
+                var hMetaFile = SetMetaFileBitsEx((uint)wmfBytes.Length, wmfBytes);
+                if (hMetaFile == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Failed to reconstruct clipboard metafile.");
+                }
+
+                var hGlobal = GlobalAlloc(GmemMoveable, (UIntPtr)Marshal.SizeOf<NativeMetaFilePict>());
+                if (hGlobal == IntPtr.Zero)
+                {
+                    _ = DeleteMetaFile(hMetaFile);
+                    throw new InvalidOperationException("Failed to allocate clipboard metafile picture handle.");
+                }
+
+                var locked = GlobalLock(hGlobal);
+                if (locked == IntPtr.Zero)
+                {
+                    _ = GlobalFree(hGlobal);
+                    _ = DeleteMetaFile(hMetaFile);
+                    throw new InvalidOperationException("Failed to lock clipboard metafile picture handle.");
+                }
+
+                try
+                {
+                    var pict = new NativeMetaFilePict
+                    {
+                        Mm = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(entry.Bytes.AsSpan(0, 4)),
+                        XExt = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(entry.Bytes.AsSpan(4, 4)),
+                        YExt = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(entry.Bytes.AsSpan(8, 4)),
+                        MetaFile = hMetaFile,
+                    };
+                    Marshal.StructureToPtr(pict, locked, fDeleteOld: false);
+                }
+                finally
+                {
+                    _ = GlobalUnlock(hGlobal);
+                }
+
+                return hGlobal;
+            }
             default:
             {
                 var size = Math.Max(1, entry.Bytes.Length);
@@ -1097,6 +1230,28 @@ internal static class WindowsClipboardPaste
                 case NativeClipboardEntryKind.BitmapPng:
                     _ = DeleteObject(item.Handle);
                     break;
+                case NativeClipboardEntryKind.MetaFilePict:
+                {
+                    var locked = GlobalLock(item.Handle);
+                    if (locked != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            var pict = Marshal.PtrToStructure<NativeMetaFilePict>(locked);
+                            if (pict.MetaFile != IntPtr.Zero)
+                            {
+                                _ = DeleteMetaFile(pict.MetaFile);
+                            }
+                        }
+                        finally
+                        {
+                            _ = GlobalUnlock(item.Handle);
+                        }
+                    }
+
+                    _ = GlobalFree(item.Handle);
+                    break;
+                }
                 default:
                     _ = GlobalFree(item.Handle);
                     break;
@@ -1392,6 +1547,16 @@ internal static class WindowsClipboardPaste
         HGlobal,
         EnhMetaFile,
         BitmapPng,
+        MetaFilePict,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMetaFilePict
+    {
+        public int Mm;
+        public int XExt;
+        public int YExt;
+        public IntPtr MetaFile;
     }
 
     internal sealed record NativeClipboardEntry(
@@ -1529,4 +1694,14 @@ internal static class WindowsClipboardPaste
     [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeleteObject(IntPtr gdiObject);
+
+    [DllImport("gdi32.dll")]
+    private static extern uint GetMetaFileBitsEx(IntPtr metaFile, uint bufferSize, [Out] byte[]? buffer);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr SetMetaFileBitsEx(uint bufferSize, byte[] data);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteMetaFile(IntPtr metaFile);
 }

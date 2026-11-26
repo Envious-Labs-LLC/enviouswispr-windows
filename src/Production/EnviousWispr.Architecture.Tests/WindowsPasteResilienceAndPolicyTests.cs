@@ -507,20 +507,84 @@ public sealed class WindowsPasteResilienceAndPolicyTests
     }
 
     [Fact]
-    public void OwnerDisplayClipboardFormatIsNotOmittedAndFailsSnapshotCapture()
+    public void OwnerDisplayAndExplicitCompanionFormatsRespectCapturePolicy()
     {
+        const uint cfText = 1;
+        const uint cfBitmap = 2;
+        const uint cfMetaFilePict = 3;
+        const uint cfOemText = 7;
+        const uint cfPalette = 9;
+        const uint cfLocale = 16;
         const uint cfOwnerDisplay = 0x0080;
 
-        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(
-            cfOwnerDisplay,
-            hasUnicodeText: true,
-            hasDib: true,
-            hasEnhMetaFile: true));
+        // Only synthesized GDI bitmaps/palettes alongside CF_DIB are omitted.
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfText, hasDib: true));
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfOemText, hasDib: true));
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfLocale, hasDib: true));
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfMetaFilePict, hasDib: true));
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfOwnerDisplay, hasDib: true));
+        Assert.True(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfBitmap, hasDib: true));
+        Assert.True(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfPalette, hasDib: true));
+        Assert.False(WindowsClipboardPaste.ShouldOmitSynthesizedFormat(cfBitmap, hasDib: false));
+
         Assert.False(WindowsClipboardPaste.TryCaptureNativeEntry(
             cfOwnerDisplay,
             formatName: null,
             out var entry));
         Assert.Null(entry);
+    }
+
+    [Fact]
+    public void RegisteredFormatNullHandleFallsBackToIStreamDataObjectWithoutDroppingStream()
+    {
+        var fallback = WindowsClipboardPaste.TrySnapshotRegisteredFallback(() => new FakeDataObject(
+        [
+            ("FileContents", new MemoryStream([9, 8, 7, 6])),
+            (System.Windows.Forms.DataFormats.UnicodeText, "attachment"),
+        ]));
+
+        Assert.NotNull(fallback);
+        Assert.False(fallback!.IsEmpty);
+        Assert.True(fallback.Data!.TryGetData<MemoryStream>("FileContents", autoConvert: false, out var stream));
+        Assert.Equal(new byte[] { 9, 8, 7, 6 }, stream!.ToArray());
+
+        var failedFallback = WindowsClipboardPaste.TrySnapshotRegisteredFallback(() => new FakeDataObject(
+        [
+            ("FileContents", null),
+        ]));
+        Assert.Null(failedFallback);
+    }
+
+    [ClipboardFact]
+    public async Task PastePreservesExplicitCompanionCfTextAndCfLocaleAlongsideUnicodeText()
+    {
+        using var guard = StaClipboardFixture.Capture();
+        const string expectedUnicode = "hello world";
+        byte[] expectedCfTextBytes = "custom-ansi-companion\0"u8.ToArray();
+        byte[] expectedCfLocaleBytes = [0x09, 0x04, 0x00, 0x00];
+
+        StaClipboardFixture.SetNativeStandardFormats(
+            [
+                (13u, System.Text.Encoding.Unicode.GetBytes(expectedUnicode + '\0')),
+                (1u, expectedCfTextBytes),
+                (16u, expectedCfLocaleBytes),
+            ]);
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            WindowsClipboardPaste.SetClipboardTextOrThrow,
+            static () => true,
+            CancellationToken.None);
+
+        Assert.True(pasted.Delivered);
+        Assert.True(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+        Assert.Equal(expectedUnicode, StaClipboardFixture.GetText());
+        Assert.Equal(expectedCfTextBytes, StaClipboardFixture.GetRawStandardFormatBytes(1u));
+        Assert.Equal(expectedCfLocaleBytes, StaClipboardFixture.GetRawStandardFormatBytes(16u));
     }
 
     [Theory]
@@ -1174,17 +1238,36 @@ public sealed class WindowsPasteResilienceAndPolicyTests
             return true;
         });
 
-        public static byte[]? GetRawFormatBytes(string formatName) => OnSta(() =>
+        public static void SetNativeStandardFormats(
+            IReadOnlyList<(uint FormatId, byte[] Bytes)> standardFormats) => OnSta(() =>
         {
-            var fmt = RegisterClipboardFormat(formatName);
-            if (fmt == 0 || !OpenClipboard(IntPtr.Zero))
+            Assert.True(OpenClipboard(IntPtr.Zero));
+            try
+            {
+                Assert.True(EmptyClipboard());
+                foreach (var (formatId, bytes) in standardFormats)
+                {
+                    Assert.True(SetHGlobalFormat(formatId, bytes));
+                }
+            }
+            finally
+            {
+                _ = CloseClipboard();
+            }
+
+            return true;
+        });
+
+        public static byte[]? GetRawStandardFormatBytes(uint formatId) => OnSta(() =>
+        {
+            if (!OpenClipboard(IntPtr.Zero))
             {
                 return null;
             }
 
             try
             {
-                var handle = GetClipboardData(fmt);
+                var handle = GetClipboardData(formatId);
                 if (handle == IntPtr.Zero)
                 {
                     return null;
@@ -1218,6 +1301,12 @@ public sealed class WindowsPasteResilienceAndPolicyTests
                 _ = CloseClipboard();
             }
         });
+
+        public static byte[]? GetRawFormatBytes(string formatName)
+        {
+            var fmt = RegisterClipboardFormat(formatName);
+            return fmt == 0 ? null : GetRawStandardFormatBytes(fmt);
+        }
 
         private static bool SetHGlobalFormat(uint format, byte[] bytes)
         {
