@@ -354,11 +354,13 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         var vocabulary = new VocabularyPresenter(settingsPresenter);
         var events = new List<AppLogEntry>();
         var logger = new CapturingLogger(events);
+        var committedCallbacks = 0;
         var coordinator = new LearnedCorrectionCoordinator(
             vocabulary,
             memory,
             () => [],
-            logger);
+            logger,
+            onSettingsCommitted: () => Interlocked.Increment(ref committedCallbacks));
         var presenter = new FakePresenter(coordinator);
         coordinator.AttachPresenter(presenter);
 
@@ -382,6 +384,7 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         observer.Emit(new PastedRegionEvent.Settled("Hello Saurabh.", SettleEvidence.Strong));
 
         var pill1 = await presenter.ShownQueue.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, Volatile.Read(ref committedCallbacks));
         Assert.Equal("Saurabh", pill1.Canonical);
         Assert.Equal(LearnedCorrectionPillKind.Added, pill1.Kind);
         var savedAfter1 = Assert.Single(store.Current.UserData.CustomWords);
@@ -393,6 +396,7 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         Assert.NotNull(claimed1);
         var undo1 = await coordinator.PerformUndoAsync(claimed1!, pill1.PillId);
         Assert.Equal(LearnedCorrectionUndoOutcome.Undone, undo1);
+        Assert.Equal(2, Volatile.Read(ref committedCallbacks));
         Assert.Empty(store.Current.UserData.CustomWords);
         Assert.Equal(1, memory.GetEntry(CorrectionPairKey.Make("saurab", "Saurabh"))?.UserNos);
         Assert.False(memory.IsBlocked(CorrectionPairKey.Make("saurab", "Saurabh")));
@@ -501,6 +505,94 @@ public sealed class SelfLearningDictionaryTests : IDisposable
         Assert.Equal(PortableProfileImportStatus.Imported, imported.Status);
         Assert.Equal(PortableProfile.CurrentSchemaVersion, imported.Profile!.SchemaVersion);
         Assert.True(imported.Profile.Preferences.Dictation.LearnFromEditsEnabled);
+        Assert.Null(imported.Profile.LearnMemory);
+        Assert.DoesNotContain("learnMemory", exportedJson, StringComparison.Ordinal);
+
+        // Portable profile round-trips LearnMemory blocks and merges cleanly on import.
+        var memSource = new StoreLearnMemory(Path.Combine(dir, "mem-export", StoreLearnMemory.FileName));
+        var blockKey = CorrectionPairKey.Make("saurab", "Saurabh");
+        memSource.RecordUndo(blockKey);
+        memSource.RecordUndo(blockKey);
+        var memProfilePath = Path.Combine(dir, "profile-with-mem.json");
+        var exportedWithMem = await portableService.ExportAsync(
+            new PortableProfile(
+                PortableProfile.CurrentSchemaVersion,
+                UserPreferences.Default,
+                ReusableUserData.Empty,
+                memSource.ExportEntries()),
+            memProfilePath);
+        Assert.True(exportedWithMem.Succeeded);
+        var importedWithMem = await portableService.ImportAsync(memProfilePath);
+        Assert.Equal(PortableProfileImportStatus.Imported, importedWithMem.Status);
+        Assert.NotNull(importedWithMem.Profile?.LearnMemory);
+
+        var memTarget = new StoreLearnMemory(Path.Combine(dir, "mem-import", StoreLearnMemory.FileName));
+        Assert.True(memTarget.ImportEntries(importedWithMem.Profile!.LearnMemory!));
+        Assert.True(memTarget.IsBlocked(blockKey));
+    }
+
+    [Fact]
+    public async Task EditingAndRemovalPreserveRemainingProvenanceAndReportOnlyRemovedEntries()
+    {
+        var store = new InMemorySettingsStore();
+        var learnedAt = new DateTimeOffset(2026, 11, 26, 9, 15, 0, TimeSpan.Zero);
+        var entry1 = new CustomWordEntry(
+            aliases: ["saurab", "sarab", "sorab"],
+            replacement: "Saurabh",
+            learnedAliases: ["saurab", "sarab"],
+            learnedAt: learnedAt);
+        var entry2 = new CustomWordEntry("old", "KeepMe");
+        await store.SaveAsync(AppSettings.Default with
+        {
+            UserData = new ReusableUserData([entry1, entry2], []),
+        });
+
+        var vocabulary = new VocabularyPresenter(new SettingsPresenter(store, store.Current));
+        var editSameCanonical = await vocabulary.UpdateMultiAliasWordAsync(
+            entry1,
+            ["sarab", "sorab", "saurav"],
+            "Saurabh",
+            MatchStrictness.Default,
+            WordCategory.General);
+        Assert.True(editSameCanonical.Saved);
+        var edited1 = Assert.Single(store.Current.UserData.CustomWords, w => w.Id == entry1.Id);
+        Assert.Equal(["sarab"], edited1.LearnedAliases);
+        Assert.Equal(learnedAt, edited1.LearnedAt);
+        Assert.True(edited1.IsAutoLearned);
+
+        // Selecting stale entry1 (now replaced by edited1) beside live entry2 removes only entry2.
+        var removal = await vocabulary.RemoveWordsAndReportAsync([entry1, entry2]);
+        Assert.True(removal.Saved);
+        var removed = Assert.Single(removal.Value);
+        Assert.Same(entry2, removed);
+        Assert.Single(store.Current.UserData.CustomWords);
+
+        // Changing canonical clears learned provenance so unrelated replacements aren't misattributed.
+        var editChangedCanonical = await vocabulary.UpdateMultiAliasWordAsync(
+            edited1,
+            ["sarab", "sorab"],
+            "SomethingElse",
+            MatchStrictness.Default,
+            WordCategory.General);
+        Assert.True(editChangedCanonical.Saved);
+        var edited2 = Assert.Single(store.Current.UserData.CustomWords, w => w.Id == entry1.Id);
+        Assert.Empty(edited2.LearnedAliases);
+        Assert.Null(edited2.LearnedAt);
+        Assert.False(edited2.IsAutoLearned);
+
+        // PastedRegionTracker does not treat !SameElementFocus && !Readable (different control in same window) as read failure.
+        Assert.True(PastedRegionTracker.TryCaptureTarget(
+            "Hello saurab.", "Hello saurab.", 1, 2, "notepad", out var regionTarget, out _));
+        var tracker = new PastedRegionTracker(regionTarget!, startedAtMs: 0);
+        for (var t = 100; t <= 400; t += 100)
+        {
+            var tickEvents = tracker.Poll(
+                new PastedRegionTracker.ReadSnapshot(false, null, null, SameApplicationFocus: true, SameElementFocus: false, ElementAlive: true),
+                nowMs: t);
+            Assert.Empty(tickEvents);
+        }
+
+        Assert.False(tracker.HasEnded);
     }
 
     private sealed class InMemorySettingsStore : ISettingsStore

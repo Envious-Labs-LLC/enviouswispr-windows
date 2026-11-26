@@ -179,6 +179,59 @@ public sealed class JsonLearnMemoryStore : ILearnMemoryStore
         });
     }
 
+    public IReadOnlyDictionary<string, LearnMemoryEntry> ExportEntries()
+    {
+        lock (_inProcessLock)
+        {
+            RefreshIfChanged();
+            return new Dictionary<string, LearnMemoryEntry>(_pairs, StringComparer.Ordinal);
+        }
+    }
+
+    public bool ImportEntries(IReadOnlyDictionary<string, LearnMemoryEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        if (entries.Count == 0)
+        {
+            return false;
+        }
+
+        var mutation = Transact(pairs =>
+        {
+            var changed = false;
+            foreach (var (rawKey, incoming) in entries)
+            {
+                if (string.IsNullOrWhiteSpace(rawKey) || rawKey.Length > 512 || incoming is null)
+                {
+                    continue;
+                }
+
+                var existing = pairs.GetValueOrDefault(rawKey);
+                var refusals = Math.Max(existing?.JudgeRefusals ?? 0, Math.Max(0, incoming.JudgeRefusals));
+                var userNos = Math.Max(existing?.UserNos ?? 0, Math.Max(0, incoming.UserNos));
+                var blocked = (existing?.Blocked ?? false) || incoming.Blocked || userNos >= 2;
+                if (blocked && !(existing?.Blocked ?? false) && pairs.Values.Count(e => e.Blocked) >= BlockedCap)
+                {
+                    continue;
+                }
+
+                var lastSeen = existing is not null && existing.LastSeen > incoming.LastSeen
+                    ? existing.LastSeen
+                    : incoming.LastSeen;
+                var merged = new LearnMemoryEntry(refusals, userNos, blocked, lastSeen);
+                if (existing != merged)
+                {
+                    pairs[rawKey] = merged;
+                    changed = true;
+                }
+            }
+
+            return (changed, changed);
+        });
+
+        return mutation.Committed && mutation.Value;
+    }
+
     public bool ForgetAll()
     {
         var erased = false;

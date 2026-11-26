@@ -188,6 +188,7 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
             }
 
             PastedRegionTarget? captured = null;
+            int[]? capturedRuntimeId = null;
             PastedRegionEndReason? endReason = null;
             string? skipReason = null;
             var captureDeadline = Environment.TickCount64 + PastedRegionTiming.CaptureGraceMs;
@@ -198,6 +199,7 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
                 if (attempt.Captured is not null)
                 {
                     captured = attempt.Captured;
+                    capturedRuntimeId = attempt.RuntimeId;
                     break;
                 }
 
@@ -255,7 +257,7 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
                     return;
                 }
 
-                var snapshot = ReadLiveSnapshot(target, captured);
+                var snapshot = ReadLiveSnapshot(target, capturedRuntimeId);
                 IReadOnlyList<PastedRegionEvent> events;
                 lock (_sync)
                 {
@@ -317,7 +319,8 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
         PastedRegionTarget? Captured,
         string? FatalSkipReason,
         PastedRegionEndReason? EndReason,
-        string? RetryableSkipReason = null);
+        string? RetryableSkipReason = null,
+        int[]? RuntimeId = null);
 
     private static CaptureAttempt TryCaptureOnce(
         PasteCompletedEvent paste,
@@ -350,6 +353,7 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
             return new CaptureAttempt(null, null, null, RetryableSkipReason: "no_focused_element");
         }
 
+        int[]? runtimeId;
         try
         {
             var current = focused.Current;
@@ -362,6 +366,8 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
             {
                 return new CaptureAttempt(null, null, null, RetryableSkipReason: "destination_mismatch");
             }
+
+            runtimeId = TryGetRuntimeId(focused);
         }
         catch (Exception exception) when (IsExpectedUiaException(exception))
         {
@@ -388,13 +394,13 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
                 out var captured,
                 out var endReason))
         {
-            return new CaptureAttempt(captured, null, null);
+            return new CaptureAttempt(captured, null, null, RuntimeId: runtimeId);
         }
 
         return new CaptureAttempt(null, null, endReason);
     }
 
-    private static PastedRegionTracker.ReadSnapshot ReadLiveSnapshot(TargetWindowId target, PastedRegionTarget captured)
+    private static PastedRegionTracker.ReadSnapshot ReadLiveSnapshot(TargetWindowId target, int[]? capturedRuntimeId)
     {
         if (!IsWindow(target.Value))
         {
@@ -443,6 +449,15 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
                 target.Value,
                 target.ProcessId,
                 checked((uint)current.ProcessId));
+            if (isSameElementFocus && capturedRuntimeId is { Length: > 0 })
+            {
+                var focusedRuntimeId = TryGetRuntimeId(focused);
+                if (focusedRuntimeId is null || !capturedRuntimeId.AsSpan().SequenceEqual(focusedRuntimeId))
+                {
+                    return new PastedRegionTracker.ReadSnapshot(
+                        false, null, null, SameApplicationFocus: true, SameElementFocus: false, ElementAlive: true);
+                }
+            }
         }
         catch (Exception exception) when (IsExpectedUiaException(exception))
         {
@@ -458,6 +473,18 @@ public sealed class WindowsPastedRegionObserver : IPastedRegionObserver, IDispos
             SameElementFocus: isSameElementFocus && read.Readable,
             ElementAlive: true,
             TooLong: read.TooLong);
+    }
+
+    private static int[]? TryGetRuntimeId(AutomationElement element)
+    {
+        try
+        {
+            return element.GetRuntimeId();
+        }
+        catch (Exception exception) when (IsExpectedUiaException(exception))
+        {
+            return null;
+        }
     }
 
     private readonly record struct FieldRead(bool Readable, string? Text, int? CaretOffset, bool TooLong);

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EnviousWispr.Core.Learning;
 
 namespace EnviousWispr.Core.Settings;
 
@@ -561,7 +562,9 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
 public sealed record PortableProfile(
     int SchemaVersion,
     UserPreferences Preferences,
-    ReusableUserData UserData)
+    ReusableUserData UserData,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyDictionary<string, LearnMemoryEntry>? LearnMemory = null)
 {
     public const int CurrentSchemaVersion = 20;
 }

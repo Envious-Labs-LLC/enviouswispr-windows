@@ -195,12 +195,20 @@ public sealed class VocabularyPresenter
 
         var normalizedAliases = CustomWordEntry.NormalizeAliases(aliases);
         var trimmedReplacement = replacement.Trim();
+        var preservedLearned = string.Equals(original.Replacement, trimmedReplacement, StringComparison.OrdinalIgnoreCase)
+            ? original.LearnedAliases
+                .Where(alias => normalizedAliases.Contains(alias, StringComparer.OrdinalIgnoreCase))
+                .ToArray()
+            : [];
+        var preservedLearnedAt = preservedLearned.Length > 0 ? original.LearnedAt : null;
         var updated = new CustomWordEntry(
             normalizedAliases,
             trimmedReplacement,
             strictness,
             category,
-            original.Id);
+            original.Id,
+            preservedLearned,
+            preservedLearnedAt);
         return ChangeAsync(data =>
         {
             var originalIndex = FindWordIndex(data.CustomWords, original);
@@ -389,6 +397,19 @@ public sealed class VocabularyPresenter
         {
             var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
             return (data.WithCustomWords(remaining), data.CustomWords.Count - remaining.Count);
+        });
+    }
+
+    /// <summary>Removes the selected rows and returns the exact entries removed by reference identity.</summary>
+    public Task<SettingsSaveResult<IReadOnlyList<CustomWordEntry>>> RemoveWordsAndReportAsync(IReadOnlyList<CustomWordEntry> selected)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        return ChangeAsync<IReadOnlyList<CustomWordEntry>>(data =>
+        {
+            var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
+            var remainingSet = new HashSet<CustomWordEntry>(remaining, ReferenceEqualityComparer.Instance);
+            var removed = data.CustomWords.Where(entry => !remainingSet.Contains(entry)).ToArray();
+            return (data.WithCustomWords(remaining), removed);
         });
     }
 

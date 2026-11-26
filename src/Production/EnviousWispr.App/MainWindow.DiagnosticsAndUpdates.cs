@@ -223,7 +223,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var result = await _session.Profiles.ExportAsync(_settings.ToPortableProfile(), file.Path).ConfigureAwait(true);
+        var result = await _session.Profiles.ExportAsync(BuildExportablePortableProfile(), file.Path).ConfigureAwait(true);
         ShowMessage(
             result.Succeeded ? "Profile exported" : "Profile export failed safely",
             result.Succeeded ? "Settings, dictionary entries, and snippets were written without private machine data." : "No existing destination data was intentionally replaced with an invalid profile.",
@@ -426,6 +426,11 @@ public sealed partial class MainWindow
                 "Profile imported",
                 "Settings, dictionary entries, and snippets are ready. Machine-local choices and history were preserved.").ConfigureAwait(true))
         {
+            if (imported.Profile.LearnMemory is { Count: > 0 } memoryEntries)
+            {
+                ImportLearnMemory?.Invoke(memoryEntries);
+            }
+
             ApplySettingsToControls();
         }
     }

@@ -262,6 +262,11 @@ public sealed class PastedRegionTracker
             return events;
         }
 
+        if (!snapshot.SameElementFocus && !snapshot.Readable)
+        {
+            return events;
+        }
+
         if (!snapshot.Readable || snapshot.FieldText is null)
         {
             _consecutiveFailures++;

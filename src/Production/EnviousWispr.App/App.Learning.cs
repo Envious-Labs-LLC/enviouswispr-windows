@@ -32,7 +32,8 @@ public partial class App
             _presentation.Vocabulary,
             memoryStore,
             () => VocabularyPacks.ResolveEntries(_enabledVocabularyPackIds),
-            _logger);
+            _logger,
+            onSettingsCommitted: PublishSelfLearningSettings);
         var presenter = new OverlayLearnedCorrectionPresenter(this, coordinator);
         coordinator.AttachPresenter(presenter);
 
@@ -81,6 +82,8 @@ public partial class App
             _learnedCoordinator?.RecordManualWordRemovals(entries);
         window.LearnedAliasesRemovedFromDictionary = (replacement, aliases) =>
             _learnedCoordinator?.RecordManualAliasRemovals(replacement, aliases);
+        window.ExportLearnMemory = () => _learnMemoryStore?.ExportEntries();
+        window.ImportLearnMemory = entries => _learnMemoryStore?.ImportEntries(entries);
         window.LearnedPillUndoRequested += RequestLearnedCorrectionUndo;
         window.LearnedPillUndoActiveRequested += RequestActiveLearnedCorrectionUndo;
         window.LearnedPillEnded += OnLearnedPillEnded;
@@ -93,9 +96,26 @@ public partial class App
         window.ForgetLearnMemory = null;
         window.WordsRemovedFromDictionary = null;
         window.LearnedAliasesRemovedFromDictionary = null;
+        window.ExportLearnMemory = null;
+        window.ImportLearnMemory = null;
         window.LearnedPillUndoRequested -= RequestLearnedCorrectionUndo;
         window.LearnedPillUndoActiveRequested -= RequestActiveLearnedCorrectionUndo;
         window.LearnedPillEnded -= OnLearnedPillEnded;
+    }
+
+    private void PublishSelfLearningSettings()
+    {
+        if (_presentation is not { } presentation)
+        {
+            return;
+        }
+
+        var latest = presentation.Settings.Current;
+        _settings = latest;
+        _customWords = latest.UserData.CustomWords;
+        _enabledVocabularyPackIds = latest.UserData.EnabledVocabularyPackIds;
+        _snippetVocabulary = Core.Settings.SnippetVocabulary.From(latest.UserData);
+        PostToLiveWindow(window => window.SyncExternalSettingsUpdate());
     }
 
     private void OnLearnMemoryChanged() =>

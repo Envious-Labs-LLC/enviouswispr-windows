@@ -629,6 +629,19 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public Action<string, IReadOnlyList<string>>? LearnedAliasesRemovedFromDictionary { get; set; }
 
+    public Func<IReadOnlyDictionary<string, EnviousWispr.Core.Learning.LearnMemoryEntry>?>? ExportLearnMemory { get; set; }
+
+    public Action<IReadOnlyDictionary<string, EnviousWispr.Core.Learning.LearnMemoryEntry>>? ImportLearnMemory { get; set; }
+
+    internal PortableProfile BuildExportablePortableProfile()
+    {
+        var baseProfile = _settings.ToPortableProfile();
+        var learnMemory = ExportLearnMemory?.Invoke();
+        return learnMemory is { Count: > 0 }
+            ? baseProfile with { LearnMemory = learnMemory }
+            : baseProfile;
+    }
+
     public event Action<Guid>? LearnedPillUndoRequested;
 
     public event Action? LearnedPillUndoActiveRequested;

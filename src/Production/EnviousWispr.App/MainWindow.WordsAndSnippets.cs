@@ -519,11 +519,11 @@ public sealed partial class MainWindow
                         "This removes the word and all its mishearings from Your Words.",
                         "Delete").ConfigureAwait(true))
                 {
-                    var removed = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAsync(new[] { existing }))
+                    var removed = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAndReportAsync(new[] { existing }))
                         .ConfigureAwait(true);
-                    if (removed.Saved && removed.Value > 0)
+                    if (removed.Saved && removed.Value.Count > 0)
                     {
-                        WordsRemovedFromDictionary?.Invoke([existing]);
+                        WordsRemovedFromDictionary?.Invoke(removed.Value);
                         RefreshLearnMemoryUi();
                         ShowMessage("Word deleted", $"\u201C{existing.Replacement}\u201D was removed.", InfoBarSeverity.Informational);
                     }

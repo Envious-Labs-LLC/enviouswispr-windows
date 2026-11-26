@@ -279,16 +279,16 @@ public sealed partial class MainWindow
         // so a row that another change replaced while this was waiting is no longer the row that was
         // chosen - it is left alone, correctly, and saying "removed" over the top of that tells
         // somebody a word is gone when it is still there.
-        var removal = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAsync(selected)).ConfigureAwait(true);
+        var removal = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAndReportAsync(selected)).ConfigureAwait(true);
         if (!removal.Saved)
         {
             return;
         }
 
-        var removedCount = removal.Value;
+        var removedCount = removal.Value.Count;
         if (removedCount > 0)
         {
-            WordsRemovedFromDictionary?.Invoke(selected);
+            WordsRemovedFromDictionary?.Invoke(removal.Value);
             RefreshLearnMemoryUi();
         }
 

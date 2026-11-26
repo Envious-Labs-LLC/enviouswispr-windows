@@ -27,6 +27,7 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
     private readonly Func<IReadOnlyList<CustomWordEntry>> _packTerms;
     private readonly IAppLogger? _logger;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly Action? _onSettingsCommitted;
     private readonly object _sync = new();
 
     private ILearnedCorrectionPresenter? _presenter;
@@ -37,7 +38,8 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
         ILearnMemoryStore memory,
         Func<IReadOnlyList<CustomWordEntry>> packTerms,
         IAppLogger? logger = null,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        Action? onSettingsCommitted = null)
     {
         ArgumentNullException.ThrowIfNull(vocabulary);
         ArgumentNullException.ThrowIfNull(memory);
@@ -48,6 +50,7 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
         _packTerms = packTerms;
         _logger = logger;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _onSettingsCommitted = onSettingsCommitted;
     }
 
     public UndoRecord? CurrentUndoRecord
@@ -144,6 +147,7 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
         }
 
         Log(AppEventCode.LearnAdded);
+        _onSettingsCommitted?.Invoke();
         _presenter?.Show(pill);
         return new LearnedCorrectionOutcome.Learned(pill);
     }
@@ -217,6 +221,7 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
             return LearnedCorrectionUndoOutcome.AlreadyChanged;
         }
 
+        _onSettingsCommitted?.Invoke();
         var mem = _memory.RecordUndo(record.PairKey);
         Log(AppEventCode.LearnUndone);
         if (mem.Committed)

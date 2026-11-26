@@ -40,4 +40,8 @@ public interface ILearnMemoryStore
     LearnMemoryMutation<LearnUserNoResult> RecordUndo(string pairKey);
 
     bool ForgetAll();
+
+    IReadOnlyDictionary<string, LearnMemoryEntry> ExportEntries();
+
+    bool ImportEntries(IReadOnlyDictionary<string, LearnMemoryEntry> entries);
 }

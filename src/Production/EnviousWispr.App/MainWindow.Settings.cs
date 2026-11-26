@@ -421,6 +421,13 @@ public sealed partial class MainWindow
         UpdateSelectionDependentButtons();
     }
 
+    public void SyncExternalSettingsUpdate()
+    {
+        _settings = _session.Settings.Current;
+        RefreshReusableUserDataViews();
+        RefreshLearnMemoryUi();
+    }
+
     /// <summary>A quiet write: applied through the presenter, published on success, silent on refusal.</summary>
     /// <remarks>
     /// THE TRANSACTION IS THE PRESENTER'S. One at a time, each change derived from what is actually
