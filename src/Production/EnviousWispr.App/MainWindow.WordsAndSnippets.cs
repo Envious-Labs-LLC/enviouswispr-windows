@@ -381,8 +381,7 @@ public sealed partial class MainWindow
 
         var errorText = new TextBlock
         {
-            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
-            Foreground = ResolveWindowThemeBrush("BrandErrorBrush"),
+            Style = (Style)Application.Current.Resources["BrandErrorHelperStyle"],
             TextWrapping = TextWrapping.Wrap,
             Visibility = Visibility.Collapsed,
         };
@@ -410,7 +409,7 @@ public sealed partial class MainWindow
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot ?? Content.XamlRoot,
-            RequestedTheme = WindowRoot.RequestedTheme,
+            RequestedTheme = WindowRoot.ActualTheme,
             Title = existing is null ? "Add word" : "Edit word",
             PrimaryButtonText = existing is null ? "Add word" : "Save",
             SecondaryButtonText = existing is null ? string.Empty : "Delete",
@@ -661,9 +660,7 @@ public sealed partial class MainWindow
             Child = new TextBlock
             {
                 Text = "{}",
-                FontSize = 17,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = ResolveWindowThemeBrush("BrandAccentBrush"),
+                Style = (Style)Application.Current.Resources["BrandAccentTitleStyle"],
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             },
@@ -773,8 +770,7 @@ public sealed partial class MainWindow
 
         var errorText = new TextBlock
         {
-            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
-            Foreground = ResolveWindowThemeBrush("BrandErrorBrush"),
+            Style = (Style)Application.Current.Resources["BrandErrorHelperStyle"],
             TextWrapping = TextWrapping.Wrap,
             Visibility = Visibility.Collapsed,
         };

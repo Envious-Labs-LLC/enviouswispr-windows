@@ -452,42 +452,6 @@ public sealed partial class FeedbackDialog : ContentDialog, IDisposable
     private Brush? ResolveBrush(string key) =>
         ResolveThemeResource<Brush>(key);
 
-    private T? ResolveThemeResource<T>(string key) where T : class
-    {
-        if (Resources.TryGetValue(key, out var local) && local is T localTyped)
-        {
-            return localTyped;
-        }
-
-        var themeKey = ActualTheme == ElementTheme.Dark ? "Dark" : ActualTheme == ElementTheme.Light ? "Light" : null;
-        if (themeKey is not null && TryFindInThemeDictionaries<T>(Application.Current.Resources, themeKey, key) is { } themed)
-        {
-            return themed;
-        }
-
-        return Application.Current.Resources.TryGetValue(key, out var appRes) && appRes is T appTyped
-            ? appTyped
-            : null;
-    }
-
-    private static T? TryFindInThemeDictionaries<T>(ResourceDictionary dictionary, string themeKey, string key) where T : class
-    {
-        if (dictionary.ThemeDictionaries.TryGetValue(themeKey, out var themeObj)
-            && themeObj is ResourceDictionary themeDict
-            && themeDict.TryGetValue(key, out var themeVal)
-            && themeVal is T typedThemeVal)
-        {
-            return typedThemeVal;
-        }
-
-        foreach (var merged in dictionary.MergedDictionaries)
-        {
-            if (TryFindInThemeDictionaries<T>(merged, themeKey, key) is { } found)
-            {
-                return found;
-            }
-        }
-
-        return null;
-    }
+    private T? ResolveThemeResource<T>(string key) where T : class =>
+        ThemeResourceLookup.Resolve<T>(this, key);
 }

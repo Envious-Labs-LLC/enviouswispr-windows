@@ -191,43 +191,9 @@ public sealed partial class MainWindow
         }
     }
 
-    private Brush ResolveWindowThemeBrush(string key)
-    {
-        var themeKey = WindowRoot.ActualTheme switch
-        {
-            ElementTheme.Dark => "Dark",
-            ElementTheme.Light => "Light",
-            _ => null,
-        };
-        if (themeKey is not null &&
-            TryFindThemedResource<Brush>(Application.Current.Resources, themeKey, key) is { } themed)
-        {
-            return themed;
-        }
-
-        return (Brush)Application.Current.Resources[key];
-    }
-
-    private static T? TryFindThemedResource<T>(ResourceDictionary dictionary, string themeKey, string key) where T : class
-    {
-        if (dictionary.ThemeDictionaries.TryGetValue(themeKey, out var themeObj)
-            && themeObj is ResourceDictionary themeDict
-            && themeDict.TryGetValue(key, out var themeVal)
-            && themeVal is T typed)
-        {
-            return typed;
-        }
-
-        foreach (var merged in dictionary.MergedDictionaries)
-        {
-            if (TryFindThemedResource<T>(merged, themeKey, key) is { } found)
-            {
-                return found;
-            }
-        }
-
-        return null;
-    }
+    private Brush ResolveWindowThemeBrush(string key) =>
+        ThemeResourceLookup.Resolve<Brush>(WindowRoot, key)
+        ?? (Brush)Application.Current.Resources[key];
 
     private void SetSidebarWidth(double requested)
     {
