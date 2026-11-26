@@ -30,8 +30,8 @@ public partial class App
     private LastDictationReuse? _lastDictation;
     private SavedDictationPaste? _savedDictationPaste;
     private int _lastDictationPreviewVersion;
-    private bool _bluetoothAwarenessShownThisLaunch;
-    private bool _bluetoothMicDetectedPending;
+    private volatile bool _bluetoothAwarenessShownThisLaunch;
+    private volatile bool _bluetoothMicDetectedPending;
 
     /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
     private Guid? _lastDictationPreviewEntry;
@@ -142,9 +142,19 @@ public partial class App
                 !_bluetoothAwarenessShownThisLaunch &&
                 string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE")))
             {
-                _bluetoothMicDetectedPending = false;
-                _bluetoothAwarenessShownThisLaunch = true;
-                PostToLiveWindow(window => window.TryShowBluetoothAwarenessCard());
+                PostToLiveWindow(window =>
+                {
+                    if (_bluetoothAwarenessShownThisLaunch || !_bluetoothMicDetectedPending)
+                    {
+                        return;
+                    }
+
+                    if (window.TryShowBluetoothAwarenessCard())
+                    {
+                        _bluetoothMicDetectedPending = false;
+                        _bluetoothAwarenessShownThisLaunch = true;
+                    }
+                });
             }
         }
         catch (ObjectDisposedException)

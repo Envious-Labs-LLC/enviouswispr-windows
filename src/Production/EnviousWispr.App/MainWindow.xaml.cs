@@ -647,24 +647,26 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void InvokeLearnedCorrectionUndo() => LearnedPillUndoActiveRequested?.Invoke();
 
-    public void TryShowBluetoothAwarenessCard()
+    public bool TryShowBluetoothAwarenessCard()
     {
         if (_overlayWindow.IsActiveNonPreview || _overlayWindow.IsPreviewVisible)
         {
-            return;
+            return false;
         }
 
         _overlayWindow.ShowState(DictationStatus.BluetoothCard());
+        return true;
     }
 
-    public void TryShowPolishSetupCard(string title, string buttonLabel)
+    public bool TryShowPolishSetupCard(string title, string buttonLabel)
     {
         if (_overlayWindow.IsActiveNonPreview || _overlayWindow.IsPreviewVisible)
         {
-            return;
+            return false;
         }
 
         _overlayWindow.ShowState(DictationStatus.PolishSetupCard(title, buttonLabel));
+        return true;
     }
 
     public Func<(bool HasStoredMemory, int BlockedCount)>? QueryLearnMemoryState { get; set; }

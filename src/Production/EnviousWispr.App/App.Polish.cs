@@ -548,14 +548,16 @@ public partial class App
             return;
         }
 
-        _polishSetupCardShownThisLaunch = true;
         var (title, button) = provider switch
         {
             PolishProvider.Ollama => ("Choose a model for Ollama.", "Open AI polish settings"),
             PolishProvider.EgOne => ("Local AI polish needs setup.", "Set up AI polish"),
             _ => ("Finish AI polish setup.", "Set up AI polish"),
         };
-        window.TryShowPolishSetupCard(title, button);
+        if (window.TryShowPolishSetupCard(title, button))
+        {
+            _polishSetupCardShownThisLaunch = true;
+        }
     }
 
     private RuntimeResourceKind EffectivePolishResource(IPolishProvider provider) =>
