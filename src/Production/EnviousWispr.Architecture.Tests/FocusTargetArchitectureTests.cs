@@ -397,6 +397,213 @@ public sealed class FocusTargetArchitectureTests
         await controller.CancelAsync();
     }
 
+    [Fact]
+    public void EvaluateFocusedElementRejectsSameWindowReplacementInReleaseModeAcrossUiaAndWin32()
+    {
+        var rule = WindowsPastePolicy.Resolve("msedge", "Chrome_WidgetWin_1", isControlEdit: true);
+        var uiaReleaseTarget = new TargetWindowId(0x1111, 4242, FocusedElementId: "42.1.10", ProcessName: "msedge");
+
+        var movedUiaField = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            uiaReleaseTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: "42.1.25",
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Edit"),
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: true,
+            (_, _) => rule,
+            allowSameWindowEditableReplacement: false);
+        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, movedUiaField.Failure?.RefusalReason);
+
+        var win32ReleaseTarget = new TargetWindowId(0x1111, 4242, FocusedElementId: "win32:100", ProcessName: "notepad");
+        var movedWin32Field = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            win32ReleaseTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Edit"),
+            win32ChildFocusId: "win32:200",
+            isExplicitHistoryPaste: true,
+            (_, _) => WindowsPastePolicy.Resolve("notepad", "Notepad", "Edit", isControlEdit: true),
+            allowSameWindowEditableReplacement: false);
+        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, movedWin32Field.Failure?.RefusalReason);
+
+        var exactWin32Field = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            win32ReleaseTarget,
+            new WindowsTextTargetAdapter.FocusedElementFacts(
+                ProcessId: 4242,
+                RuntimeId: string.Empty,
+                HasKeyboardFocus: true,
+                IsPassword: false,
+                IsEnabled: true,
+                IsKeyboardFocusable: true,
+                IsControlEdit: true,
+                ClassName: "Edit"),
+            win32ChildFocusId: "win32:100",
+            isExplicitHistoryPaste: true,
+            (_, _) => WindowsPastePolicy.Resolve("notepad", "Notepad", "Edit", isControlEdit: true),
+            allowSameWindowEditableReplacement: false);
+        Assert.Null(exactWin32Field.Failure);
+        Assert.Equal("win32:100", exactWin32Field.EffectiveFocusId);
+    }
+
+    [Fact]
+    public async Task CaptureReleaseTargetHonorsFrozenPressOptionsDuringPendingAudioStartup()
+    {
+        var liveOptions = TextDeliveryOptions.Default with
+        {
+            TargetMode = PasteTargetMode.WhereCursorIsAtRelease,
+            CopyInsteadOfPaste = false,
+        };
+        var releaseWindow = new TargetWindowId(0x2222, 200, FocusedElementId: "win32:20", ProcessName: "notepad");
+        var currentTarget = new TargetWindowId(0x1111, 100, FocusedElementId: "win32:10", ProcessName: "notepad");
+        var capture = new BlockingStartAudioCapture();
+        var controller = new PushToTalkSessionController(
+            capture,
+            new DelegateTargetProvider(() => currentTarget),
+            deliveryOptions: () => liveOptions,
+            minimumHoldDuration: TimeSpan.Zero);
+
+        var pressTask = controller.PressAsync();
+        await capture.StartEntered.Task;
+        Assert.Null(controller.CurrentSession);
+
+        currentTarget = releaseWindow;
+        liveOptions = TextDeliveryOptions.Default with
+        {
+            TargetMode = PasteTargetMode.WhereDictationStarted,
+            CopyInsteadOfPaste = true,
+        };
+
+        var capturedDuringStartup = controller.CaptureReleaseTarget();
+        Assert.NotNull(capturedDuringStartup);
+        Assert.Equal(releaseWindow, capturedDuringStartup!.Target);
+
+        capture.ReleaseStart.TrySetResult(new AudioOperationResult(Succeeded: true));
+        var started = await pressTask;
+        Assert.Equal(SessionTransitionKind.Started, started.Kind);
+        await controller.CancelAsync();
+    }
+
+    [Fact]
+    public async Task CoordinatorCapturesReleaseTargetAtCancelledAdmissionForEscapeRecovery()
+    {
+        var liveOptions = TextDeliveryOptions.Default with
+        {
+            TargetMode = PasteTargetMode.WhereCursorIsAtRelease,
+            CopyInsteadOfPaste = false,
+        };
+        var currentTarget = new TargetWindowId(0x1111, 100, FocusedElementId: "win32:10", ProcessName: "notepad");
+        var escapeWindow = new TargetWindowId(0x3333, 300, FocusedElementId: "win32:30", ProcessName: "notepad");
+        var capture = new BlockingStartAudioCapture();
+        var controller = new PushToTalkSessionController(
+            capture,
+            new DelegateTargetProvider(() => currentTarget),
+            deliveryOptions: () => liveOptions,
+            minimumHoldDuration: TimeSpan.Zero);
+        var executor = new CapturingSessionExecutor(controller);
+        await using var coordinator = new DictationSessionCoordinator(
+            executor,
+            controller.CaptureStartContext,
+            captureReleaseTargetWithOptions: controller.CaptureReleaseTarget);
+
+        var pressTask = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await capture.StartEntered.Task;
+
+        currentTarget = escapeWindow;
+        liveOptions = TextDeliveryOptions.Default with
+        {
+            TargetMode = PasteTargetMode.WhereDictationStarted,
+            CopyInsteadOfPaste = true,
+        };
+
+        var cancelTask = coordinator.SubmitAsync(PushToTalkSignal.Cancelled);
+        capture.ReleaseStart.TrySetResult(new AudioOperationResult(Succeeded: true));
+        await pressTask;
+        await cancelTask;
+
+        Assert.NotNull(executor.LastCancelledReleaseTarget);
+        Assert.Equal(escapeWindow, executor.LastCancelledReleaseTarget!.Target);
+    }
+
+    private sealed class BlockingStartAudioCapture : IAudioCapture
+    {
+        public TaskCompletionSource<bool> StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<AudioOperationResult> ReleaseStart { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event EventHandler<AudioLevel>? LevelChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public bool IsCapturing { get; private set; }
+
+        public async Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            StartEntered.TrySetResult(true);
+            var result = await ReleaseStart.Task.ConfigureAwait(false);
+            IsCapturing = result.Succeeded;
+            return result;
+        }
+
+        public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
+        {
+            IsCapturing = false;
+            return Task.FromResult(new CapturedAudio(new DictationSessionId(Guid.NewGuid()), ReadOnlyMemory<float>.Empty, 16_000, 1));
+        }
+
+        public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
+        {
+            IsCapturing = false;
+            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CapturingSessionExecutor(PushToTalkSessionController controller) : ISessionCommandExecutor
+    {
+        public ReleaseTargetContext? LastCancelledReleaseTarget { get; private set; }
+
+        public bool HasRetainedCleanup => false;
+
+        public Task<bool> JoinRetainedCleanupAsync() => Task.FromResult(true);
+
+        public async Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
+        {
+            if (command.Signal == PushToTalkSignal.Pressed && command.StartContext is { } startContext)
+            {
+                var started = await controller.PressAsync(startContext, stoppingToken).ConfigureAwait(false);
+                return new SessionCommandResult(SessionCommandDisposition.Applied, started.Session);
+            }
+
+            if (command.Signal == PushToTalkSignal.Cancelled)
+            {
+                LastCancelledReleaseTarget = command.ReleaseTarget;
+                await controller.CancelAsync(stoppingToken).ConfigureAwait(false);
+                return new SessionCommandResult(SessionCommandDisposition.Applied);
+            }
+
+            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+        }
+
+        public Task ExpireAsync(SessionCommand command) => Task.CompletedTask;
+
+        public bool TryCancelProcessingForEscape() => false;
+    }
+
     private sealed class DelegateTargetProvider(Func<TargetWindowId?> read) : IForegroundTargetProvider
     {
         public TargetWindowId? CaptureForegroundTarget() => read();

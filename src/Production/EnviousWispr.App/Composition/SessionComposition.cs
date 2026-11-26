@@ -95,6 +95,7 @@ public static class SessionComposition
             executor,
             parts.Controller.CaptureStartContext,
             parts.Clock,
+            parts.Controller.CaptureReleaseTarget,
             parts.Controller.CaptureReleaseTarget);
     }
 }

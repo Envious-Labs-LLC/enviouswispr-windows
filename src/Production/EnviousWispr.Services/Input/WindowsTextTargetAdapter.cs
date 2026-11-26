@@ -338,7 +338,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             focus,
             win32ChildFocusId,
             options.IsExplicitHistoryPaste || options.TargetMode == Core.Settings.PasteTargetMode.WhereCursorIsAtRelease,
-            (className, isControlEdit) => ResolveTargetPolicy(target, className, isControlEdit));
+            (className, isControlEdit) => ResolveTargetPolicy(target, className, isControlEdit),
+            allowSameWindowEditableReplacement: options.TargetMode == Core.Settings.PasteTargetMode.WhereDictationStarted);
         if (evaluation.Failure is not null)
         {
             return evaluation.Failure;
@@ -430,7 +431,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         FocusedElementFacts? focus,
         string? win32ChildFocusId,
         bool isExplicitHistoryPaste,
-        Func<string?, bool, WindowsPasteRule> resolvePolicy)
+        Func<string?, bool, WindowsPasteRule> resolvePolicy,
+        bool allowSameWindowEditableReplacement = true)
     {
         ArgumentNullException.ThrowIfNull(resolvePolicy);
         if (focus is null)
@@ -563,7 +565,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
                 : win32ChildFocusId;
             if (!exactWin32Match &&
-                (!IsEditableReplacementCandidate(focus) || string.IsNullOrEmpty(resolvedWin32Id)))
+                (!allowSameWindowEditableReplacement ||
+                 !IsEditableReplacementCandidate(focus) ||
+                 string.IsNullOrEmpty(resolvedWin32Id)))
             {
                 return new FocusEvaluationResult(
                     new TargetContextResult(
@@ -608,7 +612,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
 
         if (!string.Equals(focus.RuntimeId, target.FocusedElementId, StringComparison.Ordinal) &&
-            (!IsEditableReplacementCandidate(focus) || string.IsNullOrEmpty(focus.RuntimeId)))
+            (!allowSameWindowEditableReplacement ||
+             !IsEditableReplacementCandidate(focus) ||
+             string.IsNullOrEmpty(focus.RuntimeId)))
         {
             return new FocusEvaluationResult(
                 new TargetContextResult(

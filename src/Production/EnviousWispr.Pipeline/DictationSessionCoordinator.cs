@@ -247,6 +247,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private bool _gateDisposed;
     private readonly Func<RecordingStartContext>? _captureStartContext;
     private readonly Func<ReleaseTargetContext?>? _captureReleaseTarget;
+    private readonly Func<TextDeliveryOptions?, ReleaseTargetContext?>? _captureReleaseTargetWithOptions;
     private readonly Channel<QueuedCommand> _queue;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _admission = new();
@@ -254,6 +255,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private bool _expiryFaulted;
     private readonly Task _consumer;
     private QueuedCommand? _activeQueued;
+    private TextDeliveryOptions? _admittedPressDeliveryOptions;
     private int _pendingOrRunning;
     private int _gateWaitsEntered;
     /// <summary>The recordings the pending terminals are for: null for a key's or a timeout's, which is for whatever is in flight.</summary>
@@ -285,13 +287,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         ISessionCommandExecutor executor,
         Func<RecordingStartContext>? captureStartContext = null,
         TimeProvider? clock = null,
-        Func<ReleaseTargetContext?>? captureReleaseTarget = null)
+        Func<ReleaseTargetContext?>? captureReleaseTarget = null,
+        Func<TextDeliveryOptions?, ReleaseTargetContext?>? captureReleaseTargetWithOptions = null)
     {
         ArgumentNullException.ThrowIfNull(executor);
         _executor = executor;
         _clock = clock ?? TimeProvider.System;
         _captureStartContext = captureStartContext;
         _captureReleaseTarget = captureReleaseTarget;
+        _captureReleaseTargetWithOptions = captureReleaseTargetWithOptions;
         _queue = Channel.CreateUnbounded<QueuedCommand>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -656,11 +660,17 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             else if (command.IsTerminal)
             {
                 if (command.Kind == SessionCommandKind.PushToTalk &&
-                    command.Signal == PushToTalkSignal.Released &&
-                    releaseTarget is null &&
-                    _captureReleaseTarget is not null)
+                    command.Signal is PushToTalkSignal.Released or PushToTalkSignal.Cancelled &&
+                    releaseTarget is null)
                 {
-                    releaseTarget = _captureReleaseTarget();
+                    if (_captureReleaseTargetWithOptions is not null)
+                    {
+                        releaseTarget = _captureReleaseTargetWithOptions(_admittedPressDeliveryOptions);
+                    }
+                    else if (_captureReleaseTarget is not null)
+                    {
+                        releaseTarget = _captureReleaseTarget();
+                    }
                 }
 
                 _pendingTerminals.Add(command.TerminalIdentity);
@@ -683,6 +693,11 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 }
 
                 throw new InvalidOperationException("The session command queue refused a write while open.");
+            }
+
+            if (command.IsPress && !command.PromotionOnly)
+            {
+                _admittedPressDeliveryOptions = startContext?.DeliveryOptions;
             }
 
             _pendingOrRunning++;
@@ -1063,6 +1078,11 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         lock (_admission)
         {
             _pendingOrRunning--;
+            if (command.IsPress && !command.PromotionOnly)
+            {
+                _admittedPressDeliveryOptions = null;
+            }
+
             if (command.IsTerminal)
             {
                 _pendingTerminals.Remove(command.TerminalIdentity);
@@ -1103,11 +1123,13 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                     _recording = session.Id;
                 }
             }
-            else if (result.Disposition is SessionCommandDisposition.Applied or SessionCommandDisposition.Failed)
+            else if (!command.PromotionOnly &&
+                result.Disposition is SessionCommandDisposition.Applied or SessionCommandDisposition.Failed)
             {
                 // A terminal or an interruption that ran ended the take, one way or another; one that
                 // was ignored - for a recording that had already ended - says nothing about this one.
                 _recording = null;
+                _admittedPressDeliveryOptions = null;
             }
         }
     }
