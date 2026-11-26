@@ -114,6 +114,11 @@ public sealed partial class MainWindow
             SnippetSearchBox.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        if (SnippetsToolbarGrid is { ActualWidth: > 0 })
+        {
+            UpdateSnippetsToolbarLayout(SnippetsToolbarGrid.ActualWidth);
+        }
+
         SnippetEmptyState.Visibility = snippets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var noMatch = snippets.Count > 0 && shown.Count == 0;
         SnippetNoMatchState.Visibility = noMatch ? Visibility.Visible : Visibility.Collapsed;

@@ -191,6 +191,72 @@ public sealed partial class MainWindow
         }
     }
 
+    private static void ApplyResponsiveTwoClusterRowLayout(
+        Grid? grid,
+        FrameworkElement? primary,
+        FrameworkElement? secondary,
+        double availableWidth,
+        double stackThreshold)
+    {
+        if (grid is null || primary is null || secondary is null)
+        {
+            return;
+        }
+
+        var stack = availableWidth > 0
+            && availableWidth < stackThreshold
+            && primary.Visibility == Visibility.Visible;
+        if (stack)
+        {
+            grid.RowSpacing = LayoutDouble("BrandSpacingS");
+            Grid.SetRow(primary, 0);
+            Grid.SetColumn(primary, 0);
+            Grid.SetColumnSpan(primary, 2);
+            Grid.SetRow(secondary, 1);
+            Grid.SetColumn(secondary, 0);
+            Grid.SetColumnSpan(secondary, 2);
+            secondary.HorizontalAlignment = HorizontalAlignment.Left;
+        }
+        else
+        {
+            grid.RowSpacing = 0;
+            Grid.SetRow(primary, 0);
+            Grid.SetColumn(primary, 0);
+            Grid.SetColumnSpan(primary, 1);
+            Grid.SetRow(secondary, 0);
+            Grid.SetColumn(secondary, 1);
+            Grid.SetColumnSpan(secondary, 1);
+            secondary.HorizontalAlignment = HorizontalAlignment.Right;
+        }
+    }
+
+    private void HistoryHeaderBarGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ApplyResponsiveTwoClusterRowLayout(
+            HistoryHeaderBarGrid,
+            HistoryFilterButtonsPanel,
+            HistoryStatusChipsPanel,
+            e.NewSize.Width,
+            stackThreshold: 540);
+
+    private void WordListHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ApplyResponsiveTwoClusterRowLayout(
+            WordListHeaderGrid,
+            WordCountText,
+            WordListActionButtonsPanel,
+            e.NewSize.Width,
+            stackThreshold: 500);
+
+    private void SnippetsToolbarGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateSnippetsToolbarLayout(e.NewSize.Width);
+
+    private void UpdateSnippetsToolbarLayout(double availableWidth) =>
+        ApplyResponsiveTwoClusterRowLayout(
+            SnippetsToolbarGrid,
+            SnippetSearchContainer,
+            SnippetsToolbarActionsPanel,
+            availableWidth,
+            stackThreshold: 520);
+
     private Brush ResolveWindowThemeBrush(string key) =>
         ThemeResourceLookup.Resolve<Brush>(WindowRoot, key)
         ?? (Brush)Application.Current.Resources[key];

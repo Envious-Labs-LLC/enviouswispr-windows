@@ -303,6 +303,52 @@ public sealed class FluentShellTests
         Assert.Contains("\"home\" => (\"history\", null)", codeBehind, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ResponsiveHeaderAndToolbarGridsWireTwoRowStackingHandlers()
+    {
+        var root = FindRepositoryRoot();
+        var doc = LoadMainWindow();
+        var shellCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Shell.cs"));
+
+        Assert.Contains("ApplyResponsiveTwoClusterRowLayout(", shellCode, StringComparison.Ordinal);
+
+        var specs = new[]
+        {
+            (GridName: "HistoryHeaderBarGrid", Handler: "HistoryHeaderBarGrid_SizeChanged", Primary: "HistoryFilterButtonsPanel", Secondary: "HistoryStatusChipsPanel"),
+            (GridName: "WordListHeaderGrid", Handler: "WordListHeaderGrid_SizeChanged", Primary: "WordCountText", Secondary: "WordListActionButtonsPanel"),
+            (GridName: "SnippetsToolbarGrid", Handler: "SnippetsToolbarGrid_SizeChanged", Primary: "SnippetSearchContainer", Secondary: "SnippetsToolbarActionsPanel"),
+        };
+
+        foreach (var spec in specs)
+        {
+            var grid = FindNamed(doc, spec.GridName);
+            Assert.Equal("Grid", grid.Name.LocalName);
+            Assert.Equal(spec.Handler, (string?)grid.Attribute("SizeChanged"));
+            Assert.Contains(spec.Handler, shellCode, StringComparison.Ordinal);
+
+            var rows = grid.Element(XName.Get("Grid.RowDefinitions", PresentationNamespace))?
+                .Elements(XName.Get("RowDefinition", PresentationNamespace))
+                .Select(r => (string?)r.Attribute("Height") ?? string.Empty)
+                .ToArray() ?? [];
+            Assert.Equal(["Auto", "Auto"], rows);
+
+            var columns = grid.Element(XName.Get("Grid.ColumnDefinitions", PresentationNamespace))?
+                .Elements(XName.Get("ColumnDefinition", PresentationNamespace))
+                .Select(c => (string?)c.Attribute("Width") ?? string.Empty)
+                .ToArray() ?? [];
+            Assert.Equal(["*", "Auto"], columns);
+
+            Assert.NotNull(FindNamed(grid, spec.Primary));
+            var secondary = FindNamed(grid, spec.Secondary);
+            Assert.Equal("1", (string?)secondary.Attribute("Grid.Column"));
+        }
+
+        Assert.Equal("NoWrap", (string?)FindNamed(doc, "WordCountText").Attribute("TextWrapping"));
+        var snippetsActions = FindNamed(doc, "SnippetsToolbarActionsPanel");
+        Assert.NotNull(FindNamed(snippetsActions, "ExportSnippetsButton"));
+        Assert.NotNull(FindNamed(snippetsActions, "AddSnippetToolbarButton"));
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 

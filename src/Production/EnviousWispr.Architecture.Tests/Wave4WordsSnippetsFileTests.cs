@@ -182,11 +182,13 @@ public sealed class Wave4WordsSnippetsFileTests
         XElement? FindByName(string name) =>
             document.Descendants().SingleOrDefault(e => (string?)e.Attribute(xaml + "Name") == name);
 
-        // 1. What's New release notes replace Founder build placeholder.
+        // 1. What's New release notes replace Founder build placeholder and outdated two-pane wording.
         var whatsNew = FindByName("WhatsNewPage");
         Assert.NotNull(whatsNew);
         Assert.NotNull(FindByName("WhatsNewBuildInfoText"));
         Assert.DoesNotContain("Founder build", whatsNew!.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Two-pane", whatsNew.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Inline History diary", whatsNew.ToString(), StringComparison.Ordinal);
         Assert.Contains("Version 0.19.0", whatsNew.ToString(), StringComparison.Ordinal);
 
         // 2. Your Words header Add button, top tab bar & Quick Add 3-step cards + shortcut badge.
