@@ -337,7 +337,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             target,
             focus,
             win32ChildFocusId,
-            options.IsExplicitHistoryPaste,
+            options.IsExplicitHistoryPaste || options.TargetMode == Core.Settings.PasteTargetMode.WhereCursorIsAtRelease,
             (className, isControlEdit) => ResolveTargetPolicy(target, className, isControlEdit));
         if (evaluation.Failure is not null)
         {

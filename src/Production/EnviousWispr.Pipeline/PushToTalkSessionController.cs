@@ -4,6 +4,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Sessions;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
 
@@ -31,6 +32,12 @@ public sealed record SessionTransitionResult(
 /// delivery choice in force. Carried with the press so that whatever runs it later cannot ask again.
 /// </summary>
 public sealed record RecordingStartContext(TargetWindowId? Target, TextDeliveryOptions DeliveryOptions);
+
+/// <summary>
+/// What a release is about, taken at the instant of the release when cursor-at-release targeting
+/// is in force: the live non-self foreground window under the caret before transcription or polish runs.
+/// </summary>
+public sealed record ReleaseTargetContext(TargetWindowId? Target);
 
 public sealed class PushToTalkSessionController : IAsyncDisposable
 {
@@ -202,9 +209,44 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
             Error: fallbackReason);
     }
 
+    /// <summary>
+    /// Takes the release-time window under the caret when cursor-at-release targeting is active
+    /// and Copy-only is off, excluding EnviousWispr's own windows. Returns null otherwise so start
+    /// targeting avoids any unnecessary UI Automation probe on release.
+    /// </summary>
+    public ReleaseTargetContext? CaptureReleaseTarget()
+    {
+        var deliveryOptions = _deliveryOptions();
+        if (deliveryOptions.CopyInsteadOfPaste ||
+            deliveryOptions.TargetMode != PasteTargetMode.WhereCursorIsAtRelease)
+        {
+            return null;
+        }
+
+        return new ReleaseTargetContext(CaptureNonSelfTarget());
+    }
+
+    private TargetWindowId? CaptureNonSelfTarget()
+    {
+        var captured = _targetProvider.CaptureForegroundTarget();
+        return captured is { } target &&
+            target.ProcessId != 0 &&
+            target.ProcessId == (uint)Environment.ProcessId
+                ? null
+                : captured;
+    }
+
+    public Task<SessionTransitionResult> ReleaseAsync(
+        CancellationToken cancellationToken = default) =>
+        ReleaseAsync(releaseContext: null, cancellationToken);
+
     public async Task<SessionTransitionResult> ReleaseAsync(
+        ReleaseTargetContext? releaseContext,
         CancellationToken cancellationToken = default)
     {
+        var captureFallback = releaseContext is null &&
+            CurrentSession is { DeliveryOptions: { CopyInsteadOfPaste: false, TargetMode: PasteTargetMode.WhereCursorIsAtRelease } };
+        var fallbackReleaseTarget = captureFallback ? CaptureNonSelfTarget() : null;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -225,7 +267,20 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
             }
 
             var sessionId = CurrentSession.Id.Value;
-            CurrentSession = CurrentSession with { State = DictationSessionState.Finalizing };
+            var effectiveTarget = CurrentSession.DeliveryOptions is
+                {
+                    CopyInsteadOfPaste: false,
+                    TargetMode: PasteTargetMode.WhereCursorIsAtRelease,
+                }
+                    ? (releaseContext is not null
+                        ? releaseContext.Target
+                        : (captureFallback ? fallbackReleaseTarget : CaptureNonSelfTarget())) ?? default
+                    : CurrentSession.Target;
+            CurrentSession = CurrentSession with
+            {
+                State = DictationSessionState.Finalizing,
+                Target = effectiveTarget,
+            };
             RaiseChanged();
             _phaseJournal?.Record(UatRuntimePhase.CaptureStopEntered, sessionId);
             var audio = await _audioCapture.StopAsync(cancellationToken).ConfigureAwait(false);

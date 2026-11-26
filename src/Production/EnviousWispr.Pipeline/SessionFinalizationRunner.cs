@@ -85,9 +85,6 @@ public interface ISessionFinalizationEffects
     {
     }
 
-    /// <summary>Captures the live foreground target when delivery is configured to follow the cursor at release.</summary>
-    TargetWindowId? ResolveReleaseTarget() => null;
-
     /// <summary>The delivered outcome on screen, with the language offer that may follow it.</summary>
     void ReportDelivery(DeliveryResult delivery, string? language);
 
@@ -354,15 +351,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             _effects.DisarmCancel();
             _effects.RecordTranscriptionFinished(transcript, timer.ElapsedMilliseconds);
             var options = _effects.CurrentOptions();
-            var startSession = _controller.CurrentSession;
-            var initialReleaseTarget = startSession?.DeliveryOptions is
-                {
-                    CopyInsteadOfPaste: false,
-                    TargetMode: PasteTargetMode.WhereCursorIsAtRelease,
-                }
-                ? _effects.ResolveReleaseTarget()
-                : null;
-            var targetAppName = TargetAppNameResolver.Resolve(initialReleaseTarget ?? startSession?.Target);
+            var targetAppName = TargetAppNameResolver.Resolve(_controller.CurrentSession?.Target);
             var finalized = await _finalizer
                 .FinalizeAsync(
                     transcript,
@@ -399,14 +388,10 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     _phaseJournal?.Record(UatRuntimePhase.DeliveryEntered, sessionId.Value);
                     var deliveryTimer = Stopwatch.StartNew();
                     var language = DeliveryLanguagePolicy.For(transcript);
-                    var deliveryTarget = pendingSession.DeliveryOptions.TargetMode == PasteTargetMode.WhereCursorIsAtRelease &&
-                        !pendingSession.DeliveryOptions.CopyInsteadOfPaste
-                            ? (_effects.ResolveReleaseTarget() ?? default)
-                            : pendingSession.Target;
                     var result = await delivery.DeliverAsync(
                         new TextDeliveryRequest(
                             processed.Output,
-                            deliveryTarget,
+                            pendingSession.Target,
                             language,
                             pendingSession.DeliveryOptions,
                             SnippetExpanded: finalized.SnippetsExpanded > 0),

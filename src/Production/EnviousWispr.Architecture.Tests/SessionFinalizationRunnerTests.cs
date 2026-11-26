@@ -341,13 +341,14 @@ public sealed class SessionFinalizationRunnerTests
     }
 
     [Fact]
-    public async Task WhereCursorIsAtReleaseModeResolvesReleaseTargetInsteadOfStartTarget()
+    public async Task WhereCursorIsAtReleaseModeResolvesReleaseTargetAtReleaseBeforeTranscription()
     {
+        var releaseTarget = new TargetWindowId(202, 4242, FocusedElementId: "win32:99", ProcessName: "notepad");
+        var targetSequence = new Queue<TargetWindowId?>([new TargetWindowId(101), releaseTarget]);
         var world = await World.RecordingFinishedAsync(
             "hello world",
-            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease });
-        var releaseTarget = new TargetWindowId(202, 4242, FocusedElementId: "win32:99", ProcessName: "notepad");
-        world.Effects.ReleaseTargetResolver = () => releaseTarget;
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease },
+            () => targetSequence.Count > 0 ? targetSequence.Dequeue() : new TargetWindowId(303, 9999, ProcessName: "later"));
 
         var report = await world.RunAsync();
 
@@ -356,12 +357,13 @@ public sealed class SessionFinalizationRunnerTests
     }
 
     [Fact]
-    public async Task WhereDictationStartedModeIgnoresReleaseResolverAndDeliversToStartTarget()
+    public async Task WhereDictationStartedModeKeepsStartTargetEvenWhenForegroundChangesBeforeRelease()
     {
+        var targetSequence = new Queue<TargetWindowId?>([new TargetWindowId(101), new TargetWindowId(202, 4242, ProcessName: "notepad")]);
         var world = await World.RecordingFinishedAsync(
             "hello world",
-            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereDictationStarted });
-        world.Effects.ReleaseTargetResolver = () => new TargetWindowId(202, 4242, ProcessName: "notepad");
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereDictationStarted },
+            () => targetSequence.Count > 0 ? targetSequence.Dequeue() : null);
 
         var report = await world.RunAsync();
 
@@ -372,10 +374,11 @@ public sealed class SessionFinalizationRunnerTests
     [Fact]
     public async Task WhereCursorIsAtReleaseWithNullReleaseTargetDoesNotRedirectToStartTarget()
     {
+        var targetSequence = new Queue<TargetWindowId?>([new TargetWindowId(101), null]);
         var world = await World.RecordingFinishedAsync(
             "hello world",
-            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease });
-        world.Effects.ReleaseTargetResolver = () => null;
+            TextDeliveryOptions.Default with { TargetMode = PasteTargetMode.WhereCursorIsAtRelease },
+            () => targetSequence.Count > 0 ? targetSequence.Dequeue() : null);
 
         var report = await world.RunAsync();
 
@@ -408,12 +411,18 @@ public sealed class SessionFinalizationRunnerTests
 
         public List<string> Trace => Effects.Trace;
 
-        public static async Task<World> RecordingFinishedAsync(string spoken, TextDeliveryOptions? deliveryOptions = null)
+        public static async Task<World> RecordingFinishedAsync(
+            string spoken,
+            TextDeliveryOptions? deliveryOptions = null,
+            Func<TargetWindowId?>? nextTarget = null)
         {
             var capture = new FakeAudioCapture();
+            var targetProvider = nextTarget is null
+                ? (IForegroundTargetProvider)new FakeTargetProvider(101)
+                : new SequenceTargetProvider(nextTarget);
             var controller = new PushToTalkSessionController(
                 capture,
-                new FakeTargetProvider(101),
+                targetProvider,
                 deliveryOptions: deliveryOptions is null ? null : () => deliveryOptions,
                 minimumHoldDuration: TimeSpan.Zero);
             var started = await controller.PressAsync();
@@ -554,10 +563,6 @@ public sealed class SessionFinalizationRunnerTests
 
         public Func<FinalizationOptions> Options { get; set; } =
             () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), SnippetVocabulary.Empty, null);
-
-        public Func<TargetWindowId?>? ReleaseTargetResolver { get; set; }
-
-        public TargetWindowId? ResolveReleaseTarget() => ReleaseTargetResolver?.Invoke();
 
         public FinalizationOptions CurrentOptions()
         {
@@ -772,6 +777,11 @@ public sealed class SessionFinalizationRunnerTests
     private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider
     {
         public TargetWindowId? CaptureForegroundTarget() => new TargetWindowId(window);
+    }
+
+    private sealed class SequenceTargetProvider(Func<TargetWindowId?> next) : IForegroundTargetProvider
+    {
+        public TargetWindowId? CaptureForegroundTarget() => next();
     }
 
     private sealed class FakeAudioCapture(float[]? samples = null) : IAudioCapture

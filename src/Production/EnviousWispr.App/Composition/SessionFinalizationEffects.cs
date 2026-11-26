@@ -28,8 +28,6 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
 
     public FinalizationOptions CurrentOptions() => parts.Shell.Options();
 
-    public TargetWindowId? ResolveReleaseTarget() => parts.Shell.ResolveReleaseTarget?.Invoke();
-
     public void ArchiveAudio(CapturedAudio audio) => parts.Shell.ArchiveAudio(audio);
 
     public void RecordTranscriptionUnavailable() =>

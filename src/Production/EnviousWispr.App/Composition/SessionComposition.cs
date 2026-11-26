@@ -39,8 +39,7 @@ public sealed record SessionShell(
     Action ReleaseSession,
     Action DisposeDeliveryRoute,
     Action<bool>? DictationActivityChanged = null,
-    Action<bool>? CancelArmed = null,
-    Func<TargetWindowId?>? ResolveReleaseTarget = null);
+    Action<bool>? CancelArmed = null);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>
@@ -92,7 +91,11 @@ public static class SessionComposition
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the
         // queue's first hop.
-        return new DictationSessionCoordinator(executor, parts.Controller.CaptureStartContext, parts.Clock);
+        return new DictationSessionCoordinator(
+            executor,
+            parts.Controller.CaptureStartContext,
+            parts.Clock,
+            parts.Controller.CaptureReleaseTarget);
     }
 }
 

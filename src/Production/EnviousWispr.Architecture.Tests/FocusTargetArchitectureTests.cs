@@ -321,6 +321,43 @@ public sealed class FocusTargetArchitectureTests
             (_, _) => WindowsPastePolicy.Resolve("notepad", "Notepad", "Edit", isControlEdit: true));
         Assert.Null(replacedWin32Edit.Failure);
         Assert.Equal("win32:200", replacedWin32Edit.EffectiveFocusId);
+
+        var electronTarget = new TargetWindowId(0x2222, 7777, FocusedElementId: null, ProcessName: "chrome");
+        var electronFocus = new WindowsTextTargetAdapter.FocusedElementFacts(
+            ProcessId: 7777,
+            RuntimeId: string.Empty,
+            HasKeyboardFocus: true,
+            IsPassword: false,
+            IsEnabled: true,
+            IsKeyboardFocusable: true,
+            IsControlEdit: false,
+            ClassName: "Chrome_RenderWidgetHostHWND");
+        var electronRule = WindowsPastePolicy.Resolve("chrome", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", isControlEdit: false);
+
+        var startModeElectronRefused = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            electronTarget,
+            electronFocus,
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: false,
+            (_, _) => electronRule);
+        Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, startModeElectronRefused.Failure?.RefusalReason);
+
+        var releaseModeElectronAllowed = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            electronTarget,
+            electronFocus,
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: true,
+            (_, _) => electronRule);
+        Assert.Null(releaseModeElectronAllowed.Failure);
+        Assert.True(releaseModeElectronAllowed.WindowFallbackOnly);
+
+        var releaseModeElectronPasswordBlocked = WindowsTextTargetAdapter.EvaluateFocusedElement(
+            electronTarget,
+            electronFocus with { IsPassword = true },
+            win32ChildFocusId: null,
+            isExplicitHistoryPaste: true,
+            (_, _) => electronRule);
+        Assert.Equal(TextDeliveryRefusalReason.ProtectedField, releaseModeElectronPasswordBlocked.Failure?.RefusalReason);
     }
 
     private static GeneralSettingsInput CreateGeneralInput(bool returnToStartWindow) => new(

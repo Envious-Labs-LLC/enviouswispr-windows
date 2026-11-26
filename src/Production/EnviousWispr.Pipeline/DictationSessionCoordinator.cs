@@ -114,7 +114,8 @@ public sealed record SessionCommand(
     DictationSessionId? TimedOutSession = null,
     DictationSessionId? ForSession = null,
     bool IsHandsFree = false,
-    bool PromotionOnly = false)
+    bool PromotionOnly = false,
+    ReleaseTargetContext? ReleaseTarget = null)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -245,6 +246,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private SessionHolder? _heldBy;
     private bool _gateDisposed;
     private readonly Func<RecordingStartContext>? _captureStartContext;
+    private readonly Func<ReleaseTargetContext?>? _captureReleaseTarget;
     private readonly Channel<QueuedCommand> _queue;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _admission = new();
@@ -275,15 +277,21 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// choice belong to the instant of the press rather than to whenever the consumer gets to it.
     /// </param>
     /// <param name="clock">Stamps admissions; an interruption that waited too long behind a running command stands down.</param>
+    /// <param name="captureReleaseTarget">
+    /// Called synchronously when a key release is admitted, before any await, so cursor-at-release
+    /// targeting freezes the foreground window at the instant of release.
+    /// </param>
     public DictationSessionCoordinator(
         ISessionCommandExecutor executor,
         Func<RecordingStartContext>? captureStartContext = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        Func<ReleaseTargetContext?>? captureReleaseTarget = null)
     {
         ArgumentNullException.ThrowIfNull(executor);
         _executor = executor;
         _clock = clock ?? TimeProvider.System;
         _captureStartContext = captureStartContext;
+        _captureReleaseTarget = captureReleaseTarget;
         _queue = Channel.CreateUnbounded<QueuedCommand>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -606,6 +614,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
             var gateReserved = false;
             var startContext = command.StartContext;
+            var releaseTarget = command.ReleaseTarget;
             if (IsHandsFreePromotion(command))
             {
                 // A modifier recording started immediately at press-down and just completed a
@@ -646,12 +655,20 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             }
             else if (command.IsTerminal)
             {
+                if (command.Kind == SessionCommandKind.PushToTalk &&
+                    command.Signal == PushToTalkSignal.Released &&
+                    releaseTarget is null &&
+                    _captureReleaseTarget is not null)
+                {
+                    releaseTarget = _captureReleaseTarget();
+                }
+
                 _pendingTerminals.Add(command.TerminalIdentity);
             }
 
             // A terminal admitted while anything is ahead of it has, by definition, waited in the queue.
             // A press is admitted only when nothing is ahead, so it never has.
-            queued = new QueuedCommand(command with { StartContext = startContext }, gateReserved)
+            queued = new QueuedCommand(command with { StartContext = startContext, ReleaseTarget = releaseTarget }, gateReserved)
             {
                 WaitedInQueue = _pendingOrRunning > 0,
             };
