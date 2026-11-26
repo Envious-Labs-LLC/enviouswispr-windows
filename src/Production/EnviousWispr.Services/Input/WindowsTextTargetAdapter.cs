@@ -168,12 +168,28 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return pasted;
         }
 
-        var (arrivalStatus, arrivalElapsedMs) = await ObserveArrivalAsync(
-            request,
-            dispatchedWatch,
-            dispatchToken,
-            settleFloor,
-            cancellationToken).ConfigureAwait(false);
+        // Post-paste arrival verification runs strictly best-effort after the paste keystroke and
+        // clipboard restoration already completed: cancellation or observer failure must never turn
+        // an already-completed paste into Cancelled/DeliveryFaulted and trigger duplicate retries.
+        PasteArrivalStatus arrivalStatus;
+        int arrivalElapsedMs;
+        try
+        {
+            (arrivalStatus, arrivalElapsedMs) = await ObserveArrivalAsync(
+                request,
+                dispatchedWatch,
+                dispatchToken,
+                settleFloor,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            arrivalStatus = PasteArrivalStatus.Unreadable;
+            arrivalElapsedMs = dispatchedWatch is { } w
+                ? (int)Math.Min(int.MaxValue, w.ElapsedMilliseconds)
+                : 0;
+        }
+
         return pasted with
         {
             ArrivalStatus = arrivalStatus,
