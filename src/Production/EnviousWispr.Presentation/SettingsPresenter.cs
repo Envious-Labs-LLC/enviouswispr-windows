@@ -110,7 +110,8 @@ public sealed record GeneralSettingsInput(
     bool SendCrashReports = true,
     string? EgOneModelId = null,
     int PolishUnloadPolicyIndex = 0,
-    bool ReturnToStartWindow = true);
+    bool ReturnToStartWindow = true,
+    bool LearnFromEdits = true);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -335,7 +336,8 @@ public sealed class SettingsPresenter : IDisposable
             (EnglishSpelling)Math.Clamp(Chosen(input.EnglishSpellingIndex), 0, 1),
             pasteLast.Gesture?.ToString() ?? string.Empty,
             copyLast.Gesture?.ToString() ?? string.Empty,
-            input.CasualMode);
+            input.CasualMode,
+            input.LearnFromEdits);
         var polishProvider = PolishProviderFromIndex(Chosen(input.PolishProviderIndex));
         var normalizedEgOneModelId = EnginePolishPresentation.NormalizeOptionalEgOneModelId(input.EgOneModelId);
         if (normalizedEgOneModelId is null &&

@@ -68,7 +68,7 @@ public sealed partial class MainWindow : Window, IDisposable
         new("AI Polish", "settings-ai-polish", null, "rewrite grammar fix format eg-1 ollama openai llm"),
         new("Dictionary", "dictionary", "your-words", "custom words vocabulary spellings jargon replacements"),
         new("Vocabulary Packs", "dictionary", "packs", "medical legal tech terminology packs"),
-        new("Learn From", "dictionary", "learn-from", "import analyze documents"),
+        new("Learn From", "dictionary", "learn-from", "self learning automatic edits memory import analyze documents"),
         new("Quick Add Words", "dictionary", "quick-add", "shortcut add word"),
         new("Snippets", "snippets", null, "text expansion templates boilerplates phrases"),
         new("Appearance & Theme", "settings-app", "appearance", "light dark system theme high contrast"),
@@ -265,6 +265,9 @@ public sealed partial class MainWindow : Window, IDisposable
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
         _historyAnnounceDebounce.Tick += OnHistoryAnnounceDue;
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
+        _overlayWindow.LearnedUndoRequested += pillId => LearnedPillUndoRequested?.Invoke(pillId);
+        _overlayWindow.LearnedEnded += pillId => LearnedPillEnded?.Invoke(pillId);
+        _overlayWindow.LearnedDismissed += pillId => LearnedPillEnded?.Invoke(pillId);
         _overlayWindow.ApplyPreferences(
             settings.Preferences.OverlayPosition,
             settings.Preferences.LivePreviewEnabled,
@@ -602,6 +605,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 InvokeEscapeRecoveryUndo();
                 break;
 
+            case PillActionKind.UndoLearnedCorrection:
+                InvokeLearnedCorrectionUndo();
+                break;
+
             // An enum can hold a value nobody declared. Appearance is the harmless page: it changes
             // nothing and shows the person something they can read.
             default:
@@ -611,6 +618,34 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     private void InvokeEscapeRecoveryUndo() => RecoveryUndoRequested?.Invoke();
+
+    private void InvokeLearnedCorrectionUndo() => LearnedPillUndoActiveRequested?.Invoke();
+
+    public Func<(bool HasStoredMemory, int BlockedCount)>? QueryLearnMemoryState { get; set; }
+
+    public Func<bool>? ForgetLearnMemory { get; set; }
+
+    public Action<IReadOnlyList<CustomWordEntry>>? WordsRemovedFromDictionary { get; set; }
+
+    public Action<string, IReadOnlyList<string>>? LearnedAliasesRemovedFromDictionary { get; set; }
+
+    public event Action<Guid>? LearnedPillUndoRequested;
+
+    public event Action? LearnedPillUndoActiveRequested;
+
+    public event Action<Guid>? LearnedPillEnded;
+
+    public bool ShowLearnedCorrectionPill(EnviousWispr.Core.Learning.LearnedCorrectionPillModel model) =>
+        _overlayWindow.ShowLearnedCorrection(model);
+
+    public void UpdateLearnedCorrectionPill(EnviousWispr.Core.Learning.LearnedCorrectionPillModel model) =>
+        _overlayWindow.UpdateLearnedCorrection(model);
+
+    public void CloseLearnedCorrectionPill(Guid pillId) =>
+        _overlayWindow.CloseLearnedCorrection(pillId);
+
+    public void ShowLearnedCorrectionSaveErrorPill(string canonical) =>
+        _overlayWindow.ShowLearnedSaveError(canonical);
 
     public event Action? ManualDictationToggleRequested;
 

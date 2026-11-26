@@ -86,6 +86,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 23 => MigrateFromV23(json),
                 24 => MigrateFromV24(json),
                 25 => MigrateFromV25(json),
+                26 => MigrateFromV26(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -617,7 +618,40 @@ public sealed class JsonSettingsStore : ISettingsStore
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null
             ? null
-            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        LearnFromEditsEnabled = true,
+                    },
+                },
+            };
+    }
+
+    /// <summary>Takes a settings file written before Self-Learning Dictionary existed (schema v27).</summary>
+    /// <remarks>
+    /// Enables <see cref="DictationPreferences.LearnFromEditsEnabled"/> by default to match macOS,
+    /// preserving every prior word, shortcut, and preference while bumping the schema version.
+    /// </remarks>
+    private static AppSettings? MigrateFromV26(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        LearnFromEditsEnabled = true,
+                    },
+                },
+            };
     }
 
     private static AppSettings SeedEgOneModelIdIfMissing(AppSettings settings) =>

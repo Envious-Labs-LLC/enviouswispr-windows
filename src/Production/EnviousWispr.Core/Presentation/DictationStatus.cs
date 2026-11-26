@@ -59,6 +59,9 @@ public enum DictationOverlayState
 
     /// <summary>An Escape Recovery copy is waiting and the pill offers a one-shot Undo button.</summary>
     EscapeRecovery,
+
+    /// <summary>The Self-Learning Dictionary just learned a correction and offers an Undo pill.</summary>
+    CorrectionLearned,
 }
 
 
@@ -95,6 +98,9 @@ public enum PillActionKind
 
     /// <summary>Restore the Escape-cancelled dictation straight back into the field it came from.</summary>
     UndoEscapeRecovery,
+
+    /// <summary>Undo an automatically learned correction from the Self-Learning Dictionary pill.</summary>
+    UndoLearnedCorrection,
 }
 
 /// <summary>The one button a notice may carry.</summary>

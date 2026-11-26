@@ -156,6 +156,9 @@ public static class AppSettingsValidator
             entry.Aliases is not null &&
             entry.Aliases.Count <= CustomWordEntry.MaximumAliasesPerEntry &&
             entry.Aliases.All(alias => !string.IsNullOrWhiteSpace(alias) && alias.Length <= 256) &&
+            entry.LearnedAliases is not null &&
+            entry.LearnedAliases.Count <= CustomWordEntry.MaximumAliasesPerEntry &&
+            entry.LearnedAliases.All(alias => !string.IsNullOrWhiteSpace(alias) && alias.Length <= 256) &&
             !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
             entry.SpokenForm.Length <= 256 &&
             !string.IsNullOrWhiteSpace(entry.Replacement) &&

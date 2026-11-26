@@ -69,7 +69,8 @@ public sealed partial class MainWindow
             SendCrashReportsToggle.IsOn,
             EgOneModelId: _selectedEgOneModelId,
             PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex ?? 0,
-            ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn ?? true);
+            ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn ?? true,
+            LearnFromEdits: LearnFromEditsToggle?.IsOn ?? true);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -128,6 +129,14 @@ public sealed partial class MainWindow
         if (ReturnToStartWindowToggle is not null)
         {
             ReturnToStartWindowToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        }
+        if (LearnFromEditsToggle is not null)
+        {
+            LearnFromEditsToggle.Toggled += (_, _) =>
+            {
+                RefreshLearnMemoryUi();
+                _ = TriggerAutoSaveAsync();
+            };
         }
         LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         ShareUsageMetricsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -473,6 +482,11 @@ public sealed partial class MainWindow
             CopyLastHotkeyTextBox.Text = preferences.Dictation.CopyLastGesture;
             WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
             DictionaryEnabledToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
+            if (LearnFromEditsToggle is not null)
+            {
+                LearnFromEditsToggle.IsOn = preferences.Dictation.LearnFromEditsEnabled;
+            }
+            RefreshLearnMemoryUi();
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
             SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;

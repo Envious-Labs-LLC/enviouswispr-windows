@@ -286,6 +286,11 @@ public sealed partial class MainWindow
         }
 
         var removedCount = removal.Value;
+        if (removedCount > 0)
+        {
+            WordsRemovedFromDictionary?.Invoke(selected);
+            RefreshLearnMemoryUi();
+        }
 
         if (removedCount == 0)
         {
@@ -863,4 +868,43 @@ public sealed partial class MainWindow
 
     private void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e) =>
         HandleWordCorrectionToggleChanged(DictionaryEnabledToggle);
+
+    public void RefreshLearnMemoryUi()
+    {
+        if (LearnFromEditsStatusText is not null)
+        {
+            var isOn = LearnFromEditsToggle?.IsOn ?? (_settings?.Preferences?.Dictation?.LearnFromEditsEnabled ?? true);
+            LearnFromEditsStatusText.Text = isOn ? "Available" : "Off";
+        }
+
+        if (LearnMemoryRow is null || LearnMemorySummaryText is null)
+        {
+            return;
+        }
+
+        var state = QueryLearnMemoryState?.Invoke() ?? (HasStoredMemory: false, BlockedCount: 0);
+        LearnMemoryRow.Visibility = state.HasStoredMemory ? Visibility.Visible : Visibility.Collapsed;
+        LearnMemorySummaryText.Text = $"Learning memory: {state.BlockedCount} blocked";
+    }
+
+    private async void ForgetLearnMemoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmAsync(
+                "Forget what EnviousWispr remembers about your fixes?",
+                "Blocked words may be learned again.",
+                "Forget").ConfigureAwait(true))
+        {
+            return;
+        }
+
+        if (ForgetLearnMemory?.Invoke() == true)
+        {
+            RefreshLearnMemoryUi();
+            ShowMessage("Learning memory cleared", "Previously blocked words can now be learned again.", InfoBarSeverity.Success);
+        }
+        else
+        {
+            ShowMessage("Couldn\u2019t forget. Try again.", "Learning memory could not be removed cleanly.", InfoBarSeverity.Warning);
+        }
+    }
 }

@@ -393,4 +393,34 @@ public enum AppEventCode
 
     /// <summary>Post-paste UI Automation inspection could not read the target control after paste (normal for terminals and custom canvases).</summary>
     TextDeliveryArrivalUnreadable,
+
+    /// <summary>Self-Learning Dictionary skipped observing a paste (toggle off, active watch, destination mismatch, elevated target, or terminal).</summary>
+    LearnSkipped,
+
+    /// <summary>Self-Learning Dictionary ended an edit observation session (settled, focus changed, emptied, ceiling, or next dictation).</summary>
+    LearnObservationEnded,
+
+    /// <summary>Self-Learning Dictionary finished judging edited word spans (counts-only, never user text).</summary>
+    LearnJudged,
+
+    /// <summary>Self-Learning Dictionary automatically saved a learned word or alias.</summary>
+    LearnAdded,
+
+    /// <summary>The floating Undo pill for a learned word was displayed to the user.</summary>
+    LearnUndoShown,
+
+    /// <summary>User pressed Undo on the learned-word pill and the change was reverted.</summary>
+    LearnUndone,
+
+    /// <summary>User rejected a learned correction via Undo or Dictionary removal, updating learn memory.</summary>
+    LearnRefusedByUser,
+
+    /// <summary>Self-Learning Dictionary suppressed a candidate because its pair reached the 2-strike block in learn memory.</summary>
+    LearnBlockedSeen,
+
+    /// <summary>Saving a learned correction to settings failed safely.</summary>
+    LearnSaveFailed,
+
+    /// <summary>User cleared all remembered refusals and blocks from learning memory.</summary>
+    LearnMemoryForgotten,
 }

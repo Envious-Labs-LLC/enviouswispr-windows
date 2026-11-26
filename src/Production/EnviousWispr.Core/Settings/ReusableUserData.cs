@@ -26,12 +26,16 @@ public sealed record CustomWordEntry
         string replacement,
         MatchStrictness strictness = MatchStrictness.Default,
         WordCategory category = WordCategory.General,
-        string? id = null)
+        string? id = null,
+        IReadOnlyList<string>? learnedAliases = null,
+        DateTimeOffset? learnedAt = null)
     {
         Aliases = NormalizeAliases(aliases);
         Replacement = replacement?.Trim() ?? string.Empty;
         Strictness = strictness;
         Category = category;
+        LearnedAliases = NormalizeLearnedAliases(learnedAliases, Aliases);
+        LearnedAt = learnedAt;
         Id = !string.IsNullOrWhiteSpace(id)
             ? id.Trim()
             : CreateDeterministicId(Aliases, Replacement, Strictness, Category);
@@ -48,6 +52,16 @@ public sealed record CustomWordEntry
     public MatchStrictness Strictness { get; init; }
 
     public WordCategory Category { get; init; }
+
+    /// <summary>Subset of <see cref="Aliases"/> learned automatically from post-paste edits.</summary>
+    public IReadOnlyList<string> LearnedAliases { get; init; }
+
+    /// <summary>Timestamp when the app automatically learned this word from an edit; null when user-authored.</summary>
+    public DateTimeOffset? LearnedAt { get; init; }
+
+    /// <summary>Whether any part of this word was taught automatically by post-paste edit observation.</summary>
+    [JsonIgnore]
+    public bool IsAutoLearned => LearnedAt.HasValue || LearnedAliases.Count > 0;
 
     /// <summary>Primary spoken form for legacy 1-to-1 callers; falls back to <see cref="Replacement"/> when no aliases exist.</summary>
     public string SpokenForm => Aliases.Count > 0 ? Aliases[0] : Replacement;
@@ -68,7 +82,9 @@ public sealed record CustomWordEntry
                string.Equals(Replacement, other.Replacement, StringComparison.Ordinal) &&
                Strictness == other.Strictness &&
                Category == other.Category &&
-               Aliases.SequenceEqual(other.Aliases, StringComparer.Ordinal);
+               Aliases.SequenceEqual(other.Aliases, StringComparer.Ordinal) &&
+               LearnedAliases.SequenceEqual(other.LearnedAliases, StringComparer.Ordinal) &&
+               Nullable.Equals(LearnedAt, other.LearnedAt);
     }
 
     public override int GetHashCode()
@@ -83,7 +99,37 @@ public sealed record CustomWordEntry
             hash.Add(alias, StringComparer.Ordinal);
         }
 
+        foreach (var alias in LearnedAliases)
+        {
+            hash.Add(alias, StringComparer.Ordinal);
+        }
+
+        hash.Add(LearnedAt);
         return hash.ToHashCode();
+    }
+
+    public static IReadOnlyList<string> NormalizeLearnedAliases(
+        IEnumerable<string>? learnedAliases,
+        IReadOnlyList<string> aliases)
+    {
+        if (learnedAliases is null)
+        {
+            return [];
+        }
+
+        var allowed = aliases.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<string>();
+        foreach (var raw in learnedAliases)
+        {
+            var trimmed = raw?.Trim();
+            if (!string.IsNullOrEmpty(trimmed) && allowed.Contains(trimmed) && seen.Add(trimmed))
+            {
+                normalized.Add(trimmed);
+            }
+        }
+
+        return normalized.ToArray();
     }
 
     public static IReadOnlyList<string> NormalizeAliases(IEnumerable<string>? aliases)
@@ -187,12 +233,17 @@ public sealed record CustomWordEntry
             {
                 var take = Math.Min(space, newAliases.Count);
                 var combinedAliases = NormalizeAliases(active.Aliases.Concat(newAliases.Take(take)));
+                var combinedLearned = NormalizeLearnedAliases(
+                    active.LearnedAliases.Concat(entry.LearnedAliases),
+                    combinedAliases);
                 merged[activeIndex] = new CustomWordEntry(
                     combinedAliases,
                     active.Replacement,
                     active.Strictness,
                     active.Category,
-                    id: null);
+                    id: null,
+                    combinedLearned,
+                    active.LearnedAt ?? entry.LearnedAt);
                 consumed = take;
             }
 
@@ -206,7 +257,9 @@ public sealed record CustomWordEntry
                     entry.Replacement,
                     entry.Strictness,
                     entry.Category,
-                    id: null));
+                    id: null,
+                    entry.LearnedAliases,
+                    entry.LearnedAt));
             }
         }
 
@@ -268,6 +321,8 @@ internal sealed class CustomWordEntryJsonConverter : JsonConverter<CustomWordEnt
         string? replacement = null;
         var strictness = MatchStrictness.Default;
         var category = WordCategory.General;
+        List<string>? learnedAliases = null;
+        DateTimeOffset? learnedAt = null;
 
         while (reader.Read())
         {
@@ -289,7 +344,9 @@ internal sealed class CustomWordEntryJsonConverter : JsonConverter<CustomWordEnt
                     replacement ?? string.Empty,
                     strictness,
                     category,
-                    id);
+                    id,
+                    learnedAliases,
+                    learnedAt);
             }
 
             if (reader.TokenType != JsonTokenType.PropertyName)
@@ -322,6 +379,16 @@ internal sealed class CustomWordEntryJsonConverter : JsonConverter<CustomWordEnt
                 case "category":
                     category = JsonSerializer.Deserialize<WordCategory>(ref reader, options);
                     break;
+                case "learnedAliases":
+                    learnedAliases = reader.TokenType == JsonTokenType.Null
+                        ? null
+                        : JsonSerializer.Deserialize<List<string>>(ref reader, options);
+                    break;
+                case "learnedAt":
+                    learnedAt = reader.TokenType == JsonTokenType.Null
+                        ? null
+                        : JsonSerializer.Deserialize<DateTimeOffset?>(ref reader, options);
+                    break;
                 default:
                     throw new JsonException($"Unmapped property '{propertyName}' on CustomWordEntry.");
             }
@@ -341,6 +408,18 @@ internal sealed class CustomWordEntryJsonConverter : JsonConverter<CustomWordEnt
         JsonSerializer.Serialize(writer, value.Strictness, options);
         writer.WritePropertyName("category");
         JsonSerializer.Serialize(writer, value.Category, options);
+        if (value.LearnedAliases.Count > 0)
+        {
+            writer.WritePropertyName("learnedAliases");
+            JsonSerializer.Serialize(writer, value.LearnedAliases, options);
+        }
+
+        if (value.LearnedAt is { } learnedAt)
+        {
+            writer.WritePropertyName("learnedAt");
+            JsonSerializer.Serialize(writer, learnedAt, options);
+        }
+
         writer.WriteEndObject();
     }
 }
@@ -484,5 +563,5 @@ public sealed record PortableProfile(
     UserPreferences Preferences,
     ReusableUserData UserData)
 {
-    public const int CurrentSchemaVersion = 19;
+    public const int CurrentSchemaVersion = 20;
 }

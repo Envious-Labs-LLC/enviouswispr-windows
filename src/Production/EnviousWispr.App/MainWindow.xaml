@@ -1407,6 +1407,9 @@
                                                                         <Border Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
                                                                             <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="{Binding CategoryLabel}" />
                                                                         </Border>
+                                                                        <Border Style="{StaticResource BrandAccentChipStyle}" Visibility="{Binding AutoLearnedVisibility}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="Learned" />
+                                                                        </Border>
                                                                     </StackPanel>
                                                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
                                                                         <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding AliasesText}" TextAlignment="DetectFromContent" TextWrapping="Wrap" VerticalAlignment="Center" />
@@ -1440,17 +1443,51 @@
                                             <StackPanel x:Name="VocabularyPacksList" Spacing="{StaticResource BrandSpacingS}" />
                                         </StackPanel>
                                     </Border>
-                                    <Border x:Name="DictPanelLearnFrom" Padding="20" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Learn From" />
-                                            <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Import words from existing dictation apps, files, or pasted lists." TextWrapping="Wrap" />
-                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                <Button Click="WordsFromAnotherAppButton_Click" Content="From another app" AutomationProperties.Name="Import words from another app" AutomationProperties.HelpText="Bring your dictionary over from another dictation app. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}" />
-                                                <Button Click="ImportWordsButton_Click" Content="Import words" AutomationProperties.HelpText="Reads a file of word pairs. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
-                                                <Button Click="PasteWordsButton_Click" Content="Paste a list" AutomationProperties.HelpText="Reads word pairs you have copied. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
+                                    <StackPanel x:Name="DictPanelLearnFrom" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                                        <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                            <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Learn from..." />
+                                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Let EnviousWispr pick up new words on its own, from things you already have." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                        <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                <TextBlock x:Name="LearnFromEditsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Learn new words" />
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Automatically detects when you correct a dictation and adds the corrected word to your dictionary. Undo it from the notification, or remove it later in Your Words." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                            <ToggleSwitch x:Name="LearnFromEditsToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind LearnFromEditsToggleLabel, Mode=OneTime}" OnContent="" OffContent="" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" />
+                                                        </Grid>
+                                                        <TextBlock x:Name="LearnFromEditsStatusText" Style="{StaticResource BrandHelperStyle}" Text="Available" />
+                                                        <Grid x:Name="LearnMemoryRow" ColumnSpacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock x:Name="LearnMemorySummaryText" Style="{StaticResource BrandHelperStyle}" Text="Learning memory: 0 blocked" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                                            <Button x:Name="ForgetLearnMemoryButton" Grid.Column="1" Click="ForgetLearnMemoryButton_Click" Content="Forget" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Forget what EnviousWispr remembers about your fixes so blocked words may be learned again." />
+                                                        </Grid>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Import word lists" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Import words from existing dictation apps, files, or pasted lists." TextWrapping="Wrap" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <Button Click="WordsFromAnotherAppButton_Click" Content="From another app" AutomationProperties.Name="Import words from another app" AutomationProperties.HelpText="Bring your dictionary over from another dictation app. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                            <Button Click="ImportWordsButton_Click" Content="Import words" AutomationProperties.HelpText="Reads a file of word pairs. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                            <Button Click="PasteWordsButton_Click" Content="Paste a list" AutomationProperties.HelpText="Reads word pairs you have copied. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
                                             </StackPanel>
-                                        </StackPanel>
-                                    </Border>
+                                        </Border>
+                                    </StackPanel>
                                     <StackPanel x:Name="DictPanelQuickAdd" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
                                         <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                             <StackPanel Spacing="{StaticResource BrandSpacingM}">

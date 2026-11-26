@@ -641,6 +641,7 @@ public partial class App
                 _globalHotkeyLock?.Dispose();
                 _globalHotkeyLock = null;
             }),
+            LifetimeStep.Of("self-learning observer", DisposeSelfLearning),
         ],
         ShutDownSession: _sessionCoordinator is { } coordinator ? budget => coordinator.ShutdownAsync(budget) : null,
         Quiesce: (LifetimeStep[])

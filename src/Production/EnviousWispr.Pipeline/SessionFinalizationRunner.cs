@@ -3,6 +3,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
@@ -87,6 +88,11 @@ public interface ISessionFinalizationEffects
 
     /// <summary>The delivered outcome on screen, with the language offer that may follow it.</summary>
     void ReportDelivery(DeliveryResult delivery, string? language);
+
+    /// <summary>Notifies the Self-Learning Dictionary watcher when dictated text was pasted into a target.</summary>
+    void NotifyPasteCompleted(PasteCompletedEvent paste)
+    {
+    }
 
     /// <summary>An Escape Recovery kept the words; <paramref name="undoOffered"/> says whether Home offers its one-shot Undo.</summary>
     void ShowEscapeRecoveryFinished(bool undoOffered);
@@ -420,6 +426,18 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                         .ConfigureAwait(false);
                     await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
                     _effects.ReportDelivery(result, language);
+                    if (result.Delivered &&
+                        result.Route is TextDeliveryRoute.ClipboardPaste or TextDeliveryRoute.UiAutomationValue &&
+                        result.ArrivalStatus != PasteArrivalStatus.Unreadable &&
+                        !string.IsNullOrWhiteSpace(processed.Output.Text))
+                    {
+                        _effects.NotifyPasteCompleted(new PasteCompletedEvent(
+                            processed.Output.Text,
+                            pendingSession.Target,
+                            language,
+                            _clock.GetUtcNow()));
+                    }
+
                     return new FinalizationReport(
                         result.Delivered || result.ClipboardFallback
                             ? FinalizationOutcome.Delivered
