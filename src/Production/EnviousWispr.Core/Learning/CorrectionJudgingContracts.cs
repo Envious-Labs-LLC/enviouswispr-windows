@@ -5,7 +5,13 @@ namespace EnviousWispr.Core.Learning;
 /// <summary>One changed run the user made inside a pasted dictation.</summary>
 public sealed record CorrectionCandidate(int Id, string Original, string Replacement);
 
-/// <summary>The mutually exclusive verdicts a correction judge assigns to a candidate.</summary>
+/// <summary>
+/// The mutually exclusive verdicts a correction judge assigns to a candidate.
+/// Mirrors macOS <c>CorrectionJudgeClass</c> (#996, #3101): every decision whose
+/// <see cref="CorrectionJudgeClassExtensions.IsVocabularyCorrection"/> is true
+/// (including <see cref="CorrectionButUnsafe"/>) is learned with its original text
+/// as an alias; <c>safeAlias</c> is advisory for structured schema parity and evaluation.
+/// </summary>
 public enum CorrectionJudgeClass
 {
     NotCorrection,
@@ -20,6 +26,32 @@ public static class CorrectionJudgeClassExtensions
 
     public static bool IsSafeAlias(this CorrectionJudgeClass verdict) =>
         verdict == CorrectionJudgeClass.CorrectionAndSafe;
+
+    /// <summary>
+    /// Converts model boolean outputs to <see cref="CorrectionJudgeClass"/>.
+    /// Rejects the impossible <c>(vocabularyCorrection: false, safeAlias: true)</c> pair.
+    /// </summary>
+    public static bool TryFromBooleans(
+        bool vocabularyCorrection,
+        bool safeAlias,
+        out CorrectionJudgeClass verdict)
+    {
+        switch ((vocabularyCorrection, safeAlias))
+        {
+            case (false, false):
+                verdict = CorrectionJudgeClass.NotCorrection;
+                return true;
+            case (true, false):
+                verdict = CorrectionJudgeClass.CorrectionButUnsafe;
+                return true;
+            case (true, true):
+                verdict = CorrectionJudgeClass.CorrectionAndSafe;
+                return true;
+            default:
+                verdict = CorrectionJudgeClass.NotCorrection;
+                return false;
+        }
+    }
 }
 
 public sealed record CorrectionJudgeDecision(
@@ -40,13 +72,16 @@ public abstract record CorrectionJudgeOutcome
 {
     private CorrectionJudgeOutcome() { }
 
-    public sealed record Verdict(IReadOnlyList<CorrectionJudgeDecision> Decisions) : CorrectionJudgeOutcome;
+    public sealed record Verdict(
+        IReadOnlyList<CorrectionJudgeDecision> Decisions,
+        string? ProviderId = null) : CorrectionJudgeOutcome;
 
     public sealed record Bypass(CorrectionJudgeBypass Reason) : CorrectionJudgeOutcome;
 
     public static CorrectionJudgeOutcome Validated(
         IReadOnlyList<CorrectionJudgeDecision> decisions,
-        CorrectionJudgeRequest request)
+        CorrectionJudgeRequest request,
+        string? providerId = null)
     {
         ArgumentNullException.ThrowIfNull(decisions);
         ArgumentNullException.ThrowIfNull(request);
@@ -66,7 +101,7 @@ public abstract record CorrectionJudgeOutcome
             }
         }
 
-        return new Verdict(decisions.OrderBy(d => d.Id).ToArray());
+        return new Verdict(decisions.OrderBy(d => d.Id).ToArray(), providerId);
     }
 }
 

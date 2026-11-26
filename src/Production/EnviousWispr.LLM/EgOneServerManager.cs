@@ -40,6 +40,9 @@ internal interface IEgOneRuntime : IAsyncDisposable
 
     Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken);
 
+    /// <summary>Returns the live loopback endpoint only if the server is already running and ready; never cold-starts it.</summary>
+    EgOneEndpoint? TryGetReadyEndpoint();
+
     Task<bool> TryPreWakeAsync(CancellationToken cancellationToken);
 
     void TerminateImmediately();
@@ -50,13 +53,13 @@ public sealed class EgOneServerManager : IEgOneRuntime
     private readonly EgOneServerOptions _options;
     private readonly HttpClient _healthClient;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private Process? _process;
+    private volatile Process? _process;
     private WindowsProcessJob? _processJob;
-    private EgOneEndpoint? _endpoint;
+    private volatile EgOneEndpoint? _endpoint;
     private bool _hasReachedReady;
     private bool _restartUsed;
     private int _failedStarts;
-    private bool _disposed;
+    private volatile bool _disposed;
     private int _preWakeInFlight;
     private volatile bool _isUsingAccelerator;
 
@@ -259,6 +262,30 @@ public sealed class EgOneServerManager : IEgOneRuntime
         }
 
         return endpoint;
+    }
+
+    public EgOneEndpoint? TryGetReadyEndpoint()
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        var endpoint = _endpoint;
+        var process = _process;
+        if (endpoint is null || process is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return process.HasExited ? null : endpoint;
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private async Task<EgOneEndpoint?> StartWithOptionsAsync(

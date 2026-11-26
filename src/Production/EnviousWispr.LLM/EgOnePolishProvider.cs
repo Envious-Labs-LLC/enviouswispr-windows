@@ -26,12 +26,30 @@ public sealed record EgOnePolishOptions(
     public TimeSpan EffectiveInferenceTimeout => InferenceTimeout ?? TimeSpan.FromSeconds(15);
 }
 
+internal enum EgOneJudgeCallStatus
+{
+    Completed,
+    Unavailable,
+    NotGranted,
+    Deadline,
+    Cancelled,
+    Failed,
+}
+
+internal readonly record struct EgOneJudgeCallResult(
+    EgOneJudgeCallStatus Status,
+    string? Content);
+
 public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 {
     private readonly IEgOneRuntime _runtime;
     private readonly HttpClient _httpClient;
     private readonly string _modelId;
     private readonly TimeSpan _inferenceTimeout;
+    private readonly SemaphoreSlim _slotGate = new(1, 1);
+    private readonly Lock _judgeSlotLock = new();
+    private CancellationTokenSource? _activeJudgeCts;
+    private int _polishInFlight;
     private bool _disposed;
 
     public EgOnePolishProvider(
@@ -64,6 +82,10 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
     }
 
     public string ProviderId => "eg-one";
+
+    public string ModelId => _modelId;
+
+    public bool IsLocalRuntimeReady => !_disposed && _runtime.TryGetReadyEndpoint() is not null;
 
     public int? OwnedProcessId => _runtime.OwnedProcessId;
 
@@ -103,105 +125,122 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         }
 
         var timer = Stopwatch.StartNew();
-        var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        if (endpoint is null)
-        {
-            return Fallback(
-                input,
-                PolishAttemptStatus.Unavailable,
-                AppErrorCode.PolishProviderUnavailable,
-                timer);
-        }
-
-        var systemPrompt = EgOnePrompt.BuildSystemPrompt(request.DetectedLanguage ?? request.RecognitionLanguage);
-        var userMessage = EgOnePrompt.BuildUserMessage(input.Text);
-        var maximumOutputTokens = Math.Max(input.Text.Length, 256);
-        if (!FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
-        {
-            return Fallback(
-                input,
-                PolishAttemptStatus.InputTooLarge,
-                AppErrorCode.PolishInputTooLarge,
-                timer,
-                canRetry: false);
-        }
-
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCancellation.CancelAfter(_inferenceTimeout);
+        EnterCriticalSlotPriority();
+        var slotAcquired = false;
         try
         {
-            for (var attempt = 0; attempt < 2; attempt++)
+            var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            if (endpoint is null)
             {
-                if (attempt > 0)
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(750), timeoutCancellation.Token)
-                        .ConfigureAwait(false);
-                    endpoint = await _runtime.EnsureReadyAsync(timeoutCancellation.Token)
-                        .ConfigureAwait(false);
-                    if (endpoint is null)
-                    {
-                        break;
-                    }
-                }
-
-                try
-                {
-                    var parsed = await SendAsync(
-                        endpoint,
-                        systemPrompt,
-                        userMessage,
-                        maximumOutputTokens,
-                        timeoutCancellation.Token).ConfigureAwait(false);
-                    if (parsed is null || !IsSafeOutput(input.Text, parsed))
-                    {
-                        return Fallback(
-                            input,
-                            PolishAttemptStatus.Failed,
-                            AppErrorCode.PolishFailed,
-                            timer);
-                    }
-
-                    timer.Stop();
-                    var status = string.Equals(input.Text, parsed, StringComparison.Ordinal)
-                        ? PolishAttemptStatus.Unchanged
-                        : PolishAttemptStatus.Polished;
-                    return new PolishResult(
-                        new ProcessedText(input.SessionId, parsed),
-                        status,
-                        ElapsedMilliseconds: timer.ElapsedMilliseconds);
-                }
-                catch (HttpRequestException) when (attempt == 0)
-                {
-                    // One retry covers a single owned-server crash or a transient loopback reset.
-                }
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.Unavailable,
+                    AppErrorCode.PolishProviderUnavailable,
+                    timer);
             }
 
-            return Fallback(
-                input,
-                PolishAttemptStatus.Failed,
-                AppErrorCode.PolishFailed,
-                timer);
+            var systemPrompt = EgOnePrompt.BuildSystemPrompt(request.DetectedLanguage ?? request.RecognitionLanguage);
+            var userMessage = EgOnePrompt.BuildUserMessage(input.Text);
+            var maximumOutputTokens = Math.Max(input.Text.Length, 256);
+            if (!FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
+            {
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.InputTooLarge,
+                    AppErrorCode.PolishInputTooLarge,
+                    timer,
+                    canRetry: false);
+            }
+
+            using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCancellation.CancelAfter(_inferenceTimeout);
+            try
+            {
+                await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
+                slotAcquired = true;
+
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    if (attempt > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(750), timeoutCancellation.Token)
+                            .ConfigureAwait(false);
+                        endpoint = await _runtime.EnsureReadyAsync(timeoutCancellation.Token)
+                            .ConfigureAwait(false);
+                        if (endpoint is null)
+                        {
+                            break;
+                        }
+                    }
+
+                    try
+                    {
+                        var parsed = await SendAsync(
+                            endpoint,
+                            systemPrompt,
+                            userMessage,
+                            maximumOutputTokens,
+                            timeoutCancellation.Token).ConfigureAwait(false);
+                        if (parsed is null || !IsSafeOutput(input.Text, parsed))
+                        {
+                            return Fallback(
+                                input,
+                                PolishAttemptStatus.Failed,
+                                AppErrorCode.PolishFailed,
+                                timer);
+                        }
+
+                        timer.Stop();
+                        var status = string.Equals(input.Text, parsed, StringComparison.Ordinal)
+                            ? PolishAttemptStatus.Unchanged
+                            : PolishAttemptStatus.Polished;
+                        return new PolishResult(
+                            new ProcessedText(input.SessionId, parsed),
+                            status,
+                            ElapsedMilliseconds: timer.ElapsedMilliseconds);
+                    }
+                    catch (HttpRequestException) when (attempt == 0)
+                    {
+                        // One retry covers a single owned-server crash or a transient loopback reset.
+                    }
+                }
+
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.Failed,
+                    AppErrorCode.PolishFailed,
+                    timer);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.TimedOut,
+                    AppErrorCode.PolishTimedOut,
+                    timer);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is HttpRequestException or JsonException or IOException or InvalidOperationException)
+            {
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.Failed,
+                    AppErrorCode.PolishFailed,
+                    timer);
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        finally
         {
-            return Fallback(
-                input,
-                PolishAttemptStatus.TimedOut,
-                AppErrorCode.PolishTimedOut,
-                timer);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (
-            exception is HttpRequestException or JsonException or IOException or InvalidOperationException)
-        {
-            return Fallback(
-                input,
-                PolishAttemptStatus.Failed,
-                AppErrorCode.PolishFailed,
-                timer);
+            if (slotAcquired)
+            {
+                _slotGate.Release();
+            }
+
+            Interlocked.Decrement(ref _polishInFlight);
         }
     }
 
@@ -285,19 +324,24 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
         }
 
-        var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        if (endpoint is null)
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        timeoutCancellation.CancelAfter(_inferenceTimeout);
-
+        EnterCriticalSlotPriority();
+        var slotAcquired = false;
         string? reply;
         try
         {
+            var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            if (endpoint is null)
+            {
+                return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
+            using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            timeoutCancellation.CancelAfter(_inferenceTimeout);
+
+            await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
+            slotAcquired = true;
+
             reply = await SendAsync(
                 endpoint,
                 AliasSuggestionPrompt.SystemPrompt,
@@ -311,6 +355,15 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         {
             return MishearingAdvice.None(MishearingAdviceStatus.Failed);
         }
+        finally
+        {
+            if (slotAcquired)
+            {
+                _slotGate.Release();
+            }
+
+            Interlocked.Decrement(ref _polishInFlight);
+        }
 
         if (reply is null)
         {
@@ -321,6 +374,166 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         return suggestions.Count == 0
             ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
             : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
+    }
+
+    internal async Task<EgOneJudgeCallResult> TryCompleteJudgeJsonAsync(
+        string systemPrompt,
+        string userMessage,
+        object responseFormat,
+        int maximumOutputTokens,
+        TimeSpan deadline,
+        CancellationToken cancellationToken)
+    {
+        if (_disposed)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Unavailable, null);
+        }
+
+        if (Volatile.Read(ref _polishInFlight) > 0)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
+        }
+
+        if (_runtime.TryGetReadyEndpoint() is not { } endpoint)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Unavailable, null);
+        }
+
+        if (!_slotGate.Wait(0, CancellationToken.None))
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
+        }
+
+        CancellationTokenSource? timeoutCts = null;
+        try
+        {
+            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            lock (_judgeSlotLock)
+            {
+                if (_disposed || Volatile.Read(ref _polishInFlight) > 0)
+                {
+                    return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
+                }
+
+                _activeJudgeCts = timeoutCts;
+            }
+
+            timeoutCts.CancelAfter(deadline);
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint.ChatCompletionsUri);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", endpoint.AuthToken);
+            request.Content = JsonContent.Create(new
+            {
+                model = _modelId,
+                messages = new object[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userMessage },
+                },
+                max_tokens = maximumOutputTokens,
+                temperature = 0,
+                cache_prompt = false,
+                id_slot = 0,
+                response_format = responseFormat,
+            });
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeoutCts.Token).ConfigureAwait(false);
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token)
+                .ConfigureAwait(false);
+            using var document = await JsonDocument.ParseAsync(
+                stream,
+                cancellationToken: timeoutCts.Token).ConfigureAwait(false);
+            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
+                choices.ValueKind != JsonValueKind.Array ||
+                choices.GetArrayLength() == 0)
+            {
+                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+            }
+
+            var choice = choices[0];
+            if (choice.TryGetProperty("finish_reason", out var finishReason) &&
+                string.Equals(finishReason.GetString(), "length", StringComparison.Ordinal))
+            {
+                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+            }
+
+            if (!choice.TryGetProperty("message", out var message) ||
+                !message.TryGetProperty("content", out var content))
+            {
+                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+            }
+
+            var raw = content.GetString()?.Trim();
+            return string.IsNullOrWhiteSpace(raw)
+                ? new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null)
+                : new EgOneJudgeCallResult(EgOneJudgeCallStatus.Completed, raw);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Cancelled, null);
+        }
+        catch (OperationCanceledException) when (Volatile.Read(ref _polishInFlight) > 0)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.NotGranted, null);
+        }
+        catch (OperationCanceledException)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Deadline, null);
+        }
+        catch (ObjectDisposedException)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Unavailable, null);
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or JsonException or IOException or InvalidOperationException)
+        {
+            return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+        }
+        finally
+        {
+            lock (_judgeSlotLock)
+            {
+                if (timeoutCts is not null && ReferenceEquals(_activeJudgeCts, timeoutCts))
+                {
+                    _activeJudgeCts = null;
+                }
+            }
+
+            timeoutCts?.Dispose();
+            _slotGate.Release();
+        }
+    }
+
+    private void EnterCriticalSlotPriority()
+    {
+        Interlocked.Increment(ref _polishInFlight);
+        CancelActiveJudge();
+    }
+
+    private void CancelActiveJudge()
+    {
+        CancellationTokenSource? judgeCts;
+        lock (_judgeSlotLock)
+        {
+            judgeCts = _activeJudgeCts;
+        }
+
+        if (judgeCts is not null)
+        {
+            try
+            {
+                judgeCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     /// <summary>
@@ -457,6 +670,7 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         }
 
         _disposed = true;
+        CancelActiveJudge();
         _httpClient.Dispose();
         await _runtime.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);

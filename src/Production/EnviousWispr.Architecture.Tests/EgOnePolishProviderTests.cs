@@ -460,6 +460,8 @@ public sealed class EgOnePolishProviderTests
             return Task.FromResult(Endpoint);
         }
 
+        public EgOneEndpoint? TryGetReadyEndpoint() => Disposed ? null : Endpoint;
+
         public Task<bool> TryPreWakeAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();

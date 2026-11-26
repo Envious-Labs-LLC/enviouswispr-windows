@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
@@ -24,6 +25,7 @@ public sealed class ObservedCorrectionWatcher
     {
         public required ulong Generation { get; init; }
         public required PasteCompletedEvent Paste { get; init; }
+        public CancellationTokenSource JudgeCts { get; } = new();
         public ulong Revision { get; set; }
         public HashSet<string> SettledSnapshots { get; } = new(StringComparer.Ordinal);
         public int SettledBursts { get; set; }
@@ -37,6 +39,17 @@ public sealed class ObservedCorrectionWatcher
         public bool Ended { get; set; }
         public bool Cancelled { get; set; }
         public bool IsLive => !Ended && !Cancelled;
+
+        public void CancelJudge()
+        {
+            try
+            {
+                JudgeCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     private readonly Func<bool> _isLearnFromEditsOn;
@@ -137,6 +150,7 @@ public sealed class ObservedCorrectionWatcher
             if (_watch is { } w && w.Generation == liveWatch.Generation && !w.Ended)
             {
                 w.Cancelled = true;
+                w.CancelJudge();
             }
         }
 
@@ -238,6 +252,7 @@ public sealed class ObservedCorrectionWatcher
             }
 
             _watch.Cancelled = true;
+            _watch.CancelJudge();
             _watch = null;
         }
 
@@ -255,6 +270,7 @@ public sealed class ObservedCorrectionWatcher
             }
 
             _watch.Cancelled = true;
+            _watch.CancelJudge();
             if (!_watch.Ended)
             {
                 shouldLog = true;
@@ -459,6 +475,7 @@ public sealed class ObservedCorrectionWatcher
             return;
         }
 
+        CancellationToken judgeToken;
         lock (_sync)
         {
             if (_watch is null || _watch.Generation != gen || !_watch.IsLive ||
@@ -468,15 +485,17 @@ public sealed class ObservedCorrectionWatcher
             }
 
             _watch.JudgeCalls++;
+            judgeToken = _watch.JudgeCts.Token;
             foreach (var entry in prepared.ById.Values)
             {
                 _watch.SentPairKeys.Add(entry.PairKey);
             }
         }
 
-        var context = BuildContextExcerpt(paste.PastedText);
+        var focusRun = prepared.ById[prepared.Candidates[0].Id].Run;
+        var context = BuildContextExcerpt(region, focusRun.EditedStart, focusRun.EditedEnd);
         var request = new CorrectionJudgeRequest(prepared.Candidates, context, paste.LanguageCode);
-        _ = Task.Run(() => AskJudgeAsync(judge, request, prepared, region, evidence, gen, revision));
+        _ = Task.Run(() => AskJudgeAsync(judge, request, prepared, region, evidence, gen, revision, judgeToken));
     }
 
     private async Task AskJudgeAsync(
@@ -486,17 +505,20 @@ public sealed class ObservedCorrectionWatcher
         string region,
         SettleEvidence initialEvidence,
         ulong gen,
-        ulong revision)
+        ulong revision,
+        CancellationToken judgeToken)
     {
         try
         {
-            if (!StillWanted(gen, revision))
+            if (!StillWanted(gen, revision) || judgeToken.IsCancellationRequested)
             {
                 return;
             }
 
-            var outcome = await judge.JudgeAsync(request).ConfigureAwait(false);
-            if (!StillWanted(gen, revision))
+            var timer = Stopwatch.StartNew();
+            var outcome = await judge.JudgeAsync(request, judgeToken).ConfigureAwait(false);
+            timer.Stop();
+            if (!StillWanted(gen, revision) || judgeToken.IsCancellationRequested)
             {
                 return;
             }
@@ -513,8 +535,15 @@ public sealed class ObservedCorrectionWatcher
                 }
             }
 
-            Log(AppEventCode.LearnJudged);
-            if (outcome is not CorrectionJudgeOutcome.Verdict(var decisions))
+            var diagnosticProvider = outcome is CorrectionJudgeOutcome.Verdict v
+                ? DiagnosticProviderIds.FromProviderId(v.ProviderId)
+                : null;
+            _logger?.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LearnJudged,
+                ElapsedMilliseconds: timer.ElapsedMilliseconds,
+                Provider: diagnosticProvider));
+            if (outcome is not CorrectionJudgeOutcome.Verdict(var decisions, _))
             {
                 return;
             }
@@ -683,10 +712,101 @@ public sealed class ObservedCorrectionWatcher
         return double.IsFinite(p) && p >= WeakEvidenceThreshold && p <= 1.0;
     }
 
-    private static string BuildContextExcerpt(string pastedText) =>
-        pastedText.Length <= CorrectionJudgeRequest.MaxContextUtf16
-            ? pastedText
-            : pastedText[..CorrectionJudgeRequest.MaxContextUtf16];
+    internal static string BuildContextExcerpt(
+        string region,
+        int focusEditedTokenStart = 0,
+        int focusEditedTokenEnd = 0,
+        int maxContextUtf16 = CorrectionJudgeRequest.MaxContextUtf16)
+    {
+        if (string.IsNullOrEmpty(region) || region.Length <= maxContextUtf16)
+        {
+            return region;
+        }
+
+        var start = 0;
+        if (focusEditedTokenEnd > focusEditedTokenStart &&
+            TryFindTokenSpan(region, focusEditedTokenStart, focusEditedTokenEnd, out var hitStart, out var hitEnd))
+        {
+            var hitLength = hitEnd - hitStart;
+            start = Math.Max(0, hitStart - (maxContextUtf16 - Math.Min(hitLength, maxContextUtf16)) / 2);
+            start = Math.Min(start, Math.Max(0, region.Length - maxContextUtf16));
+            if (start > 0 && char.IsLowSurrogate(region[start]))
+            {
+                start++;
+            }
+
+            var alignedStart = start;
+            while (alignedStart > 0 && alignedStart < region.Length && !char.IsWhiteSpace(region[alignedStart - 1]))
+            {
+                alignedStart++;
+            }
+
+            if (alignedStart <= hitStart && region.Length - alignedStart >= Math.Min(hitLength, maxContextUtf16))
+            {
+                start = alignedStart;
+            }
+        }
+
+        var end = Math.Min(region.Length, start + maxContextUtf16);
+        if (end < region.Length && end > start && char.IsLowSurrogate(region[end]))
+        {
+            end--;
+        }
+
+        return region[start..end];
+    }
+
+    private static bool TryFindTokenSpan(
+        string text,
+        int tokenStart,
+        int tokenEnd,
+        out int charStart,
+        out int charEnd)
+    {
+        charStart = 0;
+        charEnd = 0;
+        if (tokenStart < 0 || tokenEnd <= tokenStart)
+        {
+            return false;
+        }
+
+        var index = 0;
+        var tokenIndex = -1;
+        var foundStart = false;
+        while (index < text.Length)
+        {
+            while (index < text.Length && char.IsWhiteSpace(text[index]))
+            {
+                index++;
+            }
+
+            if (index >= text.Length)
+            {
+                break;
+            }
+
+            var wordStart = index;
+            while (index < text.Length && !char.IsWhiteSpace(text[index]))
+            {
+                index++;
+            }
+
+            tokenIndex++;
+            if (tokenIndex == tokenStart)
+            {
+                charStart = wordStart;
+                foundStart = true;
+            }
+
+            if (tokenIndex + 1 == tokenEnd && foundStart)
+            {
+                charEnd = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private void Log(AppEventCode code) =>
         _logger?.Write(new AppLogEntry(DateTimeOffset.UtcNow, code));

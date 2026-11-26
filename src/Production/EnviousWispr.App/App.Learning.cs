@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.LLM;
 using EnviousWispr.PostProcessing.Learning;
 using EnviousWispr.Presentation.Learning;
 using EnviousWispr.Services.Input;
@@ -12,6 +13,8 @@ public partial class App
 {
     private JsonLearnMemoryStore? _learnMemoryStore;
     private RulesCorrectionJudge? _rulesCorrectionJudge;
+    private EgOneCorrectionJudge? _egOneCorrectionJudge;
+    private FallbackCorrectionJudge? _correctionJudge;
     private WindowsPastedRegionObserver? _pastedRegionObserver;
     private LearnedCorrectionCoordinator? _learnedCoordinator;
     private ObservedCorrectionWatcher? _correctionWatcher;
@@ -26,7 +29,11 @@ public partial class App
 
         var memoryPath = Path.Combine(_dataDirectory, JsonLearnMemoryStore.FileName);
         var memoryStore = new JsonLearnMemoryStore(memoryPath);
-        var judge = new RulesCorrectionJudge();
+        var rulesJudge = new RulesCorrectionJudge();
+        var egOneJudge = new EgOneCorrectionJudge(
+            () => _polishProvider as EgOnePolishProvider,
+            canRun: () => !IsSpeechEngineBusy && !Leaving);
+        var judge = new FallbackCorrectionJudge(() => egOneJudge, rulesJudge);
         var observer = new WindowsPastedRegionObserver();
         var coordinator = new LearnedCorrectionCoordinator(
             _presentation.Vocabulary,
@@ -50,7 +57,9 @@ public partial class App
         memoryStore.Changed += OnLearnMemoryChanged;
 
         _learnMemoryStore = memoryStore;
-        _rulesCorrectionJudge = judge;
+        _rulesCorrectionJudge = rulesJudge;
+        _egOneCorrectionJudge = egOneJudge;
+        _correctionJudge = judge;
         _pastedRegionObserver = observer;
         _learnedCoordinator = coordinator;
         _learnedPresenter = presenter;
