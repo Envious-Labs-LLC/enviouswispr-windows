@@ -71,7 +71,8 @@ public sealed record RuntimeCompositionParts(
     IRuntimeResourceAdmission PolishAdmission,
     IAppLogger Logger,
     RuntimeShell Shell,
-    TimeProvider Clock);
+    TimeProvider Clock,
+    IDictationAudioArchive? AudioArchive = null);
 
 /// <summary>The shared queue as the hook and the timers reach it: one method to submit a key, one for the watchdog's timeout.</summary>
 internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
@@ -202,7 +203,8 @@ public static class RuntimeComposition
             parts.Logger,
             parts.Clock,
             parts.Shell.History,
-            new SessionPersistenceEffects(parts.Shell.View));
+            new SessionPersistenceEffects(parts.Shell.View),
+            parts.AudioArchive);
         var finalizationEffects = new TranscriptFinalizationEffects(parts.Logger, persistence);
         var finalizer = new TranscriptFinalizer(
             parts.TextPipeline,

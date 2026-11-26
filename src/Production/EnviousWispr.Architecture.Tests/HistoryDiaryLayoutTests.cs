@@ -37,7 +37,8 @@ public sealed class HistoryDiaryLayoutTests
 
         var historyList = FindNamed(document, "HistoryList");
         Assert.Null(historyList.Attribute("MaxHeight"));
-        Assert.Equal("Single", (string?)historyList.Attribute("SelectionMode"));
+        Assert.Equal("None", (string?)historyList.Attribute("SelectionMode"));
+        Assert.Equal("{StaticResource BrandHistoryListItemStyle}", (string?)historyList.Attribute("ItemContainerStyle"));
 
         var windowCode = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
@@ -57,11 +58,14 @@ public sealed class HistoryDiaryLayoutTests
         var document = LoadMainWindow(FindRepositoryRoot());
         var historyPage = FindNamed(document, "HistoryPage");
 
+        Assert.DoesNotContain(
+            historyPage.Descendants(),
+            element => string.Equals(
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
+                "HistoryFilterAllButton",
+                StringComparison.Ordinal));
         Assert.Equal(
             "{StaticResource BrandTabStripActiveButtonStyle}",
-            (string?)FindNamed(document, "HistoryFilterAllButton").Attribute("Style"));
-        Assert.Equal(
-            "{StaticResource BrandTabStripButtonStyle}",
             (string?)FindNamed(document, "HistoryFilterDictationButton").Attribute("Style"));
         Assert.Equal(
             "{StaticResource BrandTabStripButtonStyle}",
@@ -103,19 +107,23 @@ public sealed class HistoryDiaryLayoutTests
     }
 
     [Fact]
-    public void HistoryDiaryCardTemplateHasDayHeadersChipsShowMoreEditsComparisonAndActions()
+    public void HistoryDiaryCardTemplateHasDayHeadersChipsShowMoreEditsComparisonPlaybackAndActions()
     {
         var document = LoadMainWindow(FindRepositoryRoot());
         var historyList = FindNamed(document, "HistoryList");
-        var templateMarkup = historyList
+        var templates = historyList
             .Descendants(XName.Get("DataTemplate", PresentationNamespace))
-            .Single()
-            .ToString();
+            .ToArray();
+        Assert.Equal(2, templates.Length);
 
-        Assert.Contains("DayHeaderVisibility", templateMarkup, StringComparison.Ordinal);
-        Assert.Contains("DayHeaderTitle", templateMarkup, StringComparison.Ordinal);
-        Assert.Contains("DayCountText", templateMarkup, StringComparison.Ordinal);
+        var dayHeaderMarkup = templates[0].ToString();
+        Assert.Contains("BrandDayTitleStyle", dayHeaderMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandSubsectionEyebrowStyle", dayHeaderMarkup, StringComparison.Ordinal);
+        Assert.Contains("DayHeaderTitle", dayHeaderMarkup, StringComparison.Ordinal);
+        Assert.Contains("DayHeaderSubtitle", dayHeaderMarkup, StringComparison.Ordinal);
+        Assert.Contains("DayCountText", dayHeaderMarkup, StringComparison.Ordinal);
 
+        var templateMarkup = templates[1].ToString();
         Assert.Contains("SelectionCheckBoxVisibility", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardSelectCheckBox_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("BrandNeutralChipStyle", templateMarkup, StringComparison.Ordinal);
@@ -129,11 +137,17 @@ public sealed class HistoryDiaryLayoutTests
         Assert.Contains("CardShowOriginal_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("ComparisonOtherText", templateMarkup, StringComparison.Ordinal);
 
+        Assert.Contains("CardPlayPauseButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardWaveform_SeekRequested", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("PlaybackClockText", templateMarkup, StringComparison.Ordinal);
+
         Assert.Contains("ProvenanceText", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardPasteButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardCopyButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardKeepButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardRepolishButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("RepolishButtonVisibility", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CanRepolish", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("CardDeleteButton_Click", templateMarkup, StringComparison.Ordinal);
         Assert.Contains("PasteButtonAutomationId", templateMarkup, StringComparison.Ordinal);
 
@@ -168,7 +182,9 @@ public sealed class HistoryDiaryLayoutTests
         var repositoryRoot = FindRepositoryRoot();
         var document = LoadMainWindow(repositoryRoot);
         var historyList = FindNamed(document, "HistoryList");
-        var template = historyList.Descendants(XName.Get("DataTemplate", PresentationNamespace)).Single();
+        var template = historyList
+            .Descendants(XName.Get("DataTemplate", PresentationNamespace))
+            .Last();
         var templateMarkup = template.ToString();
 
         Assert.Contains("CardCopyAlternateButton_Click", templateMarkup, StringComparison.Ordinal);
@@ -189,6 +205,30 @@ public sealed class HistoryDiaryLayoutTests
         Assert.Contains("package.SetText(card.ComparisonOtherText);", historyCode, StringComparison.Ordinal);
         Assert.Contains("SetHistorySelectionMode(false);", historyCode, StringComparison.Ordinal);
         Assert.Contains("\"Select dictations\"", historyCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BrandHistoryListItemStyleBindsContentTemplateSelectorAndSelectorHasBothRowTemplates()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var controlsDoc = XDocument.Load(Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+        var itemStyle = controlsDoc
+            .Descendants(XName.Get("Style", PresentationNamespace))
+            .Single(style => string.Equals((string?)style.Attribute(XName.Get("Key", XamlNamespace)), "BrandHistoryListItemStyle", StringComparison.Ordinal));
+        var presenter = itemStyle.Descendants(XName.Get("ListViewItemPresenter", PresentationNamespace)).Single();
+
+        Assert.Equal("Transparent", (string?)presenter.Attribute("PointerOverBackground"));
+        Assert.Equal("Transparent", (string?)presenter.Attribute("PressedBackground"));
+        Assert.Equal("Transparent", (string?)presenter.Attribute("SelectedBackground"));
+        Assert.Equal("False", (string?)presenter.Attribute("SelectionCheckMarkVisualEnabled"));
+
+        var mainDoc = LoadMainWindow(repositoryRoot);
+        var historyList = FindNamed(mainDoc, "HistoryList");
+        var selector = historyList
+            .Descendants()
+            .Single(el => el.Name.LocalName == "HistoryDiaryRowTemplateSelector");
+        Assert.Contains(selector.Elements(), el => el.Name.LocalName == "HistoryDiaryRowTemplateSelector.DayHeaderTemplate");
+        Assert.Contains(selector.Elements(), el => el.Name.LocalName == "HistoryDiaryRowTemplateSelector.CardTemplate");
     }
 
     private static XDocument LoadMainWindow(string repositoryRoot) =>

@@ -45,6 +45,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly JsonSettingsStore _settingsStore;
     private readonly JsonPortableProfileService _profileService = new();
     private readonly JsonHistoryStore _historyStore;
+    private readonly LocalDictationAudioArchive _dictationAudioArchive;
     private readonly JsonApplicationRunStateStore _runStateStore;
     private readonly WindowsRecoveryTextStore _recoveryTextStore;
     private readonly SessionPersistence _sessionPersistence;
@@ -115,7 +116,9 @@ public partial class App : Application, IAsyncDisposable
             telemetryTransport);
         _diagnosticExportService = new JsonDiagnosticExportService(diagnosticPath);
         _settingsStore = new JsonSettingsStore(Path.Combine(_dataDirectory, "settings.json"));
-        _historyStore = new JsonHistoryStore(Path.Combine(_dataDirectory, "history.json"));
+        var dictationRecordingsDirectory = Path.Combine(_dataDirectory, "recordings", "dictations");
+        _dictationAudioArchive = new LocalDictationAudioArchive(dictationRecordingsDirectory);
+        _historyStore = new JsonHistoryStore(Path.Combine(_dataDirectory, "history.json"), dictationRecordingsDirectory);
         _runStateStore = new JsonApplicationRunStateStore(Path.Combine(_dataDirectory, "run-state.json"));
         _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(_dataDirectory, "recovery.json"));
         // THE LONG-LIVED SESSION OWNERS ARE ONE COMPOSITION'S, SHARED WITH THE TESTS. The shell chooses
@@ -143,7 +146,8 @@ public partial class App : Application, IAsyncDisposable
                 Leaving: () => _exitRequested || _disposed,
                 ClipboardText: WindowsClipboardText.TryReadAsync,
                 Dictation: () => _settings.Preferences.Dictation),
-            TimeProvider.System));
+            TimeProvider.System,
+            _dictationAudioArchive));
         _sessionPersistence = _runtime.Persistence;
         _livePreview = _runtime.Preview;
         _streaming = _runtime.Streaming;
@@ -372,6 +376,7 @@ public partial class App : Application, IAsyncDisposable
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
         _window.FeedbackDataDirectory = _dataDirectory;
+        _window.DictationRecordingsDirectory = _dictationAudioArchive.RecordingsDirectory;
         _window.FeedbackDraftStore = _feedbackCoordinator.DraftStore;
         _window.BuildFeedbackDiagnosticsSnapshot = () =>
             _feedbackCoordinator.BuildDiagnosticsSnapshot(_settings, _lastHardwareSnapshot);

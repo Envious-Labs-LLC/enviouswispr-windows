@@ -945,29 +945,22 @@ public partial class App
     /// can break a dictation is worse than no debugging aid: the archive exists to help diagnose
     /// the pipeline, so it must never be the reason the pipeline failed.
     /// </remarks>
-    [System.Diagnostics.Conditional("DEBUG")]
+    /// <summary>
+    /// Ensures the local-only release dictation recording folder is ready when a capture finishes.
+    /// Individual WAV recordings are saved under <c>recordings\dictations\&lt;entryId&gt;.wav</c> when
+    /// History persists the entry.
+    /// </summary>
     private void ArchiveDictationAudio(CapturedAudio audio)
     {
+        ArgumentNullException.ThrowIfNull(audio);
+        if (audio.SampleRate <= 0 || audio.Samples.IsEmpty)
+        {
+            return;
+        }
+
         try
         {
-            var directory = Path.Combine(_dataDirectory, "audio-archive");
-            Directory.CreateDirectory(directory);
-
-            var existing = Directory
-                .EnumerateFiles(directory, "*.wav")
-                .Select(path => (Path: path, Written: (DateTimeOffset)File.GetLastWriteTimeUtc(path)))
-                .ToArray();
-            foreach (var stale in AudioArchiveRetention.ToDelete(existing))
-            {
-                File.Delete(stale);
-            }
-
-            // The session id rather than a timestamp, so the file can be matched to the log lines
-            // for the same dictation. A timestamp would collide with itself on a fast machine and
-            // would have to be matched by eye against a clock.
-            File.WriteAllBytes(
-                Path.Combine(directory, $"{audio.SessionId.Value:N}.wav"),
-                WaveFile.EncodeMono(audio.Samples.Span, audio.SampleRate));
+            Directory.CreateDirectory(_dictationAudioArchive.RecordingsDirectory);
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or ArgumentException)

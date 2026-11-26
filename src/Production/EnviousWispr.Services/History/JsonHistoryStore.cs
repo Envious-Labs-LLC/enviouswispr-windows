@@ -21,12 +21,24 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     };
 
     private readonly string _historyPath;
+    private readonly string _recordingsDirectory;
+    private readonly string _pendingAudioDeletesPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonHistoryStore(string historyPath)
+    public JsonHistoryStore(string historyPath, string? recordingsDirectory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(historyPath);
         _historyPath = Path.GetFullPath(historyPath);
+        var historyDirectory = Path.GetDirectoryName(_historyPath) ?? AppContext.BaseDirectory;
+        _pendingAudioDeletesPath = Path.Combine(
+            historyDirectory,
+            $".{Path.GetFileName(_historyPath)}.pending-audio-deletes.json");
+        _recordingsDirectory = !string.IsNullOrWhiteSpace(recordingsDirectory)
+            ? Path.GetFullPath(recordingsDirectory)
+            : Path.Combine(
+                historyDirectory,
+                "recordings",
+                "dictations");
     }
 
     public async Task<HistoryLoadResult> LoadAsync(
@@ -41,13 +53,30 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             var loaded = await ReadAsync(cancellationToken).ConfigureAwait(false);
             if (loaded.Status is not HistoryLoadStatus.Loaded)
             {
+                if (loaded.Status is HistoryLoadStatus.Missing)
+                {
+                    LocalDictationAudioArchive.RecoverStagedDeletes(
+                        _recordingsDirectory,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                }
+
+                DrainPendingAudioDeletes([]);
                 return loaded;
             }
+
+            LocalDictationAudioArchive.RecoverStagedDeletes(
+                _recordingsDirectory,
+                BuildReferencedAudioSet(loaded.Entries));
 
             var retained = Retain(loaded.Entries, retentionDays, now);
             if (retained.Length != loaded.Entries.Count)
             {
                 await WriteAsync(retained, cancellationToken).ConfigureAwait(false);
+                DrainPendingAudioDeletes(CollectRemovedAudioFileNames(loaded.Entries, retained));
+            }
+            else
+            {
+                DrainPendingAudioDeletes([]);
             }
 
             return loaded with { Entries = retained };
@@ -80,6 +109,10 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
                 return new HistoryOperationResult(false, loaded.Error);
             }
 
+            LocalDictationAudioArchive.RecoverStagedDeletes(
+                _recordingsDirectory,
+                BuildReferencedAudioSet(loaded.Entries));
+
             var entries = Retain(loaded.Entries, retentionDays, now)
                 .Where(existing => existing.Id != entry.Id)
                 .Prepend(entry)
@@ -87,6 +120,7 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
                 .Take(MaximumEntries)
                 .ToArray();
             await WriteAsync(entries, cancellationToken).ConfigureAwait(false);
+            DrainPendingAudioDeletes(CollectRemovedAudioFileNames(loaded.Entries, entries));
             return new HistoryOperationResult(true);
         }
         catch (IOException)
@@ -216,7 +250,10 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     public Task<HistoryOperationResult> DeleteAsync(
         Guid id,
         CancellationToken cancellationToken = default) =>
-        MutateAsync(entries => entries.Where(entry => entry.Id != id).ToArray(), cancellationToken);
+        MutateAsync(
+            entries => entries.Where(entry => entry.Id != id).ToArray(),
+            cancellationToken,
+            verifyAudioDeletion: true);
 
     public Task<HistoryOperationResult> DeleteManyAsync(
         IReadOnlyCollection<Guid> ids,
@@ -231,7 +268,8 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
         var idSet = ids as HashSet<Guid> ?? new HashSet<Guid>(ids);
         return MutateAsync(
             entries => entries.Where(entry => !idSet.Contains(entry.Id)).ToArray(),
-            cancellationToken);
+            cancellationToken,
+            verifyAudioDeletion: true);
     }
 
     public Task<HistoryOperationResult> KeepAsync(
@@ -244,13 +282,19 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             cancellationToken);
 
     public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) =>
-        MutateAsync(_ => Array.Empty<DictationHistoryEntry>(), cancellationToken);
+        MutateAsync(
+            _ => Array.Empty<DictationHistoryEntry>(),
+            cancellationToken,
+            clearAllAudio: true,
+            verifyAudioDeletion: true);
 
     public void Dispose() => _gate.Dispose();
 
     private async Task<HistoryOperationResult> MutateAsync(
         Func<IReadOnlyList<DictationHistoryEntry>, IReadOnlyList<DictationHistoryEntry>> mutation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool clearAllAudio = false,
+        bool verifyAudioDeletion = false)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -261,7 +305,59 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
                 return new HistoryOperationResult(false, loaded.Error);
             }
 
-            await WriteAsync(mutation(loaded.Entries), cancellationToken).ConfigureAwait(false);
+            LocalDictationAudioArchive.RecoverStagedDeletes(
+                _recordingsDirectory,
+                BuildReferencedAudioSet(loaded.Entries));
+
+            var updated = mutation(loaded.Entries);
+            if (verifyAudioDeletion)
+            {
+                // Stage paired WAV removals before mutating history so locked files or write failures
+                // roll back cleanly without leaving surviving entries without recordings.
+                var targetFiles = CollectRemovedAudioFileNames(loaded.Entries, updated);
+                var deleteError = LocalDictationAudioArchive.TryStageDeletes(
+                    _recordingsDirectory,
+                    targetFiles,
+                    includeAllWaveFiles: clearAllAudio,
+                    out var stagedDeletes);
+                if (deleteError is { } errorCode)
+                {
+                    return Failure(errorCode, canRetry: errorCode == AppErrorCode.StorageUnavailable);
+                }
+
+                try
+                {
+                    await WriteAsync(updated, cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    LocalDictationAudioArchive.RollbackStagedDeletes(stagedDeletes);
+                    throw;
+                }
+
+                LocalDictationAudioArchive.CommitStagedDeletes(
+                    _recordingsDirectory,
+                    stagedDeletes,
+                    cleanRemainingTempFiles: clearAllAudio);
+                if (clearAllAudio)
+                {
+                    DeletePendingDeletesManifest();
+                }
+                else
+                {
+                    DrainPendingAudioDeletes([]);
+                }
+
+                return new HistoryOperationResult(true);
+            }
+
+            await WriteAsync(updated, cancellationToken).ConfigureAwait(false);
+            DrainPendingAudioDeletes(CollectRemovedAudioFileNames(loaded.Entries, updated));
+            if (clearAllAudio)
+            {
+                _ = ClearAllAudioFiles();
+                DeletePendingDeletesManifest();
+            }
             return new HistoryOperationResult(true);
         }
         catch (IOException)
@@ -399,6 +495,150 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     private static HistoryOperationResult Failure(AppErrorCode code, bool canRetry = true) => new(
         false,
         new AppError(code, AppErrorStage.HistorySave, canRetry));
+
+    private static HashSet<string> BuildReferencedAudioSet(IReadOnlyList<DictationHistoryEntry> entries)
+    {
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.AudioFileName))
+            {
+                referenced.Add(entry.AudioFileName);
+            }
+        }
+
+        return referenced;
+    }
+
+    private static List<string> CollectRemovedAudioFileNames(
+        IReadOnlyList<DictationHistoryEntry> before,
+        IReadOnlyList<DictationHistoryEntry> after)
+    {
+        if (before.Count == 0)
+        {
+            return [];
+        }
+
+        var survivingFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in after)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.AudioFileName))
+            {
+                survivingFiles.Add(entry.AudioFileName);
+            }
+        }
+
+        var removed = new List<string>();
+        foreach (var entry in before)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.AudioFileName)
+                && !survivingFiles.Contains(entry.AudioFileName))
+            {
+                removed.Add(entry.AudioFileName);
+            }
+        }
+
+        return removed;
+    }
+
+    private void DrainPendingAudioDeletes(IEnumerable<string> newlyRemovedFileNames)
+    {
+        var pending = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fileName in ReadPendingDeletesManifest())
+        {
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                pending.Add(fileName);
+            }
+        }
+
+        foreach (var fileName in newlyRemovedFileNames)
+        {
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                pending.Add(fileName);
+            }
+        }
+
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        var stillBlocked = new List<string>();
+        foreach (var fileName in pending)
+        {
+            if (LocalDictationAudioArchive.TryDeleteNamedFileOutcome(_recordingsDirectory, fileName) is not null)
+            {
+                stillBlocked.Add(fileName);
+            }
+        }
+
+        if (stillBlocked.Count == 0)
+        {
+            DeletePendingDeletesManifest();
+        }
+        else
+        {
+            WritePendingDeletesManifest(stillBlocked);
+        }
+    }
+
+    private string[] ReadPendingDeletesManifest()
+    {
+        try
+        {
+            if (!File.Exists(_pendingAudioDeletesPath))
+            {
+                return [];
+            }
+
+            var json = File.ReadAllText(_pendingAudioDeletesPath);
+            return JsonSerializer.Deserialize<string[]>(json, SerializerOptions) ?? [];
+        }
+        catch (Exception exception) when (
+            exception is JsonException or IOException or UnauthorizedAccessException or SecurityException)
+        {
+            return [];
+        }
+    }
+
+    private void WritePendingDeletesManifest(IReadOnlyList<string> fileNames)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_pendingAudioDeletesPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var json = JsonSerializer.Serialize(fileNames, SerializerOptions);
+            File.WriteAllText(_pendingAudioDeletesPath, json);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+        }
+    }
+
+    private void DeletePendingDeletesManifest()
+    {
+        try
+        {
+            if (File.Exists(_pendingAudioDeletesPath))
+            {
+                File.Delete(_pendingAudioDeletesPath);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+        }
+    }
+
+    private AppErrorCode? ClearAllAudioFiles() =>
+        LocalDictationAudioArchive.DeleteAllFilesWithOutcome(_recordingsDirectory);
 
     private sealed record HistoryDocument(
         int SchemaVersion,

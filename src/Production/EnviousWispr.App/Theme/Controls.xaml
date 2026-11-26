@@ -1357,4 +1357,40 @@
         <Setter Property="Padding" Value="{StaticResource BrandHelpFlyoutPadding}" />
         <Setter Property="MaxWidth" Value="{StaticResource BrandHelpFlyoutMaxWidth}" />
     </Style>
+    <!-- History list rows are separated into unselectable day headers and custom card borders so container hover/selection chrome never bleeds across gaps or headings. -->
+    <Style x:Key="BrandHistoryListItemStyle" TargetType="ListViewItem">
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Background" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListViewItem">
+                    <ListViewItemPresenter
+                        x:Name="Root"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        ContentMargin="0"
+                        Padding="0"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                        PointerOverBackground="Transparent"
+                        PressedBackground="Transparent"
+                        SelectedBackground="Transparent"
+                        SelectedPointerOverBackground="Transparent"
+                        SelectedPressedBackground="Transparent"
+                        PointerOverForeground="{TemplateBinding Foreground}"
+                        SelectedForeground="{TemplateBinding Foreground}"
+                        FocusBorderBrush="Transparent"
+                        FocusSecondaryBorderBrush="Transparent"
+                        SelectionCheckMarkVisualEnabled="False"
+                        CheckMode="Inline" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>

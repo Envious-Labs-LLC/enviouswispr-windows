@@ -135,27 +135,31 @@ public sealed partial class MainWindow
     private bool _egOneServerExecutableExists;
     private string? _activeEgOneDownloadModelId;
     private bool _hasEgOneInventorySnapshot;
+    private string? _cloudPolishNotice;
+    private string? _ollamaPolishNotice;
+    private string? _lastOllamaModelsNotice;
 
     public void SetCloudPolishNotice(string? notice)
     {
-        if (string.IsNullOrWhiteSpace(notice) ||
-            (OperationInfoBar.IsOpen && OperationInfoBar.Severity >= InfoBarSeverity.Warning))
-        {
-            return;
-        }
-
-        ShowMessage("Cloud polish is on, using your own key", notice, InfoBarSeverity.Informational);
+        _cloudPolishNotice = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
+        UpdateActivePolishProviderDisplay();
     }
 
     public void SetOllamaPolishNotice(string? notice)
     {
-        if (string.IsNullOrWhiteSpace(notice) ||
-            (OperationInfoBar.IsOpen && OperationInfoBar.Severity >= InfoBarSeverity.Warning))
+        _ollamaPolishNotice = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
+        if (OllamaNoticeText is not null)
         {
-            return;
+            var effectiveNotice = HistoryPlaybackPresentation.ResolveOllamaNoticeDisplay(
+                _ollamaPolishNotice,
+                _lastOllamaModelsNotice);
+            SetLiveRegion(
+                OllamaNoticeText,
+                effectiveNotice ?? string.Empty,
+                effectiveNotice is null ? Visibility.Collapsed : Visibility.Visible);
         }
 
-        ShowMessage("Ollama polish is on, running on this PC", notice, InfoBarSeverity.Informational);
+        UpdateActivePolishProviderDisplay();
     }
 
     private async void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
@@ -244,11 +248,15 @@ public sealed partial class MainWindow
             ? ResolveEgOneDisplayState(ResolveSelectedEgOneModelId())
             : null;
         var isOllamaHosted = provider == PolishProvider.Ollama && IsSelectedOllamaModelHosted();
-        var summaryBadge = EnginePolishPresentation.DescribeActivePolishProvider(
+        var summaryBadge = HistoryPlaybackPresentation.ApplyPolishNoticeToBadge(
+            EnginePolishPresentation.DescribeActivePolishProvider(
+                provider,
+                selectedEgOneState,
+                _egOneServerExecutableExists,
+                isOllamaHosted),
             provider,
-            selectedEgOneState,
-            _egOneServerExecutableExists,
-            isOllamaHosted);
+            isOllamaHosted,
+            _cloudPolishNotice);
         ApplyActivePolishProviderBadge(summaryBadge);
 
         if (ActivePolishProviderIcon is not null)
@@ -292,6 +300,7 @@ public sealed partial class MainWindow
                 : Visibility.Collapsed;
         }
         UpdateOllamaLivePollTimer();
+        UpdateHistoryPolishState();
     }
 
     public void SetEgOneModels(
@@ -362,6 +371,7 @@ public sealed partial class MainWindow
             _egOneServerExecutableExists,
             isOllamaHosted: false);
         ApplyActivePolishProviderBadge(summaryBadge);
+        UpdateHistoryPolishState();
     }
 
     private void ApplyActivePolishProviderBadge(ActivePolishProviderBadgePresentation summaryBadge)
@@ -809,7 +819,6 @@ public sealed partial class MainWindow
         }
 
         UpdateActivePolishProviderDisplay();
-        UpdateHistoryStatusCards();
         if (PolishProviderChooserPanel is not null)
         {
             PolishProviderChooserPanel.Visibility = Visibility.Collapsed;
@@ -928,6 +937,7 @@ public sealed partial class MainWindow
                 ApiKeyPasswordBox.Password = string.Empty;
                 _cloudKeyRejectedProvider = null;
                 RefreshApiKeyStatus();
+                UpdateHistoryPolishState();
                 ShowMessage(
                     $"{ProviderDisplayName(provider)} key saved",
                     "The key is stored in Windows Credential Manager. It is not part of settings, profiles, history, or diagnostics.",
@@ -983,9 +993,12 @@ public sealed partial class MainWindow
         if (_session.Provider.RemoveKey(provider) == ApiKeyRemoveOutcome.Removed)
         {
             ApiKeyPasswordBox.Password = string.Empty;
+            _cloudKeyRejectedProvider = null;
             RefreshApiKeyStatus();
+            UpdateHistoryPolishState();
             await RefreshPolishModelChoicesAsync(provider, chooseDefault: false)
                 .ConfigureAwait(true);
+            UpdateActivePolishProviderDisplay();
             ShowMessage(
                 $"{ProviderDisplayName(provider)} key removed",
                 "The stored credential was removed from Windows Credential Manager.",
@@ -1156,6 +1169,7 @@ public sealed partial class MainWindow
                 ? provider
                 : null;
             SetLiveText(ApiKeyStatusText, ModelDiscoveryNotice(provider, discovery));
+            UpdateHistoryPolishState();
         }
     }
 

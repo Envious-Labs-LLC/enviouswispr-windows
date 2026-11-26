@@ -1,11 +1,17 @@
 using System.ComponentModel;
 using System.Globalization;
+using EnviousWispr.App.Controls;
+using EnviousWispr.App.Services;
+using EnviousWispr.Core.Credentials;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.History;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.LLM;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using Microsoft.UI.Xaml;
@@ -14,15 +20,18 @@ using Windows.ApplicationModel.DataTransfer;
 
 namespace EnviousWispr.App;
 
-/// <summary>Dictation history diary, search, filtering, re-polish, and recovery card UI.</summary>
+/// <summary>Dictation history diary, search, filtering, re-polish, playback, and recovery card UI.</summary>
 public sealed partial class MainWindow
 {
     private readonly List<DictationHistoryEntry> _history = [];
+    private readonly WindowsAudioPlaybackService _audioPlayback;
 
     private HistoryLoadStatus _historyLoadStatus = HistoryLoadStatus.Missing;
     private bool _isHistoryLoading = true;
 
     private bool _isRepolishing;
+
+    public string? DictationRecordingsDirectory { get; set; }
 
     public event Action? RecoveryCleared;
 
@@ -158,7 +167,11 @@ public sealed partial class MainWindow
 
         if (refusal is not null)
         {
-            ShowMessage("Not pasted", SavedDictationPasteRefusalSentence(refusal), InfoBarSeverity.Informational);
+            SurfacePasteNotice(
+                action,
+                "Could not paste right now",
+                SavedDictationPasteRefusalSentence(refusal),
+                HistoryPasteNoticeTone.Informational);
             return;
         }
 
@@ -178,7 +191,7 @@ public sealed partial class MainWindow
             {
                 ShowMessage(
                     "Your dictation could not be pasted",
-                    "Nothing was typed, and your clipboard could not be restored. Copy it from Home or History instead.",
+                    "Nothing was typed, and your clipboard could not be restored. Copy it from History instead.",
                     InfoBarSeverity.Error);
             }
 
@@ -188,48 +201,91 @@ public sealed partial class MainWindow
         switch (outcome)
         {
             case SavedDictationPasteOutcome.KeptOnClipboard:
-                ShowMessage(
-                    "Your dictation is on the clipboard",
+                SurfacePasteNotice(
+                    action,
+                    "Dictation placed on clipboard",
                     undo
-                        ? "EnviousWispr could not get back to the place you were dictating into, so nothing was typed there. Paste it where you want it."
-                        : "That app refused the paste. Paste it where you want it.",
-                    InfoBarSeverity.Warning);
+                        ? "Could not return to the previous app, so your words are on the clipboard instead."
+                        : "That app refused the paste, so your words are on the clipboard. Paste where you want them.",
+                    HistoryPasteNoticeTone.Warning);
                 break;
             case SavedDictationPasteOutcome.MayHavePasted:
-                // NOT "NOTHING WAS TYPED", AND NO INVITATION TO PRESS AGAIN: the words may already be there, and a
-                // second paste would put them in twice. Only Undo promises a copy: Home keeps it, and a History entry may not.
-                ShowMessage(
-                    "Your dictation may have been pasted",
+                SurfacePasteNotice(
+                    action,
+                    "Paste could not be confirmed",
                     undo
-                        ? "EnviousWispr could not confirm it. Check the app before you try again. The text is still on Home."
-                        : "EnviousWispr could not confirm it. Check the app before you try again.",
-                    InfoBarSeverity.Warning);
+                        ? "Could not confirm the paste. Check the app before trying again; the copy is still here."
+                        : "Could not confirm the paste. Check the app before trying again.",
+                    HistoryPasteNoticeTone.Warning);
                 break;
             case SavedDictationPasteOutcome.NoLongerAvailable:
-                ShowMessage(
-                    "That dictation is no longer in History",
-                    "It was deleted or its 24 hours ran out, so nothing was pasted.",
-                    InfoBarSeverity.Informational);
+                SurfacePasteNotice(
+                    action,
+                    "Dictation is no longer available",
+                    "This dictation was deleted or expired, so nothing was pasted.",
+                    HistoryPasteNoticeTone.Informational);
                 break;
             case SavedDictationPasteOutcome.DictationInProgress or SavedDictationPasteOutcome.Busy:
-                ShowMessage(
-                    "Not pasted",
+                SurfacePasteNotice(
+                    action,
+                    "Could not paste right now",
                     "EnviousWispr is busy with a dictation. Try again in a moment.",
-                    InfoBarSeverity.Informational);
+                    HistoryPasteNoticeTone.Informational);
                 break;
             case SavedDictationPasteOutcome.NoTarget:
-                ShowMessage(
-                    "Not pasted",
+                SurfacePasteNotice(
+                    action,
+                    "No active target to paste into",
                     undo
-                        ? "The app you were dictating into has gone. Copy the text from Home instead."
-                        : "Click into the app you want it in, then come back and try again.",
-                    InfoBarSeverity.Informational);
+                        ? "The app you were dictating into has closed. Copy the text from here instead."
+                        : "Click into the app you want it in, then try Paste again.",
+                    HistoryPasteNoticeTone.Warning);
                 break;
             case SavedDictationPasteOutcome.Failed:
-                ShowMessage(
-                    "Your dictation could not be pasted",
-                    "Nothing was typed. Copy it from Home or History instead.",
-                    InfoBarSeverity.Error);
+                SurfacePasteNotice(
+                    action,
+                    "Dictation could not be pasted",
+                    "Could not paste into that app. Copy the text instead.",
+                    HistoryPasteNoticeTone.Error);
+                break;
+        }
+    }
+
+    private void SurfacePasteNotice(
+        SavedDictationPasteAction action,
+        string title,
+        string sentence,
+        HistoryPasteNoticeTone tone)
+    {
+        var isTargetCardRendered = _lastPasteRequestedEntryId is { } targetId
+            && _renderedHistoryItems.Any(item => item.Id == targetId);
+        var plan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
+            isUndoAction: action == SavedDictationPasteAction.Undo,
+            isRecoveryCardVisible: RecoveryCard.Visibility == Visibility.Visible,
+            lastPasteRequestedEntryId: _lastPasteRequestedEntryId,
+            isTargetCardRendered: isTargetCardRendered,
+            title: title,
+            sentence: sentence,
+            tone: tone);
+
+        switch (plan.Target)
+        {
+            case HistoryPasteNoticeTarget.RecoveryCard:
+                RecoveryBodyText.Text = plan.Sentence;
+                break;
+
+            case HistoryPasteNoticeTarget.CardInline when plan.TargetEntryId is { } entryId:
+                SetCardInlineNotice(entryId, plan.Sentence);
+                break;
+
+            default:
+                var severity = plan.Tone switch
+                {
+                    HistoryPasteNoticeTone.Error => InfoBarSeverity.Error,
+                    HistoryPasteNoticeTone.Warning => InfoBarSeverity.Warning,
+                    _ => InfoBarSeverity.Informational,
+                };
+                ShowMessage(plan.Title, plan.Sentence, severity);
                 break;
         }
     }
@@ -275,7 +331,7 @@ public sealed partial class MainWindow
     private void ClearHistoryFiltersButton_Click(object sender, RoutedEventArgs e)
     {
         HistorySearchBox.Text = string.Empty;
-        _historyKindFilter = HistoryKindFilter.All;
+        _historyKindFilter = HistoryKindFilter.Dictation;
         _historyDateRangeFilter = HistoryDateRangeFilter.AnyTime;
         _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
         if (HistoryDateFilterText is not null)
@@ -482,6 +538,10 @@ public sealed partial class MainWindow
             return;
         }
 
+        _activeHistoryCardId = card.Id;
+        _lastPasteRequestedEntryId = card.Id;
+        ClearCardInlineNotice(card.Id);
+        UpdateHistorySelectionDependentButtons();
         HistoryPasteRequested?.Invoke(card.Id);
     }
 
@@ -498,7 +558,14 @@ public sealed partial class MainWindow
         package.SetText(card.Text);
         Clipboard.SetContent(package);
         Clipboard.Flush();
-        ShowMessage("Copied", "The saved dictation is on your clipboard.", InfoBarSeverity.Success);
+
+        _activeHistoryCardId = card.Id;
+        var version = _copyPrimaryResetVersions.TryGetValue(card.Id, out var existing)
+            ? existing + 1
+            : 1;
+        _copyPrimaryResetVersions[card.Id] = version;
+        card.SetCopiedPrimary(true);
+        _ = ResetPrimaryCopyBadgeAfterDelayAsync(card.Id, version);
     }
 
     private void CardCopyAlternateButton_Click(object sender, RoutedEventArgs e)
@@ -515,12 +582,103 @@ public sealed partial class MainWindow
         package.SetText(card.ComparisonOtherText);
         Clipboard.SetContent(package);
         Clipboard.Flush();
-        ShowMessage(
-            "Copied",
-            card.IsShowingOriginalView
-                ? "The AI-polished version is on your clipboard."
-                : "The original unpolished words are on your clipboard.",
-            InfoBarSeverity.Success);
+
+        _activeHistoryCardId = card.Id;
+        var version = _copyAlternateResetVersions.TryGetValue(card.Id, out var existing)
+            ? existing + 1
+            : 1;
+        _copyAlternateResetVersions[card.Id] = version;
+        card.SetCopiedAlternate(true);
+        _ = ResetAlternateCopyBadgeAfterDelayAsync(card.Id, version);
+    }
+
+    private void CardPlayPauseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isBulkDeletingHistory
+            || _dictationActive
+            || IsSpeechEngineBusy?.Invoke() == true
+            || sender is not FrameworkElement element
+            || element.DataContext is not HistoryItemViewModel card)
+        {
+            return;
+        }
+
+        var path = ResolveRecordingPath(card.Entry);
+        if (path is null)
+        {
+            card.MarkRecordingMissing();
+            SetCardInlineNotice(card.Id, "Recording is no longer available on this PC.");
+            return;
+        }
+
+        _activeHistoryCardId = card.Id;
+        ClearCardInlineNotice(card.Id);
+        _audioPlayback.TogglePlayPause(card.Id, path, card.AudioDurationMs);
+    }
+
+    private void CardWaveform_SeekRequested(HistoryWaveformScrubber sender, double fraction)
+    {
+        if (_isBulkDeletingHistory
+            || _dictationActive
+            || IsSpeechEngineBusy?.Invoke() == true
+            || sender.DataContext is not HistoryItemViewModel card
+            || !card.CanTogglePlayback)
+        {
+            return;
+        }
+
+        var path = ResolveRecordingPath(card.Entry);
+        if (path is null)
+        {
+            card.MarkRecordingMissing();
+            SetCardInlineNotice(card.Id, "Recording is no longer available on this PC.");
+            return;
+        }
+
+        _activeHistoryCardId = card.Id;
+        ClearCardInlineNotice(card.Id);
+        _audioPlayback.SeekFraction(card.Id, path, fraction, card.AudioDurationMs);
+    }
+
+    private void OnAudioPlaybackStateChanged(HistoryPlaybackSnapshot snapshot)
+    {
+        _lastPlaybackSnapshot = snapshot;
+        foreach (var item in _renderedHistoryItems)
+        {
+            item.SetPlaybackSnapshot(snapshot);
+        }
+    }
+
+    private void OnAudioPlaybackFailed(Guid entryId, string message) => SetCardInlineNotice(entryId, message);
+
+    private async Task ResetPrimaryCopyBadgeAfterDelayAsync(Guid entryId, int expectedVersion)
+    {
+        await Task.Delay(2000).ConfigureAwait(true);
+        if (_shuttingDownProductWindows
+            || !_copyPrimaryResetVersions.TryGetValue(entryId, out var current)
+            || current != expectedVersion)
+        {
+            return;
+        }
+
+        _copyPrimaryResetVersions.Remove(entryId);
+        var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
+        card?.SetCopiedPrimary(false);
+    }
+
+    private async Task ResetAlternateCopyBadgeAfterDelayAsync(Guid entryId, int expectedVersion)
+    {
+        await Task.Delay(2000).ConfigureAwait(true);
+        if (_shuttingDownProductWindows
+            || !_copyAlternateResetVersions.TryGetValue(entryId, out var current)
+            || current != expectedVersion)
+        {
+            return;
+        }
+
+        _copyAlternateResetVersions.Remove(entryId);
+        var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
+        card?.SetCopiedAlternate(false);
     }
 
     private bool _copyingRecovery;
@@ -545,6 +703,15 @@ public sealed partial class MainWindow
         }
 
         _copyingRecovery = true;
+        var recoveryCopyVersion = ++_recoveryCopyResetVersion;
+        if (CopyRecoveryIcon is not null)
+        {
+            CopyRecoveryIcon.Glyph = "\uE73E";
+        }
+        if (CopyRecoveryLabel is not null)
+        {
+            CopyRecoveryLabel.Text = "Copied";
+        }
         try
         {
             var package = new DataPackage();
@@ -563,22 +730,40 @@ public sealed partial class MainWindow
                 ClearRecoveredText();
                 OnboardingReliabilityInfoBar.IsOpen = false;
                 RecoveryCleared?.Invoke();
-                ShowMessage(
-                    "Recovered text copied",
-                    "The recovered dictation is on your clipboard, and its private recovery copy was removed from this PC.",
-                    InfoBarSeverity.Success);
+                ResetRecoveryCopyButtonVisuals();
             }
             else
             {
-                ShowMessage(
-                    "Recovered text copied",
-                    "The recovered dictation is on your clipboard. Its private recovery copy could not be removed, so delete it when you no longer need it.",
-                    InfoBarSeverity.Warning);
+                RecoveryBodyText.Text = "Copied to clipboard. The encrypted recovery file could not be removed yet.";
+                _ = ResetRecoveryCopyButtonAfterDelayAsync(recoveryCopyVersion);
             }
         }
         finally
         {
             _copyingRecovery = false;
+        }
+    }
+
+    private async Task ResetRecoveryCopyButtonAfterDelayAsync(int expectedVersion)
+    {
+        await Task.Delay(2000).ConfigureAwait(true);
+        if (_shuttingDownProductWindows || _recoveryCopyResetVersion != expectedVersion)
+        {
+            return;
+        }
+
+        ResetRecoveryCopyButtonVisuals();
+    }
+
+    private void ResetRecoveryCopyButtonVisuals()
+    {
+        if (CopyRecoveryIcon is not null)
+        {
+            CopyRecoveryIcon.Glyph = "\uE8C8";
+        }
+        if (CopyRecoveryLabel is not null)
+        {
+            CopyRecoveryLabel.Text = "Copy recovered text";
         }
     }
 
@@ -642,16 +827,24 @@ public sealed partial class MainWindow
 
         if (selected.IsTemporary)
         {
-            ShowMessage("Keep dictation first", "Escape recovery entries must be kept before re-polishing.", InfoBarSeverity.Informational);
+            SetCardInlineNotice(selected.Id, "Choose Keep first before re-polishing an Escape Recovery dictation.");
             return;
         }
 
-        if (_settings?.Preferences.Polish.Provider == PolishProvider.None)
+        var readiness = GetCurrentPolishReadiness();
+        if (!readiness.IsEnabled || !readiness.IsReady)
         {
-            ShowMessage("AI polish is off", "Enable an AI polish provider in settings first.", InfoBarSeverity.Warning);
+            SetCardInlineNotice(
+                selected.Id,
+                readiness.IsEnabled
+                    ? $"AI Polish is not ready ({readiness.StatusText}). Finish setup in AI Polish settings."
+                    : "AI Polish is off. Enable an AI Polish provider in settings first.");
+            UpdateHistoryPolishState();
             return;
         }
 
+        _activeHistoryCardId = selected.Id;
+        ClearCardInlineNotice(selected.Id);
         _isRepolishing = true;
         _repolishingHistoryEntryId = selected.Id;
         UpdateHistorySelectionDependentButtons();
@@ -670,26 +863,20 @@ public sealed partial class MainWindow
                 if (result.View is not null)
                 {
                     ShowHistory(result.View);
-                    var refreshed = _renderedHistoryItems.FirstOrDefault(i => i.Id == selected.Id);
-                    if (refreshed is not null)
-                    {
-                        HistoryList.SelectedItem = refreshed;
-                    }
                 }
-                ShowMessage("Re-polished dictation", "Transcript updated with active polish model.", InfoBarSeverity.Success);
             }
             else
             {
-                var (title, message, severity) = result.Status switch
+                var message = result.Status switch
                 {
-                    HistoryRepolishStatus.NoProviderConfigured => ("AI polish is off", "Enable an AI polish provider in settings first.", InfoBarSeverity.Warning),
-                    HistoryRepolishStatus.EscapeRecoveryEntryMustBeKept => ("Keep dictation first", "Escape recovery entries must be kept before re-polishing.", InfoBarSeverity.Informational),
-                    HistoryRepolishStatus.PolishRefused => ("Re-polish refused", "The polish provider returned no response.", InfoBarSeverity.Warning),
-                    HistoryRepolishStatus.EntryNotFound => ("History entry not found", "The entry may have already been removed.", InfoBarSeverity.Warning),
-                    HistoryRepolishStatus.EntryExpired => ("History entry expired", "The entry is past retention.", InfoBarSeverity.Warning),
-                    _ => ("Re-polish failed", "The polish service encountered an error.", InfoBarSeverity.Error),
+                    HistoryRepolishStatus.NoProviderConfigured => "Enable an AI polish provider in settings first.",
+                    HistoryRepolishStatus.EscapeRecoveryEntryMustBeKept => "Choose Keep before re-polishing this entry.",
+                    HistoryRepolishStatus.PolishRefused => "The active AI polish provider returned no updated transcript.",
+                    HistoryRepolishStatus.EntryNotFound => "This entry may have already been removed.",
+                    HistoryRepolishStatus.EntryExpired => "This entry is past retention.",
+                    _ => "The AI polish service encountered an error.",
                 };
-                ShowMessage(title, message, severity);
+                SetCardInlineNotice(selected.Id, message);
             }
         }
         finally
@@ -709,6 +896,7 @@ public sealed partial class MainWindow
             return;
         }
 
+        _audioPlayback.Stop(selected.Id);
         var result = await _session.History.DeleteAsync(selected.Id).ConfigureAwait(true);
         if (result.Closing || _session.Closing)
         {
@@ -717,13 +905,9 @@ public sealed partial class MainWindow
 
         if (result.Succeeded)
         {
-            _selectedHistoryIds.Remove(selected.Id);
-            _expandedTranscriptIds.Remove(selected.Id);
-            _showingEditsIds.Remove(selected.Id);
-            _showingOriginalIds.Remove(selected.Id);
+            CleanupEntryUiState(selected.Id);
             BeginHistoryReload();
             ShowHistory(result.View!);
-            ShowMessage("History entry deleted", "The local copy was removed.", InfoBarSeverity.Success);
         }
         else
         {
@@ -792,6 +976,11 @@ public sealed partial class MainWindow
 
         try
         {
+            if (_audioPlayback.CurrentState.ActiveEntryId is { } activeId && idsToDelete.Contains(activeId))
+            {
+                _audioPlayback.Stop(activeId);
+            }
+
             var result = await _session.History.DeleteManyAsync(idsToDelete).ConfigureAwait(true);
             if (result.Closing || _session.Closing)
             {
@@ -809,9 +998,7 @@ public sealed partial class MainWindow
                 }
                 foreach (var id in idsToDelete.Where(id => !remaining.Contains(id)))
                 {
-                    _expandedTranscriptIds.Remove(id);
-                    _showingEditsIds.Remove(id);
-                    _showingOriginalIds.Remove(id);
+                    CleanupEntryUiState(id);
                 }
 
                 _lastBulkDeletionSummary = remaining.Count > 0
@@ -819,10 +1006,6 @@ public sealed partial class MainWindow
                     : deletedCount == 1 ? "1 dictation deleted." : $"{deletedCount} dictations deleted.";
                 BeginHistoryReload();
                 ShowHistory(result.View);
-                ShowMessage(
-                    deletedCount == 1 ? "1 dictation deleted" : $"{deletedCount} dictations deleted",
-                    "The selected local history copies were removed.",
-                    InfoBarSeverity.Success);
             }
             else
             {
@@ -863,6 +1046,7 @@ public sealed partial class MainWindow
             return;
         }
 
+        _audioPlayback.Stop();
         var result = await _session.History.ClearAsync().ConfigureAwait(true);
         if (result.Closing || _session.Closing)
         {
@@ -874,11 +1058,18 @@ public sealed partial class MainWindow
             _expandedTranscriptIds.Clear();
             _showingEditsIds.Clear();
             _showingOriginalIds.Clear();
+            _copyPrimaryResetVersions.Clear();
+            _copyAlternateResetVersions.Clear();
+            _cardInlineNotices.Clear();
+            _inlineNoticeVersions.Clear();
+            _waveformCache.Clear();
+            _waveformLoadInFlight.Clear();
+            _activeHistoryCardId = null;
+            _lastPasteRequestedEntryId = null;
             SetHistorySelectionMode(false);
             UpdateHistoryFilterSegmentButtons();
             BeginHistoryReload();
             ShowHistory(result.View!);
-            ShowMessage("History cleared", "All locally saved dictations were removed.", InfoBarSeverity.Success);
         }
         else
         {
@@ -928,21 +1119,43 @@ public sealed partial class MainWindow
             _selectedHistoryIds.Add(id);
         }
 
+        if (_audioPlayback.CurrentState.ActiveEntryId is { } activePlaybackId
+            && _history.All(entry => entry.Id != activePlaybackId))
+        {
+            _audioPlayback.Stop(activePlaybackId);
+        }
+
+        var existingIds = _history.Select(entry => entry.Id).ToHashSet();
+        foreach (var cachedId in _waveformCache.Keys.Where(id => !existingIds.Contains(id)).ToArray())
+        {
+            _waveformCache.Remove(cachedId);
+        }
+
         _isHistoryLoading = false;
         RefreshHistoryView();
     }
 
-    private HistoryKindFilter _historyKindFilter = HistoryKindFilter.All;
+    private HistoryKindFilter _historyKindFilter = HistoryKindFilter.Dictation;
     private HistoryDateRangeFilter _historyDateRangeFilter = HistoryDateRangeFilter.AnyTime;
     private bool _isHistorySelectionMode;
     private bool _isBulkDeletingHistory;
     private int _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
     private Guid? _repolishingHistoryEntryId;
+    private Guid? _activeHistoryCardId;
+    private Guid? _lastPasteRequestedEntryId;
+    private int _recoveryCopyResetVersion;
     private string? _lastBulkDeletionSummary;
+    private HistoryPlaybackSnapshot _lastPlaybackSnapshot = new(null, false, 0, 0);
     private readonly HashSet<Guid> _selectedHistoryIds = [];
     private readonly HashSet<Guid> _expandedTranscriptIds = [];
     private readonly HashSet<Guid> _showingEditsIds = [];
     private readonly HashSet<Guid> _showingOriginalIds = [];
+    private readonly Dictionary<Guid, int> _copyPrimaryResetVersions = [];
+    private readonly Dictionary<Guid, int> _copyAlternateResetVersions = [];
+    private readonly Dictionary<Guid, string> _cardInlineNotices = [];
+    private readonly Dictionary<Guid, int> _inlineNoticeVersions = [];
+    private readonly Dictionary<Guid, (string FileName, IReadOnlyList<float> Peaks, long DurationMs)> _waveformCache = [];
+    private readonly HashSet<Guid> _waveformLoadInFlight = [];
     private List<DictationHistoryEntry> _lastMatchingHistoryEntries = [];
     private List<HistoryItemViewModel> _renderedHistoryItems = [];
 
@@ -955,9 +1168,8 @@ public sealed partial class MainWindow
 
         _historyKindFilter = tag switch
         {
-            "Dictation" => HistoryKindFilter.Dictation,
             "TranscribeFile" => HistoryKindFilter.TranscribeFile,
-            _ => HistoryKindFilter.All,
+            _ => HistoryKindFilter.Dictation,
         };
         _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
 
@@ -971,7 +1183,6 @@ public sealed partial class MainWindow
         var normalTab = Application.Current.Resources["BrandTabStripButtonStyle"] as Style;
         if (activeTab is not null && normalTab is not null)
         {
-            HistoryFilterAllButton.Style = _historyKindFilter == HistoryKindFilter.All ? activeTab : normalTab;
             HistoryFilterDictationButton.Style = _historyKindFilter == HistoryKindFilter.Dictation ? activeTab : normalTab;
             HistoryFilterTranscribeButton.Style = _historyKindFilter == HistoryKindFilter.TranscribeFile ? activeTab : normalTab;
         }
@@ -993,7 +1204,6 @@ public sealed partial class MainWindow
 
     private void RefreshHistoryView()
     {
-        var previousSelectedId = (HistoryList.SelectedItem as HistoryItemViewModel)?.Id;
         var query = HistorySearchBox.Text.Trim();
         var now = DateTimeOffset.Now;
         var matching = HistoryPresenter.Filter(_history, query, _historyKindFilter, _historyDateRangeFilter, now);
@@ -1002,20 +1212,45 @@ public sealed partial class MainWindow
         var fullDayCounts = HistoryDiaryPresentation.CountByDay(matching);
         var paged = HistoryDiaryPresentation.TakePage(matching, _historyVisibleLimit);
         var dayGroups = HistoryDiaryPresentation.GroupByDay(paged.Items, now);
-        var rendered = new List<HistoryItemViewModel>(paged.Items.Count);
+        var renderedCards = new List<HistoryItemViewModel>(paged.Items.Count);
+        var renderedRows = new List<object>(paged.Items.Count + dayGroups.Count);
+        var missingWaveforms = new List<(Guid EntryId, string FileName, string Path)>();
         var busy = _isRepolishing || _isBulkDeletingHistory;
+        var polishReadiness = GetCurrentPolishReadiness();
+
         foreach (var group in dayGroups)
         {
             var totalDayCount = fullDayCounts.TryGetValue(group.Header.Day, out var dayCount)
                 ? dayCount
                 : group.Entries.Count;
-            var isFirstInDay = true;
+            renderedRows.Add(new HistoryDayHeaderViewModel(group.Header, totalDayCount));
+
             foreach (var entry in group.Entries)
             {
+                var recordingPath = ResolveRecordingPath(entry);
+                var hasRecording = recordingPath is not null;
+                IReadOnlyList<float>? cachedPeaks = null;
+                var durationMs = entry.AudioDurationMs ?? 0;
+
+                if (hasRecording && entry.AudioFileName is { } fileName)
+                {
+                    if (_waveformCache.TryGetValue(entry.Id, out var cached)
+                        && string.Equals(cached.FileName, fileName, StringComparison.Ordinal))
+                    {
+                        cachedPeaks = cached.Peaks;
+                        if (cached.DurationMs > 0)
+                        {
+                            durationMs = cached.DurationMs;
+                        }
+                    }
+                    else if (_waveformLoadInFlight.Add(entry.Id))
+                    {
+                        missingWaveforms.Add((entry.Id, fileName, recordingPath!));
+                    }
+                }
+
                 var vm = new HistoryItemViewModel(
                     entry,
-                    dayHeader: isFirstInDay ? group.Header : null,
-                    dayEntryCount: totalDayCount,
                     isSelectionMode: _isHistorySelectionMode,
                     isSelected: _selectedHistoryIds.Contains(entry.Id),
                     isTranscriptExpanded: _expandedTranscriptIds.Contains(entry.Id),
@@ -1023,14 +1258,22 @@ public sealed partial class MainWindow
                     isShowingOriginal: _showingOriginalIds.Contains(entry.Id),
                     isGlobalBusy: busy,
                     isRepolishingThisCard: _repolishingHistoryEntryId == entry.Id,
-                    isPrimaryPasteTarget: false);
-                rendered.Add(vm);
-                isFirstInDay = false;
+                    isPrimaryPasteTarget: false,
+                    polishReadiness: polishReadiness,
+                    hasAudioRecording: hasRecording,
+                    audioDurationMs: durationMs,
+                    waveformPeaks: cachedPeaks,
+                    playbackSnapshot: _lastPlaybackSnapshot,
+                    isCopiedPrimary: _copyPrimaryResetVersions.ContainsKey(entry.Id),
+                    isCopiedAlternate: _copyAlternateResetVersions.ContainsKey(entry.Id),
+                    inlineNotice: _cardInlineNotices.GetValueOrDefault(entry.Id));
+                renderedCards.Add(vm);
+                renderedRows.Add(vm);
             }
         }
 
-        _renderedHistoryItems = rendered;
-        HistoryList.ItemsSource = rendered;
+        _renderedHistoryItems = renderedCards;
+        HistoryList.ItemsSource = renderedRows;
         if (HistoryCountText is not null)
         {
             HistoryCountText.Text = HistoryDiaryPresentation.FormatItemCount(matching.Count);
@@ -1046,19 +1289,16 @@ public sealed partial class MainWindow
         if (ResetHistoryFiltersBarButton is not null)
         {
             var hasAnyFilter = !string.IsNullOrWhiteSpace(query)
-                || _historyKindFilter != HistoryKindFilter.All
+                || _historyKindFilter != HistoryKindFilter.Dictation
                 || _historyDateRangeFilter != HistoryDateRangeFilter.AnyTime;
             ResetHistoryFiltersBarButton.Visibility = hasAnyFilter ? Visibility.Visible : Visibility.Collapsed;
         }
-        if (previousSelectedId is { } id)
-        {
-            HistoryList.SelectedItem = rendered.FirstOrDefault(item => item.Id == id);
-        }
 
         PopulateHistoryHelpItems();
-        UpdateHistoryListVisibility(query, rendered.Count);
+        UpdateHistoryListVisibility(query, renderedCards.Count);
         UpdateHistorySelectionDependentButtons();
         UpdateHistoryStatusCards();
+        ScheduleMissingWaveformLoads(missingWaveforms);
     }
 
     private void RefreshCardSelectionVisuals()
@@ -1077,8 +1317,10 @@ public sealed partial class MainWindow
         }
 
         var busy = _isRepolishing || _isBulkDeletingHistory;
-        var activePasteId = (HistoryList.SelectedItem as HistoryItemViewModel)?.Id
-            ?? _renderedHistoryItems.FirstOrDefault()?.Id;
+        var activePasteId = _activeHistoryCardId is { } tracked
+            && _renderedHistoryItems.Any(item => item.Id == tracked)
+            ? tracked
+            : _renderedHistoryItems.FirstOrDefault()?.Id;
         foreach (var item in _renderedHistoryItems)
         {
             item.SetOperationState(busy, _repolishingHistoryEntryId == item.Id, item.Id == activePasteId);
@@ -1112,6 +1354,59 @@ public sealed partial class MainWindow
         }
     }
 
+    internal HistoryPolishReadiness GetCurrentPolishReadiness()
+    {
+        if (_settings is null)
+        {
+            return HistoryPlaybackPresentation.DescribePolishReadiness(
+                PolishProvider.None,
+                modelId: null,
+                isEgOneReady: false,
+                isOllamaEndpointValid: false,
+                hasCloudCredential: false,
+                isCloudKeyRejected: false);
+        }
+
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
+        var modelId = provider == PolishProvider.EgOne
+            ? ResolveSelectedEgOneModelId()
+            : (!string.IsNullOrWhiteSpace(_selectedPolishModelId)
+                ? _selectedPolishModelId
+                : _settings.Preferences.Polish.ModelId);
+        var normalizedEgId = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
+        var isEgOneReady = provider == PolishProvider.EgOne
+            && _egOneServerExecutableExists
+            && _egOneModelStates.TryGetValue(normalizedEgId, out var egState)
+            && egState.IsInstalled;
+        var ollamaEndpoint = OllamaEndpointTextBox is not null && !string.IsNullOrWhiteSpace(OllamaEndpointTextBox.Text)
+            ? OllamaEndpointTextBox.Text
+            : _settings.Preferences.Polish.OllamaEndpoint;
+        var isOllamaEndpointValid = provider == PolishProvider.Ollama
+            && OllamaEndpointPolicy.TryNormalize(ollamaEndpoint, out _);
+        var hasCloudCredential = IsCloudProvider(provider)
+            && _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
+        var isCloudKeyRejected = IsCloudProvider(provider)
+            && _cloudKeyRejectedProvider == provider;
+
+        return HistoryPlaybackPresentation.DescribePolishReadiness(
+            provider,
+            modelId,
+            isEgOneReady,
+            isOllamaEndpointValid,
+            hasCloudCredential,
+            isCloudKeyRejected);
+    }
+
+    private void UpdateHistoryPolishState()
+    {
+        UpdateHistoryStatusCards();
+        var readiness = GetCurrentPolishReadiness();
+        foreach (var item in _renderedHistoryItems)
+        {
+            item.SetPolishReadiness(readiness);
+        }
+    }
+
     private void UpdateHistoryStatusCards()
     {
         if (HistoryEngineStatusText is not null && _settings is not null)
@@ -1120,12 +1415,9 @@ public sealed partial class MainWindow
                 .DescribeEngine(_settings.Preferences.Dictation.FinalEngine)
                 .Name;
         }
-        if (HistoryPolishStatusText is not null && _settings is not null)
+        if (HistoryPolishStatusText is not null)
         {
-            var providerIndex = PolishProviderIndex(_settings.Preferences.Polish.Provider);
-            HistoryPolishStatusText.Text = providerIndex > 0 && providerIndex < PolishProviderChoices.Length
-                ? PolishProviderChoices[providerIndex].Name
-                : "Off";
+            HistoryPolishStatusText.Text = GetCurrentPolishReadiness().StatusText;
         }
         if (HistoryDetailReadyHotkeyText is not null && _settings is not null)
         {
@@ -1139,7 +1431,7 @@ public sealed partial class MainWindow
         var hasItems = itemCount > 0;
         var hasQuery = !string.IsNullOrWhiteSpace(query);
         var hasFilters = hasQuery
-            || _historyKindFilter != HistoryKindFilter.All
+            || _historyKindFilter != HistoryKindFilter.Dictation
             || _historyDateRangeFilter != HistoryDateRangeFilter.AnyTime;
         var showFilteredEmpty = !hasItems && (_history.Count > 0 && hasFilters || hasQuery);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
@@ -1244,7 +1536,7 @@ public sealed partial class MainWindow
             _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable,
             HistoryList.Visibility == Visibility.Visible,
             hasFilteredEmpty,
-            HistoryList.Items.Count);
+            _renderedHistoryItems.Count);
     }
 
     /// <summary>The last history outcome a screen reader was told about.</summary>
@@ -1268,6 +1560,149 @@ public sealed partial class MainWindow
         return AnnounceLiveRegion(HistoryList);
     }
 
+    private string? ResolveRecordingPath(DictationHistoryEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.AudioFileName)
+            || string.IsNullOrWhiteSpace(DictationRecordingsDirectory)
+            || Path.IsPathRooted(entry.AudioFileName)
+            || !string.Equals(Path.GetFileName(entry.AudioFileName), entry.AudioFileName, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var root = Path.GetFullPath(DictationRecordingsDirectory);
+        var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(root, entry.AudioFileName));
+        return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) && File.Exists(full)
+            ? full
+            : null;
+    }
+
+    private void ScheduleMissingWaveformLoads(List<(Guid EntryId, string FileName, string Path)> items)
+    {
+        if (items.Count == 0 || _shuttingDownProductWindows)
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            foreach (var (entryId, fileName, path) in items)
+            {
+                if (_shuttingDownProductWindows)
+                {
+                    return;
+                }
+
+                if (!WaveFile.TryAnalyzeFile(path, HistoryPlaybackPresentation.DefaultWaveformBarCount, out var peaks, out var durationMs))
+                {
+                    DispatcherQueue?.TryEnqueue(() => _waveformLoadInFlight.Remove(entryId));
+                    continue;
+                }
+
+                var normalized = HistoryPlaybackPresentation.NormalizeOrFallbackPeaks(
+                    peaks,
+                    HistoryPlaybackPresentation.DefaultWaveformBarCount);
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    _waveformLoadInFlight.Remove(entryId);
+                    if (_shuttingDownProductWindows)
+                    {
+                        return;
+                    }
+
+                    _waveformCache[entryId] = (fileName, normalized, durationMs);
+                    var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
+                    if (card is not null && string.Equals(card.Entry.AudioFileName, fileName, StringComparison.Ordinal))
+                    {
+                        card.SetWaveformData(normalized, durationMs);
+                    }
+                });
+            }
+        });
+    }
+
+    private void SetCardInlineNotice(Guid entryId, string message)
+    {
+        _cardInlineNotices[entryId] = message;
+        var version = _inlineNoticeVersions.TryGetValue(entryId, out var prev) ? prev + 1 : 1;
+        _inlineNoticeVersions[entryId] = version;
+        _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId)?.SetInlineNotice(message);
+        _ = ClearInlineNoticeAfterDelayAsync(entryId, version);
+    }
+
+    private void ClearCardInlineNotice(Guid entryId)
+    {
+        _cardInlineNotices.Remove(entryId);
+        _inlineNoticeVersions.Remove(entryId);
+        _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId)?.SetInlineNotice(null);
+    }
+
+    private async Task ClearInlineNoticeAfterDelayAsync(Guid entryId, int expectedVersion)
+    {
+        await Task.Delay(5000).ConfigureAwait(true);
+        if (_shuttingDownProductWindows
+            || !_inlineNoticeVersions.TryGetValue(entryId, out var current)
+            || current != expectedVersion)
+        {
+            return;
+        }
+
+        ClearCardInlineNotice(entryId);
+    }
+
+    private void CleanupEntryUiState(Guid entryId)
+    {
+        _selectedHistoryIds.Remove(entryId);
+        _expandedTranscriptIds.Remove(entryId);
+        _showingEditsIds.Remove(entryId);
+        _showingOriginalIds.Remove(entryId);
+        _copyPrimaryResetVersions.Remove(entryId);
+        _copyAlternateResetVersions.Remove(entryId);
+        _cardInlineNotices.Remove(entryId);
+        _inlineNoticeVersions.Remove(entryId);
+        _waveformCache.Remove(entryId);
+        _waveformLoadInFlight.Remove(entryId);
+        if (_activeHistoryCardId == entryId)
+        {
+            _activeHistoryCardId = null;
+        }
+        if (_lastPasteRequestedEntryId == entryId)
+        {
+            _lastPasteRequestedEntryId = null;
+        }
+    }
+
+    public sealed class HistoryDayHeaderViewModel
+    {
+        public HistoryDayHeaderViewModel(HistoryDayHeader header, int dayEntryCount)
+        {
+            DayHeaderTitle = header.PrimaryTitle;
+            DayHeaderSubtitle = !string.IsNullOrWhiteSpace(header.RelativeLabel)
+                ? header.RelativeLabel.ToUpper(CultureInfo.CurrentCulture)
+                : string.Empty;
+            DayHeaderSubtitleVisibility = !string.IsNullOrEmpty(DayHeaderSubtitle)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            DayCountText = HistoryDiaryPresentation.FormatItemCount(dayEntryCount);
+            AccessibilityLabel = $"{header.AccessibilityLabel}, {DayCountText}";
+        }
+
+        public string DayHeaderTitle { get; }
+
+        public string DayHeaderSubtitle { get; }
+
+        public Visibility DayHeaderSubtitleVisibility { get; }
+
+        public string DayCountText { get; }
+
+        public string AccessibilityLabel { get; }
+
+        public override string ToString() => AccessibilityLabel;
+    }
+
     public sealed class HistoryItemViewModel : INotifyPropertyChanged
     {
         private readonly DictationHistoryEntry _entry;
@@ -1280,11 +1715,19 @@ public sealed partial class MainWindow
         private bool _isGlobalBusy;
         private bool _isRepolishingThisCard;
         private bool _isPrimaryPasteTarget;
+        private HistoryPolishReadiness _polishReadiness;
+        private bool _hasAudioRecording;
+        private long _audioDurationMs;
+        private IReadOnlyList<float> _waveformPeaks;
+        private bool _isPlaybackActive;
+        private bool _isPlaying;
+        private long _playbackPositionMs;
+        private bool _isCopiedPrimary;
+        private bool _isCopiedAlternate;
+        private string? _inlineNotice;
 
         public HistoryItemViewModel(
             DictationHistoryEntry entry,
-            HistoryDayHeader? dayHeader,
-            int dayEntryCount,
             bool isSelectionMode,
             bool isSelected,
             bool isTranscriptExpanded,
@@ -1292,7 +1735,15 @@ public sealed partial class MainWindow
             bool isShowingOriginal,
             bool isGlobalBusy,
             bool isRepolishingThisCard,
-            bool isPrimaryPasteTarget)
+            bool isPrimaryPasteTarget,
+            HistoryPolishReadiness polishReadiness,
+            bool hasAudioRecording,
+            long audioDurationMs,
+            IReadOnlyList<float>? waveformPeaks,
+            HistoryPlaybackSnapshot playbackSnapshot,
+            bool isCopiedPrimary,
+            bool isCopiedAlternate,
+            string? inlineNotice)
         {
             _entry = entry;
             _isSelectionMode = isSelectionMode;
@@ -1303,6 +1754,13 @@ public sealed partial class MainWindow
             _isGlobalBusy = isGlobalBusy;
             _isRepolishingThisCard = isRepolishingThisCard;
             _isPrimaryPasteTarget = isPrimaryPasteTarget;
+            _polishReadiness = polishReadiness;
+            _hasAudioRecording = hasAudioRecording;
+            _audioDurationMs = Math.Max(0L, audioDurationMs);
+            _waveformPeaks = HistoryPlaybackPresentation.NormalizeOrFallbackPeaks(waveformPeaks);
+            _isCopiedPrimary = isCopiedPrimary;
+            _isCopiedAlternate = isCopiedAlternate;
+            _inlineNotice = inlineNotice;
 
             Id = entry.Id;
             Text = entry.Text;
@@ -1312,26 +1770,20 @@ public sealed partial class MainWindow
             IsTemporary = entry.ExpiresAt is not null;
             HasPolishEdits = HistoryDiaryPresentation.HasPolishEdits(entry);
 
-            DayHeaderTitle = dayHeader?.PrimaryTitle ?? string.Empty;
-            DayHeaderSubtitle = dayHeader?.SecondaryDateLabel ?? string.Empty;
-            DayCountText = HistoryDiaryPresentation.FormatItemCount(dayEntryCount);
-            DayHeaderVisibility = dayHeader is not null ? Visibility.Visible : Visibility.Collapsed;
-            DayHeaderSubtitleVisibility = !string.IsNullOrEmpty(DayHeaderSubtitle)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
             FileChipVisibility = HistoryPresenter.IsFileTranscription(entry) ? Visibility.Visible : Visibility.Collapsed;
             RecoveryChipVisibility = IsTemporary ? Visibility.Visible : Visibility.Collapsed;
             RecoveryChipText = entry.ExpiresAt is { } expires
-                ? FormatRecoveryExpiryChip(expires, localCreated)
+                ? FormatRecoveryExpiryChip(expires)
                 : string.Empty;
             HeldSafelyChipVisibility = !entry.WasDelivered ? Visibility.Visible : Visibility.Collapsed;
 
-            ProvenanceText = BuildProvenanceText(entry);
             _hasOverflow = ShouldOfferShowMore(DisplayText);
+            ApplySnapshotFields(playbackSnapshot);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
+
+        public DictationHistoryEntry Entry => _entry;
 
         public Guid Id { get; }
 
@@ -1345,15 +1797,7 @@ public sealed partial class MainWindow
 
         public bool HasPolishEdits { get; }
 
-        public string DayHeaderTitle { get; }
-
-        public string DayHeaderSubtitle { get; }
-
-        public string DayCountText { get; }
-
-        public Visibility DayHeaderVisibility { get; }
-
-        public Visibility DayHeaderSubtitleVisibility { get; }
+        public long AudioDurationMs => _audioDurationMs;
 
         public Visibility FileChipVisibility { get; }
 
@@ -1363,7 +1807,7 @@ public sealed partial class MainWindow
 
         public Visibility HeldSafelyChipVisibility { get; }
 
-        public string ProvenanceText { get; }
+        public string ProvenanceText => BuildProvenanceText(_entry, _hasAudioRecording);
 
         public Visibility KeepButtonVisibility => IsTemporary ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1377,6 +1821,9 @@ public sealed partial class MainWindow
 
         public Visibility SelectedAccentVisibility =>
             _isSelectionMode && _isSelected ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility ActiveCardOutlineVisibility =>
+            (_isSelectionMode && _isSelected) || _isPlaying ? Visibility.Visible : Visibility.Collapsed;
 
         public string ShowEditsButtonText => _isShowingEdits ? "Hide edits" : "Show edits";
 
@@ -1399,8 +1846,16 @@ public sealed partial class MainWindow
         public string ComparisonOtherHeader =>
             _isShowingOriginal ? "AI-polished version" : "Before AI Polish (speech engine output)";
 
+        public string CopyAlternateButtonGlyph => _isCopiedAlternate ? "\uE73E" : "\uE8C8";
+
         public string CopyAlternateButtonLabel =>
-            _isShowingOriginal ? "Copy polished" : "Copy original";
+            _isCopiedAlternate
+                ? "Copied"
+                : (_isShowingOriginal ? "Copy polished" : "Copy original");
+
+        public string CopyButtonGlyph => _isCopiedPrimary ? "\uE73E" : "\uE8C8";
+
+        public string CopyButtonText => _isCopiedPrimary ? "Copied" : "Copy";
 
         public string ComparisonOtherText =>
             (_isShowingOriginal ? _entry.Text : _entry.OriginalText) ?? string.Empty;
@@ -1417,13 +1872,43 @@ public sealed partial class MainWindow
 
         public string ShowMoreButtonText => _isTranscriptExpanded ? "Show less" : "Show more";
 
+        public Visibility PlaybackRowVisibility => _hasAudioRecording ? Visibility.Visible : Visibility.Collapsed;
+
+        public bool CanTogglePlayback =>
+            HistoryPlaybackPresentation.CanTogglePlayback(_hasAudioRecording, _isGlobalBusy, _isPlaying);
+
+        public string PlaybackButtonGlyph => _isPlaying ? "\uE769" : "\uE768";
+
+        public string PlaybackButtonAutomationName =>
+            _isPlaying ? $"Pause recording from {TimeDisplay}" : $"Play recording from {TimeDisplay}";
+
+        public string PlaybackScrubberLabel => $"Recording playback position, {PlaybackClockText}";
+
+        public IReadOnlyList<float> WaveformPeaks => _waveformPeaks;
+
+        public double PlaybackProgress =>
+            _isPlaybackActive && _audioDurationMs > 0
+                ? Math.Clamp((double)_playbackPositionMs / _audioDurationMs, 0.0, 1.0)
+                : 0.0;
+
+        public string PlaybackClockText =>
+            HistoryPlaybackPresentation.FormatClockDisplay(_playbackPositionMs, _audioDurationMs, _isPlaybackActive);
+
+        public string InlineNoticeText => _inlineNotice ?? string.Empty;
+
+        public Visibility InlineNoticeVisibility =>
+            !string.IsNullOrWhiteSpace(_inlineNotice) ? Visibility.Visible : Visibility.Collapsed;
+
         public bool IsRepolishing => _isRepolishingThisCard;
 
         public Visibility RepolishingVisibility => _isRepolishingThisCard ? Visibility.Visible : Visibility.Collapsed;
 
         public bool CanRunCardActions => !_isGlobalBusy;
 
-        public bool CanRepolish => !_isGlobalBusy && !IsTemporary;
+        public Visibility RepolishButtonVisibility =>
+            _polishReadiness.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+        public bool CanRepolish => _polishReadiness.CanRepolishEntry(_isGlobalBusy, IsTemporary);
 
         public string PasteButtonAutomationId => _isPrimaryPasteTarget ? "PasteHistoryButton" : string.Empty;
 
@@ -1439,7 +1924,124 @@ public sealed partial class MainWindow
             Notify(
                 nameof(SelectionCheckBoxVisibility),
                 nameof(IsSelected),
-                nameof(SelectedAccentVisibility));
+                nameof(SelectedAccentVisibility),
+                nameof(ActiveCardOutlineVisibility));
+        }
+
+        public void SetPolishReadiness(HistoryPolishReadiness readiness)
+        {
+            if (_polishReadiness == readiness)
+            {
+                return;
+            }
+
+            _polishReadiness = readiness;
+            Notify(nameof(RepolishButtonVisibility), nameof(CanRepolish));
+        }
+
+        public void SetCopiedPrimary(bool isCopied)
+        {
+            if (_isCopiedPrimary == isCopied)
+            {
+                return;
+            }
+
+            _isCopiedPrimary = isCopied;
+            Notify(nameof(CopyButtonGlyph), nameof(CopyButtonText));
+        }
+
+        public void SetCopiedAlternate(bool isCopied)
+        {
+            if (_isCopiedAlternate == isCopied)
+            {
+                return;
+            }
+
+            _isCopiedAlternate = isCopied;
+            Notify(nameof(CopyAlternateButtonGlyph), nameof(CopyAlternateButtonLabel));
+        }
+
+        public void SetInlineNotice(string? notice)
+        {
+            var normalized = string.IsNullOrWhiteSpace(notice) ? null : notice.Trim();
+            if (string.Equals(_inlineNotice, normalized, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _inlineNotice = normalized;
+            Notify(nameof(InlineNoticeText), nameof(InlineNoticeVisibility));
+        }
+
+        public void SetWaveformData(IReadOnlyList<float> peaks, long durationMs)
+        {
+            _waveformPeaks = peaks;
+            if (durationMs > 0)
+            {
+                _audioDurationMs = durationMs;
+            }
+
+            Notify(
+                nameof(WaveformPeaks),
+                nameof(PlaybackProgress),
+                nameof(PlaybackClockText),
+                nameof(PlaybackScrubberLabel));
+        }
+
+        public void MarkRecordingMissing()
+        {
+            if (!_hasAudioRecording)
+            {
+                return;
+            }
+
+            _hasAudioRecording = false;
+            _isPlaybackActive = false;
+            _isPlaying = false;
+            _playbackPositionMs = 0;
+            Notify(
+                nameof(PlaybackRowVisibility),
+                nameof(CanTogglePlayback),
+                nameof(ActiveCardOutlineVisibility),
+                nameof(ProvenanceText));
+        }
+
+        public void SetPlaybackSnapshot(HistoryPlaybackSnapshot snapshot)
+        {
+            var wasActive = _isPlaybackActive;
+            var wasPlaying = _isPlaying;
+            var prevPos = _playbackPositionMs;
+            var prevDuration = _audioDurationMs;
+
+            ApplySnapshotFields(snapshot);
+            if (wasActive == _isPlaybackActive
+                && wasPlaying == _isPlaying
+                && prevPos == _playbackPositionMs
+                && prevDuration == _audioDurationMs)
+            {
+                return;
+            }
+
+            Notify(
+                nameof(PlaybackButtonGlyph),
+                nameof(PlaybackButtonAutomationName),
+                nameof(CanTogglePlayback),
+                nameof(PlaybackProgress),
+                nameof(PlaybackClockText),
+                nameof(PlaybackScrubberLabel),
+                nameof(ActiveCardOutlineVisibility));
+        }
+
+        private void ApplySnapshotFields(HistoryPlaybackSnapshot snapshot)
+        {
+            var isTarget = snapshot.ActiveEntryId == Id;
+            _isPlaybackActive = isTarget;
+            _isPlaying = isTarget && snapshot.IsPlaying;
+            _playbackPositionMs = isTarget ? snapshot.PositionMs : 0;
+            if (isTarget && snapshot.DurationMs > 0)
+            {
+                _audioDurationMs = snapshot.DurationMs;
+            }
         }
 
         public void SetShowingEdits(bool isShowingEdits)
@@ -1475,6 +2077,7 @@ public sealed partial class MainWindow
                 nameof(OriginalInactiveVisibility),
                 nameof(ComparisonStatusText),
                 nameof(ComparisonOtherHeader),
+                nameof(CopyAlternateButtonGlyph),
                 nameof(CopyAlternateButtonLabel),
                 nameof(ComparisonOtherText),
                 nameof(DisplayText),
@@ -1519,6 +2122,8 @@ public sealed partial class MainWindow
                 nameof(IsRepolishing),
                 nameof(RepolishingVisibility),
                 nameof(CanRunCardActions),
+                nameof(CanTogglePlayback),
+                nameof(RepolishButtonVisibility),
                 nameof(CanRepolish),
                 nameof(PasteButtonAutomationId));
         }
@@ -1536,7 +2141,7 @@ public sealed partial class MainWindow
             }
         }
 
-        private static string FormatRecoveryExpiryChip(DateTimeOffset expiresAt, DateTimeOffset createdLocal)
+        private static string FormatRecoveryExpiryChip(DateTimeOffset expiresAt)
         {
             var localExpiry = expiresAt.ToLocalTime();
             var pattern = DateOnly.FromDateTime(localExpiry.DateTime) == DateOnly.FromDateTime(DateTime.Now)
@@ -1545,10 +2150,10 @@ public sealed partial class MainWindow
             return $"Recovery · expires {localExpiry.ToString(pattern, CultureInfo.CurrentCulture)}";
         }
 
-        private static string BuildProvenanceText(DictationHistoryEntry entry)
+        private static string BuildProvenanceText(DictationHistoryEntry entry, bool hasAudioRecording)
         {
             var engineName = HistoryDiaryPresentation.FormatEngineDisplayName(entry.EngineId);
-            var parts = new List<string>(3)
+            var parts = new List<string>(4)
             {
                 engineName,
             };
@@ -1567,6 +2172,11 @@ public sealed partial class MainWindow
             if (!string.IsNullOrWhiteSpace(entry.LanguageCode))
             {
                 parts.Add(LanguageCatalog.DisplayNameFor(entry.LanguageCode));
+            }
+
+            if (!hasAudioRecording)
+            {
+                parts.Add(string.IsNullOrWhiteSpace(entry.AudioFileName) ? "No recording" : "Recording unavailable");
             }
 
             return string.Join(" · ", parts);
@@ -1596,4 +2206,21 @@ public sealed partial class MainWindow
         /// </summary>
         public override string ToString() => $"{Text}, dictated {CreatedDisplay}";
     }
+}
+
+public sealed class HistoryDiaryRowTemplateSelector : DataTemplateSelector
+{
+    public DataTemplate? DayHeaderTemplate { get; set; }
+
+    public DataTemplate? CardTemplate { get; set; }
+
+    protected override DataTemplate? SelectTemplateCore(object item) => item switch
+    {
+        MainWindow.HistoryDayHeaderViewModel => DayHeaderTemplate,
+        MainWindow.HistoryItemViewModel => CardTemplate,
+        _ => base.SelectTemplateCore(item),
+    };
+
+    protected override DataTemplate? SelectTemplateCore(object item, DependencyObject container) =>
+        SelectTemplateCore(item);
 }

@@ -81,6 +81,10 @@ public sealed partial class MainWindow
     {
         var ended = _dictationActive && !active;
         _dictationActive = active;
+        if (active)
+        {
+            _audioPlayback.Stop();
+        }
         RunSetupAgainButton.IsEnabled = !active;
         if (ended)
         {
