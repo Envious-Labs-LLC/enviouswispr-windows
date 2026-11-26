@@ -62,6 +62,7 @@ public static class WindowsPastePolicy
         "wsl",
         "ubuntu",
         "rio",
+        "warp",
     };
 
     private static readonly HashSet<string> BrowserProcesses = new(StringComparer.OrdinalIgnoreCase)
@@ -88,7 +89,6 @@ public static class WindowsPastePolicy
         "cursor",
         "windsurf",
         "zed",
-        "warp",
         "sublime_text",
         "idea64",
         "pycharm64",

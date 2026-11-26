@@ -15,6 +15,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private const int ArrivalPollIntervalMs = 35;
     private readonly SemaphoreSlim _automationGate = new(1, 1);
     private readonly PasteRevealPatience _revealPatience = new();
+    private int _arrivalProbeInFlight;
 
     public void Dispose() => _automationGate.Dispose();
 
@@ -147,7 +148,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         var settleFloor = TimeSpan.FromMilliseconds(commitRule.MinimumPasteSettleMilliseconds);
         var settleDelay = _revealPatience.GetSettleDelay(processName, settleFloor);
         var dispatchToken = _revealPatience.RecordDispatch(processName);
-        var pasteWatch = Stopwatch.StartNew();
+        Stopwatch? dispatchedWatch = null;
 
         var pasted = await WindowsClipboardPaste.PasteAsync(
             request.Text.Text,
@@ -159,7 +160,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 request.ExpectedContext,
                 request.Options)),
             cancellationToken,
-            settleDelay).ConfigureAwait(false);
+            settleDelay,
+            onPasteDispatched: () => dispatchedWatch = Stopwatch.StartNew()).ConfigureAwait(false);
 
         if (!pasted.Delivered || pasted.Route != TextDeliveryRoute.ClipboardPaste)
         {
@@ -168,7 +170,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         var (arrivalStatus, arrivalElapsedMs) = await ObserveArrivalAsync(
             request,
-            pasteWatch,
+            dispatchedWatch,
             dispatchToken,
             settleFloor,
             cancellationToken).ConfigureAwait(false);
@@ -181,54 +183,78 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     private async Task<(PasteArrivalStatus Status, int ElapsedMilliseconds)> ObserveArrivalAsync(
         TextCommitRequest request,
-        Stopwatch pasteWatch,
+        Stopwatch? dispatchedWatch,
         PasteRevealPatience.DispatchToken? dispatchToken,
         TimeSpan settleFloor,
         CancellationToken cancellationToken)
     {
         var contextWindow = Math.Max(request.Options.ContextWindowCharacters, request.Text.Text.Length + 64);
         var previousLeft = request.ExpectedContext?.HasTextContext == true ? request.ExpectedContext.Left : null;
+        var previousValue = request.ExpectedContext?.BaselineValue;
         var deadline = Environment.TickCount64 + (long)ArrivalObservationTimeout.TotalMilliseconds;
+        var attempt = 0;
 
         while (true)
         {
-            PasteArrivalStatus status;
-            try
+            var remainingMs = (int)Math.Max(0, deadline - Environment.TickCount64);
+            if (remainingMs == 0 && attempt > 0)
             {
-                await _automationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                var timeoutElapsed = dispatchedWatch is { } tw ? (int)Math.Min(int.MaxValue, tw.ElapsedMilliseconds) : 0;
+                return (PasteArrivalStatus.BudgetExhausted, timeoutElapsed);
+            }
+
+            if (Interlocked.CompareExchange(ref _arrivalProbeInFlight, 1, 0) != 0)
+            {
+                var busyElapsed = dispatchedWatch is { } bw ? (int)Math.Min(int.MaxValue, bw.ElapsedMilliseconds) : 0;
+                return (PasteArrivalStatus.BudgetExhausted, busyElapsed);
+            }
+
+            PasteArrivalStatus status;
+            var probeTask = Task.Run(() =>
+            {
                 try
                 {
-                    status = await Task.Run(
-                        () => ObserveArrivalOnce(request, contextWindow, previousLeft),
-                        cancellationToken).ConfigureAwait(false);
+                    return ObserveArrivalOnce(request, contextWindow, previousLeft, previousValue);
+                }
+                catch (Exception exception) when (IsExpectedAutomationFailure(exception))
+                {
+                    return PasteArrivalStatus.Unreadable;
                 }
                 finally
                 {
-                    _automationGate.Release();
+                    Interlocked.Exchange(ref _arrivalProbeInFlight, 0);
                 }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            }, CancellationToken.None);
+
+            var waitMs = Math.Max(1, remainingMs);
+            var finished = await Task.WhenAny(
+                probeTask,
+                Task.Delay(waitMs, cancellationToken)).ConfigureAwait(false);
+            if (!ReferenceEquals(finished, probeTask))
             {
-                throw;
+                cancellationToken.ThrowIfCancellationRequested();
+                var expiredElapsed = dispatchedWatch is { } ew ? (int)Math.Min(int.MaxValue, ew.ElapsedMilliseconds) : 0;
+                return (PasteArrivalStatus.BudgetExhausted, expiredElapsed);
             }
-            catch (Exception exception) when (IsExpectedAutomationFailure(exception))
-            {
-                status = PasteArrivalStatus.Unreadable;
-            }
+
+            status = await probeTask.ConfigureAwait(false);
+            var sinceDispatchMs = dispatchedWatch is { } sw ? (int)Math.Min(int.MaxValue, sw.ElapsedMilliseconds) : 0;
 
             if (status == PasteArrivalStatus.Confirmed)
             {
-                var elapsedMs = (int)Math.Min(int.MaxValue, pasteWatch.ElapsedMilliseconds);
-                _ = _revealPatience.RecordSighting(dispatchToken, elapsedMs, settleFloor);
-                return (PasteArrivalStatus.Confirmed, elapsedMs);
+                // First-check confirmation landed inside the already-waited settle delay: report 0 ms
+                // so fast confirmations never multiply the prior wait upward into the 1.2 s ceiling.
+                var revealSampleMs = attempt == 0 ? 0 : sinceDispatchMs;
+                _ = _revealPatience.RecordSighting(dispatchToken, revealSampleMs, settleFloor);
+                return (PasteArrivalStatus.Confirmed, sinceDispatchMs);
             }
 
             if (status != PasteArrivalStatus.NotObserved || Environment.TickCount64 >= deadline)
             {
-                var elapsedMs = (int)Math.Min(int.MaxValue, pasteWatch.ElapsedMilliseconds);
-                return (status, elapsedMs);
+                return (status, sinceDispatchMs);
             }
 
+            attempt++;
             await Task.Delay(ArrivalPollIntervalMs, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -242,7 +268,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private static PasteArrivalStatus ObserveArrivalOnce(
         TextCommitRequest request,
         int contextCharacters,
-        string? previousLeft)
+        string? previousLeft,
+        string? previousValue)
     {
         if (GetForegroundWindow() != request.Target.Value)
         {
@@ -316,14 +343,16 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             request.Text.Text,
             observed.LeftBeforeCaret,
             observed.FullValue,
-            previousLeft);
+            previousLeft,
+            previousValue);
     }
 
     internal static PasteArrivalStatus EvaluateArrival(
         string insertedText,
         string? observedLeft,
         string? observedValue,
-        string? previousLeft)
+        string? previousLeft,
+        string? previousValue = null)
     {
         var normalizedExpected = NormalizeArrivalText(insertedText).Trim();
         if (string.IsNullOrEmpty(normalizedExpected))
@@ -336,35 +365,69 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return PasteArrivalStatus.Unreadable;
         }
 
-        var normalizedPreviousLeft = previousLeft is null ? null : NormalizeArrivalText(previousLeft);
-        var previousTrimmed = normalizedPreviousLeft?.TrimEnd();
-        var previousAlreadyEndedWithExpected = !string.IsNullOrEmpty(previousTrimmed) &&
-            previousTrimmed.EndsWith(normalizedExpected, StringComparison.Ordinal);
-
         if (observedLeft is not null)
         {
-            var normalizedLeft = NormalizeArrivalText(observedLeft).TrimEnd();
-            if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal))
+            if (previousLeft is null && previousValue is null)
             {
-                if (!previousAlreadyEndedWithExpected ||
-                    normalizedLeft.Length >= previousTrimmed!.Length + normalizedExpected.Length)
+                return PasteArrivalStatus.Unreadable;
+            }
+
+            var normalizedLeft = NormalizeArrivalText(observedLeft).TrimEnd();
+            if (previousLeft is not null)
+            {
+                var normalizedPreviousLeft = NormalizeArrivalText(previousLeft).TrimEnd();
+                var previousAlreadyEndedWithExpected = !string.IsNullOrEmpty(normalizedPreviousLeft) &&
+                    normalizedPreviousLeft.EndsWith(normalizedExpected, StringComparison.Ordinal);
+                if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal) &&
+                    (!previousAlreadyEndedWithExpected ||
+                     normalizedLeft.Length >= normalizedPreviousLeft.Length + normalizedExpected.Length))
                 {
                     return PasteArrivalStatus.Confirmed;
                 }
             }
-        }
-
-        if (observedValue is not null)
-        {
-            var normalizedValue = NormalizeArrivalText(observedValue).TrimEnd();
-            if (!previousAlreadyEndedWithExpected &&
-                normalizedValue.Contains(normalizedExpected, StringComparison.Ordinal))
+            else if (previousValue is not null)
             {
-                return PasteArrivalStatus.Confirmed;
+                var normalizedPrevValue = NormalizeArrivalText(previousValue).TrimEnd();
+                if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal) &&
+                    CountOccurrences(normalizedLeft, normalizedExpected) > CountOccurrences(normalizedPrevValue, normalizedExpected))
+                {
+                    return PasteArrivalStatus.Confirmed;
+                }
             }
+
+            return PasteArrivalStatus.NotObserved;
         }
 
-        return PasteArrivalStatus.NotObserved;
+        // ValuePattern-only controls have no TextPattern caret, so compare against a pre-paste value
+        // baseline rather than confirming stale text that was already in the box before the paste.
+        if (previousValue is null)
+        {
+            return PasteArrivalStatus.Unreadable;
+        }
+
+        var normalizedValue = NormalizeArrivalText(observedValue!).TrimEnd();
+        var normalizedPreviousValue = NormalizeArrivalText(previousValue).TrimEnd();
+        return CountOccurrences(normalizedValue, normalizedExpected) > CountOccurrences(normalizedPreviousValue, normalizedExpected)
+            ? PasteArrivalStatus.Confirmed
+            : PasteArrivalStatus.NotObserved;
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        if (string.IsNullOrEmpty(needle) || string.IsNullOrEmpty(haystack))
+        {
+            return 0;
+        }
+
+        var count = 0;
+        var index = 0;
+        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
     }
 
     private static string NormalizeArrivalText(string value) =>
@@ -593,9 +656,22 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 : null);
         if (textPattern is null)
         {
+            string? baselineValue = null;
+            if (budget.TryAdmit())
+            {
+                var maxBaseline = options.ContextWindowCharacters * 2;
+                baselineValue = Automation(() =>
+                    element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObj) &&
+                    valuePatternObj is ValuePattern valuePattern
+                        ? valuePattern.Current.Value is { } raw
+                            ? (raw.Length > maxBaseline ? raw[^maxBaseline..] : raw)
+                            : string.Empty
+                        : null);
+            }
+
             return new TargetContextResult(
                 TargetContextStatus.Available,
-                EmptyContext(target, focusedId, targetKind));
+                EmptyContext(target, focusedId, targetKind, baselineValue));
         }
 
         var caret = Automation(() => ReadCaret(textPattern, options));
@@ -938,7 +1014,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private static CaretContext EmptyContext(
         TargetWindowId target,
         string focusedId,
-        TextTargetKind targetKind) => new(
+        TextTargetKind targetKind,
+        string? baselineValue = null) => new(
         target,
         focusedId,
         targetKind,
@@ -950,7 +1027,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         HasTextContext: false,
         SupportsDirectValueWrite: false,
         DirectValueWriteAtEnd: false,
-        IsScreenDerived: targetKind == TextTargetKind.Terminal);
+        IsScreenDerived: targetKind == TextTargetKind.Terminal,
+        BaselineValue: baselineValue);
 
     internal static WindowsPasteRule ResolveTargetPolicy(
         TargetWindowId target,

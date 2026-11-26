@@ -353,7 +353,8 @@ internal static class WindowsClipboardPaste
         PasteKeystrokeKind keystroke,
         Func<TextDeliveryRefusalReason> preflight,
         CancellationToken cancellationToken,
-        TimeSpan? settleDelay = null)
+        TimeSpan? settleDelay = null,
+        Action? onPasteDispatched = null)
     {
         ArgumentNullException.ThrowIfNull(preflight);
         return PasteAsync(
@@ -364,7 +365,9 @@ internal static class WindowsClipboardPaste
             SetTemporaryClipboardTextOrThrow,
             keystroke == PasteKeystrokeKind.ShiftInsert ? SendShiftInsert : SendCtrlV,
             cancellationToken,
-            settleDelay);
+            settleDelay,
+            writeFallbackText: SetClipboardTextOrThrow,
+            onPasteDispatched: onPasteDispatched);
     }
 
     /// <summary>The paste with its clipboard writer named: production passes <see cref="SetClipboardTextOrThrow"/>; a test passes a writer that fails the way the clipboard can, after changing it.</summary>
@@ -390,11 +393,14 @@ internal static class WindowsClipboardPaste
         Action<string> writeText,
         Func<bool> sendPaste,
         CancellationToken cancellationToken,
-        TimeSpan? settleDelay = null)
+        TimeSpan? settleDelay = null,
+        Action<string>? writeFallbackText = null,
+        Action? onPasteDispatched = null)
     {
         ArgumentNullException.ThrowIfNull(preflight);
         ArgumentNullException.ThrowIfNull(writeText);
         ArgumentNullException.ThrowIfNull(sendPaste);
+        var fallbackWriter = writeFallbackText ?? writeText;
         return RunStaAsync(
             () => PasteOnSta(
                 text,
@@ -402,8 +408,10 @@ internal static class WindowsClipboardPaste
                 restoreClipboard,
                 preflight,
                 writeText,
+                fallbackWriter,
                 sendPaste,
                 settleDelay ?? PasteSettle,
+                onPasteDispatched,
                 cancellationToken),
             cancellationToken);
     }
@@ -414,8 +422,10 @@ internal static class WindowsClipboardPaste
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
         Action<string> writeText,
+        Action<string> writeFallbackText,
         Func<bool> sendPaste,
         TimeSpan settleDelay,
+        Action? onPasteDispatched,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -468,7 +478,7 @@ internal static class WindowsClipboardPaste
 
         if (refusal != TextDeliveryRefusalReason.None)
         {
-            var fallback = WriteClipboardText(fallbackText, writeText);
+            var fallback = WriteClipboardText(fallbackText, writeFallbackText);
             if (fallback.Written)
             {
                 return new TextCommitResult(
@@ -499,6 +509,22 @@ internal static class WindowsClipboardPaste
 
         if (!sendPaste())
         {
+            if (writeFallbackText != writeText)
+            {
+                var unmarkedFallback = WriteClipboardText(fallbackText, writeFallbackText);
+                if (!unmarkedFallback.Written && unmarkedFallback.OwnedSequence is { } brokenSeq)
+                {
+                    var (restored, uncertain) = GiveBack(snapshot, brokenSeq);
+                    return new TextCommitResult(
+                        TextDeliveryRoute.None,
+                        Delivered: false,
+                        ClipboardFallback: false,
+                        ClipboardRestored: restored,
+                        TextDeliveryRefusalReason.ClipboardUnavailable,
+                        ClipboardUncertain: uncertain);
+                }
+            }
+
             return new TextCommitResult(
                 TextDeliveryRoute.ClipboardOnly,
                 Delivered: false,
@@ -506,6 +532,8 @@ internal static class WindowsClipboardPaste
                 ClipboardRestored: false,
                 TextDeliveryRefusalReason.InputBlocked);
         }
+
+        onPasteDispatched?.Invoke();
 
         // PUMPING, BECAUSE THIS THREAD OWNS THE CLIPBOARD HERE: the target's paste needs nothing from us (the words were
         // flushed, so no format is rendered on request), but anybody who writes to the clipboard meanwhile - the person

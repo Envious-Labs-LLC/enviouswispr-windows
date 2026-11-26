@@ -223,7 +223,8 @@ public sealed record CaretContext(
     bool SupportsDirectValueWrite,
     bool DirectValueWriteAtEnd,
     bool IsScreenDerived = false,
-    bool IsUrlBarField = false);
+    bool IsUrlBarField = false,
+    string? BaselineValue = null);
 
 public sealed record TargetContextResult(
     TargetContextStatus Status,

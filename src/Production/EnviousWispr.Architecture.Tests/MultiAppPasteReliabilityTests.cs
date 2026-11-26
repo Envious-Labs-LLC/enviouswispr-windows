@@ -53,21 +53,27 @@ public sealed class MultiAppPasteReliabilityTests
         Assert.False(patience.RecordSighting(first, 600, floor));
         Assert.Equal(floor, patience.GetSettleDelay("msedge", floor));
 
-        // 500ms * 1.5 = 750ms adopted at once.
-        Assert.True(patience.RecordSighting(overlapping, 500, floor));
+        // 0ms reveal sample (first-check confirmation inside existing settle window) never inflates above floor.
+        var fast = patience.RecordDispatch("msedge");
+        Assert.True(patience.RecordSighting(fast, 0, floor));
+        Assert.Equal(floor, patience.GetSettleDelay("msedge", floor));
+
+        // Late reveal (500ms * 1.5 = 750ms) is adopted at once.
+        var slow = patience.RecordDispatch("msedge");
+        Assert.True(patience.RecordSighting(slow, 500, floor));
         Assert.Equal(TimeSpan.FromMilliseconds(750), patience.GetSettleDelay("msedge.exe", floor));
 
-        // Samples 2..9 must NOT lower patience during warm-up (WarmUpSamples = 10).
-        for (var i = 2; i <= 9; i++)
+        // Samples 2..9 must NOT lower patience during warm-up (WarmUpSamples = 10; fast + slow already count 2).
+        for (var i = 3; i <= 9; i++)
         {
             var token = patience.RecordDispatch("msedge");
-            Assert.True(patience.RecordSighting(token, 50, floor));
+            Assert.True(patience.RecordSighting(token, 0, floor));
             Assert.Equal(TimeSpan.FromMilliseconds(750), patience.GetSettleDelay("msedge", floor));
         }
 
         // Sample 10 crosses WarmUpSamples and shrinks by at most 10% (750 * 0.9 = 675ms).
         var tenth = patience.RecordDispatch("msedge");
-        Assert.True(patience.RecordSighting(tenth, 50, floor));
+        Assert.True(patience.RecordSighting(tenth, 0, floor));
         Assert.Equal(TimeSpan.FromMilliseconds(675), patience.GetSettleDelay("msedge", floor));
 
         // Very slow reveal clamps cleanly to CapMilliseconds (1200ms).
@@ -80,11 +86,11 @@ public sealed class MultiAppPasteReliabilityTests
     [InlineData("notepad", "Notepad", "Edit", true, 200)]
     [InlineData("pwsh", "ConsoleWindowClass", null, false, 300)]
     [InlineData("ghostty", null, null, false, 300)]
+    [InlineData("warp", null, null, false, 300)]
     [InlineData("msedge", "Chrome_WidgetWin_1", null, false, 350)]
     [InlineData("Code", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", true, 350)]
     [InlineData("rider64", "SunAwtFrame", null, false, 350)]
     [InlineData("zed", null, null, false, 350)]
-    [InlineData("warp", null, null, false, 350)]
     [InlineData("zoom", null, null, false, 350)]
     [InlineData("onenoteim", null, null, false, 350)]
     public void WindowsPastePolicyAssignsAppClassSettleAndExpandedTargets(
@@ -98,26 +104,42 @@ public sealed class MultiAppPasteReliabilityTests
         Assert.Equal(expectedSettleMs, rule.MinimumPasteSettleMilliseconds);
     }
 
+    [Fact]
+    public void WarpIsClassifiedAsTerminalAndRefusesMultilinePayloads()
+    {
+        var warpRule = WindowsPastePolicy.Resolve("warp", isControlEdit: true);
+        Assert.Equal(TextTargetKind.Terminal, warpRule.TargetKind);
+        Assert.Equal(PasteKeystrokeKind.ShiftInsert, warpRule.Keystroke);
+        Assert.Equal(
+            TextDeliveryRefusalReason.UnsafeMultilineTarget,
+            WindowsTextTargetAdapter.CompatibilityRefusal(warpRule.TargetKind, "line1\nline2"));
+    }
+
     [Theory]
-    [InlineData("hello world", "prefix hello world", null, "prefix ", PasteArrivalStatus.Confirmed)]
-    [InlineData("hello\r\nworld", "hello\nworld ", null, "", PasteArrivalStatus.Confirmed)]
-    [InlineData("hello world", null, "existing hello world", null, PasteArrivalStatus.Confirmed)]
-    [InlineData("hello world", "hello world", null, "hello world", PasteArrivalStatus.NotObserved)]
-    [InlineData("hello world", "hello world hello world", null, "hello world", PasteArrivalStatus.Confirmed)]
-    [InlineData("hello world", "different text", "different text", null, PasteArrivalStatus.NotObserved)]
-    [InlineData("hello world", null, null, null, PasteArrivalStatus.Unreadable)]
+    [InlineData("hello world", "prefix hello world", null, "prefix ", null, PasteArrivalStatus.Confirmed)]
+    [InlineData("hello\r\nworld", "hello\nworld ", null, "", null, PasteArrivalStatus.Confirmed)]
+    [InlineData("hello world", null, "existing hello world", null, "existing ", PasteArrivalStatus.Confirmed)]
+    [InlineData("hello world", "hello world", null, "hello world", null, PasteArrivalStatus.NotObserved)]
+    [InlineData("hello world", null, "hello world", null, "hello world", PasteArrivalStatus.NotObserved)]
+    [InlineData("hello world", null, "hello world", null, null, PasteArrivalStatus.Unreadable)]
+    [InlineData("hello world", "hello world hello world", null, "hello world", null, PasteArrivalStatus.Confirmed)]
+    [InlineData("hello world", null, "hello world hello world", null, "hello world", PasteArrivalStatus.Confirmed)]
+    [InlineData("hello world", "different text", "different text", null, "different text", PasteArrivalStatus.NotObserved)]
+    [InlineData("hello world", null, null, null, null, PasteArrivalStatus.Unreadable)]
     public void EvaluateArrivalClassifiesConfirmedNotObservedAndUnreadableCleanly(
         string insertedText,
         string? observedLeft,
         string? observedValue,
         string? previousLeft,
+        string? previousValue,
         PasteArrivalStatus expected)
     {
         var actual = WindowsTextTargetAdapter.EvaluateArrival(
             insertedText,
             observedLeft,
             observedValue,
-            previousLeft);
+            previousLeft,
+            previousValue);
         Assert.Equal(expected, actual);
     }
 
@@ -192,6 +214,22 @@ public sealed class MultiAppPasteReliabilityTests
         Assert.True(copied.Delivered);
         var copyFormats = RunOnSta(() => Clipboard.GetDataObject()?.GetFormats(autoConvert: false) ?? []);
         Assert.DoesNotContain(WindowsClipboardPaste.CanIncludeInClipboardHistoryFormatName, copyFormats, StringComparer.OrdinalIgnoreCase);
+
+        // Preflight refusal via temporary+unmarked-fallback writer leaves fallback text UNMARKED for manual Ctrl+V.
+        var refused = await WindowsClipboardPaste.PasteAsync(
+            "temp text",
+            "retained manual fallback",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.TargetChanged,
+            WindowsClipboardPaste.SetTemporaryClipboardTextOrThrow,
+            static () => true,
+            CancellationToken.None,
+            settleDelay: TimeSpan.FromMilliseconds(20),
+            writeFallbackText: WindowsClipboardPaste.SetClipboardTextOrThrow);
+        Assert.True(refused.ClipboardFallback);
+        var refusedFormats = RunOnSta(() => Clipboard.GetDataObject()?.GetFormats(autoConvert: false) ?? []);
+        Assert.DoesNotContain(WindowsClipboardPaste.CanIncludeInClipboardHistoryFormatName, refusedFormats, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("retained manual fallback", RunOnSta(() => Clipboard.GetText()));
     }
 
     [Fact]
