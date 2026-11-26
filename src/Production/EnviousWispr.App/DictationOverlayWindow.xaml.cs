@@ -1923,8 +1923,12 @@ public sealed partial class DictationOverlayWindow : Window
                             ? 360
                             : StandardNoticeMaxWidth;
 
-        // Measure action row cleanly AFTER style/content assignment and margin update.
-        var leadingReserved = isRichError ? 52d : (HeaderLeading.Visibility == Visibility.Visible ? 30d : 0d);
+        // Measure leading chrome and action row cleanly AFTER style/content assignment and margin update.
+        var leadingReserved = isRichError
+            ? 52d
+            : HeaderLeading.Visibility == Visibility.Visible
+                ? Math.Max(26d, MeasureElementWidth(HeaderLeading, 20d) + _noticeColumnSpacing)
+                : 0d;
         var actionReserved = 0d;
         var actionHeight = 0d;
         if (_action is not null)
@@ -1935,7 +1939,7 @@ public sealed partial class DictationOverlayWindow : Window
             actionHeight = InlineActionRow.DesiredSize.Height;
         }
 
-        var maxTextWidth = Math.Max(140d, maxOuterWidth - horizontalPad * 2 - FrameBorderThickness * 2 - leadingReserved - actionReserved);
+        var maxTextWidth = Math.Max(110d, maxOuterWidth - horizontalPad * 2 - FrameBorderThickness * 2 - leadingReserved - actionReserved);
         StateTitle.MaxWidth = maxTextWidth;
         StateSubtitle.MaxWidth = maxTextWidth;
 
@@ -1948,6 +1952,23 @@ public sealed partial class DictationOverlayWindow : Window
         }
 
         var textW = Math.Max(StateTitle.DesiredSize.Width, hasSubtitle ? StateSubtitle.DesiredSize.Width : 0);
+        var computedWidth = (int)Math.Ceiling(FrameBorderThickness * 2 + horizontalPad * 2 + leadingReserved + textW + actionReserved + (isRichError ? 6 : 8));
+        var width = isRichError
+            ? RichErrorCardWidth
+            : Math.Clamp(computedWidth, isEscapeRecovery ? 240 : 180, maxOuterWidth);
+
+        // Re-measure wrapped text against the ACTUAL clamped column width so layout height never under-allocates wrapped lines.
+        var finalTextWidth = Math.Max(100d, width - FrameBorderThickness * 2 - horizontalPad * 2 - leadingReserved - actionReserved - (isRichError ? 6 : 2));
+        StateTitle.MaxWidth = finalTextWidth;
+        StateSubtitle.MaxWidth = finalTextWidth;
+        StateTitle.InvalidateMeasure();
+        StateTitle.Measure(new Windows.Foundation.Size(finalTextWidth, double.PositiveInfinity));
+        if (hasSubtitle)
+        {
+            StateSubtitle.InvalidateMeasure();
+            StateSubtitle.Measure(new Windows.Foundation.Size(finalTextWidth, double.PositiveInfinity));
+        }
+
         var textH = StateTitle.DesiredSize.Height + (hasSubtitle ? StateSubtitle.DesiredSize.Height + 2 : 0);
         var isMultiLine = textH > 26;
         var verticalPad = isEscapeRecovery ? 6 : (isRichError || hasSubtitle || isMultiLine ? 12 : 9);
@@ -1957,10 +1978,7 @@ public sealed partial class DictationOverlayWindow : Window
             verticalPad,
             horizontalPad,
             isEscapeRecovery ? verticalPad + 2 : verticalPad);
-        var computedWidth = (int)Math.Ceiling(FrameBorderThickness * 2 + horizontalPad * 2 + leadingReserved + textW + actionReserved + (isRichError ? 6 : 8));
-        var width = isRichError
-            ? RichErrorCardWidth
-            : Math.Clamp(computedWidth, isEscapeRecovery ? 240 : 180, maxOuterWidth);
+
         var contentHeight = Math.Max(textH, Math.Max(actionHeight, isRichError ? 40 : 24));
         var height = isEscapeRecovery
             ? Math.Max(46, (int)Math.Ceiling(FrameBorderThickness * 2 + verticalPad * 2 + 2 + contentHeight))
