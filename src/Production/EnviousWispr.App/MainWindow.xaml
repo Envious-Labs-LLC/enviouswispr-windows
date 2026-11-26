@@ -820,8 +820,8 @@
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                         <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE81C;" />
                                         <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
-                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Two-pane History diary &amp; built-in Feedback dialog" />
-                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Browse dictations beside a full-height detail pane with one-click copy, paste, repolish, and in-app feedback reporting." TextWrapping="Wrap" />
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Inline History diary &amp; built-in Feedback dialog" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Browse dictations with inline AI polish diffs, audio waveform playback, one-click copy and paste, and in-app feedback reporting." TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Grid>
                                     <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
@@ -913,16 +913,20 @@
                                 </Border>
 
                                 <!-- Tab strip + active engine / polish summary + matching item count badge -->
-                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                <Grid x:Name="HistoryHeaderBarGrid" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="HistoryHeaderBarGrid_SizeChanged">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                    <StackPanel x:Name="HistoryFilterButtonsPanel" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
                                         <Button x:Name="HistoryFilterDictationButton" Content="Dictations" ToolTipService.ToolTip="Dictations (D)" Click="HistoryFilterButton_Click" Tag="Dictation" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="12,6" />
                                         <Button x:Name="HistoryFilterTranscribeButton" Content="Transcribed Files" ToolTipService.ToolTip="Transcribed files (T)" Click="HistoryFilterButton_Click" Tag="TranscribeFile" Style="{StaticResource BrandTabStripButtonStyle}" Padding="12,6" />
                                     </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                    <StackPanel x:Name="HistoryStatusChipsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
                                         <Border Style="{StaticResource BrandNeutralChipStyle}" ToolTipService.ToolTip="Active speech engine and AI polish provider">
                                             <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
                                                 <TextBlock x:Name="HistoryEngineStatusText" Style="{StaticResource BrandNeutralChipTextStyle}" Text="Parakeet" />
@@ -1349,13 +1353,17 @@
                                     </Border>
                                     <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                            <Grid x:Name="WordListHeaderGrid" ColumnSpacing="{StaticResource BrandSpacingS}" SizeChanged="WordListHeaderGrid_SizeChanged">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock x:Name="WordCountText" Style="{StaticResource BrandSubsectionEyebrowStyle}" VerticalAlignment="Center" Text="0 WORDS" />
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                <TextBlock x:Name="WordCountText" Style="{StaticResource BrandSubsectionEyebrowStyle}" TextWrapping="NoWrap" VerticalAlignment="Center" Text="0 WORDS" />
+                                                <StackPanel x:Name="WordListActionButtonsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
                                                     <Button x:Name="OpenAddWordDialogButton" Click="OpenAddWordDialogButton_Click" Content="+ Add word" Style="{StaticResource BrandPrimaryButtonStyle}" VerticalAlignment="Center" />
                                                     <Button x:Name="ImportWordsMenuButton" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import words">
                                                         <Button.Flyout>
@@ -1722,11 +1730,13 @@
                                 </Grid>
                                 <Border Padding="0" Style="{StaticResource BrandSettingsCardStyle}">
                                     <StackPanel>
-                                        <Grid Padding="16,12" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                        <Grid x:Name="SnippetsToolbarGrid" Padding="16,12" ColumnSpacing="{StaticResource BrandSpacingS}" SizeChanged="SnippetsToolbarGrid_SizeChanged">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <Grid x:Name="SnippetSearchContainer">
@@ -1736,17 +1746,19 @@
                                                 </Button>
                                                 <FontIcon FontSize="14" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" />
                                             </Grid>
-                                            <Button Grid.Column="1" Content="Import" AutomationProperties.Name="Import snippets" AutomationProperties.HelpText="Bring your snippets in from anywhere. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}">
-                                                <Button.Flyout>
-                                                    <MenuFlyout>
-                                                        <MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" AutomationProperties.HelpText="Paste a list from anywhere: plain lines, CSV, or exported JSON." />
-                                                        <MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" AutomationProperties.HelpText="Pick the EnviousWispr Snippets.json you exported, a CSV, or a plain list. Snippets you already have are left as they are." />
-                                                        <MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" AutomationProperties.HelpText="Bring your snippets over from another dictation app." />
-                                                    </MenuFlyout>
-                                                </Button.Flyout>
-                                            </Button>
-                                            <Button x:Name="ExportSnippetsButton" Grid.Column="2" Click="ExportSnippetsButton_Click" Content="Export" AutomationProperties.Name="Export snippets" AutomationProperties.HelpText="Saves your snippets and your keyword to a file you can import on another PC or Mac." Style="{StaticResource BrandQuietButtonStyle}" />
-                                            <Button x:Name="AddSnippetToolbarButton" Grid.Column="3" Click="AddSnippetToolbarButton_Click" Content="+ Add snippet" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                            <StackPanel x:Name="SnippetsToolbarActionsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                <Button Content="Import" AutomationProperties.Name="Import snippets" AutomationProperties.HelpText="Bring your snippets in from anywhere. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}">
+                                                    <Button.Flyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" AutomationProperties.HelpText="Paste a list from anywhere: plain lines, CSV, or exported JSON." />
+                                                            <MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" AutomationProperties.HelpText="Pick the EnviousWispr Snippets.json you exported, a CSV, or a plain list. Snippets you already have are left as they are." />
+                                                            <MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" AutomationProperties.HelpText="Bring your snippets over from another dictation app." />
+                                                        </MenuFlyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                                <Button x:Name="ExportSnippetsButton" Click="ExportSnippetsButton_Click" Content="Export" AutomationProperties.Name="Export snippets" AutomationProperties.HelpText="Saves your snippets and your keyword to a file you can import on another PC or Mac." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                <Button x:Name="AddSnippetToolbarButton" Click="AddSnippetToolbarButton_Click" Content="+ Add snippet" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                            </StackPanel>
                                         </Grid>
                                         <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
                                         <ListView x:Name="SnippetList" Padding="4" SelectionChanged="ListSelectionChanged" ItemClick="SnippetList_ItemClick" IsItemClickEnabled="True" AutomationProperties.Name="Saved snippets" SelectionMode="None">
