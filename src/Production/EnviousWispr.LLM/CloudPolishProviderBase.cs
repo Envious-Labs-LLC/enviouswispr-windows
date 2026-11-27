@@ -47,6 +47,8 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
 
     public abstract string ProviderId { get; }
 
+    public string ModelId => Options.ModelId;
+
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
         CancellationToken cancellationToken = default)

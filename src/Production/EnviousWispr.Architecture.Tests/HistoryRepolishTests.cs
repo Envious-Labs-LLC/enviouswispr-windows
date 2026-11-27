@@ -220,6 +220,35 @@ public sealed class HistoryRepolishTests
         Assert.Equal("This is a complete sentence.", result.Entry!.Text);
     }
 
+    [Fact]
+    public async Task RepolishUsesLazyTargetAdapterProviderWhenCopyToClipboardRequested()
+    {
+        var store = new FakeMemoryHistoryStore();
+        var entry = CreateEntry("spoken text");
+        store.Entries.Add(entry);
+        var admission = new FakeRuntimeAdmission();
+        var effects = new FakePolishEffects();
+        var provider = new TestPolishProvider("test-provider", _ => "polished lazily");
+        var executor = new PolishExecutor(admission, effects, () => []);
+        var targetAdapter = new FakeTargetAdapter();
+        ITextTargetAdapter? deferredAdapter = null;
+
+        var service = new HistoryRepolishService(
+            store,
+            executor,
+            new DeterministicTextPipeline(),
+            () => new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu, "test-model"),
+            targetAdapterProvider: () => deferredAdapter,
+            clock: new FrozenClock(Now));
+
+        deferredAdapter = targetAdapter;
+        var result = await service.RepolishAsync(entry.Id, copyToClipboard: true);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.CopiedToClipboard);
+        Assert.Equal("polished lazily", targetAdapter.CopiedText);
+    }
+
     private static DictationHistoryEntry CreateEntry(string text) => new(
         Guid.NewGuid(),
         Now,

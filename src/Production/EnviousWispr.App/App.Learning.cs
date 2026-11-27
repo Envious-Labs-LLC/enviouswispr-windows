@@ -35,7 +35,11 @@ public partial class App
         var rulesJudge = new RulesCorrectionJudge();
         var egOneJudge = new EgOneCorrectionJudge(
             () => _polishProvider as EgOnePolishProvider,
-            canRun: () => !IsSpeechEngineBusy && !Leaving);
+            canRun: () => !IsSpeechEngineBusy && !Leaving,
+            resourceAdmission: _resourceArbiter,
+            resourceKind: () => _polishProvider is { } provider
+                ? EffectivePolishResource(provider)
+                : _polishResource);
         var judge = new FallbackCorrectionJudge(() => egOneJudge, rulesJudge);
         var observer = new WindowsPastedRegionObserver();
         var coordinator = new LearnedCorrectionCoordinator(
@@ -74,7 +78,12 @@ public partial class App
 
     private ILearnedWordChecker EnsureLearnedWordChecker() =>
         _learnedWordChecker ??= new FallbackLearnedWordChecker(
-            () => new EgOneLearnedWordChecker(() => !Leaving ? _polishProvider as EgOnePolishProvider : null),
+            () => new EgOneLearnedWordChecker(
+                () => !Leaving ? _polishProvider as EgOnePolishProvider : null,
+                resourceAdmission: _resourceArbiter,
+                resourceKind: () => _polishProvider is { } provider
+                    ? EffectivePolishResource(provider)
+                    : _polishResource),
             new DeterministicLearnedWordChecker());
 
     private void AttachSelfLearningToWindow(MainWindow window)

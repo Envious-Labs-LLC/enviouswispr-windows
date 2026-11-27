@@ -23,6 +23,7 @@ public partial class App
     private CloudPolishConsent? _cloudPolishConsent;
     private string? _localPolishNotice;
     private readonly CancellationTokenSource _polishLifetime = new();
+    private readonly Lock _polishWarmupLock = new();
     private CancellationTokenSource? _polishWarmupCancellation;
     private readonly Lock _polishKeepAwakeLock = new();
     private CancellationTokenSource? _polishKeepAwakeCancellation;
@@ -68,14 +69,60 @@ public partial class App
         MishearingAdvice advice;
         using (lease)
         {
+            IAsyncDisposable? resourceLease = null;
+            if (_polishUsesLocalRuntime && _polishProvider is { } localProvider)
+            {
+                RuntimeResourceAcquireResult acquired;
+                try
+                {
+                    acquired = await _resourceArbiter.AcquireAsync(
+                        EffectivePolishResource(localProvider),
+                        RuntimeWorkloadKind.LocalPolish,
+                        TimeSpan.FromSeconds(2),
+                        lease.Closing).ConfigureAwait(true);
+                }
+                catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+
+                if (!acquired.Succeeded || acquired.Lease is null)
+                {
+                    if (!lease.Closing.IsCancellationRequested)
+                    {
+                        _window?.SetAliasSuggestions(
+                            term,
+                            MishearingAdvice.None(MishearingAdviceStatus.Failed));
+                    }
+
+                    return;
+                }
+
+                resourceLease = acquired.Lease;
+            }
+
             try
             {
-                advice = await advisor.SuggestAsync(term, existing, lease.Closing).ConfigureAwait(true);
+                try
+                {
+                    advice = await advisor.SuggestAsync(term, existing, lease.Closing).ConfigureAwait(true);
+                }
+                catch (Exception exception) when (
+                    exception is not (StackOverflowException or OutOfMemoryException))
+                {
+                    advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+                }
             }
-            catch (Exception exception) when (
-                exception is not (StackOverflowException or OutOfMemoryException))
+            finally
             {
-                advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+                if (resourceLease is not null)
+                {
+                    await resourceLease.DisposeAsync().ConfigureAwait(true);
+                }
             }
 
             if (lease.Closing.IsCancellationRequested)
@@ -87,10 +134,32 @@ public partial class App
         _window?.SetAliasSuggestions(term, advice);
     }
 
+    private void CancelPolishWarmup()
+    {
+        CancellationTokenSource? active;
+        lock (_polishWarmupLock)
+        {
+            active = _polishWarmupCancellation;
+        }
+
+        if (active is null)
+        {
+            return;
+        }
+
+        try
+        {
+            active.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private void AbortPolishRuntime()
     {
         StopPolishKeepAwake();
-        _polishWarmupCancellation?.Cancel();
+        CancelPolishWarmup();
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
     }
 
@@ -112,6 +181,12 @@ public partial class App
 
     private void SetPolishSessionActive(bool active)
     {
+        if (active)
+        {
+            CancelPolishWarmup();
+            _resourceArbiter.PreemptBackgroundWork();
+        }
+
         if (!active || Leaving || _polishProvider is not EgOnePolishProvider egOneProvider)
         {
             StopPolishKeepAwake();
@@ -161,18 +236,44 @@ public partial class App
 
     private void StartPolishWarmup()
     {
-        _polishWarmupCancellation?.Cancel();
-        _polishWarmupCancellation?.Dispose();
-        _polishWarmupCancellation = null;
+        CancellationTokenSource? previous;
+        CancellationTokenSource? next = null;
+        lock (_polishWarmupLock)
+        {
+            previous = _polishWarmupCancellation;
+            _polishWarmupCancellation = null;
+            if (_polishProvider is EgOnePolishProvider or OllamaPolishProvider)
+            {
+                next = CancellationTokenSource.CreateLinkedTokenSource(_polishLifetime.Token);
+                _polishWarmupCancellation = next;
+            }
+        }
+
+        if (previous is not null)
+        {
+            try
+            {
+                previous.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            previous.Dispose();
+        }
+
+        if (next is null)
+        {
+            return;
+        }
+
         if (_polishProvider is EgOnePolishProvider polishProvider)
         {
-            _polishWarmupCancellation = CancellationTokenSource.CreateLinkedTokenSource(_polishLifetime.Token);
-            _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishWarmupCancellation.Token);
+            _polishWarmup = WarmPolishRuntimeAsync(polishProvider, next.Token);
         }
         else if (_polishProvider is OllamaPolishProvider ollamaProvider)
         {
-            _polishWarmupCancellation = CancellationTokenSource.CreateLinkedTokenSource(_polishLifetime.Token);
-            _polishWarmup = ProbeOllamaRuntimeAsync(ollamaProvider, _polishWarmupCancellation.Token);
+            _polishWarmup = ProbeOllamaRuntimeAsync(ollamaProvider, next.Token);
         }
     }
 
@@ -188,7 +289,7 @@ public partial class App
 
         var normalizedId = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
         var active = await Task.Run(
-            () => CreateModelStore().OpenActiveOfflineAsync(normalizedId, cancellationToken),
+            () => OfflineModelStore.OpenActiveOfflineAsync(normalizedId, cancellationToken),
             cancellationToken).ConfigureAwait(true);
         if (active.Succeeded &&
             EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed?.DirectoryPath, normalizedId) is { } storeFile)
@@ -209,10 +310,9 @@ public partial class App
             return;
         }
 
-        var store = CreateModelStore();
         var modelId = ConfiguredEgOneModelId(preferences);
         var active = await Task.Run(
-            () => store.OpenActiveOfflineAsync(modelId, cancellationToken),
+            () => OfflineModelStore.OpenActiveOfflineAsync(modelId, cancellationToken),
             cancellationToken).ConfigureAwait(true);
         if (Leaving ||
             !active.Succeeded ||
@@ -497,9 +597,54 @@ public partial class App
                 window.SetSessionStatus(OllamaHealthStatus(health.Health));
             }
         });
-        if (health.Health == OllamaHealth.Ready)
+        if (health.Health == OllamaHealth.Ready &&
+            !Leaving &&
+            !IsSpeechEngineBusy &&
+            _cloudPolishConsent is null)
         {
-            _ = await provider.WarmUpAsync(cancellationToken).ConfigureAwait(false);
+            CancellationTokenSource? linked = null;
+            RuntimeResourceAcquireResult acquired;
+            try
+            {
+                linked = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    _resourceArbiter.CurrentBackgroundToken);
+                acquired = await _resourceArbiter.AcquireAsync(
+                    RuntimeResourceKind.Cpu,
+                    RuntimeWorkloadKind.LocalPolishBackground,
+                    TimeSpan.Zero,
+                    linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                linked?.Dispose();
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                linked?.Dispose();
+                return;
+            }
+
+            using (linked)
+            {
+                if (acquired.Succeeded && acquired.Lease is not null)
+                {
+                    await using (acquired.Lease.ConfigureAwait(false))
+                    {
+                        if (!Leaving && !IsSpeechEngineBusy)
+                        {
+                            try
+                            {
+                                _ = await provider.WarmUpAsync(linked.Token).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+                            {
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -507,30 +652,96 @@ public partial class App
         EgOnePolishProvider provider,
         CancellationToken cancellationToken)
     {
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            AppEventCode.PolishRuntimeStarted,
-            Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        var health = await provider.ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
-        timer.Stop();
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            health.Health == EgOneHealth.Green
-                ? AppEventCode.PolishRuntimeReady
-                : AppEventCode.PolishRuntimeDegraded,
-            health.Health == EgOneHealth.Green
-                ? AppFailureCategory.None
-                : AppFailureCategory.LocalPolish,
-            timer.ElapsedMilliseconds,
-            DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
+        if (Leaving || IsSpeechEngineBusy)
+        {
+            return;
+        }
+
+        CancellationTokenSource? linked = null;
+        RuntimeResourceAcquireResult acquired;
+        try
+        {
+            linked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _resourceArbiter.CurrentBackgroundToken);
+            acquired = await _resourceArbiter.AcquireAsync(
+                EffectivePolishResource(provider),
+                RuntimeWorkloadKind.LocalPolishBackground,
+                TimeSpan.Zero,
+                linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            linked?.Dispose();
+            return;
+        }
+        catch (ObjectDisposedException)
+        {
+            linked?.Dispose();
+            return;
+        }
+
+        using (linked)
+        {
+            if (!acquired.Succeeded || acquired.Lease is null)
+            {
+                return;
+            }
+
+            await using (acquired.Lease.ConfigureAwait(false))
+            {
+                if (Leaving || IsSpeechEngineBusy)
+                {
+                    return;
+                }
+
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.PolishRuntimeStarted,
+                    Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                EgOneHealthResult health;
+                try
+                {
+                    health = await provider.ProbeHealthAsync(linked.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (linked.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                timer.Stop();
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    health.Health == EgOneHealth.Green
+                        ? AppEventCode.PolishRuntimeReady
+                        : AppEventCode.PolishRuntimeDegraded,
+                    health.Health == EgOneHealth.Green
+                        ? AppFailureCategory.None
+                        : AppFailureCategory.LocalPolish,
+                    timer.ElapsedMilliseconds,
+                    DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
+            }
+        }
     }
 
     /// <summary>The polish provider in force, and how it is hosted, or null when there is none.</summary>
-    private PolishSetup? CurrentPolishSetup() =>
-        _polishProvider is { } provider
-            ? new PolishSetup(provider, _polishUsesLocalRuntime, EffectivePolishResource(provider))
-            : null;
+    private PolishSetup? CurrentPolishSetup()
+    {
+        if (_polishProvider is not { } provider)
+        {
+            return null;
+        }
+
+        var modelId = provider switch
+        {
+            EgOnePolishProvider egOne => egOne.ModelId,
+            OllamaPolishProvider => _ollamaActiveModel,
+            CloudPolishProviderBase cloud => cloud.ModelId,
+            _ => null,
+        };
+        return new PolishSetup(provider, _polishUsesLocalRuntime, EffectivePolishResource(provider), modelId);
+    }
 
     internal void MaybeShowPolishSetupCard(DeliveryReport delivered, MainWindow window)
     {

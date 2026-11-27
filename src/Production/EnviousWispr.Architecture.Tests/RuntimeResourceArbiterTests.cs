@@ -56,4 +56,34 @@ public sealed class RuntimeResourceArbiterTests
         await cpu.Lease!.DisposeAsync();
         await accelerator.Lease!.DisposeAsync();
     }
+
+    [Fact]
+    public async Task FinalAsrPreemptsBackgroundWorkAndRotatesToken()
+    {
+        using var arbiter = new RuntimeResourceArbiter();
+        var backgroundToken = arbiter.CurrentBackgroundToken;
+        Assert.False(backgroundToken.IsCancellationRequested);
+
+        var backgroundLease = await arbiter.AcquireAsync(
+            RuntimeResourceKind.Cpu,
+            RuntimeWorkloadKind.LocalPolishBackground,
+            TimeSpan.Zero);
+        Assert.True(backgroundLease.Succeeded);
+
+        // Release the lease as soon as FinalAsr cancels the background token.
+        using var registration = backgroundToken.Register(() =>
+        {
+            _ = backgroundLease.Lease!.DisposeAsync().AsTask();
+        });
+
+        var finalAsr = await arbiter.AcquireAsync(
+            RuntimeResourceKind.Cpu,
+            RuntimeWorkloadKind.FinalAsr,
+            TimeSpan.FromSeconds(1));
+
+        Assert.True(backgroundToken.IsCancellationRequested);
+        Assert.True(finalAsr.Succeeded);
+        Assert.False(arbiter.CurrentBackgroundToken.IsCancellationRequested);
+        await finalAsr.Lease!.DisposeAsync();
+    }
 }

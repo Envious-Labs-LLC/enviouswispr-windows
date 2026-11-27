@@ -764,6 +764,9 @@ public partial class App
                 var models = _polishModelSource;
                 _polishModelSource = null;
                 models?.Dispose();
+                var ollamaHost = _ollamaModelHost;
+                _ollamaModelHost = null;
+                ollamaHost?.Dispose();
             }),
             new LifetimeStep("activation channel", async () =>
             {

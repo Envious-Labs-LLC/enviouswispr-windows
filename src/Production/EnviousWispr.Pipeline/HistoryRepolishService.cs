@@ -20,6 +20,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
     private readonly Func<IReadOnlyList<CustomWordEntry>> _customWords;
     private readonly Func<IReadOnlyList<string>> _enabledVocabularyPackIds;
     private readonly ITextTargetAdapter? _targetAdapter;
+    private readonly Func<ITextTargetAdapter?>? _targetAdapterProvider;
     private readonly IAppLogger? _logger;
     private readonly TimeProvider _clock;
 
@@ -33,7 +34,8 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         ITextTargetAdapter? targetAdapter = null,
         IAppLogger? logger = null,
         TimeProvider? clock = null,
-        Func<IReadOnlyList<string>>? enabledVocabularyPackIds = null)
+        Func<IReadOnlyList<string>>? enabledVocabularyPackIds = null,
+        Func<ITextTargetAdapter?>? targetAdapterProvider = null)
     {
         ArgumentNullException.ThrowIfNull(historyStore);
         ArgumentNullException.ThrowIfNull(polishExecutor);
@@ -47,6 +49,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         _customWords = customWords ?? (() => Array.Empty<CustomWordEntry>());
         _enabledVocabularyPackIds = enabledVocabularyPackIds ?? (() => Array.Empty<string>());
         _targetAdapter = targetAdapter;
+        _targetAdapterProvider = targetAdapterProvider;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
     }
@@ -190,11 +193,12 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         }
 
         var copied = false;
-        if (copyToClipboard && _targetAdapter is not null)
+        var targetAdapter = _targetAdapterProvider?.Invoke() ?? _targetAdapter;
+        if (copyToClipboard && targetAdapter is not null)
         {
             try
             {
-                var commit = await _targetAdapter.CopyOnlyAsync(
+                var commit = await targetAdapter.CopyOnlyAsync(
                     new ProcessedText(sessionId, newText),
                     cancellationToken).ConfigureAwait(false);
                 copied = commit.Delivered || commit.ClipboardFallback;

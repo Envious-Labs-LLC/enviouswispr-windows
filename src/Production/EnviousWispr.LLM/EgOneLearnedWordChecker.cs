@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using EnviousWispr.Core.Learning;
+using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.LLM;
 
@@ -36,13 +37,19 @@ public sealed class EgOneLearnedWordChecker : ILearnedWordChecker
 
     private readonly Func<EgOnePolishProvider?> _providerAccessor;
     private readonly TimeSpan _deadline;
+    private readonly IRuntimeResourceAdmission? _resourceAdmission;
+    private readonly Func<RuntimeResourceKind>? _resourceKind;
 
     public EgOneLearnedWordChecker(
         Func<EgOnePolishProvider?> providerAccessor,
-        TimeSpan? deadline = null)
+        TimeSpan? deadline = null,
+        IRuntimeResourceAdmission? resourceAdmission = null,
+        Func<RuntimeResourceKind>? resourceKind = null)
     {
         _providerAccessor = providerAccessor ?? throw new ArgumentNullException(nameof(providerAccessor));
         _deadline = deadline is { } d && d > TimeSpan.Zero ? d : DefaultDeadline;
+        _resourceAdmission = resourceAdmission;
+        _resourceKind = resourceKind;
     }
 
     public string ArmName => ProviderId;
@@ -68,13 +75,41 @@ public sealed class EgOneLearnedWordChecker : ILearnedWordChecker
             return null;
         }
 
-        var result = await provider.TryCompleteJudgeJsonAsync(
-            SystemPromptText,
-            BuildUserMessage(questions),
-            CreateResponseFormat(),
-            MaxResponseTokens,
-            _deadline,
-            cancellationToken).ConfigureAwait(false);
+        IAsyncDisposable? lease = null;
+        if (_resourceAdmission is not null)
+        {
+            var kind = _resourceKind?.Invoke() ?? RuntimeResourceKind.Cpu;
+            var acquired = await _resourceAdmission.AcquireAsync(
+                kind,
+                RuntimeWorkloadKind.LocalPolishBackground,
+                TimeSpan.FromMilliseconds(250),
+                cancellationToken).ConfigureAwait(false);
+            if (!acquired.Succeeded || acquired.Lease is null)
+            {
+                return null;
+            }
+
+            lease = acquired.Lease;
+        }
+
+        EgOneJudgeCallResult result;
+        try
+        {
+            result = await provider.TryCompleteJudgeJsonAsync(
+                SystemPromptText,
+                BuildUserMessage(questions),
+                CreateResponseFormat(),
+                MaxResponseTokens,
+                _deadline,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (lease is not null)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+        }
 
         if (result.Status == EgOneJudgeCallStatus.Cancelled)
         {

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using EnviousWispr.Core.Learning;
+using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.LLM;
 
@@ -40,15 +41,21 @@ public sealed class EgOneCorrectionJudge : ICorrectionJudge
     private readonly Func<EgOnePolishProvider?> _providerAccessor;
     private readonly Func<bool>? _canRun;
     private readonly TimeSpan _deadline;
+    private readonly IRuntimeResourceAdmission? _resourceAdmission;
+    private readonly Func<RuntimeResourceKind>? _resourceKind;
 
     public EgOneCorrectionJudge(
         Func<EgOnePolishProvider?> providerAccessor,
         Func<bool>? canRun = null,
-        TimeSpan? deadline = null)
+        TimeSpan? deadline = null,
+        IRuntimeResourceAdmission? resourceAdmission = null,
+        Func<RuntimeResourceKind>? resourceKind = null)
     {
         _providerAccessor = providerAccessor ?? throw new ArgumentNullException(nameof(providerAccessor));
         _canRun = canRun;
         _deadline = deadline is { } d && d > TimeSpan.Zero ? d : DefaultDeadline;
+        _resourceAdmission = resourceAdmission;
+        _resourceKind = resourceKind;
     }
 
     public ValueTask<CorrectionJudgeCapabilities> GetCapabilitiesAsync(CancellationToken cancellationToken = default)
@@ -99,13 +106,52 @@ public sealed class EgOneCorrectionJudge : ICorrectionJudge
             return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Unavailable);
         }
 
-        var result = await provider.TryCompleteJudgeJsonAsync(
-            BuildSystemPrompt(),
-            BuildUserMessage(request),
-            CreateResponseFormat(),
-            MaxResponseTokens,
-            _deadline,
-            cancellationToken).ConfigureAwait(false);
+        IAsyncDisposable? lease = null;
+        if (_resourceAdmission is not null)
+        {
+            var kind = _resourceKind?.Invoke() ?? RuntimeResourceKind.Cpu;
+            try
+            {
+                var acquired = await _resourceAdmission.AcquireAsync(
+                    kind,
+                    RuntimeWorkloadKind.LocalPolishBackground,
+                    TimeSpan.Zero,
+                    cancellationToken).ConfigureAwait(false);
+                if (!acquired.Succeeded || acquired.Lease is null)
+                {
+                    return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.NotGranted);
+                }
+
+                lease = acquired.Lease;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Cancelled);
+            }
+            catch (ObjectDisposedException)
+            {
+                return new CorrectionJudgeOutcome.Bypass(CorrectionJudgeBypass.Unavailable);
+            }
+        }
+
+        EgOneJudgeCallResult result;
+        try
+        {
+            result = await provider.TryCompleteJudgeJsonAsync(
+                BuildSystemPrompt(),
+                BuildUserMessage(request),
+                CreateResponseFormat(),
+                MaxResponseTokens,
+                _deadline,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (lease is not null)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+        }
 
         return result.Status switch
         {

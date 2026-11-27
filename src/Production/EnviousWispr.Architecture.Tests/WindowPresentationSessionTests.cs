@@ -316,6 +316,90 @@ public sealed class WindowPresentationSessionTests
     }
 
     [Fact]
+    public async Task WindowCompositionWiresHistoryRepolishServiceInShell()
+    {
+        var shell = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"), "App*.cs")
+                .Order()
+                .Select(File.ReadAllText));
+        Assert.Contains("new HistoryRepolishService(", shell, StringComparison.Ordinal);
+        Assert.Contains("historyRepolishService);", shell, StringComparison.Ordinal);
+
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "ew-win-comp-repolish-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        try
+        {
+            using var history = new EnviousWispr.Services.History.JsonHistoryStore(
+                Path.Combine(tempDirectory, "history.json"),
+                Path.Combine(tempDirectory, "recordings"));
+            var entry = new DictationHistoryEntry(
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow,
+                "spoken text",
+                "parakeet",
+                WasPolished: false,
+                WasDelivered: true);
+            await history.AddAsync(entry, 30, DateTimeOffset.UtcNow);
+
+            using var arbiter = new EnviousWispr.Services.Runtime.RuntimeResourceArbiter();
+            var executor = new EnviousWispr.Pipeline.PolishExecutor(
+                arbiter,
+                new NoopPolishEffects(),
+                () => []);
+            var repolishService = new EnviousWispr.Pipeline.HistoryRepolishService(
+                history,
+                executor,
+                new EnviousWispr.Pipeline.DeterministicTextPipeline(),
+                () => new EnviousWispr.Pipeline.PolishSetup(
+                    new StubRepolishProvider(),
+                    UsesLocalRuntime: false,
+                    EnviousWispr.Core.Runtime.RuntimeResourceKind.Cpu,
+                    "stub-model"));
+
+            await using var session = WindowComposition.Compose(
+                new HeldStore(),
+                AppSettings.Default,
+                history,
+                new FakeRecoveryStore(),
+                new FakeKeys(),
+                new FakeModels(),
+                new FakeProfiles(),
+                new FakeDiagnostics(),
+                repolishService: repolishService);
+
+            var result = await session.History.RepolishAsync(entry.Id);
+
+            Assert.True(result.Succeeded, $"Expected repolish to succeed, got {result.Status}");
+            Assert.Equal("polished text", result.Entry?.Text);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private sealed class NoopPolishEffects : EnviousWispr.Pipeline.IPolishAttemptEffects
+    {
+        public void RecordPolishStarted(string providerId) { }
+        public void RecordPolishFinished(string providerId, PolishResult result, bool usedLocalRuntime, long elapsedMilliseconds) { }
+    }
+
+    private sealed class StubRepolishProvider : IPolishProvider
+    {
+        public string ProviderId => "stub";
+        public Task<PolishResult> TryPolishAsync(PolishRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PolishResult(request.Input with { Text = "polished text" }, PolishAttemptStatus.Polished));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Fact]
     public void TheWindowDoesNotDrawAnAnswerThatArrivesAfterTheDrainBegan()
     {
         // A SUCCESSFUL ANSWER CAN LAND AFTER THE DRAIN BEGAN: a load inside a store that ignores its

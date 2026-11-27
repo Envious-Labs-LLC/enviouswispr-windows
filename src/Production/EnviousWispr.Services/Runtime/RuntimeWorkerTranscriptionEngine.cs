@@ -29,7 +29,9 @@ public sealed record RuntimeWorkerTranscriptionOptions(
     string? Language = null,
     ProcessPriorityClass? WorkerPriority = null,
     Func<string?>? CurrentLanguage = null,
-    bool AllowFullPrecisionFallback = true);
+    bool AllowFullPrecisionFallback = true,
+    IRuntimeResourceAdmission? ResourceAdmission = null,
+    TimeSpan? ResourceWaitTimeout = null);
 
 internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
 {
@@ -47,10 +49,14 @@ internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDis
 public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime
 {
     private const int RequiredSampleRate = 16_000;
+    private static readonly TimeSpan DefaultResourceWaitTimeout = TimeSpan.FromSeconds(2);
     private readonly RuntimeWorkerSupervisor _supervisor;
     private readonly TimeSpan _startupTimeout;
     private readonly TimeSpan _transcriptionTimeout;
     private readonly Func<string?> _language;
+    private readonly IRuntimeResourceAdmission? _resourceAdmission;
+    private readonly RuntimeResourceKind _resourceKind;
+    private readonly TimeSpan _resourceWaitTimeout;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private bool _disposed;
 
@@ -64,6 +70,11 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         _startupTimeout = options.StartupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = options.TranscriptionTimeout ?? TimeSpan.FromMinutes(2);
         _language = LanguageFor(options);
+        _resourceAdmission = options.ResourceAdmission;
+        _resourceKind = options.Provider == RuntimeProviderKind.Cpu
+            ? RuntimeResourceKind.Cpu
+            : RuntimeResourceKind.Accelerator;
+        _resourceWaitTimeout = options.ResourceWaitTimeout ?? DefaultResourceWaitTimeout;
         _supervisor = new RuntimeWorkerSupervisor(
             options.WorkerExecutable,
             CreateWorkerArguments(options),
@@ -77,7 +88,10 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         string engineId,
         TimeSpan? startupTimeout = null,
         TimeSpan? transcriptionTimeout = null,
-        Func<string?>? language = null)
+        Func<string?>? language = null,
+        IRuntimeResourceAdmission? resourceAdmission = null,
+        RuntimeResourceKind resourceKind = RuntimeResourceKind.Cpu,
+        TimeSpan? resourceWaitTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(supervisor);
         ArgumentException.ThrowIfNullOrWhiteSpace(engineId);
@@ -86,6 +100,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         EngineId = engineId;
         _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = transcriptionTimeout ?? TimeSpan.FromMinutes(2);
+        _resourceAdmission = resourceAdmission;
+        _resourceKind = resourceKind;
+        _resourceWaitTimeout = resourceWaitTimeout ?? DefaultResourceWaitTimeout;
     }
 
     public string EngineId { get; }
@@ -143,24 +160,53 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             audio.Samples.Length,
             // READ NOW, AT THE TAKE, not when the worker was built: the setting as it stands.
             _language());
-        var response = await _supervisor.TranscribeAsync(
-            request,
-            _transcriptionTimeout,
-            effectiveCancellationToken).ConfigureAwait(false);
-        if (response is null)
-        {
-            var recovery = await _supervisor.EnsureHealthyAsync(
-                _startupTimeout,
-                effectiveCancellationToken).ConfigureAwait(false);
-            if (!recovery.Succeeded)
-            {
-                throw Failure(AppErrorCode.RuntimeWorkerFailed);
-            }
 
+        // Dictation-first front door: acquire the shared processor/accelerator lease (which preempts
+        // background warmups/judges). Heart is sacred — if an unrelated limb fails to yield inside
+        // the deadline, raw transcription still proceeds rather than failing the user's take.
+        IAsyncDisposable? resourceLease = null;
+        if (_resourceAdmission is not null)
+        {
+            var acquired = await _resourceAdmission.AcquireAsync(
+                _resourceKind,
+                RuntimeWorkloadKind.FinalAsr,
+                _resourceWaitTimeout,
+                effectiveCancellationToken).ConfigureAwait(false);
+            if (acquired.Succeeded)
+            {
+                resourceLease = acquired.Lease;
+            }
+        }
+
+        RuntimeWorkerResponse? response;
+        try
+        {
             response = await _supervisor.TranscribeAsync(
                 request,
                 _transcriptionTimeout,
                 effectiveCancellationToken).ConfigureAwait(false);
+            if (response is null)
+            {
+                var recovery = await _supervisor.EnsureHealthyAsync(
+                    _startupTimeout,
+                    effectiveCancellationToken).ConfigureAwait(false);
+                if (!recovery.Succeeded)
+                {
+                    throw Failure(AppErrorCode.RuntimeWorkerFailed);
+                }
+
+                response = await _supervisor.TranscribeAsync(
+                    request,
+                    _transcriptionTimeout,
+                    effectiveCancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (resourceLease is not null)
+            {
+                await resourceLease.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         if (response?.Status != "complete" || response.Transcript is null)

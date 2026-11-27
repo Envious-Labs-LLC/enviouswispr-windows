@@ -1,9 +1,15 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace EnviousWispr.LLM;
+namespace EnviousWispr.Core.Runtime;
 
-internal sealed class WindowsProcessJob : IDisposable
+/// <summary>
+/// Assigns an owned child process to a Windows Job Object configured with
+/// <c>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</c> so the OS terminates the worker tree even if the
+/// parent process exits abruptly or crashes.
+/// </summary>
+public sealed class WindowsProcessJob : IDisposable
 {
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
     private const int JobObjectExtendedLimitInformationClass = 9;
@@ -17,6 +23,11 @@ internal sealed class WindowsProcessJob : IDisposable
     public static WindowsProcessJob? TryCreateFor(Process process)
     {
         ArgumentNullException.ThrowIfNull(process);
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
         var handle = CreateJobObject(nint.Zero, null);
         if (handle == nint.Zero)
         {
@@ -31,12 +42,20 @@ internal sealed class WindowsProcessJob : IDisposable
             },
         };
         var length = (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>();
-        if (!SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformationClass,
-                ref information,
-                length) ||
-            !AssignProcessToJobObject(handle, process.Handle))
+        try
+        {
+            if (!SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformationClass,
+                    ref information,
+                    length) ||
+                !AssignProcessToJobObject(handle, process.Handle))
+            {
+                CloseHandle(handle);
+                return null;
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
         {
             CloseHandle(handle);
             return null;

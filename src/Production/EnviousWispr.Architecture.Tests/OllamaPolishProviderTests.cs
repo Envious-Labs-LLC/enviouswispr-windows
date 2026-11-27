@@ -298,6 +298,72 @@ public sealed class OllamaPolishProviderTests
         Assert.Empty(handler.Exchanges);
     }
 
+    [Fact]
+    public async Task TryPolishCancelsActiveWarmupAndSerializesConcurrentRequests()
+    {
+        var warmupChatEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var warmupCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentChatCount = 0;
+        var maxConcurrentChatCount = 0;
+
+        var handler = new ScriptedHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return JsonResponse(Tags("""{"name":"llama3.2","capabilities":["completion"]}"""));
+            }
+
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            if (body.Contains("\"num_predict\":1", StringComparison.Ordinal))
+            {
+                warmupChatEntered.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    warmupCancelled.TrySetResult();
+                    throw;
+                }
+            }
+
+            var current = Interlocked.Increment(ref concurrentChatCount);
+            if (current > maxConcurrentChatCount)
+            {
+                maxConcurrentChatCount = current;
+            }
+
+            try
+            {
+                await Task.Delay(25, cancellationToken);
+                return JsonResponse(Chat("Cleaned text."));
+            }
+            finally
+            {
+                Interlocked.Decrement(ref concurrentChatCount);
+            }
+        });
+
+        await using var provider = new OllamaPolishProvider(
+            new OllamaPolishOptions(null, "llama3.2"),
+            handler);
+
+        var warmupTask = provider.WarmUpAsync();
+        await warmupChatEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var polishTask1 = provider.TryPolishAsync(new PolishRequest(Input));
+        var polishTask2 = provider.TryPolishAsync(new PolishRequest(Input));
+
+        var warmupOutcome = await warmupTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var results = await Task.WhenAll(polishTask1, polishTask2).WaitAsync(TimeSpan.FromSeconds(5));
+
+        await warmupCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(OllamaWarmupOutcome.Cancelled, warmupOutcome);
+        Assert.Equal(1, maxConcurrentChatCount);
+        Assert.All(results, r => Assert.Equal(PolishAttemptStatus.Polished, r.Status));
+    }
+
     private static string Tags(params string[] models) =>
         $"{{\"models\":[{string.Join(',', models)}]}}";
 

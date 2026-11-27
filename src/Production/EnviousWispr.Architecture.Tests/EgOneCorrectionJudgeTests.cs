@@ -295,6 +295,32 @@ public sealed class EgOneCorrectionJudgeTests : IDisposable
     }
 
     [Fact]
+    public async Task JudgeAsyncReturnsNotGrantedWhenResourceAdmissionIsBusy()
+    {
+        var runtime = new FakeRuntime();
+        using var handler = new StubHandler((_, _) => throw new InvalidOperationException("should not send when busy"));
+        await using var provider = new EgOnePolishProvider(runtime, DefaultOptions, handler);
+        using var arbiter = new EnviousWispr.Services.Runtime.RuntimeResourceArbiter();
+        var busyLease = await arbiter.AcquireAsync(
+            EnviousWispr.Core.Runtime.RuntimeResourceKind.Cpu,
+            EnviousWispr.Core.Runtime.RuntimeWorkloadKind.FinalAsr,
+            TimeSpan.Zero);
+        Assert.True(busyLease.Succeeded);
+
+        var judge = new EgOneCorrectionJudge(() => provider, resourceAdmission: arbiter);
+        var req = new CorrectionJudgeRequest(
+            [new CorrectionCandidate(1, "saurab", "Saurabh")],
+            "Ask saurab.",
+            "en");
+        var outcome = await judge.JudgeAsync(req);
+
+        var bypass = Assert.IsType<CorrectionJudgeOutcome.Bypass>(outcome);
+        Assert.Equal(CorrectionJudgeBypass.NotGranted, bypass.Reason);
+        Assert.Equal(0, handler.CallCount);
+        await busyLease.Lease!.DisposeAsync();
+    }
+
+    [Fact]
     public void BuildContextExcerptCentersLongDictationAroundEditedTokenSpan()
     {
         var prefix = string.Join(' ', Enumerable.Repeat("filler", 150)); // > 900 UTF-16 chars

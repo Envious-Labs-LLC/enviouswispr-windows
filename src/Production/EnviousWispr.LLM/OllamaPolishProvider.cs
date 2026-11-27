@@ -25,6 +25,9 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
     private readonly OllamaPolishOptions _options;
     private readonly TimeSpan _requestTimeout;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly SemaphoreSlim _requestGate = new(1, 1);
+    private readonly Lock _warmupLock = new();
+    private CancellationTokenSource? _activeWarmupCts;
     private bool _disposed;
 
     public OllamaPolishProvider(
@@ -56,9 +59,74 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
         CancellationToken cancellationToken = default) =>
         _apiClient.ProbeModelAsync(_options.ModelId, cancellationToken);
 
-    public Task<EnviousWispr.Core.Polish.OllamaWarmupOutcome> WarmUpAsync(
-        CancellationToken cancellationToken = default) =>
-        _apiClient.WarmUpAsync(_options.ModelId, cancellationToken);
+    public async Task<EnviousWispr.Core.Polish.OllamaWarmupOutcome> WarmUpAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        CancellationTokenSource? previous;
+        lock (_warmupLock)
+        {
+            previous = _activeWarmupCts;
+            _activeWarmupCts = linked;
+        }
+
+        TryCancel(previous);
+        try
+        {
+            await _requestGate.WaitAsync(linked.Token).ConfigureAwait(false);
+            try
+            {
+                return await _apiClient.WarmUpAsync(_options.ModelId, linked.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _requestGate.Release();
+            }
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested || cancellationToken.IsCancellationRequested)
+        {
+            return EnviousWispr.Core.Polish.OllamaWarmupOutcome.Cancelled;
+        }
+        finally
+        {
+            lock (_warmupLock)
+            {
+                if (ReferenceEquals(_activeWarmupCts, linked))
+                {
+                    _activeWarmupCts = null;
+                }
+            }
+        }
+    }
+
+    private void CancelActiveWarmup()
+    {
+        CancellationTokenSource? active;
+        lock (_warmupLock)
+        {
+            active = _activeWarmupCts;
+            _activeWarmupCts = null;
+        }
+
+        TryCancel(active);
+    }
+
+    private static void TryCancel(CancellationTokenSource? cts)
+    {
+        if (cts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
 
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
@@ -72,116 +140,125 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
             return new PolishResult(request.Input, PolishAttemptStatus.Unchanged);
         }
 
+        CancelActiveWarmup();
         var timer = Stopwatch.StartNew();
-        var readiness = await _apiClient.ProbeModelAsync(
-            _options.ModelId,
-            cancellationToken).ConfigureAwait(false);
-        if (readiness.Readiness != OllamaModelReadiness.Ready || readiness.Model is null)
-        {
-            return Fallback(
-                request.Input,
-                PolishAttemptStatus.Unavailable,
-                readiness.Error ?? new AppError(
-                    AppErrorCode.PolishProviderUnavailable,
-                    AppErrorStage.LocalPolish,
-                    CanRetry: true),
-                timer);
-        }
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_requestTimeout);
+        await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            for (var attempt = 0; ; attempt++)
+            var readiness = await _apiClient.ProbeModelAsync(
+                _options.ModelId,
+                cancellationToken).ConfigureAwait(false);
+            if (readiness.Readiness != OllamaModelReadiness.Ready || readiness.Model is null)
             {
-                try
-                {
-                    var output = await SendOnceAsync(
-                        request.Input.Text,
-                        request.Vocabulary,
-                        request.RecognitionLanguage,
-                        request.TargetAppName,
-                        readiness.Model,
-                        timeout.Token).ConfigureAwait(false);
-                    if (LooksLikeCodeOutput(output))
-                    {
-                        return Fallback(
-                            request.Input,
-                            PolishAttemptStatus.Failed,
-                            AppErrorCode.PolishFailed,
-                            timer,
-                            canRetry: false);
-                    }
-
-                    output = CleanOutput(output);
-                    if (output is null || !EgOnePolishProvider.IsSafeOutput(request.Input.Text, output))
-                    {
-                        return Fallback(
-                            request.Input,
-                            PolishAttemptStatus.Failed,
-                            AppErrorCode.PolishEmptyResponse,
-                            timer,
-                            canRetry: false);
-                    }
-
-                    timer.Stop();
-                    return new PolishResult(
-                        new ProcessedText(request.Input.SessionId, output),
-                        string.Equals(request.Input.Text, output, StringComparison.Ordinal)
-                            ? PolishAttemptStatus.Unchanged
-                            : PolishAttemptStatus.Polished,
-                        ElapsedMilliseconds: timer.ElapsedMilliseconds);
-                }
-                catch (OllamaPolishException exception) when (
-                    exception.CanRetry && attempt < RetryDelays.Length)
-                {
-                    await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (
-                    exception is HttpRequestException or IOException &&
-                    attempt < RetryDelays.Length)
-                {
-                    await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
-                }
-                catch (OllamaPolishException exception)
-                {
-                    return Fallback(
-                        request.Input,
-                        StatusFor(exception.ErrorCode),
-                        exception.ErrorCode,
-                        timer,
-                        exception.CanRetry);
-                }
-                catch (Exception exception) when (exception is HttpRequestException or IOException)
-                {
-                    return Fallback(
-                        request.Input,
-                        PolishAttemptStatus.Unavailable,
+                return Fallback(
+                    request.Input,
+                    PolishAttemptStatus.Unavailable,
+                    readiness.Error ?? new AppError(
                         AppErrorCode.PolishProviderUnavailable,
-                        timer);
+                        AppErrorStage.LocalPolish,
+                        CanRetry: true),
+                    timer);
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(_requestTimeout);
+            try
+            {
+                for (var attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        var output = await SendOnceAsync(
+                            request.Input.Text,
+                            request.Vocabulary,
+                            request.RecognitionLanguage,
+                            request.TargetAppName,
+                            readiness.Model,
+                            timeout.Token).ConfigureAwait(false);
+                        if (LooksLikeCodeOutput(output))
+                        {
+                            return Fallback(
+                                request.Input,
+                                PolishAttemptStatus.Failed,
+                                AppErrorCode.PolishFailed,
+                                timer,
+                                canRetry: false);
+                        }
+
+                        output = CleanOutput(output);
+                        if (output is null || !EgOnePolishProvider.IsSafeOutput(request.Input.Text, output))
+                        {
+                            return Fallback(
+                                request.Input,
+                                PolishAttemptStatus.Failed,
+                                AppErrorCode.PolishEmptyResponse,
+                                timer,
+                                canRetry: false);
+                        }
+
+                        timer.Stop();
+                        return new PolishResult(
+                            new ProcessedText(request.Input.SessionId, output),
+                            string.Equals(request.Input.Text, output, StringComparison.Ordinal)
+                                ? PolishAttemptStatus.Unchanged
+                                : PolishAttemptStatus.Polished,
+                            ElapsedMilliseconds: timer.ElapsedMilliseconds);
+                    }
+                    catch (OllamaPolishException exception) when (
+                        exception.CanRetry && attempt < RetryDelays.Length)
+                    {
+                        await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (
+                        exception is HttpRequestException or IOException &&
+                        attempt < RetryDelays.Length)
+                    {
+                        await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
+                    }
+                    catch (OllamaPolishException exception)
+                    {
+                        return Fallback(
+                            request.Input,
+                            StatusFor(exception.ErrorCode),
+                            exception.ErrorCode,
+                            timer,
+                            exception.CanRetry);
+                    }
+                    catch (Exception exception) when (exception is HttpRequestException or IOException)
+                    {
+                        return Fallback(
+                            request.Input,
+                            PolishAttemptStatus.Unavailable,
+                            AppErrorCode.PolishProviderUnavailable,
+                            timer);
+                    }
                 }
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return Fallback(
+                    request.Input,
+                    PolishAttemptStatus.TimedOut,
+                    AppErrorCode.PolishTimedOut,
+                    timer);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (JsonException)
+            {
+                return Fallback(
+                    request.Input,
+                    PolishAttemptStatus.Failed,
+                    AppErrorCode.PolishBadRequest,
+                    timer,
+                    canRetry: false);
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        finally
         {
-            return Fallback(
-                request.Input,
-                PolishAttemptStatus.TimedOut,
-                AppErrorCode.PolishTimedOut,
-                timer);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (JsonException)
-        {
-            return Fallback(
-                request.Input,
-                PolishAttemptStatus.Failed,
-                AppErrorCode.PolishBadRequest,
-                timer,
-                canRetry: false);
+            _requestGate.Release();
         }
     }
 
@@ -207,42 +284,51 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
             return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
         }
 
-        var readiness = await _apiClient.ProbeModelAsync(_options.ModelId, cancellationToken)
-            .ConfigureAwait(false);
-        if (readiness.Readiness != OllamaModelReadiness.Ready || readiness.Model is null)
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        if (readiness.Model.IsRemote)
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.NotSupported);
-        }
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_requestTimeout);
-
-        string reply;
+        CancelActiveWarmup();
+        await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            reply = await SendOnceAsync(
-                spokenForm,
-                AliasSuggestionPrompt.SystemPrompt,
-                AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
-                readiness.Model,
-                timeout.Token).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (
-            exception is OllamaPolishException or HttpRequestException or OperationCanceledException
-                or JsonException)
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
+            var readiness = await _apiClient.ProbeModelAsync(_options.ModelId, cancellationToken)
+                .ConfigureAwait(false);
+            if (readiness.Readiness != OllamaModelReadiness.Ready || readiness.Model is null)
+            {
+                return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
 
-        var suggestions = AliasSuggestions.Parse(reply, spokenForm, existing);
-        return suggestions.Count == 0
-            ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
-            : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
+            if (readiness.Model.IsRemote)
+            {
+                return MishearingAdvice.None(MishearingAdviceStatus.NotSupported);
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(_requestTimeout);
+
+            string reply;
+            try
+            {
+                reply = await SendOnceAsync(
+                    spokenForm,
+                    AliasSuggestionPrompt.SystemPrompt,
+                    AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
+                    readiness.Model,
+                    timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is OllamaPolishException or HttpRequestException or OperationCanceledException
+                    or JsonException)
+            {
+                return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
+            var suggestions = AliasSuggestions.Parse(reply, spokenForm, existing);
+            return suggestions.Count == 0
+                ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
+                : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
+        }
+        finally
+        {
+            _requestGate.Release();
+        }
     }
 
     private async Task<string> SendOnceAsync(
@@ -423,6 +509,7 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
         if (!_disposed)
         {
             _disposed = true;
+            CancelActiveWarmup();
             await _apiClient.DisposeAsync().ConfigureAwait(false);
         }
 

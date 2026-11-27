@@ -555,6 +555,21 @@ public sealed class RuntimeWorkerSupervisorTests
         Assert.Null(supervisor.WorkerProcessId);
     }
 
+    [Fact]
+    public async Task StartedWorkerIsAssignedToWindowsProcessJobAndDisposedOnStop()
+    {
+        await using var supervisor = new RuntimeWorkerSupervisor(WorkerPath(), maximumRestarts: 0);
+        Assert.False(supervisor.HasProcessJob);
+
+        var started = await supervisor.StartAsync(RequestTimeout);
+        Assert.True(started.Succeeded);
+        Assert.Equal(OperatingSystem.IsWindows(), supervisor.HasProcessJob);
+
+        var stopped = await supervisor.StopAsync();
+        Assert.True(stopped.Succeeded);
+        Assert.False(supervisor.HasProcessJob);
+    }
+
     private static RuntimeWorkerTranscriptionRequest TranscriptionRequest() => new(
         Guid.NewGuid(), "unused-test-audio", SampleCount: 1);
 

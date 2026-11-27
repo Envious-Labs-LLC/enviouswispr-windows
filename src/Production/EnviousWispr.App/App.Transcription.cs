@@ -319,7 +319,8 @@ public partial class App
                 CpuFallbackThreads: cpuSelection.IntraOpThreads,
                 Language: language,
                 CurrentLanguage: CurrentWhisperLanguage,
-                CudaRuntimeDirectory: _cudaRuntimeDirectory));
+                CudaRuntimeDirectory: _cudaRuntimeDirectory,
+                ResourceAdmission: _resourceArbiter));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateCpuParakeetEngine(
@@ -350,7 +351,8 @@ public partial class App
                 selection.InterOpThreads,
                 CpuFallbackThreads: selection.IntraOpThreads,
                 Language: language,
-                CurrentLanguage: CurrentWhisperLanguage));
+                CurrentLanguage: CurrentWhisperLanguage,
+                ResourceAdmission: _resourceArbiter));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
@@ -386,7 +388,8 @@ public partial class App
             WhisperPack: selection.ModelPack.Value,
             Language: language,
             CurrentLanguage: CurrentWhisperLanguage,
-            CudaRuntimeDirectory: _cudaRuntimeDirectory));
+            CudaRuntimeDirectory: _cudaRuntimeDirectory,
+            ResourceAdmission: _resourceArbiter));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
@@ -417,7 +420,8 @@ public partial class App
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: selection.ModelPack.Value,
             Language: language,
-            CurrentLanguage: CurrentWhisperLanguage));
+            CurrentLanguage: CurrentWhisperLanguage,
+            ResourceAdmission: _resourceArbiter));
     }
 
     /// <summary>Transcribes a chosen audio file for the Transcribe a File page. Ref: #211, macOS #2648.</summary>
