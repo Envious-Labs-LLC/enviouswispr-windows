@@ -375,16 +375,22 @@ public sealed class AiPolishEgOneParityTests
         Assert.Contains("TriggerAutoSaveAsync()", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("preferences.EgOneModelId", appCode, StringComparison.Ordinal);
 
-        // Verify RemoveEgOneModelAsync unloads via TeardownPolishAsync (which invokes AbortPolishRuntime before DisposeAsync).
+        // Verify RemoveEgOneModelAsync unloads via TeardownPolishAsync (which invokes AbortPolishRuntime and drains repolish before DisposeAsync).
         var teardownStart = deliveryCode.IndexOf("private async Task TeardownPolishAsync()", StringComparison.Ordinal);
+        var teardownEnd = deliveryCode.IndexOf("private async Task ReconfigurePolishRuntimeAsync()", teardownStart, StringComparison.Ordinal);
         var removeStart = deliveryCode.IndexOf("private async Task RemoveEgOneModelAsync(", StringComparison.Ordinal);
-        Assert.True(teardownStart >= 0 && removeStart >= 0);
-        var teardownBody = deliveryCode.Substring(teardownStart, 550);
+        Assert.True(teardownStart >= 0 && teardownEnd > teardownStart && removeStart >= 0);
+        var teardownBody = deliveryCode[teardownStart..teardownEnd];
         var removeBody = deliveryCode.Substring(removeStart, 1_500);
         Assert.True(
             teardownBody.IndexOf("AbortPolishRuntime();", StringComparison.Ordinal) <
             teardownBody.IndexOf("DisposeAsync()", StringComparison.Ordinal),
             "AbortPolishRuntime must run before disposing the polish provider.");
+        Assert.Contains("CancelAndDrainRepolishAsync()", teardownBody, StringComparison.Ordinal);
+        Assert.True(
+            teardownBody.IndexOf("CancelAndDrainRepolishAsync()", StringComparison.Ordinal) <
+            teardownBody.IndexOf("DisposeAsync()", StringComparison.Ordinal),
+            "CancelAndDrainRepolishAsync must run before disposing the polish provider.");
         Assert.Contains("IsSpeechEngineBusy", removeBody, StringComparison.Ordinal);
         Assert.Contains("ModelPackageCleaner.RemoveAsync", removeBody, StringComparison.Ordinal);
         Assert.Contains("TeardownPolishAsync", removeBody, StringComparison.Ordinal);
