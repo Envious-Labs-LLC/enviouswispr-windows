@@ -4,6 +4,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Feedback;
 using EnviousWispr.Core.Learning;
+using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
@@ -21,6 +22,8 @@ internal sealed record WindowDictationHost(
     Action? TranscriptionRetryRequested = null,
     Action? ManualDictationToggleRequested = null,
     Action<bool>? KeybindCaptureActiveChanged = null,
+    Action<bool>? OnboardingKeyRehearsalActiveChanged = null,
+    Func<string, DictationRecordingMode, Task<(bool Applied, string? Error)>>? ApplyOnboardingRecordingKey = null,
     Func<string, IProgress<FileTranscriptionProgress>, CancellationToken, Task<FileTranscriptionResult>>? TranscribeFile = null);
 
 internal sealed record WindowHistoryHost(
@@ -48,7 +51,10 @@ internal sealed record WindowModelHost(
     Action? ModelDownloadCancelRequested = null,
     Action<string, string?, bool>? OnboardingDualDownloadRequested = null,
     Action? OnboardingDualDownloadCancelRequested = null,
+    Action? OnboardingDualDownloadSkipPolishRequested = null,
     Action? OnboardingDualDownloadRetryRequested = null,
+    Func<FinalAsrEngine, OnboardingPolishChoiceKind, string?, string?, Task>? ApplyOnboardingEnginesChoice = null,
+    Func<FinalAsrEngine, string?, Task<(bool SpeechInstalled, bool PolishInstalled)>>? ProbeOnboardingModelsInstalled = null,
     Action<string>? EgOneModelDownloadRequested = null,
     Action? EgOneModelDownloadCancelRequested = null,
     Action<string>? EgOneModelRemoveRequested = null,

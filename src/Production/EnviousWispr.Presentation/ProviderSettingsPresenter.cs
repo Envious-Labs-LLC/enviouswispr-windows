@@ -138,6 +138,9 @@ public sealed class ProviderSettingsPresenter
     /// <summary>Whether a key is stored for the provider, without revealing it.</summary>
     public ApiKeyReadStatus KeyStatus(PolishProvider provider) => _keys.GetStatus(provider);
 
+    /// <summary>Returns the provider's curated default model identifier, when defined.</summary>
+    public string? RecommendedModel(PolishProvider provider) => _models.RecommendedModel(provider);
+
     /// <summary>Stores a key for a cloud provider. The value is trimmed; blank is refused before the store is touched.</summary>
     public ApiKeySaveOutcome SaveKey(PolishProvider provider, string value)
     {

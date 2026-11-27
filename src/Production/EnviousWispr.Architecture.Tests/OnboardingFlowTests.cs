@@ -350,6 +350,15 @@ public sealed class OnboardingFlowTests
         Assert.Equal(OnboardingStep.Done, flow.Step);
         Assert.Empty(flow.BackStack);
 
+        var jumpFlow = CreateFlowAtStep(OnboardingStep.Closing);
+        jumpFlow.SetClosingBeat(4);
+        Assert.Equal(4, jumpFlow.ClosingBeatIndex);
+        jumpFlow.SetClosingBeat(99);
+        Assert.Equal(OnboardingFlow.ClosingBeatCount - 1, jumpFlow.ClosingBeatIndex);
+        jumpFlow.RestartClosing();
+        Assert.Equal(0, jumpFlow.ClosingBeatIndex);
+        Assert.Equal(OnboardingStep.Closing, jumpFlow.Step);
+
         var summary = OnboardingCopy.FormatClosingSummary(
             OnboardingCopy.ClosingBeats[0],
             "Parakeet",
@@ -641,5 +650,6 @@ public sealed class OnboardingFlowTests
         flow.ContinueFromPolishPick();
         Assert.Equal(OnboardingStep.Downloads, flow.Step);
         Assert.True(flow.ShouldStartDownload);
+        Assert.True(flow.NeedsDownloadStart);
     }
 }

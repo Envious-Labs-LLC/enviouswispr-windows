@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml.Linq;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -34,10 +35,24 @@ public sealed class ChoiceCardColumnTests
         "EgOneSizeMicroCard",
     };
 
+    // Wave C Onboarding side-by-side cards mirror macOS Speech Compare, Polish Pick, and See All EG-1 grids.
+    private static readonly HashSet<string> OnboardingHorizontalCards = new(StringComparer.Ordinal)
+    {
+        "OnboardingParakeetCompareCard",
+        "OnboardingWhisperCompareCard",
+        "OnboardingPolishPrimaryCard",
+        "OnboardingPolishSecondaryCard",
+        "OnboardingSeeAllEgOneFullCard",
+        "OnboardingSeeAllEgOneMiniCard",
+        "OnboardingSeeAllEgOneMicroCard",
+    };
+
     private static bool IsApprovedThreeColumnCard(XElement card)
     {
         var name = (string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty;
-        return RecordingPillHorizontalCards.Contains(name) || EgOneSizeHorizontalCards.Contains(name);
+        return RecordingPillHorizontalCards.Contains(name)
+            || EgOneSizeHorizontalCards.Contains(name)
+            || OnboardingHorizontalCards.Contains(name);
     }
 
     [Fact]
@@ -140,6 +155,56 @@ public sealed class ChoiceCardColumnTests
             .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
             .ToArray() ?? [];
         Assert.Equal(["Auto", "Auto", "Auto"], rows);
+    }
+
+    [Fact]
+    public void OnboardingCompareAndPolishChoiceCardsSitInResponsiveEqualWidthGrids()
+    {
+        var doc = Markup();
+        AssertResponsiveEqualGrid(
+            doc,
+            "OnboardingSpeechCompareGrid",
+            "OnboardingSpeechCompareGrid_SizeChanged",
+            ["OnboardingParakeetCompareCard", "OnboardingWhisperCompareCard"]);
+        AssertResponsiveEqualGrid(
+            doc,
+            "OnboardingPolishPickGrid",
+            "OnboardingPolishPickGrid_SizeChanged",
+            ["OnboardingPolishPrimaryCard", "OnboardingPolishSecondaryCard"]);
+        AssertResponsiveEqualGrid(
+            doc,
+            "OnboardingSeeAllEgOneGrid",
+            "OnboardingSeeAllEgOneGrid_SizeChanged",
+            ["OnboardingSeeAllEgOneFullCard", "OnboardingSeeAllEgOneMiniCard", "OnboardingSeeAllEgOneMicroCard"]);
+    }
+
+    private static void AssertResponsiveEqualGrid(
+        XDocument doc,
+        string gridName,
+        string sizeChangedHandler,
+        string[] expectedCardNames)
+    {
+        var cards = doc.Descendants()
+            .Where(element => expectedCardNames.Contains((string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
+            .ToArray();
+        Assert.Equal(expectedCardNames.Length, cards.Length);
+
+        var grid = cards[0].Parent;
+        Assert.NotNull(grid);
+        Assert.Equal("Grid", grid!.Name.LocalName);
+        Assert.Equal(gridName, (string?)grid.Attribute(XName.Get("Name", XamlNamespace)));
+        Assert.All(cards, card => Assert.Same(grid, card.Parent));
+        Assert.Equal(sizeChangedHandler, (string?)grid.Attribute("SizeChanged"));
+
+        var columns = grid.Elements()
+            .FirstOrDefault(child => child.Name.LocalName == "Grid.ColumnDefinitions")?
+            .Elements()
+            .Select(col => (string?)col.Attribute("Width") ?? string.Empty)
+            .ToArray() ?? [];
+        Assert.Equal(Enumerable.Repeat("*", expectedCardNames.Length).ToArray(), columns);
+        Assert.Equal(
+            Enumerable.Range(0, expectedCardNames.Length).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToArray(),
+            cards.Select(card => (string?)card.Attribute("Grid.Column") ?? string.Empty).ToArray());
     }
 
     private static List<XElement> SelectableCards() => Markup()

@@ -45,6 +45,8 @@ internal static class MainWindowHostBinder
             Subscribe(h => _window.TranscriptionRetryRequested += h, _dictation.TranscriptionRetryRequested);
             Subscribe(h => _window.ManualDictationToggleRequested += h, _dictation.ManualDictationToggleRequested);
             Subscribe(h => _window.KeybindCaptureActiveChanged += h, _dictation.KeybindCaptureActiveChanged);
+            Subscribe(h => _window.OnboardingKeyRehearsalActiveChanged += h, _dictation.OnboardingKeyRehearsalActiveChanged);
+            _window.ApplyOnboardingRecordingKey = _dictation.ApplyOnboardingRecordingKey;
             _window.TranscribeFile = _dictation.TranscribeFile;
         }
 
@@ -78,7 +80,10 @@ internal static class MainWindowHostBinder
             Subscribe(h => _window.ModelDownloadCancelRequested += h, _models.ModelDownloadCancelRequested);
             Subscribe(h => _window.OnboardingDualDownloadRequested += h, _models.OnboardingDualDownloadRequested);
             Subscribe(h => _window.OnboardingDualDownloadCancelRequested += h, _models.OnboardingDualDownloadCancelRequested);
+            Subscribe(h => _window.OnboardingDualDownloadSkipPolishRequested += h, _models.OnboardingDualDownloadSkipPolishRequested);
             Subscribe(h => _window.OnboardingDualDownloadRetryRequested += h, _models.OnboardingDualDownloadRetryRequested);
+            _window.ApplyOnboardingEnginesChoice = _models.ApplyOnboardingEnginesChoice;
+            _window.ProbeOnboardingModelsInstalled = _models.ProbeOnboardingModelsInstalled;
             Subscribe(h => _window.EgOneModelDownloadRequested += h, _models.EgOneModelDownloadRequested);
             Subscribe(h => _window.EgOneModelDownloadCancelRequested += h, _models.EgOneModelDownloadCancelRequested);
             Subscribe(h => _window.EgOneModelRemoveRequested += h, _models.EgOneModelRemoveRequested);
@@ -133,6 +138,8 @@ internal static class MainWindowHostBinder
             Unsubscribe(h => _window.TranscriptionRetryRequested -= h, _dictation.TranscriptionRetryRequested);
             Unsubscribe(h => _window.ManualDictationToggleRequested -= h, _dictation.ManualDictationToggleRequested);
             Unsubscribe(h => _window.KeybindCaptureActiveChanged -= h, _dictation.KeybindCaptureActiveChanged);
+            Unsubscribe(h => _window.OnboardingKeyRehearsalActiveChanged -= h, _dictation.OnboardingKeyRehearsalActiveChanged);
+            _window.ApplyOnboardingRecordingKey = null;
             _window.TranscribeFile = null;
         }
 
@@ -166,7 +173,10 @@ internal static class MainWindowHostBinder
             Unsubscribe(h => _window.ModelDownloadCancelRequested -= h, _models.ModelDownloadCancelRequested);
             Unsubscribe(h => _window.OnboardingDualDownloadRequested -= h, _models.OnboardingDualDownloadRequested);
             Unsubscribe(h => _window.OnboardingDualDownloadCancelRequested -= h, _models.OnboardingDualDownloadCancelRequested);
+            Unsubscribe(h => _window.OnboardingDualDownloadSkipPolishRequested -= h, _models.OnboardingDualDownloadSkipPolishRequested);
             Unsubscribe(h => _window.OnboardingDualDownloadRetryRequested -= h, _models.OnboardingDualDownloadRetryRequested);
+            _window.ApplyOnboardingEnginesChoice = null;
+            _window.ProbeOnboardingModelsInstalled = null;
             Unsubscribe(h => _window.EgOneModelDownloadRequested -= h, _models.EgOneModelDownloadRequested);
             Unsubscribe(h => _window.EgOneModelDownloadCancelRequested -= h, _models.EgOneModelDownloadCancelRequested);
             Unsubscribe(h => _window.EgOneModelRemoveRequested -= h, _models.EgOneModelRemoveRequested);

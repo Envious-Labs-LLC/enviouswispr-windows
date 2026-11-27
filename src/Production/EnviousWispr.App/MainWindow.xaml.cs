@@ -402,6 +402,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public async Task InitializeProductDataAsync()
     {
         await LoadMicrophonesAsync().ConfigureAwait(true);
+        await InitializeOnboardingStateAsync().ConfigureAwait(true);
         await ReloadHistoryAsync().ConfigureAwait(true);
         await LoadStartupRegistrationAsync().ConfigureAwait(true);
     }
@@ -734,6 +735,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _audioPlayback.PlaybackFailed -= OnAudioPlaybackFailed;
         _audioPlayback.Dispose();
         StopOllamaLivePollTimer();
+        StopOnboardingTimers();
         // THE WRITER IS NOT DISPOSED HERE, AND THAT IS DELIBERATE. Shutdown is synchronous and a
         // save may still be inside it; disposing its gate makes the release throw. The session that
         // owns the writer is closed by the shell's lifetime after the drain, once the save is over.
