@@ -102,4 +102,12 @@ internal static class AppXamlSources
             .Order(StringComparer.Ordinal);
         return string.Join("\n", paths.Select(File.ReadAllText));
     }
+
+    internal static string ReadMainWindowHistoryCodeText(string repositoryRoot)
+    {
+        var appDir = AppDirectory(repositoryRoot);
+        var paths = Directory.EnumerateFiles(appDir, "MainWindow.History*.cs", SearchOption.TopDirectoryOnly)
+            .Order(StringComparer.Ordinal);
+        return string.Join("\n", paths.Select(File.ReadAllText));
+    }
 }

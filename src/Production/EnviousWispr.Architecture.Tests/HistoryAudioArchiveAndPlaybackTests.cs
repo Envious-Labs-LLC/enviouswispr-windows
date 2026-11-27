@@ -483,7 +483,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
     public void CopyPolishNoticesAudioArchivalAndSelectionModeRespectGotchas()
     {
         var root = FindRepositoryRoot();
-        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var historyCs = AppXamlSources.ReadMainWindowHistoryCodeText(root);
         var polishCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.AiPolish.cs"));
         var runtimeCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.DictationRuntime.cs"));
 
@@ -633,7 +633,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.False(HistoryPlaybackPresentation.CanTogglePlayback(hasAudioRecording: false, isGlobalBusy: true, isPlaying: true));
 
         var root = FindRepositoryRoot();
-        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var historyCs = AppXamlSources.ReadMainWindowHistoryCodeText(root);
         Assert.Contains("HistoryPlaybackPresentation.CanTogglePlayback(_hasAudioRecording, _isGlobalBusy, _isPlaying)", historyCs, StringComparison.Ordinal);
 
         var setSnapshotStart = historyCs.IndexOf("public void SetPlaybackSnapshot(", StringComparison.Ordinal);
@@ -734,7 +734,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
         Assert.Equal(HistoryPasteNoticeTarget.StatusBanner, undoCollapsedPlan.Target);
 
         var root = FindRepositoryRoot();
-        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var historyCs = AppXamlSources.ReadMainWindowHistoryCodeText(root);
         var surfaceBody = ExtractMethodBody(historyCs, "private void SurfacePasteNotice");
         Assert.Contains("HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(", surfaceBody, StringComparison.Ordinal);
         Assert.Contains("ShowMessage(plan.Title, plan.Sentence, severity);", surfaceBody, StringComparison.Ordinal);
@@ -848,7 +848,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
     {
         var root = FindRepositoryRoot();
         var onboardingCs = AppXamlSources.ReadMainWindowOnboardingCodeText(root);
-        var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var historyCs = AppXamlSources.ReadMainWindowHistoryCodeText(root);
 
         var setDictationBody = ExtractMethodBody(onboardingCs, "public void SetDictationActive");
         Assert.Contains("_audioPlayback.Stop();", setDictationBody, StringComparison.Ordinal);

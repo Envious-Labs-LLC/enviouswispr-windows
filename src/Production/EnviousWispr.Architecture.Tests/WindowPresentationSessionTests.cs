@@ -422,7 +422,7 @@ public sealed class WindowPresentationSessionTests
         var guarded = testHandler.IndexOf("if (_session.Closing)", StringComparison.Ordinal);
         var drawn = testHandler.IndexOf("switch (result.Outcome)", StringComparison.Ordinal);
         Assert.True(ran >= 0 && ran < guarded && guarded < drawn, "the microphone test's outcome is drawn before the session is asked whether the drain began");
-        var historyCode = File.ReadAllText(Path.Combine(appDir, "MainWindow.History.cs"));
+        var historyCode = AppXamlSources.ReadMainWindowHistoryCodeText(FindRepositoryRoot());
         var recovery = historyCode[historyCode.IndexOf("private async void DeleteRecoveryButton_Click(", StringComparison.Ordinal)..];
         Assert.True(
             recovery.IndexOf("if (_session.Closing)", StringComparison.Ordinal) < recovery.IndexOf("if (recoveryDeleted)", StringComparison.Ordinal),

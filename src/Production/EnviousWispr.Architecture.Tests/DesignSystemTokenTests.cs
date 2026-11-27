@@ -2516,7 +2516,7 @@ public sealed partial class DesignSystemTokenTests
         {
             (Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Settings", "ReusableUserData.cs"), "CustomWordEntry"),
             (Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Settings", "ReusableUserData.cs"), "SnippetEntry"),
-            (Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"), "HistoryItemViewModel"),
+            (Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.ViewModels.cs"), "HistoryItemViewModel"),
         };
 
         foreach (var (path, type) in sources)
@@ -3664,8 +3664,7 @@ public sealed partial class DesignSystemTokenTests
         var templateMarkup = historyList.ToString();
         Assert.Contains("PasteButtonAutomationId", templateMarkup, StringComparison.Ordinal);
 
-        var historyCode = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var historyCode = AppXamlSources.ReadMainWindowHistoryCodeText(FindRepositoryRoot());
         Assert.Contains("\"PasteHistoryButton\"", historyCode, StringComparison.Ordinal);
     }
 
@@ -3762,9 +3761,7 @@ public sealed partial class DesignSystemTokenTests
     public void InterruptedDictationRecoveryDoesNotRaisePersistentTopInfoBarBanner()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var historyPath = Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs");
-        var method = CSharpSyntaxTree.ParseText(File.ReadAllText(historyPath), path: historyPath)
+        var method = CSharpSyntaxTree.ParseText(AppXamlSources.ReadMainWindowHistoryCodeText(repositoryRoot))
             .GetRoot()
             .DescendantNodes()
             .OfType<MethodDeclarationSyntax>()
