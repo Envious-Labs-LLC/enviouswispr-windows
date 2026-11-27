@@ -1066,13 +1066,13 @@ public sealed partial class MainWindow
         }
 
         _audioPlayback.Stop(selected.Id);
-        var succeeded = await _session.History.DeleteEntryAsync(selected.Id).ConfigureAwait(true);
-        if (succeeded is null || _session.Closing)
+        var result = await _session.History.DeleteEntryAsync(selected.Id).ConfigureAwait(true);
+        if (result.Closing || _session.Closing)
         {
             return;
         }
 
-        if (succeeded.Value)
+        if (result.Succeeded)
         {
             CleanupEntryUiState(selected.Id);
             await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
@@ -1092,13 +1092,13 @@ public sealed partial class MainWindow
             return;
         }
 
-        var succeeded = await _session.History.KeepEntryAsync(selected.Id).ConfigureAwait(true);
-        if (succeeded is null || _session.Closing)
+        var result = await _session.History.KeepEntryAsync(selected.Id).ConfigureAwait(true);
+        if (result.Closing || _session.Closing)
         {
             return;
         }
 
-        if (succeeded.Value)
+        if (result.Succeeded)
         {
             await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
             ShowMessage("History entry kept", "Its 24-hour Escape Recovery expiry was removed.", InfoBarSeverity.Success);
@@ -1148,13 +1148,13 @@ public sealed partial class MainWindow
                 _audioPlayback.Stop(activeId);
             }
 
-            var succeeded = await _session.History.DeleteEntriesAsync(idsToDelete).ConfigureAwait(true);
-            if (succeeded is null || _session.Closing)
+            var result = await _session.History.DeleteEntriesAsync(idsToDelete).ConfigureAwait(true);
+            if (result.Closing || _session.Closing)
             {
                 return;
             }
 
-            if (succeeded.Value)
+            if (result.Succeeded)
             {
                 foreach (var id in idsToDelete)
                 {
@@ -1204,13 +1204,13 @@ public sealed partial class MainWindow
         }
 
         _audioPlayback.Stop();
-        var succeeded = await _session.History.ClearEntriesAsync().ConfigureAwait(true);
-        if (succeeded is null || _session.Closing)
+        var result = await _session.History.ClearEntriesAsync().ConfigureAwait(true);
+        if (result.Closing || _session.Closing)
         {
             return;
         }
 
-        if (succeeded.Value)
+        if (result.Succeeded)
         {
             CancelWaveformLoads();
             _expandedTranscriptIds.Clear();
@@ -1388,17 +1388,22 @@ public sealed partial class MainWindow
     }
 
     private void ApplyHistoryPageView(
-        HistoryPageView pageView,
+        HistoryPageView view,
         string query,
         DateTimeOffset localNow,
         IReadOnlyDictionary<Guid, string?> resolvedRecordingPaths,
         IReadOnlyList<Guid>? existingIdsForSelection = null)
     {
-        _historyLoadStatus = pageView.Status;
-        _historyTotalStoredCount = pageView.TotalStoredCount;
-        _historyMatchingCount = pageView.TotalMatchingCount;
-        _historyHasMore = pageView.HasMore;
-        _historyRemainingCount = pageView.RemainingCount;
+        if (view.Summary == HistorySummary.Closing || _session.Closing)
+        {
+            return;
+        }
+
+        _historyLoadStatus = view.Status;
+        _historyTotalStoredCount = view.TotalStoredCount;
+        _historyMatchingCount = view.TotalMatchingCount;
+        _historyHasMore = view.HasMore;
+        _historyRemainingCount = view.RemainingCount;
 
         if (_selectedHistoryIds.Count > 0 && existingIdsForSelection is not null)
         {
@@ -1416,7 +1421,7 @@ public sealed partial class MainWindow
         }
 
         _isHistoryLoading = false;
-        RenderHistoryPage(pageView.Entries, pageView.DayCounts, query, localNow, resolvedRecordingPaths);
+        RenderHistoryPage(view.Entries, view.DayCounts, query, localNow, resolvedRecordingPaths);
     }
 
     private HistoryKindFilter _historyKindFilter = HistoryKindFilter.Dictation;

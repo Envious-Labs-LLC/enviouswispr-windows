@@ -77,6 +77,14 @@ public sealed record HistoryCommandResult(bool Succeeded, HistoryView? View, boo
     public static HistoryCommandResult Refused { get; } = new(false, null, Closing: true);
 }
 
+/// <summary>Outcome of a history store mutation that does not reload the full history list.</summary>
+public sealed record HistoryMutationResult(bool Succeeded, bool Closing = false)
+{
+    public static HistoryMutationResult Applied { get; } = new(Succeeded: true);
+    public static HistoryMutationResult Failed { get; } = new(Succeeded: false);
+    public static HistoryMutationResult ClosingResult { get; } = new(Succeeded: false, Closing: true);
+}
+
 /// <summary>How a repolish command went, and the page that follows it when it worked.</summary>
 public sealed record HistoryRepolishCommandResult(
     HistoryRepolishResult Result,
@@ -357,23 +365,23 @@ public sealed class HistoryPresenter
                entry.EngineId.Contains("transcribe", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Removes one dictation without reloading the full catalog. Returns null if closing.</summary>
-    public Task<bool?> DeleteEntryAsync(Guid id, CancellationToken cancellationToken = default) =>
+    /// <summary>Removes one dictation without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> DeleteEntryAsync(Guid id, CancellationToken cancellationToken = default) =>
         ApplyMutationOnlyAsync(token => _history.DeleteAsync(id, token), cancellationToken);
 
-    /// <summary>Keeps a temporary recovery entry without reloading the full catalog. Returns null if closing.</summary>
-    public Task<bool?> KeepEntryAsync(Guid id, CancellationToken cancellationToken = default) =>
+    /// <summary>Keeps a temporary recovery entry without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> KeepEntryAsync(Guid id, CancellationToken cancellationToken = default) =>
         ApplyMutationOnlyAsync(token => _history.KeepAsync(id, token), cancellationToken);
 
-    /// <summary>Removes every matching dictation ID without reloading the full catalog. Returns null if closing.</summary>
-    public Task<bool?> DeleteEntriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
+    /// <summary>Removes every matching dictation ID without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> DeleteEntriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(ids);
         return ApplyMutationOnlyAsync(token => _history.DeleteManyAsync(ids, token), cancellationToken);
     }
 
-    /// <summary>Removes every dictation without reloading the full catalog. Returns null if closing.</summary>
-    public Task<bool?> ClearEntriesAsync(CancellationToken cancellationToken = default) =>
+    /// <summary>Removes every dictation without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> ClearEntriesAsync(CancellationToken cancellationToken = default) =>
         ApplyMutationOnlyAsync(token => _history.ClearAsync(token), cancellationToken);
 
     /// <summary>Re-polishes an existing history entry without reloading the entire catalog.</summary>
@@ -415,13 +423,13 @@ public sealed class HistoryPresenter
         }
     }
 
-    private async Task<bool?> ApplyMutationOnlyAsync(
+    private async Task<HistoryMutationResult> ApplyMutationOnlyAsync(
         Func<CancellationToken, Task<HistoryOperationResult>> command,
         CancellationToken cancellationToken)
     {
         if (!_admission.TryEnter(out var lease))
         {
-            return null;
+            return HistoryMutationResult.ClosingResult;
         }
 
         using (lease)
@@ -432,16 +440,16 @@ public sealed class HistoryPresenter
                 var result = await command(stop.Token).ConfigureAwait(false);
                 if (!result.Succeeded)
                 {
-                    return false;
+                    return HistoryMutationResult.Failed;
                 }
 
                 _notifyHistoryChanged?.Invoke();
                 HistoryChanged?.Invoke();
-                return true;
+                return HistoryMutationResult.Applied;
             }
             catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
             {
-                return null;
+                return HistoryMutationResult.ClosingResult;
             }
         }
     }

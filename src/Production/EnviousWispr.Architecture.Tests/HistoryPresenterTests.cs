@@ -176,7 +176,7 @@ public sealed class HistoryPresenterTests
             Assert.Equal(44, matchingIds.Count);
 
             var deleted = await presenter.DeleteEntryAsync(search.Entries[0].Id);
-            Assert.True(deleted);
+            Assert.True(deleted.Succeeded);
             Assert.Equal(1, changedNotifications);
 
             var afterDelete = await presenter.QueryPageAsync("", HistoryKindFilter.All, HistoryDateRangeFilter.AnyTime, 30, Now, TimeZoneInfo.Utc);
