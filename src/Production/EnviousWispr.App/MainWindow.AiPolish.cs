@@ -322,6 +322,7 @@ public sealed partial class MainWindow
         _hasEgOneInventorySnapshot = true;
         UpdateEgOneCards();
         UpdateActivePolishProviderBadgeIfEgOneSelected();
+        SyncLiveInventoryToOnboarding();
     }
 
     public void SetEgOneDelivery(string modelId, ModelDeliveryPresentation presentation)
@@ -343,6 +344,7 @@ public sealed partial class MainWindow
         _hasEgOneInventorySnapshot = true;
         UpdateEgOneCards();
         UpdateActivePolishProviderBadgeIfEgOneSelected();
+        SyncLiveInventoryToOnboarding();
     }
 
     private string ResolveSelectedEgOneModelId()

@@ -334,6 +334,86 @@ public sealed class OnboardingDownloadCoordinatorTests
         Assert.True(snapshot.IsPolishReady);
     }
 
+    [Fact]
+    public async Task SkipPolishPreservesInFlightSpeechDownloadAndPreventsPolishRetry()
+    {
+        var plan = new OnboardingDownloadPlan(
+            SpeechModelId: ParakeetModelIds.Final,
+            SpeechTotalBytes: 200,
+            PolishModelId: EgOneModelCatalog.MiniId,
+            PolishTotalBytes: 400,
+            ParallelDownloads: true);
+
+        var releaseSpeech = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var speechCancelled = false;
+        var polishCancelled = false;
+        var provisionedModels = new ConcurrentQueue<string>();
+
+        using var coordinator = new OnboardingDownloadCoordinator(
+            plan,
+            provisionAsync: async (modelId, _, ct) =>
+            {
+                provisionedModels.Enqueue(modelId);
+                if (modelId == ParakeetModelIds.Final)
+                {
+                    try
+                    {
+                        await releaseSpeech.Task.WaitAsync(ct);
+                        return new ModelDeliveryResult(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        speechCancelled = true;
+                        return new ModelDeliveryResult(false, ModelDeliveryFailure.Cancelled);
+                    }
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                    return new ModelDeliveryResult(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    polishCancelled = true;
+                    return new ModelDeliveryResult(false, ModelDeliveryFailure.Cancelled);
+                }
+            });
+
+        var runTask = coordinator.RunAsync();
+        await WaitUntilAsync(() => provisionedModels.Count == 2);
+
+        var afterSkip = coordinator.SkipPolish();
+        Assert.Null(afterSkip.Polish);
+        Assert.True(afterSkip.IsPolishReady);
+        Assert.Null(afterSkip.Plan.PolishModelId);
+
+        releaseSpeech.TrySetResult();
+        var completed = await runTask;
+
+        Assert.False(speechCancelled);
+        Assert.True(polishCancelled);
+        Assert.True(completed.IsSpeechReady);
+        Assert.True(completed.IsPolishReady);
+        Assert.Null(completed.Polish);
+        Assert.Null(completed.FailureMessage);
+
+        provisionedModels.Clear();
+        await coordinator.RetryFailedAsync();
+        Assert.Empty(provisionedModels);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (!predicate() && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.True(predicate(), "Timed out waiting for coordinator condition.");
+    }
+
     private sealed class FixedDiskProbe(long availableBytes) : IDiskSpaceProbe
     {
         public long GetAvailableBytes(string path) => availableBytes;

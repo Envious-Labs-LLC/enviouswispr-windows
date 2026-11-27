@@ -24,6 +24,7 @@ public partial class App
     private SingleInstanceLock? _globalHotkeyLock;
     private WindowsPushToTalkHook? _pushToTalkHook;
     private bool _keybindCaptureActive;
+    private volatile bool _onboardingKeyRehearsalActive;
     private IAudioCapture? _audioCapture;
     private WindowsTextTargetAdapter? _textTargetAdapter;
     private ContextAwareTextDelivery? _textDelivery;
@@ -121,6 +122,130 @@ public partial class App
     {
         _keybindCaptureActive = active;
         _pushToTalkHook?.SetCapturingKeybind(active);
+    }
+
+    private void OnOnboardingKeyRehearsalActiveChanged(bool active) =>
+        _onboardingKeyRehearsalActive = active;
+
+    private async Task<(bool Applied, string? Error)> TryApplyOnboardingRecordingKeyAsync(
+        string gestureText,
+        DictationRecordingMode recordingMode)
+    {
+        var parsed = HotkeyGestureParser.Parse(gestureText);
+        if (!parsed.Succeeded || parsed.Gesture is not { } parsedGesture || !Enum.IsDefined(recordingMode))
+        {
+            return (false, "Use a supported shortcut like Ctrl+Win, RightCtrl, or F8.");
+        }
+
+        var canonicalGesture = parsedGesture.ToString();
+        var current = _presentation?.Settings.Current ?? _settings;
+        var conflicts = HotkeyConflictDetector.Find(
+            new (string Role, string Text)[]
+            {
+                ("Recording", canonicalGesture),
+                ("Cancel", current.Preferences.Dictation.CancelGesture),
+                ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
+                ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
+                ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
+            });
+        if (conflicts.Count > 0)
+        {
+            return (false, HotkeyConflictDetector.Describe(conflicts));
+        }
+
+        var disableGlobalHotkey = string.Equals(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_GLOBAL_HOTKEY"),
+            "1",
+            StringComparison.Ordinal);
+        var customDataDirectory = Environment.GetEnvironmentVariable("ENVIOUSWISPR_DATA_DIRECTORY");
+        var isIsolatedDataDirectory = !string.IsNullOrWhiteSpace(customDataDirectory) &&
+            !string.Equals(
+                SingleInstanceLock.ResolveKey(_releaseIdentity.SingleInstanceKey, customDataDirectory),
+                _releaseIdentity.SingleInstanceKey,
+                StringComparison.Ordinal);
+        var globalHotkeyKey = $"{_releaseIdentity.SingleInstanceKey}.GlobalHotkey";
+        var suppressGlobalHook = disableGlobalHotkey ||
+            (isIsolatedDataDirectory &&
+             (SingleInstanceLock.IsHeld(_releaseIdentity.SingleInstanceKey) ||
+              SingleInstanceLock.IsHeld(globalHotkeyKey)));
+
+        async Task<bool> SaveShortcutAsync()
+        {
+            try
+            {
+                return await TrySaveOnboardingSettingsAsync(latest => latest with
+                {
+                    Preferences = latest.Preferences with
+                    {
+                        Dictation = latest.Preferences.Dictation with
+                        {
+                            PushToTalkGesture = canonicalGesture,
+                            RecordingMode = recordingMode,
+                        },
+                    },
+                }).ConfigureAwait(true);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        if (suppressGlobalHook)
+        {
+            return await SaveShortcutAsync().ConfigureAwait(true)
+                ? (true, null)
+                : (false, "Could not save the new dictation shortcut right now.");
+        }
+
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            return (false, attempt.Refusal == SessionHoldRefusal.Closed
+                ? "Closing EnviousWispr."
+                : "Finish the active dictation before changing the shortcut.");
+        }
+
+        using (hold)
+        {
+            var currentDictation = (_presentation?.Settings.Current ?? _settings).Preferences.Dictation;
+            if (!WindowsPushToTalkHook.TryCreate(
+                    canonicalGesture,
+                    recordingMode,
+                    currentDictation.CancelGesture,
+                    currentDictation.QuickAddGesture,
+                    currentDictation.PasteLastGesture,
+                    currentDictation.CopyLastGesture,
+                    out var nextHook,
+                    out var error) ||
+                nextHook is null)
+            {
+                return (false, HotkeyFailureStatus(error));
+            }
+
+            if (!await SaveShortcutAsync().ConfigureAwait(true))
+            {
+                await nextHook.DisposeAsync().ConfigureAwait(true);
+                return (false, "Could not save the new dictation shortcut right now.");
+            }
+
+            if (_pushToTalkHook is { } existingHook)
+            {
+                existingHook.Signalled -= OnPushToTalkSignalled;
+                _pushToTalkHook = null;
+                await existingHook.DisposeAsync().ConfigureAwait(true);
+            }
+
+            _pushToTalkHook = nextHook;
+            _pushToTalkHook.Signalled += OnPushToTalkSignalled;
+            _pushToTalkHook.SetCapturingKeybind(_keybindCaptureActive);
+            _window?.SetHotkeyReady(
+                _pushToTalkHook.Gesture.ToString(),
+                _pushToTalkHook.RecordingMode);
+            _trayIcon?.SetRecordingShortcut(_pushToTalkHook.Gesture.ToString());
+            return (true, null);
+        }
     }
 
     private void OnRecoveryCleared() => _sessionPersistence.ForgetPendingRecovery();
@@ -418,6 +543,15 @@ public partial class App
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)
     {
+        if (_onboardingKeyRehearsalActive)
+        {
+            if (args.Signal is PushToTalkSignal.Pressed or PushToTalkSignal.Released or PushToTalkSignal.Cancelled)
+            {
+                PostToLiveWindow(window => window.ObserveOnboardingKeyRehearsalSignal(args));
+            }
+            return;
+        }
+
         // THE WINDOW IN FRONT AT THE PRESS is where the words go - read now, on the key's own dispatch, before
         // anything can move it. Copy needs none. Neither is a dictation command. Ref: #206.
         if (args.Signal == PushToTalkSignal.PasteLast)

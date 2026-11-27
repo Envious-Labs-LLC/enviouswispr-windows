@@ -269,9 +269,8 @@ public sealed class MultiAppPasteReliabilityTests
             {
                 (textDuringPaste, formatsDuringPaste) = RunOnSta(() =>
                 {
-                    var obj = Clipboard.GetDataObject();
                     var text = Clipboard.ContainsText() ? Clipboard.GetText() : null;
-                    return (text, obj?.GetFormats(autoConvert: false));
+                    return (text, WindowsClipboardPaste.TryGetClipboardFormatNames());
                 });
                 return true;
             },
@@ -310,7 +309,7 @@ public sealed class MultiAppPasteReliabilityTests
         // CopyOnlyAsync / CopyRequestedAsync leave normal history behavior enabled (no exclusion markers).
         var copied = await WindowsClipboardPaste.CopyRequestedAsync("user copy", CancellationToken.None);
         Assert.True(copied.Delivered);
-        var copyFormats = RunOnSta(() => Clipboard.GetDataObject()?.GetFormats(autoConvert: false) ?? []);
+        var copyFormats = RunOnSta(() => WindowsClipboardPaste.TryGetClipboardFormatNames() ?? []);
         Assert.DoesNotContain(WindowsClipboardPaste.CanIncludeInClipboardHistoryFormatName, copyFormats, StringComparer.OrdinalIgnoreCase);
 
         // Preflight refusal via temporary+unmarked-fallback writer leaves fallback text UNMARKED for manual Ctrl+V.
@@ -325,7 +324,7 @@ public sealed class MultiAppPasteReliabilityTests
             settleDelay: TimeSpan.FromMilliseconds(20),
             writeFallbackText: WindowsClipboardPaste.SetClipboardTextOrThrow);
         Assert.True(refused.ClipboardFallback);
-        var refusedFormats = RunOnSta(() => Clipboard.GetDataObject()?.GetFormats(autoConvert: false) ?? []);
+        var refusedFormats = RunOnSta(() => WindowsClipboardPaste.TryGetClipboardFormatNames() ?? []);
         Assert.DoesNotContain(WindowsClipboardPaste.CanIncludeInClipboardHistoryFormatName, refusedFormats, StringComparer.OrdinalIgnoreCase);
         Assert.Equal("retained manual fallback", RunOnSta(() => Clipboard.GetText()));
     }

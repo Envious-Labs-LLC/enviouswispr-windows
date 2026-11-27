@@ -383,6 +383,7 @@ public partial class App : Application, IAsyncDisposable
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.OnboardingDualDownloadRequested += OnOnboardingDualDownloadRequested;
         _window.OnboardingDualDownloadCancelRequested += OnOnboardingDualDownloadCancelRequested;
+        _window.OnboardingDualDownloadSkipPolishRequested += OnOnboardingDualDownloadSkipPolishRequested;
         _window.OnboardingDualDownloadRetryRequested += OnOnboardingDualDownloadRetryRequested;
         _window.EgOneModelDownloadRequested += OnEgOneModelDownloadRequested;
         _window.EgOneModelDownloadCancelRequested += OnModelDownloadCancelRequested;
@@ -398,6 +399,10 @@ public partial class App : Application, IAsyncDisposable
         _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
         _window.ManualDictationToggleRequested += OnManualDictationToggleRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
+        _window.OnboardingKeyRehearsalActiveChanged += OnOnboardingKeyRehearsalActiveChanged;
+        _window.ApplyOnboardingRecordingKey = TryApplyOnboardingRecordingKeyAsync;
+        _window.ApplyOnboardingEnginesChoice = ApplyOnboardingSelectedEnginesAsync;
+        _window.ProbeOnboardingModelsInstalled = ProbeOnboardingModelsInstalledAsync;
         _window.TranscribeFile = TranscribeFileAsync;
         _window.ExportUserData = ExportUserDataAsync;
         _window.DeleteAllData = DeleteAllData;
@@ -589,6 +594,7 @@ public partial class App : Application, IAsyncDisposable
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
             window.OnboardingDualDownloadRequested -= OnOnboardingDualDownloadRequested;
             window.OnboardingDualDownloadCancelRequested -= OnOnboardingDualDownloadCancelRequested;
+            window.OnboardingDualDownloadSkipPolishRequested -= OnOnboardingDualDownloadSkipPolishRequested;
             window.OnboardingDualDownloadRetryRequested -= OnOnboardingDualDownloadRetryRequested;
             window.EgOneModelDownloadRequested -= OnEgOneModelDownloadRequested;
             window.EgOneModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
@@ -604,6 +610,10 @@ public partial class App : Application, IAsyncDisposable
             window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
             window.ManualDictationToggleRequested -= OnManualDictationToggleRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
+            window.OnboardingKeyRehearsalActiveChanged -= OnOnboardingKeyRehearsalActiveChanged;
+            window.ApplyOnboardingRecordingKey = null;
+            window.ApplyOnboardingEnginesChoice = null;
+            window.ProbeOnboardingModelsInstalled = null;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
             DetachSelfLearningFromWindow(window);

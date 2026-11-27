@@ -61,7 +61,7 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 {
     public const long DiskHeadroomBytes = 500L * 1024 * 1024;
 
-    private readonly OnboardingDownloadPlan _plan;
+    private OnboardingDownloadPlan _plan;
     private readonly Func<string, IModelDeliveryObserver, CancellationToken, Task<ModelDeliveryResult>> _provisionAsync;
     private readonly Func<CancellationToken, Task>? _onSpeechInstalledAsync;
     private readonly Func<CancellationToken, Task>? _onPolishInstalledAsync;
@@ -72,6 +72,7 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
     private readonly Lock _sync = new();
     private CancellationTokenSource? _activeCts;
+    private CancellationTokenSource? _polishCts;
     private OnboardingModelDownloadState _speechState;
     private OnboardingModelDownloadState? _polishState;
     private bool _isRunning;
@@ -231,6 +232,7 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
     public async Task<OnboardingDownloadSnapshot> RunAsync(CancellationToken externalCancellation = default)
     {
         CancellationTokenSource? runCts = null;
+        CancellationTokenSource? polishCts = null;
         bool needSpeech;
         bool needPolish;
 
@@ -256,6 +258,11 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
                 _activeCts?.Dispose();
                 _activeCts = CancellationTokenSource.CreateLinkedTokenSource(externalCancellation);
                 runCts = _activeCts;
+                _polishCts?.Dispose();
+                _polishCts = needPolish
+                    ? CancellationTokenSource.CreateLinkedTokenSource(runCts.Token)
+                    : null;
+                polishCts = _polishCts;
                 _isRunning = true;
 
                 if (needSpeech)
@@ -324,6 +331,7 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
         try
         {
+            var polishToken = polishCts?.Token ?? runCts.Token;
             if (_plan.ParallelDownloads)
             {
                 var tasks = new List<Task>(2);
@@ -334,7 +342,7 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
                 if (needPolish)
                 {
-                    tasks.Add(DownloadSlotAsync(isSpeech: false, runCts.Token));
+                    tasks.Add(DownloadSlotAsync(isSpeech: false, polishToken));
                 }
 
                 await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -346,9 +354,9 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
                     await DownloadSlotAsync(isSpeech: true, runCts.Token).ConfigureAwait(false);
                 }
 
-                if (needPolish && !runCts.Token.IsCancellationRequested)
+                if (needPolish && !runCts.Token.IsCancellationRequested && !polishToken.IsCancellationRequested)
                 {
-                    await DownloadSlotAsync(isSpeech: false, runCts.Token).ConfigureAwait(false);
+                    await DownloadSlotAsync(isSpeech: false, polishToken).ConfigureAwait(false);
                 }
             }
         }
@@ -366,6 +374,13 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
                         _polishState = currentPolish;
                     }
                 }
+                else if (_polishState is null &&
+                         _speechState.Stage is not (OnboardingDownloadStage.Failed
+                             or OnboardingDownloadStage.CannotDownload
+                             or OnboardingDownloadStage.Cancelled))
+                {
+                    _failureMessage = null;
+                }
             }
         }
 
@@ -374,6 +389,43 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
     public Task<OnboardingDownloadSnapshot> RetryFailedAsync(CancellationToken externalCancellation = default) =>
         RunAsync(externalCancellation);
+
+    public OnboardingDownloadSnapshot SkipPolish()
+    {
+        CancellationTokenSource? polishCtsToCancel;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return BuildSnapshotLocked();
+            }
+
+            polishCtsToCancel = _polishCts;
+            _polishState = null;
+            _plan = _plan with
+            {
+                PolishModelId = null,
+                PolishTotalBytes = 0,
+                PolishAlreadyInstalled = true,
+                PolishDiskBytes = 0,
+            };
+            _failureMessage = _speechState.Stage is OnboardingDownloadStage.Failed
+                or OnboardingDownloadStage.CannotDownload
+                or OnboardingDownloadStage.Cancelled
+                ? _speechState.StatusDetail
+                : null;
+        }
+
+        try
+        {
+            polishCtsToCancel?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        return PublishSnapshot();
+    }
 
     public void Cancel()
     {
@@ -393,6 +445,9 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
             }
 
             _disposed = true;
+            _polishCts?.Cancel();
+            _polishCts?.Dispose();
+            _polishCts = null;
             _activeCts?.Cancel();
             _activeCts?.Dispose();
             _activeCts = null;
@@ -405,7 +460,12 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
         long plannedBytes;
         lock (_sync)
         {
-            var current = isSpeech ? _speechState : _polishState!;
+            var current = isSpeech ? _speechState : _polishState;
+            if (current is null)
+            {
+                return;
+            }
+
             modelId = current.ModelId;
             plannedBytes = current.TotalBytes;
             UpdateSlotLocked(isSpeech, current with
@@ -449,7 +509,12 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
             lock (_sync)
             {
-                var current = isSpeech ? _speechState : _polishState!;
+                var current = isSpeech ? _speechState : _polishState;
+                if (current is null)
+                {
+                    return;
+                }
+
                 UpdateSlotLocked(isSpeech, current with
                 {
                     Stage = stage,
@@ -466,7 +531,12 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
         lock (_sync)
         {
-            var current = isSpeech ? _speechState : _polishState!;
+            var current = isSpeech ? _speechState : _polishState;
+            if (current is null)
+            {
+                return;
+            }
+
             var finalTotal = current.TotalBytes > 0 ? current.TotalBytes : current.CompletedBytes;
             UpdateSlotLocked(isSpeech, current with
             {
@@ -500,7 +570,12 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
                     : "Downloaded the AI polish model, but local polish could not start. Retry to try again.";
                 lock (_sync)
                 {
-                    var current = isSpeech ? _speechState : _polishState!;
+                    var current = isSpeech ? _speechState : _polishState;
+                    if (current is null)
+                    {
+                        return;
+                    }
+
                     UpdateSlotLocked(isSpeech, current with
                     {
                         Stage = OnboardingDownloadStage.Failed,
@@ -520,7 +595,12 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
         {
             lock (_sync)
             {
-                var current = isSpeech ? _speechState : _polishState!;
+                var current = isSpeech ? _speechState : _polishState;
+                if (current is null)
+                {
+                    return;
+                }
+
                 var finalTotal = current.TotalBytes > 0 ? current.TotalBytes : current.CompletedBytes;
                 UpdateSlotLocked(isSpeech, current with
                 {
@@ -551,8 +631,8 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
         lock (_sync)
         {
-            var current = isSpeech ? _speechState : _polishState!;
-            if (current.Stage is not OnboardingDownloadStage.Downloading)
+            var current = isSpeech ? _speechState : _polishState;
+            if (current is null || current.Stage is not OnboardingDownloadStage.Downloading)
             {
                 return;
             }
@@ -580,7 +660,7 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
         {
             _speechState = updated;
         }
-        else
+        else if (_polishState is not null)
         {
             _polishState = updated;
         }

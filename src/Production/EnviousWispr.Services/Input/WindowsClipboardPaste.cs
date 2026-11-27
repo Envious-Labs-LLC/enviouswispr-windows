@@ -824,10 +824,22 @@ internal static class WindowsClipboardPaste
             PumpingWait,
             cancellationToken);
 
+    internal static string[]? TryGetClipboardFormatNames() =>
+        TryClipboardReadWithRetry(
+            TryGetClipboardFormatNamesWin32Once,
+            PumpingWait,
+            CancellationToken.None);
+
     internal static ClipboardSnapshot? TrySnapshotClipboardWithRetry(
         Func<ClipboardSnapshot?> readOnce,
         Action<TimeSpan> wait,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        TryClipboardReadWithRetry(readOnce, wait, cancellationToken);
+
+    private static T? TryClipboardReadWithRetry<T>(
+        Func<T?> readOnce,
+        Action<TimeSpan> wait,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(readOnce);
         ArgumentNullException.ThrowIfNull(wait);
@@ -847,7 +859,7 @@ internal static class WindowsClipboardPaste
                 exception is ExternalException or ThreadStateException or
                     InvalidOperationException or ArgumentException)
             {
-                return null;
+                return default;
             }
         }
     }
@@ -962,6 +974,59 @@ internal static class WindowsClipboardPaste
             }
         }
     }
+
+    private static string[]? TryGetClipboardFormatNamesWin32Once()
+    {
+        lock (ProcessClipboardGate)
+        {
+            if (!OpenClipboard(IntPtr.Zero))
+            {
+                Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
+            }
+
+            try
+            {
+                var formatIds = EnumerateClipboardFormatIds();
+                if (formatIds is null)
+                {
+                    return null;
+                }
+
+                var names = new List<string>(formatIds.Count);
+                foreach (var formatId in formatIds)
+                {
+                    var name = TryDescribeClipboardFormat(formatId);
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+
+                return [.. names];
+            }
+            finally
+            {
+                _ = CloseClipboard();
+            }
+        }
+    }
+
+    private static string? TryDescribeClipboardFormat(uint formatId) =>
+        formatId >= RegisteredFormatBase
+            ? TryGetClipboardFormatName(formatId)
+            : formatId switch
+            {
+                CfText => DataFormats.Text,
+                CfBitmap => DataFormats.Bitmap,
+                CfMetaFilePict => DataFormats.MetafilePict,
+                CfOemText => DataFormats.OemText,
+                CfDib => DataFormats.Dib,
+                CfPalette => DataFormats.Palette,
+                CfUnicodeText => DataFormats.UnicodeText,
+                CfEnhMetaFile => DataFormats.EnhancedMetafile,
+                CfLocale => "Locale",
+                _ => null,
+            };
 
     private static List<uint>? EnumerateClipboardFormatIds()
     {

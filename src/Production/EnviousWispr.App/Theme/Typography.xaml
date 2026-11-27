@@ -75,6 +75,15 @@
     <Style x:Key="BrandNeutralChipTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandStatusChipTextStyle}">
         <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
     </Style>
+    <Style x:Key="BrandWarningChipTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandStatusChipTextStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandWarningBrush}" />
+    </Style>
+    <Style x:Key="BrandErrorChipTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandStatusChipTextStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandErrorBrush}" />
+    </Style>
+    <Style x:Key="BrandHeroDisplayTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandPageTitleStyle}">
+        <Setter Property="FontSize" Value="32" />
+    </Style>
     <Style x:Key="BrandNavGroupLabelStyle" TargetType="TextBlock">
         <!--
             THE SIDEBAR'S GROUP LABELS, WHICH ARE NOT THE SAME THING AS A SECTION HEADING INSIDE A

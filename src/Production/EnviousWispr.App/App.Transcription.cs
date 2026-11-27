@@ -37,7 +37,7 @@ public partial class App
         // WHAT THE GRAPHICS RUNTIME OFFER READS, reset first so a configuration that stops early offers nothing.
         _configuredTranscription = null;
         // THE FIRST-RUN GATE READS THIS, NOT THE SENTENCES BELOW: every return from here says which it was.
-        _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Preparing);
+        _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Preparing, configuredEngine);
         if (string.Equals(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_LOCAL_RUNTIME"),
                 "1",
@@ -46,7 +46,7 @@ public partial class App
             _window?.SetSessionStatus(DictationStatus
                 .Quiet("Local transcription disabled for performance UAT")
                 .AboutTheTranscriptionEngine());
-            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable);
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable, configuredEngine);
             return;
         }
 
@@ -81,7 +81,7 @@ public partial class App
                 DictationStatus.Advisory(
                         "Local transcription model is not installed", StatusActions.OpenTranscription)
                     .AboutTheTranscriptionEngine());
-            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.NotInstalled);
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.NotInstalled, engine);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -125,7 +125,7 @@ public partial class App
                 DictationStatus.Advisory(
                         "Local transcription is unavailable on this machine", StatusActions.OpenTranscription)
                     .AboutTheTranscriptionEngine());
-            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable);
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable, engine);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -172,7 +172,7 @@ public partial class App
                     DictationStatus.Advisory(
                             "Local transcription could not start", StatusActions.OpenTranscription)
                         .AboutTheTranscriptionEngine());
-                _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable);
+                _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable, engine);
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -204,7 +204,7 @@ public partial class App
                         "Your graphics card did not start, so dictation is slower", StatusActions.OpenTranscription)
                     : DictationStatus.Quiet("Local transcription ready on the processor"))
                     .AboutTheTranscriptionEngine());
-            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready, engine);
             SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT");
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -221,7 +221,7 @@ public partial class App
                 ? DictationStatus.EngineReady()
                 : DictationStatus.Quiet("Local transcription ready"))
             .AboutTheTranscriptionEngine());
-        _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
+        _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready, engine);
         SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT");
     }
 
