@@ -263,6 +263,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             // close: a startup that was cancelled or refused never started, and says nothing more.
             _started = true;
             _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewStarted));
+            string? lastPublishedText = null;
             while (true)
             {
                 // ASKED BEFORE EVERY SNAPSHOT, not only inside the waits. An engine that finished
@@ -324,10 +325,15 @@ public sealed class LivePreviewController : IAsyncDisposable
                         engine.EngineId,
                         enabledVocabularyPackIds: enabledVocabularyPackIds,
                         excludeLearnedAliases: !fixLearnedWordsEnabled);
-                    _effects.ShowPreview(new LivePreviewFrame(
-                        sessionId,
-                        displayText,
-                        () => Volatile.Read(ref _closure) == closure));
+                    if (!string.IsNullOrWhiteSpace(displayText) &&
+                        !string.Equals(displayText, lastPublishedText, StringComparison.Ordinal))
+                    {
+                        lastPublishedText = displayText;
+                        _effects.ShowPreview(new LivePreviewFrame(
+                            sessionId,
+                            displayText,
+                            () => Volatile.Read(ref _closure) == closure));
+                    }
                 }
 
                 // A FLOOR, NOT AN ADDITION. A pass slower than the interval waits nothing and the next

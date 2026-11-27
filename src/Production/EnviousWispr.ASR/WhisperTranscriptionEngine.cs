@@ -146,7 +146,13 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
                 .ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                text.Append(segment.Text);
+                var cleaned = CleanSegment(segment.Text, segment.NoSpeechProbability);
+                if (cleaned.Length == 0)
+                {
+                    continue;
+                }
+
+                AppendCleanedSegment(text, cleaned);
                 detectedLanguage ??= string.IsNullOrWhiteSpace(segment.Language)
                     ? null
                     : segment.Language;
@@ -157,7 +163,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
 
             return new Transcript(
                 audio.SessionId,
-                text.ToString().Trim(),
+                WhisperNonSpeechFilter.Clean(text.ToString()),
                 EngineId,
                 timings,
                 DetectedLanguage: detectedLanguage,
@@ -176,6 +182,67 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
             _transcriptionGate.Release();
         }
     }
+
+    internal const float HighNoSpeechProbabilityThreshold = 0.85f;
+
+    internal readonly record struct WhisperSegmentPiece(string Text, float NoSpeechProbability);
+
+    internal static string CleanAndJoinSegments(IEnumerable<WhisperSegmentPiece> segments)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        var text = new StringBuilder();
+        foreach (var segment in segments)
+        {
+            var cleaned = CleanSegment(segment.Text, segment.NoSpeechProbability);
+            if (cleaned.Length == 0)
+            {
+                continue;
+            }
+
+            AppendCleanedSegment(text, cleaned);
+        }
+
+        return WhisperNonSpeechFilter.Clean(text.ToString());
+    }
+
+    internal static string CleanSegment(string? segmentText, float noSpeechProbability)
+    {
+        var cleaned = WhisperNonSpeechFilter.Clean(segmentText);
+        if (cleaned.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (noSpeechProbability >= HighNoSpeechProbabilityThreshold &&
+            !WhisperNonSpeechFilter.ContainsLetterOrDigit(cleaned))
+        {
+            return string.Empty;
+        }
+
+        return cleaned;
+    }
+
+    internal static void AppendCleanedSegment(StringBuilder text, string cleanedSegment)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (string.IsNullOrEmpty(cleanedSegment))
+        {
+            return;
+        }
+
+        if (text.Length > 0 &&
+            !char.IsWhiteSpace(text[^1]) &&
+            !char.IsWhiteSpace(cleanedSegment[0]) &&
+            !IsAttachedTrailingPunctuation(cleanedSegment[0]))
+        {
+            text.Append(' ');
+        }
+
+        text.Append(cleanedSegment);
+    }
+
+    private static bool IsAttachedTrailingPunctuation(char ch) =>
+        ch is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '\u2019' or '\u201D';
 
     private static void AddTimings(
         List<TranscriptTokenTiming> timings,

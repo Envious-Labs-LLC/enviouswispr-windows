@@ -27,7 +27,11 @@ public sealed class ClipboardFactAttribute : FactAttribute
 [Collection("SystemClipboard")]
 public sealed class WindowsTextDeliverySafetyTests
 {
-    internal static bool ClipboardAvailable() => ClipboardGuard.Available();
+    private static readonly Lazy<bool> CachedClipboardAvailable = new(
+        ClipboardGuard.Available,
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
+    internal static bool ClipboardAvailable() => CachedClipboardAvailable.Value;
 
     [Fact]
     public void TheProductionAdapterNamesOnlyWhatAUiAutomationCallRefusedAsAccessibilityUnavailable()

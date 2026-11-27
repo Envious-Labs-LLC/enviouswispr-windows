@@ -312,16 +312,43 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 var selections = textPattern.GetSelection();
                 if (selections.Length == 1)
                 {
-                    var leftRange = textPattern.DocumentRange.Clone();
+                    var document = textPattern.DocumentRange;
+                    var selection = selections[0];
+                    var leftRange = selection.Clone();
                     leftRange.MoveEndpointByRange(
                         TextPatternRangeEndpoint.End,
-                        selections[0],
+                        selection,
                         TextPatternRangeEndpoint.Start);
                     leftRange.MoveEndpointByUnit(
                         TextPatternRangeEndpoint.Start,
                         TextUnit.Character,
                         -contextCharacters);
-                    leftBeforeCaret = leftRange.GetText(contextCharacters);
+                    if (leftRange.CompareEndpoints(
+                        TextPatternRangeEndpoint.Start,
+                        document,
+                        TextPatternRangeEndpoint.Start) < 0)
+                    {
+                        leftRange.MoveEndpointByRange(
+                            TextPatternRangeEndpoint.Start,
+                            document,
+                            TextPatternRangeEndpoint.Start);
+                    }
+
+                    if (leftRange.CompareEndpoints(
+                        TextPatternRangeEndpoint.Start,
+                        leftRange,
+                        TextPatternRangeEndpoint.End) > 0)
+                    {
+                        leftRange.MoveEndpointByRange(
+                            TextPatternRangeEndpoint.Start,
+                            leftRange,
+                            TextPatternRangeEndpoint.End);
+                    }
+
+                    var readLeft = leftRange.GetText(contextCharacters * 2);
+                    leftBeforeCaret = readLeft.Length > contextCharacters
+                        ? readLeft[^contextCharacters..]
+                        : readLeft;
                 }
             }
 
@@ -1022,7 +1049,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
 
         var document = textPattern.DocumentRange;
-        var leftRange = document.Clone();
+        var leftRange = selection.Clone();
         leftRange.MoveEndpointByRange(
             TextPatternRangeEndpoint.End,
             selection,
@@ -1031,13 +1058,38 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             TextPatternRangeEndpoint.Start,
             TextUnit.Character,
             -options.ContextWindowCharacters);
-        var left = leftRange.GetText(options.ContextWindowCharacters);
         var leftAtStart = leftRange.CompareEndpoints(
             TextPatternRangeEndpoint.Start,
             document,
-            TextPatternRangeEndpoint.Start) == 0;
+            TextPatternRangeEndpoint.Start) <= 0;
+        if (leftAtStart)
+        {
+            leftRange.MoveEndpointByRange(
+                TextPatternRangeEndpoint.Start,
+                document,
+                TextPatternRangeEndpoint.Start);
+        }
 
-        var rightRange = document.Clone();
+        if (leftRange.CompareEndpoints(
+            TextPatternRangeEndpoint.Start,
+            leftRange,
+            TextPatternRangeEndpoint.End) > 0)
+        {
+            leftRange.MoveEndpointByRange(
+                TextPatternRangeEndpoint.Start,
+                leftRange,
+                TextPatternRangeEndpoint.End);
+        }
+
+        var maxReadLength = options.ContextWindowCharacters * 2;
+        var left = leftRange.GetText(maxReadLength);
+        if (left.Length > options.ContextWindowCharacters)
+        {
+            left = left[^options.ContextWindowCharacters..];
+            leftAtStart = false;
+        }
+
+        var rightRange = selection.Clone();
         rightRange.MoveEndpointByRange(
             TextPatternRangeEndpoint.Start,
             selection,
@@ -1046,11 +1098,35 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             TextPatternRangeEndpoint.End,
             TextUnit.Character,
             options.ContextWindowCharacters);
-        var right = rightRange.GetText(options.ContextWindowCharacters);
         var rightAtEnd = rightRange.CompareEndpoints(
             TextPatternRangeEndpoint.End,
             document,
-            TextPatternRangeEndpoint.End) == 0;
+            TextPatternRangeEndpoint.End) >= 0;
+        if (rightAtEnd)
+        {
+            rightRange.MoveEndpointByRange(
+                TextPatternRangeEndpoint.End,
+                document,
+                TextPatternRangeEndpoint.End);
+        }
+
+        if (rightRange.CompareEndpoints(
+            TextPatternRangeEndpoint.Start,
+            rightRange,
+            TextPatternRangeEndpoint.End) > 0)
+        {
+            rightRange.MoveEndpointByRange(
+                TextPatternRangeEndpoint.End,
+                rightRange,
+                TextPatternRangeEndpoint.Start);
+        }
+
+        var right = rightRange.GetText(maxReadLength);
+        if (right.Length > options.ContextWindowCharacters)
+        {
+            right = right[..options.ContextWindowCharacters];
+            rightAtEnd = false;
+        }
         return new CaretText(selected, left, leftAtStart, right, rightAtEnd);
     }
 

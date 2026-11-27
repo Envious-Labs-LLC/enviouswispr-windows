@@ -329,7 +329,10 @@ internal static class WindowsClipboardPaste
     {
         try
         {
-            return Clipboard.ContainsText() ? Clipboard.GetText() : null;
+            lock (ProcessClipboardGate)
+            {
+                return Clipboard.ContainsText() ? Clipboard.GetText() : null;
+            }
         }
         catch (Exception exception) when (
             exception is ExternalException or ThreadStateException or ArgumentException)
@@ -630,7 +633,10 @@ internal static class WindowsClipboardPaste
             return;
         }
 
-        Clipboard.SetDataObject(BuildMarkedRestoreDataObject(snapshot.Data!), copy: true, retryTimes: 0, retryDelay: 0);
+        lock (ProcessClipboardGate)
+        {
+            Clipboard.SetDataObject(BuildMarkedRestoreDataObject(snapshot.Data!), copy: true, retryTimes: 0, retryDelay: 0);
+        }
     }
 
     private static DataObject BuildMarkedRestoreDataObject(DataObject source)
@@ -725,7 +731,13 @@ internal static class WindowsClipboardPaste
 
     /// <summary>The production writer: the text on the clipboard, flushed so it outlives this thread; throws what the clipboard refuses.</summary>
     internal static void SetClipboardTextOrThrow(string text) =>
-        WithPumpingRetry(() => Clipboard.SetDataObject(text, copy: true, retryTimes: 0, retryDelay: 0));
+        WithPumpingRetry(() =>
+        {
+            lock (ProcessClipboardGate)
+            {
+                Clipboard.SetDataObject(text, copy: true, retryTimes: 0, retryDelay: 0);
+            }
+        });
 
     /// <summary>
     /// Atomic temporary clipboard write for paste transfers and selection probes: publishes the text
@@ -739,7 +751,10 @@ internal static class WindowsClipboardPaste
             var data = new DataObject();
             data.SetData(DataFormats.UnicodeText, autoConvert: true, text);
             AttachTransientMarkers(data);
-            Clipboard.SetDataObject(data, copy: true, retryTimes: 0, retryDelay: 0);
+            lock (ProcessClipboardGate)
+            {
+                Clipboard.SetDataObject(data, copy: true, retryTimes: 0, retryDelay: 0);
+            }
         });
     }
 
@@ -785,6 +800,10 @@ internal static class WindowsClipboardPaste
 
     /// <param name="OwnedSequence">The clipboard's sequence number when what is on it is our own change; null when nothing of ours is on it.</param>
     private readonly record struct ClipboardWrite(bool Written, uint? OwnedSequence);
+
+    // Win32 OpenClipboard(IntPtr.Zero) can succeed across concurrent threads in the same process and allow
+    // CloseClipboard() on one thread to unmap HGLOBAL clipboard handles while another is inside Marshal.Copy.
+    private static readonly object ProcessClipboardGate = new();
 
     private const int ClipboardReadAttempts = 8;
 
@@ -855,7 +874,10 @@ internal static class WindowsClipboardPaste
 
         // OpenClipboard has been closed: registered OLE IStream-backed formats (such as FileContents)
         // return NULL from GetClipboardData and must be read through OleGetClipboard / IDataObject.
-        return TrySnapshotRegisteredFallback(static () => Clipboard.GetDataObject());
+        lock (ProcessClipboardGate)
+        {
+            return TrySnapshotRegisteredFallback(static () => Clipboard.GetDataObject());
+        }
     }
 
     internal static ClipboardSnapshot? TrySnapshotRegisteredFallback(Func<System.Windows.Forms.IDataObject?> getDataObject)
@@ -868,73 +890,76 @@ internal static class WindowsClipboardPaste
 
     private static NativeCaptureAttempt TryCaptureNativeSnapshotInOpenClipboard()
     {
-        if (!OpenClipboard(IntPtr.Zero))
+        lock (ProcessClipboardGate)
         {
-            Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
-        }
-
-        try
-        {
-            var formatIds = EnumerateClipboardFormatIds();
-            if (formatIds is null)
+            if (!OpenClipboard(IntPtr.Zero))
             {
-                return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
+                Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
             }
 
-            if (formatIds.Count == 0)
+            try
             {
-                return new NativeCaptureAttempt(
-                    new ClipboardSnapshot(IsEmpty: true, Data: null),
-                    RequiresManagedFallback: false);
-            }
-
-            var hasDib = formatIds.Contains(CfDib) || formatIds.Contains(CfDibV5);
-
-            var entries = new List<NativeClipboardEntry>(formatIds.Count);
-            foreach (var formatId in formatIds)
-            {
-                string? formatName = null;
-                if (formatId >= RegisteredFormatBase)
-                {
-                    formatName = TryGetClipboardFormatName(formatId);
-                    if (formatName is null)
-                    {
-                        return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
-                    }
-
-                    if (IsOleWrapperFormat(formatName) || IsTransientMarkerFormat(formatName))
-                    {
-                        continue;
-                    }
-                }
-                else if (ShouldOmitSynthesizedFormat(formatId, hasDib))
-                {
-                    continue;
-                }
-
-                var result = TryCaptureNativeEntryCore(formatId, formatName, out var entry);
-                if (result == NativeEntryCaptureStatus.RequiresManagedFallback)
-                {
-                    return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: true);
-                }
-
-                if (result != NativeEntryCaptureStatus.Captured)
+                var formatIds = EnumerateClipboardFormatIds();
+                if (formatIds is null)
                 {
                     return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
                 }
 
-                entries.Add(entry!);
-            }
+                if (formatIds.Count == 0)
+                {
+                    return new NativeCaptureAttempt(
+                        new ClipboardSnapshot(IsEmpty: true, Data: null),
+                        RequiresManagedFallback: false);
+                }
 
-            return new NativeCaptureAttempt(
-                entries.Count == 0
-                    ? new ClipboardSnapshot(IsEmpty: true, Data: null)
-                    : new ClipboardSnapshot(IsEmpty: false, Data: null, NativeEntries: entries),
-                RequiresManagedFallback: false);
-        }
-        finally
-        {
-            _ = CloseClipboard();
+                var hasDib = formatIds.Contains(CfDib) || formatIds.Contains(CfDibV5);
+
+                var entries = new List<NativeClipboardEntry>(formatIds.Count);
+                foreach (var formatId in formatIds)
+                {
+                    string? formatName = null;
+                    if (formatId >= RegisteredFormatBase)
+                    {
+                        formatName = TryGetClipboardFormatName(formatId);
+                        if (formatName is null)
+                        {
+                            return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
+                        }
+
+                        if (IsOleWrapperFormat(formatName) || IsTransientMarkerFormat(formatName))
+                        {
+                            continue;
+                        }
+                    }
+                    else if (ShouldOmitSynthesizedFormat(formatId, hasDib))
+                    {
+                        continue;
+                    }
+
+                    var result = TryCaptureNativeEntryCore(formatId, formatName, out var entry);
+                    if (result == NativeEntryCaptureStatus.RequiresManagedFallback)
+                    {
+                        return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: true);
+                    }
+
+                    if (result != NativeEntryCaptureStatus.Captured)
+                    {
+                        return new NativeCaptureAttempt(Snapshot: null, RequiresManagedFallback: false);
+                    }
+
+                    entries.Add(entry!);
+                }
+
+                return new NativeCaptureAttempt(
+                    entries.Count == 0
+                        ? new ClipboardSnapshot(IsEmpty: true, Data: null)
+                        : new ClipboardSnapshot(IsEmpty: false, Data: null, NativeEntries: entries),
+                    RequiresManagedFallback: false);
+            }
+            finally
+            {
+                _ = CloseClipboard();
+            }
         }
     }
 
@@ -1129,33 +1154,36 @@ internal static class WindowsClipboardPaste
         var prepared = PrepareNativeHandles(entries);
         try
         {
-            if (!OpenClipboard(ownerWindow))
+            lock (ProcessClipboardGate)
             {
-                Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
-            }
-
-            try
-            {
-                if (!EmptyClipboard())
+                if (!OpenClipboard(ownerWindow))
                 {
-                    Marshal.ThrowExceptionForHR(ClipboardEmptyErrorHr);
+                    Marshal.ThrowExceptionForHR(ClipboardOpenErrorHr);
                 }
 
-                for (var i = 0; i < prepared.Length; i++)
+                try
                 {
-                    var item = prepared[i];
-                    if (SetClipboardData(item.FormatId, item.Handle) == IntPtr.Zero)
+                    if (!EmptyClipboard())
                     {
-                        Marshal.ThrowExceptionForHR(ClipboardSetErrorHr);
+                        Marshal.ThrowExceptionForHR(ClipboardEmptyErrorHr);
                     }
 
-                    // SetClipboardData succeeded: Windows now owns the handle.
-                    prepared[i] = item with { Handle = IntPtr.Zero };
+                    for (var i = 0; i < prepared.Length; i++)
+                    {
+                        var item = prepared[i];
+                        if (SetClipboardData(item.FormatId, item.Handle) == IntPtr.Zero)
+                        {
+                            Marshal.ThrowExceptionForHR(ClipboardSetErrorHr);
+                        }
+
+                        // SetClipboardData succeeded: Windows now owns the handle.
+                        prepared[i] = item with { Handle = IntPtr.Zero };
+                    }
                 }
-            }
-            finally
-            {
-                _ = CloseClipboard();
+                finally
+                {
+                    _ = CloseClipboard();
+                }
             }
         }
         finally
@@ -1569,7 +1597,10 @@ internal static class WindowsClipboardPaste
     private static void ClearOnce()
     {
         Application.OleRequired();
-        Marshal.ThrowExceptionForHR(OleSetClipboard(IntPtr.Zero));
+        lock (ProcessClipboardGate)
+        {
+            Marshal.ThrowExceptionForHR(OleSetClipboard(IntPtr.Zero));
+        }
     }
 
     /// <summary>Puts a snapshot back with no guard at all: for the tests' own desk-clipboard guard, which restores what it took whatever happened since. Every restore the app makes goes through the guarded give-back instead.</summary>

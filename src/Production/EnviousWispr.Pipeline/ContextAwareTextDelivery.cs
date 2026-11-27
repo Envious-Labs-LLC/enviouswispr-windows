@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Input;
 using EnviousWispr.PostProcessing;
 
 namespace EnviousWispr.Pipeline;
@@ -17,14 +18,124 @@ namespace EnviousWispr.Pipeline;
 /// <see cref="RecoveryText"/>, nothing is retried, and nothing further is written to the target:
 /// a commit that threw may or may not have landed, and a second attempt could double it.
 /// </remarks>
+public sealed class RecentDeliverySeamTracker
+{
+    internal static readonly TimeSpan RecentSeamWindow = TimeSpan.FromSeconds(30);
+
+    private readonly object _gate = new();
+    private RecentSeamRecord? _last;
+
+    internal bool ShouldPrependLeadingSpace(
+        TargetWindowId target,
+        string? effectiveFocusId,
+        CaretContext? context,
+        string insertionText,
+        bool languageUsesWordSpacing,
+        DateTimeOffset now)
+    {
+        if (!languageUsesWordSpacing ||
+            string.IsNullOrEmpty(insertionText) ||
+            char.IsWhiteSpace(insertionText[0]) ||
+            IsLeadingSpaceSuppressor(insertionText[0]))
+        {
+            return false;
+        }
+
+        if (context is { HasTextContext: true } ||
+            context?.IsScreenDerived == true ||
+            context?.IsUrlBarField == true)
+        {
+            return false;
+        }
+
+        RecentSeamRecord? prior;
+        lock (_gate)
+        {
+            prior = _last;
+        }
+
+        if (prior is null || !MatchesTarget(prior, target, effectiveFocusId))
+        {
+            return false;
+        }
+
+        var elapsed = now - prior.DeliveredAtUtc;
+        if (elapsed < TimeSpan.Zero || elapsed > RecentSeamWindow)
+        {
+            return false;
+        }
+
+        if (context?.BaselineValue is { Length: > 0 } baselineValue)
+        {
+            return !char.IsWhiteSpace(baselineValue[^1]);
+        }
+
+        return prior.DeliveredText.Length > 0 && !char.IsWhiteSpace(prior.DeliveredText[^1]);
+    }
+
+    internal void RecordSuccess(
+        TargetWindowId target,
+        string? effectiveFocusId,
+        string deliveredText,
+        DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            _last = new RecentSeamRecord(target, effectiveFocusId, deliveredText, now);
+        }
+    }
+
+    internal void Clear()
+    {
+        lock (_gate)
+        {
+            _last = null;
+        }
+    }
+
+    private static bool MatchesTarget(RecentSeamRecord prior, TargetWindowId target, string? effectiveFocusId) =>
+        prior.Target.Value == target.Value &&
+        prior.Target.ProcessId == target.ProcessId &&
+        string.Equals(prior.EffectiveFocusId, effectiveFocusId, StringComparison.Ordinal);
+
+    private static bool IsLeadingSpaceSuppressor(char ch) =>
+        ch is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '"' or '\'' or '\u2019' or '\u201D';
+
+    private sealed record RecentSeamRecord(
+        TargetWindowId Target,
+        string? EffectiveFocusId,
+        string DeliveredText,
+        DateTimeOffset DeliveredAtUtc);
+}
+
 public sealed class ContextAwareTextDelivery : ITextDelivery
 {
     private readonly ITextTargetAdapter _targetAdapter;
+    private readonly RecentDeliverySeamTracker _seamTracker;
+    private readonly TimeProvider _clock;
 
     public ContextAwareTextDelivery(ITextTargetAdapter targetAdapter)
+        : this(targetAdapter, seamTracker: null, TimeProvider.System)
+    {
+    }
+
+    public ContextAwareTextDelivery(
+        ITextTargetAdapter targetAdapter,
+        RecentDeliverySeamTracker? seamTracker)
+        : this(targetAdapter, seamTracker, TimeProvider.System)
+    {
+    }
+
+    internal ContextAwareTextDelivery(
+        ITextTargetAdapter targetAdapter,
+        RecentDeliverySeamTracker? seamTracker,
+        TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(targetAdapter);
+        ArgumentNullException.ThrowIfNull(clock);
         _targetAdapter = targetAdapter;
+        _seamTracker = seamTracker ?? new RecentDeliverySeamTracker();
+        _clock = clock;
     }
 
     public ProcessedText? RecoveryText { get; private set; }
@@ -113,16 +224,33 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             request.Text,
             capture.Status == TargetContextStatus.Available && !request.SnippetExpanded ? capture.Context : null,
             request.LanguageCode);
+        var availableContext = capture.Status == TargetContextStatus.Available ? capture.Context : null;
+        var effectiveFocusId = availableContext?.FocusedElementId ?? request.Target.FocusedElementId;
+        var insertion = repair.Insertion;
+        var languageUsesWordSpacing = repair.Fallback.Text.EndsWith(' ');
+        if (!request.SnippetExpanded &&
+            capture.Status == TargetContextStatus.Available &&
+            _seamTracker.ShouldPrependLeadingSpace(
+                request.Target,
+                effectiveFocusId,
+                availableContext,
+                insertion.Text,
+                languageUsesWordSpacing,
+                _clock.GetUtcNow()))
+        {
+            insertion = insertion with { Text = " " + insertion.Text };
+        }
+
         var targetKind = capture.Context?.TargetKind ?? TextTargetKind.Unknown;
         TextCommitResult commit;
         try
         {
             commit = await _targetAdapter.CommitAsync(
                 new TextCommitRequest(
-                    repair.Insertion,
+                    insertion,
                     repair.Fallback,
                     request.Target,
-                    capture.Status == TargetContextStatus.Available ? capture.Context : null,
+                    availableContext,
                     targetKind,
                     request.Options,
                     forcedRefusal),
@@ -130,7 +258,19 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         }
         catch (Exception exception) when (IsNamed(exception))
         {
+            _seamTracker.Clear();
             return Stopped(request, DeliveryStage.Commit, exception, cancellationToken, repair.Disposition);
+        }
+
+        if (commit.Delivered &&
+            !commit.ClipboardFallback &&
+            commit.Route is TextDeliveryRoute.ClipboardPaste or TextDeliveryRoute.UiAutomationValue)
+        {
+            _seamTracker.RecordSuccess(request.Target, effectiveFocusId, insertion.Text, _clock.GetUtcNow());
+        }
+        else if (!commit.Delivered)
+        {
+            _seamTracker.Clear();
         }
 
         if (commit.Delivered || commit.ClipboardFallback)
@@ -149,7 +289,7 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             ClipboardUncertain: commit.ClipboardUncertain,
             ArrivalStatus: commit.ArrivalStatus,
             ArrivalElapsedMilliseconds: commit.ArrivalElapsedMilliseconds,
-            DeliveredText: commit.Delivered ? repair.Insertion.Text : null);
+            DeliveredText: commit.Delivered ? insertion.Text : null);
     }
 
     private static TextDeliveryRefusalReason RefusalFor(TargetContextResult capture) =>
