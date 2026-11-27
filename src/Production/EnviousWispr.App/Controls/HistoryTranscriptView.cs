@@ -69,6 +69,16 @@ public sealed class HistoryTranscriptView : Grid
         new PropertyMetadata(null, OnContentPropertyChanged));
 
     private readonly RichTextBlock _richText;
+    private bool _rebuildQueued;
+    private bool _hasRendered;
+    private HistoryEditsViewMode _lastViewMode;
+    private string? _lastPolishedText;
+    private string? _lastOriginalText;
+    private IReadOnlyList<MarkedUpRun>? _lastMarkedUpRuns;
+    private Brush? _lastBodyBrush;
+    private Brush? _lastAddedTextBrush;
+    private Brush? _lastAddedHighlightBrush;
+    private Brush? _lastRemovedBrush;
 
     public HistoryTranscriptView()
     {
@@ -147,7 +157,7 @@ public sealed class HistoryTranscriptView : Grid
     {
         if (d is HistoryTranscriptView view)
         {
-            view.RebuildDocument();
+            view.ScheduleRebuild();
         }
     }
 
@@ -157,6 +167,71 @@ public sealed class HistoryTranscriptView : Grid
         {
             view._richText.MaxLines = Math.Max(0, view.MaxLines);
         }
+    }
+
+    private void ScheduleRebuild()
+    {
+        if (_rebuildQueued)
+        {
+            return;
+        }
+
+        if (DispatcherQueue is { } queue)
+        {
+            _rebuildQueued = true;
+            if (queue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Normal, FlushRebuild))
+            {
+                return;
+            }
+
+            _rebuildQueued = false;
+        }
+
+        RebuildDocumentIfChanged();
+    }
+
+    private void FlushRebuild()
+    {
+        _rebuildQueued = false;
+        RebuildDocumentIfChanged();
+    }
+
+    private void RebuildDocumentIfChanged()
+    {
+        var viewMode = ViewMode;
+        var polished = PolishedText;
+        var original = OriginalText;
+        var markedUpRuns = MarkedUpRuns;
+        var bodyBrush = BodyBrush;
+        var addedTextBrushProp = AddedTextBrush;
+        var addedHighlightBrush = AddedHighlightBrush;
+        var removedBrush = RemovedBrush;
+
+        if (_hasRendered
+            && _lastViewMode == viewMode
+            && string.Equals(_lastPolishedText, polished, StringComparison.Ordinal)
+            && string.Equals(_lastOriginalText, original, StringComparison.Ordinal)
+            && ReferenceEquals(_lastMarkedUpRuns, markedUpRuns)
+            && ReferenceEquals(_lastBodyBrush, bodyBrush)
+            && ReferenceEquals(_lastAddedTextBrush, addedTextBrushProp)
+            && ReferenceEquals(_lastAddedHighlightBrush, addedHighlightBrush)
+            && ReferenceEquals(_lastRemovedBrush, removedBrush))
+        {
+            _richText.MaxLines = Math.Max(0, MaxLines);
+            return;
+        }
+
+        _hasRendered = true;
+        _lastViewMode = viewMode;
+        _lastPolishedText = polished;
+        _lastOriginalText = original;
+        _lastMarkedUpRuns = markedUpRuns;
+        _lastBodyBrush = bodyBrush;
+        _lastAddedTextBrush = addedTextBrushProp;
+        _lastAddedHighlightBrush = addedHighlightBrush;
+        _lastRemovedBrush = removedBrush;
+
+        RebuildDocument();
     }
 
     private void RebuildDocument()

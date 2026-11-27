@@ -131,6 +131,67 @@ public sealed class HistoryPresenterTests
     }
 
     [Fact]
+    public async Task QueryPageAndLightweightMutationsPreserveCountsWithoutFullLoad()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"ew-hist-pres-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            using var store = new EnviousWispr.Services.History.SqliteHistoryStore(Path.Combine(tempDir, "history.db"));
+            var recovery = new FakeRecoveryStore();
+            var preferences = new HistoryPreferences(IsEnabled: true, RetentionDays: 30);
+            var changedNotifications = 0;
+            var presenter = new HistoryPresenter(
+                store,
+                recovery,
+                () => preferences,
+                new TestTimeProvider(Now),
+                notifyHistoryChanged: () => changedNotifications++);
+
+            for (var i = 0; i < 45; i++)
+            {
+                var entry = DictationHistoryEntry.Create(
+                    Now.AddMinutes(-i),
+                    i == 40 ? "Deep archive search needle" : $"Item {i}",
+                    "parakeet",
+                    false,
+                    true);
+                Assert.True((await store.AddAsync(entry, 30, Now)).Succeeded);
+            }
+
+            var page = await presenter.QueryPageAsync("", HistoryKindFilter.All, HistoryDateRangeFilter.AnyTime, 30, Now, TimeZoneInfo.Utc);
+            Assert.Equal(30, page.Entries.Count);
+            Assert.Equal(45, page.TotalStoredCount);
+            Assert.Equal(45, page.TotalMatchingCount);
+            Assert.True(page.HasMore);
+            Assert.Equal(15, page.RemainingCount);
+
+            var search = await presenter.QueryPageAsync("needle", HistoryKindFilter.All, HistoryDateRangeFilter.AnyTime, 30, Now, TimeZoneInfo.Utc);
+            Assert.Single(search.Entries);
+            Assert.Equal(45, search.TotalStoredCount);
+            Assert.Equal(1, search.TotalMatchingCount);
+            Assert.False(search.HasMore);
+
+            var matchingIds = await presenter.QueryMatchingIdsAsync("Item", HistoryKindFilter.All, HistoryDateRangeFilter.AnyTime, Now, TimeZoneInfo.Utc);
+            Assert.Equal(44, matchingIds.Count);
+
+            var deleted = await presenter.DeleteEntryAsync(search.Entries[0].Id);
+            Assert.True(deleted);
+            Assert.Equal(1, changedNotifications);
+
+            var afterDelete = await presenter.QueryPageAsync("", HistoryKindFilter.All, HistoryDateRangeFilter.AnyTime, 30, Now, TimeZoneInfo.Utc);
+            Assert.Equal(44, afterDelete.TotalStoredCount);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ARefusedKeepPreservesTheRowAndDoesNotReload()
     {
         var (presenter, history, _, _) = Build();
@@ -307,6 +368,11 @@ public sealed class HistoryPresenterTests
         Assert.False(result.Succeeded);
         Assert.Null(result.View);
         Assert.Equal(0, history.Loads);
+    }
+
+    private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
     }
 
     private sealed class FakeRepolishService(Func<Guid, bool, HistoryRepolishResult> answer) : IHistoryRepolishService
