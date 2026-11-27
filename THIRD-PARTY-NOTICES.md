@@ -6,6 +6,8 @@ the result. Canonical validation rejects missing license metadata or notice drif
 
 | Package | Version | License metadata | License-file SHA-256 |
 | --- | --- | --- | --- |
+| Microsoft.Data.Sqlite | 10.0.5 | expression: MIT | not-applicable |
+| Microsoft.Data.Sqlite.Core | 10.0.5 | expression: MIT | not-applicable |
 | Microsoft.Extensions.AI.Abstractions | 10.2.0 | expression: MIT | not-applicable |
 | Microsoft.ML.OnnxRuntime.Gpu | 1.29.0 | file: embedded package file LICENSE | C250D6278F0B47A6439FB7592B08B58A55EB9F535AA49A1DB63211C3F982B674 |
 | Microsoft.ML.OnnxRuntime.Gpu.Linux | 1.29.0 | file: embedded package file LICENSE | C250D6278F0B47A6439FB7592B08B58A55EB9F535AA49A1DB63211C3F982B674 |
@@ -28,6 +30,10 @@ the result. Canonical validation rejects missing license metadata or notice drif
 | Microsoft.WindowsAppSDK.WinUI | 2.3.6 | file: embedded package file license.txt | 5B11E6347756E40FE0274BC08C97F89201B94F0D50181A09A00F1F4740840501 |
 | NAudio.Core | 3.0.1 | expression: MIT | not-applicable |
 | NAudio.Wasapi | 3.0.1 | expression: MIT | not-applicable |
+| SQLitePCLRaw.bundle_e_sqlite3 | 2.1.11 | expression: Apache-2.0 | not-applicable |
+| SQLitePCLRaw.core | 2.1.11 | expression: Apache-2.0 | not-applicable |
+| SQLitePCLRaw.lib.e_sqlite3 | 2.1.14 | expression: Apache-2.0 | not-applicable |
+| SQLitePCLRaw.provider.e_sqlite3 | 2.1.11 | expression: Apache-2.0 | not-applicable |
 | System.CodeDom | 10.0.11 | expression: MIT | not-applicable |
 | System.Management | 10.0.11 | expression: MIT | not-applicable |
 | System.Numerics.Tensors | 9.0.0 | expression: MIT | not-applicable |

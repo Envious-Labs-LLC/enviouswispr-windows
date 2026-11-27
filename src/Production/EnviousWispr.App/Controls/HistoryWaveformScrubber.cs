@@ -17,7 +17,7 @@ public sealed class HistoryWaveformScrubber : Grid
         nameof(Peaks),
         typeof(IReadOnlyList<float>),
         typeof(HistoryWaveformScrubber),
-        new PropertyMetadata(null, OnVisualStatePropertyChanged));
+        new PropertyMetadata(null, OnPeaksPropertyChanged));
 
     public static readonly DependencyProperty ProgressFractionProperty = DependencyProperty.Register(
         nameof(ProgressFraction),
@@ -50,10 +50,22 @@ public sealed class HistoryWaveformScrubber : Grid
         new PropertyMetadata(false, OnVisualStatePropertyChanged));
 
     private readonly Border[] _bars = new Border[HistoryPlaybackPresentation.DefaultWaveformBarCount];
+    private readonly double[] _lastHeights = new double[HistoryPlaybackPresentation.DefaultWaveformBarCount];
     private readonly Canvas _needleLayer;
     private readonly Border _playheadNeedle;
     private uint? _capturedPointerId;
     private bool _isPointerOver;
+    private bool _heightsInitialized;
+    private bool _barsVisualsInitialized;
+    private int _lastPlayedCount = -1;
+    private Brush? _lastPlayedBrush;
+    private Brush? _lastUnplayedBrush;
+    private double _lastUnplayedOpacity = -1.0;
+    private Brush? _lastNeedleBrush;
+    private bool? _lastShowNeedle;
+    private double _lastNeedleHeight = -1.0;
+    private double _lastNeedleLeft = double.NaN;
+    private double _lastNeedleTop = double.NaN;
 
     public HistoryWaveformScrubber()
     {
@@ -101,7 +113,7 @@ public sealed class HistoryWaveformScrubber : Grid
         SetColumnSpan(_needleLayer, _bars.Length);
         Children.Add(_needleLayer);
 
-        SizeChanged += (_, _) => UpdateVisuals();
+        SizeChanged += (_, _) => UpdatePlaybackVisuals();
         PointerEntered += OnPointerEntered;
         PointerExited += OnPointerExited;
         PointerPressed += OnPointerPressed;
@@ -110,7 +122,8 @@ public sealed class HistoryWaveformScrubber : Grid
         PointerCanceled += OnPointerCanceled;
         PointerCaptureLost += OnPointerCaptureLost;
         KeyDown += OnKeyDown;
-        UpdateVisuals();
+        UpdateBarHeights();
+        UpdatePlaybackVisuals();
     }
 
     public event Action<HistoryWaveformScrubber, double>? SeekRequested;
@@ -151,51 +164,127 @@ public sealed class HistoryWaveformScrubber : Grid
         set => SetValue(IsPlaybackActiveProperty, value);
     }
 
+    private static void OnPeaksPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is HistoryWaveformScrubber scrubber)
+        {
+            scrubber.UpdateBarHeights();
+        }
+    }
+
     private static void OnVisualStatePropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is HistoryWaveformScrubber scrubber)
         {
-            scrubber.UpdateVisuals();
+            scrubber.UpdatePlaybackVisuals();
         }
     }
 
-    private void UpdateVisuals()
+    private void UpdateBarHeights()
     {
         var heights = HistoryPlaybackPresentation.ShapeBarHeights(
             Peaks,
             _bars.Length,
             minHeight: 4.0,
             maxHeight: 20.0);
+
+        for (var i = 0; i < _bars.Length; i++)
+        {
+            var nextHeight = heights[i];
+            if (!_heightsInitialized || Math.Abs(_lastHeights[i] - nextHeight) > 0.05)
+            {
+                _bars[i].Height = nextHeight;
+                _lastHeights[i] = nextHeight;
+            }
+        }
+
+        _heightsInitialized = true;
+    }
+
+    private void UpdateVisuals() => UpdatePlaybackVisuals();
+
+    private void UpdatePlaybackVisuals()
+    {
         var fraction = Math.Clamp(ProgressFraction, 0.0, 1.0);
-        var playedCount = (int)Math.Floor(fraction * _bars.Length);
+        var playedCount = fraction > 0.0 ? (int)Math.Floor(fraction * _bars.Length) : 0;
         var playedBrush = PlayedBrush;
         var unplayedBrush = UnplayedBrush ?? playedBrush;
         var unplayedOpacity = _isPointerOver || _capturedPointerId is not null ? 0.58 : 0.42;
 
-        for (var i = 0; i < _bars.Length; i++)
+        var brushesOrOpacityChanged = !_barsVisualsInitialized
+            || !ReferenceEquals(_lastPlayedBrush, playedBrush)
+            || !ReferenceEquals(_lastUnplayedBrush, unplayedBrush)
+            || Math.Abs(_lastUnplayedOpacity - unplayedOpacity) > 0.001;
+
+        if (brushesOrOpacityChanged)
         {
-            var bar = _bars[i];
-            bar.Height = heights[i];
-            var isPlayed = fraction > 0 && i < playedCount;
-            bar.Background = isPlayed ? playedBrush : unplayedBrush;
-            bar.Opacity = isPlayed ? 1.0 : unplayedOpacity;
+            for (var i = 0; i < _bars.Length; i++)
+            {
+                var isPlayed = i < playedCount;
+                _bars[i].Background = isPlayed ? playedBrush : unplayedBrush;
+                _bars[i].Opacity = isPlayed ? 1.0 : unplayedOpacity;
+            }
+
+            _barsVisualsInitialized = true;
+            _lastPlayedCount = playedCount;
+            _lastPlayedBrush = playedBrush;
+            _lastUnplayedBrush = unplayedBrush;
+            _lastUnplayedOpacity = unplayedOpacity;
+        }
+        else if (_lastPlayedCount != playedCount)
+        {
+            var start = Math.Max(0, Math.Min(_lastPlayedCount, playedCount));
+            var end = Math.Min(_bars.Length, Math.Max(_lastPlayedCount, playedCount));
+            for (var i = start; i < end; i++)
+            {
+                var isPlayed = i < playedCount;
+                _bars[i].Background = isPlayed ? playedBrush : unplayedBrush;
+                _bars[i].Opacity = isPlayed ? 1.0 : unplayedOpacity;
+            }
+
+            _lastPlayedCount = playedCount;
         }
 
-        _playheadNeedle.Background = NeedleBrush ?? playedBrush;
+        var needleBrush = NeedleBrush ?? playedBrush;
+        if (!ReferenceEquals(_lastNeedleBrush, needleBrush))
+        {
+            _playheadNeedle.Background = needleBrush;
+            _lastNeedleBrush = needleBrush;
+        }
+
         var showNeedle = IsPlaybackActive || fraction > 0.0 || _isPointerOver || _capturedPointerId is not null;
-        _playheadNeedle.Opacity = showNeedle ? 1.0 : 0.0;
+        if (_lastShowNeedle != showNeedle)
+        {
+            _playheadNeedle.Opacity = showNeedle ? 1.0 : 0.0;
+            _lastShowNeedle = showNeedle;
+        }
 
         var width = ActualWidth;
         var height = ActualHeight > 0 ? ActualHeight : 24.0;
         var needleHeight = _isPointerOver || _capturedPointerId is not null
             ? Math.Min(height, 22.0)
             : Math.Min(height, 20.0);
-        _playheadNeedle.Height = needleHeight;
+        if (Math.Abs(_lastNeedleHeight - needleHeight) > 0.05)
+        {
+            _playheadNeedle.Height = needleHeight;
+            _lastNeedleHeight = needleHeight;
+        }
 
         if (width > 2.0)
         {
-            Canvas.SetLeft(_playheadNeedle, fraction * (width - 2.0));
-            Canvas.SetTop(_playheadNeedle, Math.Max(0.0, (height - needleHeight) / 2.0));
+            var left = fraction * (width - 2.0);
+            var top = Math.Max(0.0, (height - needleHeight) / 2.0);
+            if (double.IsNaN(_lastNeedleLeft) || Math.Abs(_lastNeedleLeft - left) >= 0.5)
+            {
+                Canvas.SetLeft(_playheadNeedle, left);
+                _lastNeedleLeft = left;
+            }
+
+            if (double.IsNaN(_lastNeedleTop) || Math.Abs(_lastNeedleTop - top) >= 0.5)
+            {
+                Canvas.SetTop(_playheadNeedle, top);
+                _lastNeedleTop = top;
+            }
         }
     }
 

@@ -192,6 +192,35 @@ public static class HistoryDiaryPresentation
             _ => null,
         };
 
+    /// <summary>Converts a relative date filter into inclusive-start, exclusive-end UTC bounds in the local time zone.</summary>
+    public static (DateTimeOffset? FromUtc, DateTimeOffset? ToUtcExclusive) GetDateRangeUtcBounds(
+        HistoryDateRangeFilter dateRange,
+        DateTimeOffset localNow,
+        TimeZoneInfo? localTimeZone = null)
+    {
+        if (dateRange == HistoryDateRangeFilter.AnyTime)
+        {
+            return (null, null);
+        }
+
+        var zone = localTimeZone ?? TimeZoneInfo.Local;
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(localNow, zone).DateTime);
+        var (startDay, endExclusiveDay) = dateRange switch
+        {
+            HistoryDateRangeFilter.Today => (today, today.AddDays(1)),
+            HistoryDateRangeFilter.Yesterday => (today.AddDays(-1), today),
+            HistoryDateRangeFilter.Last7Days => (today.AddDays(-6), today.AddDays(1)),
+            HistoryDateRangeFilter.Last30Days => (today.AddDays(-29), today.AddDays(1)),
+            _ => (today, today.AddDays(1)),
+        };
+
+        var startLocal = startDay.ToDateTime(TimeOnly.MinValue);
+        var endLocal = endExclusiveDay.ToDateTime(TimeOnly.MinValue);
+        var fromUtc = new DateTimeOffset(startLocal, zone.GetUtcOffset(startLocal)).ToUniversalTime();
+        var toUtc = new DateTimeOffset(endLocal, zone.GetUtcOffset(endLocal)).ToUniversalTime();
+        return (fromUtc, toUtc);
+    }
+
     /// <summary>Evaluates whether <paramref name="entry"/> falls within <paramref name="dateRange"/> in local time.</summary>
     public static bool MatchesDateRange(
         DictationHistoryEntry entry,

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using EnviousWispr.App.Controls;
@@ -25,7 +26,6 @@ namespace EnviousWispr.App;
 /// <summary>Dictation history diary, search, filtering, re-polish, playback, and recovery card UI.</summary>
 public sealed partial class MainWindow
 {
-    private readonly List<DictationHistoryEntry> _history = [];
     private readonly WindowsAudioPlaybackService _audioPlayback;
 
     private HistoryLoadStatus _historyLoadStatus = HistoryLoadStatus.Missing;
@@ -44,6 +44,28 @@ public sealed partial class MainWindow
     public event Action<Guid>? HistoryPasteRequested;
 
     public async Task NotifyHistoryChangedAsync() => await ReloadHistoryAsync().ConfigureAwait(true);
+
+    private void InitializeHistoryUi()
+    {
+        if (HistoryList is not null)
+        {
+            HistoryList.ItemsSource = _historyRows;
+        }
+
+        _historyAnnounceDebounce.Tick += OnHistoryAnnounceDue;
+        _historySearchDebounce.Interval = TimeSpan.FromMilliseconds(150);
+        _historySearchDebounce.Tick += OnHistorySearchDebounceDue;
+    }
+
+    private void ShutdownHistoryUi()
+    {
+        _historyAnnounceDebounce.Stop();
+        _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
+        _historySearchDebounce.Stop();
+        _historySearchDebounce.Tick -= OnHistorySearchDebounceDue;
+        CancelActiveHistoryQuery();
+        CancelWaveformLoads();
+    }
 
     /// <param name="undoOffered">
     /// The text is an Escape Recovery whose one-shot Undo still stands: the card speaks macOS's words for it,
@@ -260,7 +282,7 @@ public sealed partial class MainWindow
         HistoryPasteNoticeTone tone)
     {
         var isTargetCardRendered = _lastPasteRequestedEntryId is { } targetId
-            && _renderedHistoryItems.Any(item => item.Id == targetId);
+            && _renderedItemsById.ContainsKey(targetId);
         var plan = HistoryPlaybackPresentation.PlanSavedDictationPasteNotice(
             isUndoAction: action == SavedDictationPasteAction.Undo,
             isRecoveryCardVisible: RecoveryCard.Visibility == Visibility.Visible,
@@ -317,14 +339,36 @@ public sealed partial class MainWindow
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
+        _allMatchingSelected = false;
+        var hasText = !string.IsNullOrEmpty(HistorySearchBox.Text);
         if (InlineClearHistorySearchButton is not null)
         {
-            InlineClearHistorySearchButton.Visibility = string.IsNullOrEmpty(HistorySearchBox.Text)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+            InlineClearHistorySearchButton.Visibility = hasText
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
-        RefreshHistoryView();
+        if (!hasText)
+        {
+            _historySearchDebounce.Stop();
+            _ = RefreshHistoryAsync(showLoadingState: false);
+            return;
+        }
+
+        CancelActiveHistoryQuery();
+        _historySearchDebounce.Stop();
+        _historySearchDebounce.Start();
+    }
+
+    private void OnHistorySearchDebounceDue(object? sender, object e)
+    {
+        _historySearchDebounce.Stop();
+        if (_shuttingDownProductWindows || _session.Closing)
+        {
+            return;
+        }
+
+        _ = RefreshHistoryAsync(showLoadingState: false);
     }
 
     private void ClearHistorySearchButton_Click(object sender, RoutedEventArgs e) =>
@@ -332,6 +376,8 @@ public sealed partial class MainWindow
 
     private void ClearHistoryFiltersButton_Click(object sender, RoutedEventArgs e)
     {
+        _historySearchDebounce.Stop();
+        _allMatchingSelected = false;
         HistorySearchBox.Text = string.Empty;
         _historyKindFilter = HistoryKindFilter.Dictation;
         _historyDateRangeFilter = HistoryDateRangeFilter.AnyTime;
@@ -342,7 +388,7 @@ public sealed partial class MainWindow
         }
 
         UpdateHistoryFilterSegmentButtons();
-        RefreshHistoryView();
+        _ = RefreshHistoryAsync(showLoadingState: false);
     }
 
     private void HistoryDateFilterItem_Click(object sender, RoutedEventArgs e)
@@ -360,6 +406,7 @@ public sealed partial class MainWindow
             "Last30Days" => HistoryDateRangeFilter.Last30Days,
             _ => HistoryDateRangeFilter.AnyTime,
         };
+        _allMatchingSelected = false;
         _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
         if (HistoryDateFilterText is not null)
         {
@@ -367,7 +414,7 @@ public sealed partial class MainWindow
         }
 
         UpdateHistoryFilterSegmentButtons();
-        RefreshHistoryView();
+        _ = RefreshHistoryAsync(showLoadingState: false);
     }
 
     private void HistorySelectToggleButton_Click(object sender, RoutedEventArgs e)
@@ -384,6 +431,7 @@ public sealed partial class MainWindow
         if (!isSelectionMode)
         {
             _selectedHistoryIds.Clear();
+            _allMatchingSelected = false;
             _lastBulkDeletionSummary = null;
         }
 
@@ -413,31 +461,62 @@ public sealed partial class MainWindow
         }
 
         var retentionDays = _settings?.Preferences.History.RetentionDays ?? UserPreferences.Default.History.RetentionDays;
-        HistoryHelpItemsControl.ItemsSource = HistoryDiaryPresentation.HelpItems(retentionDays);
-    }
-
-    private void SelectAllMatchingButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_lastMatchingHistoryEntries.Count == 0 || _isRepolishing || _isBulkDeletingHistory)
+        if (_lastHelpRetentionDays == retentionDays && HistoryHelpItemsControl.ItemsSource is not null)
         {
             return;
         }
 
-        var allSelected = _lastMatchingHistoryEntries.All(entry => _selectedHistoryIds.Contains(entry.Id));
+        _lastHelpRetentionDays = retentionDays;
+        HistoryHelpItemsControl.ItemsSource = HistoryDiaryPresentation.HelpItems(retentionDays);
+    }
+
+    private async void SelectAllMatchingButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_historyMatchingCount == 0 || _isRepolishing || _isBulkDeletingHistory)
+        {
+            return;
+        }
+
+        var expectedQuery = HistorySearchBox.Text.Trim();
+        var expectedKind = _historyKindFilter;
+        var expectedDateRange = _historyDateRangeFilter;
+        var expectedQueryVersion = Volatile.Read(ref _historyQueryVersion);
+        var matchingIds = await _session.History.QueryMatchingIdsAsync(
+            expectedQuery,
+            expectedKind,
+            expectedDateRange,
+            DateTimeOffset.Now,
+            TimeZoneInfo.Local).ConfigureAwait(true);
+        if (_session.Closing
+            || _shuttingDownProductWindows
+            || matchingIds.Count == 0
+            || !string.Equals(expectedQuery, HistorySearchBox?.Text.Trim() ?? string.Empty, StringComparison.Ordinal)
+            || expectedKind != _historyKindFilter
+            || expectedDateRange != _historyDateRangeFilter
+            || expectedQueryVersion != Volatile.Read(ref _historyQueryVersion))
+        {
+            return;
+        }
+
+        var allSelected = _allMatchingSelected || matchingIds.All(_selectedHistoryIds.Contains);
         _lastBulkDeletionSummary = null;
         if (allSelected)
         {
-            foreach (var entry in _lastMatchingHistoryEntries)
+            foreach (var id in matchingIds)
             {
-                _selectedHistoryIds.Remove(entry.Id);
+                _selectedHistoryIds.Remove(id);
             }
+
+            _allMatchingSelected = false;
         }
         else
         {
-            foreach (var entry in _lastMatchingHistoryEntries)
+            foreach (var id in matchingIds)
             {
-                _selectedHistoryIds.Add(entry.Id);
+                _selectedHistoryIds.Add(id);
             }
+
+            _allMatchingSelected = true;
         }
 
         RefreshCardSelectionVisuals();
@@ -447,7 +526,7 @@ public sealed partial class MainWindow
     private void LoadMoreHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         _historyVisibleLimit += HistoryDiaryPresentation.DefaultPageSize;
-        RefreshHistoryView();
+        _ = RefreshHistoryAsync(showLoadingState: false);
     }
 
     private void CardSelectCheckBox_Click(object sender, RoutedEventArgs e)
@@ -458,7 +537,11 @@ public sealed partial class MainWindow
         }
 
         _lastBulkDeletionSummary = null;
-        if (!_selectedHistoryIds.Remove(card.Id))
+        if (_selectedHistoryIds.Remove(card.Id))
+        {
+            _allMatchingSelected = false;
+        }
+        else
         {
             _selectedHistoryIds.Add(card.Id);
         }
@@ -720,10 +803,19 @@ public sealed partial class MainWindow
 
     private void OnAudioPlaybackStateChanged(HistoryPlaybackSnapshot snapshot)
     {
+        var previousId = _activePlaybackCardId;
+        var nextId = snapshot.ActiveEntryId;
         _lastPlaybackSnapshot = snapshot;
-        foreach (var item in _renderedHistoryItems)
+        _activePlaybackCardId = nextId;
+
+        if (previousId is { } prev && prev != nextId && _renderedItemsById.TryGetValue(prev, out var prevCard))
         {
-            item.SetPlaybackSnapshot(snapshot);
+            prevCard.SetPlaybackSnapshot(snapshot);
+        }
+
+        if (nextId is { } next && _renderedItemsById.TryGetValue(next, out var nextCard))
+        {
+            nextCard.SetPlaybackSnapshot(snapshot);
         }
     }
 
@@ -740,8 +832,10 @@ public sealed partial class MainWindow
         }
 
         _copyPrimaryResetVersions.Remove(entryId);
-        var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
-        card?.SetCopiedPrimary(false);
+        if (_renderedItemsById.TryGetValue(entryId, out var card))
+        {
+            card.SetCopiedPrimary(false);
+        }
     }
 
     private bool _copyingRecovery;
@@ -914,7 +1008,7 @@ public sealed partial class MainWindow
 
         try
         {
-            var result = await _session.History.RepolishAsync(selected.Id).ConfigureAwait(true);
+            var result = await _session.History.RepolishEntryAsync(selected.Id).ConfigureAwait(true);
             if (result.Status == HistoryRepolishStatus.Closing || _session.Closing)
             {
                 return;
@@ -923,10 +1017,7 @@ public sealed partial class MainWindow
             if (result.Succeeded)
             {
                 _editsViewModes.Remove(selected.Id);
-                if (result.View is not null)
-                {
-                    ShowHistory(result.View);
-                }
+                await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
             }
             else
             {
@@ -975,7 +1066,7 @@ public sealed partial class MainWindow
         }
 
         _audioPlayback.Stop(selected.Id);
-        var result = await _session.History.DeleteAsync(selected.Id).ConfigureAwait(true);
+        var result = await _session.History.DeleteEntryAsync(selected.Id).ConfigureAwait(true);
         if (result.Closing || _session.Closing)
         {
             return;
@@ -984,8 +1075,7 @@ public sealed partial class MainWindow
         if (result.Succeeded)
         {
             CleanupEntryUiState(selected.Id);
-            BeginHistoryReload();
-            ShowHistory(result.View!);
+            await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
         }
         else
         {
@@ -1002,7 +1092,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var result = await _session.History.KeepAsync(selected.Id).ConfigureAwait(true);
+        var result = await _session.History.KeepEntryAsync(selected.Id).ConfigureAwait(true);
         if (result.Closing || _session.Closing)
         {
             return;
@@ -1010,8 +1100,7 @@ public sealed partial class MainWindow
 
         if (result.Succeeded)
         {
-            BeginHistoryReload();
-            ShowHistory(result.View!);
+            await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
             ShowMessage("History entry kept", "Its 24-hour Escape Recovery expiry was removed.", InfoBarSeverity.Success);
         }
         else
@@ -1059,31 +1148,21 @@ public sealed partial class MainWindow
                 _audioPlayback.Stop(activeId);
             }
 
-            var result = await _session.History.DeleteManyAsync(idsToDelete).ConfigureAwait(true);
+            var result = await _session.History.DeleteEntriesAsync(idsToDelete).ConfigureAwait(true);
             if (result.Closing || _session.Closing)
             {
                 return;
             }
 
-            if (result.Succeeded && result.View is not null)
+            if (result.Succeeded)
             {
-                var remaining = HistoryDiaryPresentation.ReconcileSelectionAfterDelete(idsToDelete, result.View.Entries);
-                var deletedCount = idsToDelete.Length - remaining.Count;
-                _selectedHistoryIds.Clear();
-                foreach (var remainingId in remaining)
-                {
-                    _selectedHistoryIds.Add(remainingId);
-                }
-                foreach (var id in idsToDelete.Where(id => !remaining.Contains(id)))
+                foreach (var id in idsToDelete)
                 {
                     CleanupEntryUiState(id);
                 }
 
-                _lastBulkDeletionSummary = remaining.Count > 0
-                    ? $"{remaining.Count} item{(remaining.Count == 1 ? string.Empty : "s")} could not be deleted and stayed selected."
-                    : deletedCount == 1 ? "1 dictation deleted." : $"{deletedCount} dictations deleted.";
-                BeginHistoryReload();
-                ShowHistory(result.View);
+                _lastBulkDeletionSummary = count == 1 ? "1 dictation deleted." : $"{count} dictations deleted.";
+                await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
             }
             else
             {
@@ -1125,7 +1204,7 @@ public sealed partial class MainWindow
         }
 
         _audioPlayback.Stop();
-        var result = await _session.History.ClearAsync().ConfigureAwait(true);
+        var result = await _session.History.ClearEntriesAsync().ConfigureAwait(true);
         if (result.Closing || _session.Closing)
         {
             return;
@@ -1133,6 +1212,7 @@ public sealed partial class MainWindow
 
         if (result.Succeeded)
         {
+            CancelWaveformLoads();
             _expandedTranscriptIds.Clear();
             _showingEditsIds.Clear();
             _editsViewModes.Clear();
@@ -1145,8 +1225,7 @@ public sealed partial class MainWindow
             _lastPasteRequestedEntryId = null;
             SetHistorySelectionMode(false);
             UpdateHistoryFilterSegmentButtons();
-            BeginHistoryReload();
-            ShowHistory(result.View!);
+            await RefreshHistoryAsync(showLoadingState: false).ConfigureAwait(true);
         }
         else
         {
@@ -1154,75 +1233,220 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task ReloadHistoryAsync()
+    private Task ReloadHistoryAsync() => RefreshHistoryAsync(showLoadingState: _renderedHistoryItems.Count == 0);
+
+    private async Task RefreshHistoryAsync(bool showLoadingState)
     {
-        BeginHistoryReload();
-        var view = await _session.History.LoadAsync().ConfigureAwait(true);
-        ShowHistory(view);
+        if (_shuttingDownProductWindows || _session.Closing)
+        {
+            return;
+        }
+
+        CancelActiveHistoryQuery();
+        var cts = new CancellationTokenSource();
+        _historyQueryCts = cts;
+        var version = Interlocked.Increment(ref _historyQueryVersion);
+
+        if (showLoadingState)
+        {
+            BeginHistoryReload();
+        }
+
+        var query = HistorySearchBox?.Text.Trim() ?? string.Empty;
+        var localNow = DateTimeOffset.Now;
+
+        HistoryPageView pageView;
+        Dictionary<Guid, string?> resolvedPaths;
+        IReadOnlyList<Guid>? existingIdsForSelection = null;
+        try
+        {
+            pageView = await _session.History
+                .QueryPageAsync(
+                    query,
+                    _historyKindFilter,
+                    _historyDateRangeFilter,
+                    _historyVisibleLimit,
+                    localNow,
+                    TimeZoneInfo.Local,
+                    cts.Token)
+                .ConfigureAwait(true);
+
+            if (pageView.Summary == HistorySummary.Closing
+                || _session.Closing
+                || _shuttingDownProductWindows
+                || cts.IsCancellationRequested
+                || version != _historyQueryVersion)
+            {
+                return;
+            }
+
+            if (_selectedHistoryIds.Count > 0)
+            {
+                existingIdsForSelection = await _session.History
+                    .QueryMatchingIdsAsync(
+                        string.Empty,
+                        HistoryKindFilter.All,
+                        HistoryDateRangeFilter.AnyTime,
+                        localNow,
+                        TimeZoneInfo.Local,
+                        cts.Token)
+                    .ConfigureAwait(true);
+                if (_session.Closing
+                    || _shuttingDownProductWindows
+                    || cts.IsCancellationRequested
+                    || version != _historyQueryVersion)
+                {
+                    return;
+                }
+            }
+
+            var pageEntries = pageView.Entries;
+            resolvedPaths = await Task.Run(() => ResolveRecordingPathsForPage(pageEntries), cts.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested || _session.Closing || _shuttingDownProductWindows)
+        {
+            return;
+        }
+        finally
+        {
+            if (ReferenceEquals(_historyQueryCts, cts))
+            {
+                _historyQueryCts = null;
+            }
+
+            cts.Dispose();
+        }
+
+        if (_session.Closing
+            || _shuttingDownProductWindows
+            || version != _historyQueryVersion)
+        {
+            return;
+        }
+
+        ApplyHistoryPageView(pageView, query, localNow, resolvedPaths, existingIdsForSelection);
     }
 
-    /// <summary>The loading transition every reload goes through, whether the page or a command asked for it.</summary>
-    /// <remarks>
-    /// THE SAME TRANSITION FOR A COMMAND'S RELOAD AS FOR THE PAGE'S. The rows go away and the loading
-    /// card shows, which is also what resets the announcement bookkeeping - so a command that ends
-    /// with the same count as before is still announced, exactly as it was when every command
-    /// reloaded through the page's own path.
-    /// </remarks>
+    private void CancelActiveHistoryQuery()
+    {
+        Interlocked.Increment(ref _historyQueryVersion);
+        var active = _historyQueryCts;
+        _historyQueryCts = null;
+        if (active is null)
+        {
+            return;
+        }
+
+        try
+        {
+            active.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void CancelWaveformLoads()
+    {
+        Interlocked.Increment(ref _waveformLoadGeneration);
+        var active = _waveformLoadCts;
+        _waveformLoadCts = null;
+        if (active is null)
+        {
+            return;
+        }
+
+        try
+        {
+            active.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            active.Dispose();
+        }
+    }
+
+    private Dictionary<Guid, string?> ResolveRecordingPathsForPage(IReadOnlyList<DictationHistoryEntry> entries)
+    {
+        var paths = new Dictionary<Guid, string?>(entries.Count);
+        foreach (var entry in entries)
+        {
+            paths[entry.Id] = ResolveRecordingPath(entry);
+        }
+
+        return paths;
+    }
+
+    /// <summary>The loading transition every initial reload goes through.</summary>
     private void BeginHistoryReload()
     {
         _isHistoryLoading = true;
-        UpdateHistoryListVisibility(HistorySearchBox.Text.Trim(), itemCount: 0);
+        UpdateHistoryListVisibility(HistorySearchBox?.Text.Trim() ?? string.Empty, itemCount: 0);
     }
 
-    /// <summary>Puts what the presenter loaded on the page: the rows, and the one line about them.</summary>
-    private void ShowHistory(HistoryView view)
+    private void ApplyHistoryPageView(
+        HistoryPageView view,
+        string query,
+        DateTimeOffset localNow,
+        IReadOnlyDictionary<Guid, string?> resolvedRecordingPaths,
+        IReadOnlyList<Guid>? existingIdsForSelection = null)
     {
-        // A LOAD THE EXIT REFUSED OR STOPPED IS NOT DRAWN, AND NEITHER IS ONE THAT FINISHED AS THE
-        // EXIT BEGAN: a load inside a store that ignores its token completes after the drain started
-        // and reaches this thread with an honest answer for a page that is on its way out. The
-        // loading card it already shows is the last thing drawn on it.
         if (view.Summary == HistorySummary.Closing || _session.Closing)
         {
             return;
         }
 
         _historyLoadStatus = view.Status;
-        _history.Clear();
-        _history.AddRange(view.Entries);
-        var reconciled = HistoryDiaryPresentation.ReconcileSelectionAfterDelete(_selectedHistoryIds, _history);
-        _selectedHistoryIds.Clear();
-        foreach (var id in reconciled)
+        _historyTotalStoredCount = view.TotalStoredCount;
+        _historyMatchingCount = view.TotalMatchingCount;
+        _historyHasMore = view.HasMore;
+        _historyRemainingCount = view.RemainingCount;
+
+        if (_selectedHistoryIds.Count > 0 && existingIdsForSelection is not null)
         {
-            _selectedHistoryIds.Add(id);
+            var existingSet = new HashSet<Guid>(existingIdsForSelection);
+            if (_selectedHistoryIds.RemoveWhere(id => !existingSet.Contains(id)) > 0)
+            {
+                _allMatchingSelected = false;
+            }
         }
 
-        if (_audioPlayback.CurrentState.ActiveEntryId is { } activePlaybackId
-            && _history.All(entry => entry.Id != activePlaybackId))
+        if (_historyTotalStoredCount == 0
+            && _audioPlayback.CurrentState.ActiveEntryId is { } activePlaybackId)
         {
             _audioPlayback.Stop(activePlaybackId);
         }
 
-        var existingIds = _history.Select(entry => entry.Id).ToHashSet();
-        foreach (var cachedId in _waveformCache.Keys.Where(id => !existingIds.Contains(id)).ToArray())
-        {
-            _waveformCache.Remove(cachedId);
-        }
-
         _isHistoryLoading = false;
-        RefreshHistoryView();
+        RenderHistoryPage(view.Entries, view.DayCounts, query, localNow, resolvedRecordingPaths);
     }
 
     private HistoryKindFilter _historyKindFilter = HistoryKindFilter.Dictation;
     private HistoryDateRangeFilter _historyDateRangeFilter = HistoryDateRangeFilter.AnyTime;
     private bool _isHistorySelectionMode;
+    private bool _allMatchingSelected;
     private bool _isBulkDeletingHistory;
     private int _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
+    private int _historyTotalStoredCount;
+    private int _historyMatchingCount;
+    private bool _historyHasMore;
+    private int _historyRemainingCount;
+    private int _lastHelpRetentionDays = int.MinValue;
+    private long _historyQueryVersion;
+    private long _waveformLoadGeneration;
+    private CancellationTokenSource? _historyQueryCts;
+    private CancellationTokenSource? _waveformLoadCts;
     private Guid? _repolishingHistoryEntryId;
     private Guid? _activeHistoryCardId;
     private Guid? _lastPasteRequestedEntryId;
+    private Guid? _activePlaybackCardId;
     private int _recoveryCopyResetVersion;
     private string? _lastBulkDeletionSummary;
     private HistoryPlaybackSnapshot _lastPlaybackSnapshot = new(null, false, 0, 0);
+    private readonly DispatcherTimer _historySearchDebounce = new();
     private readonly HashSet<Guid> _selectedHistoryIds = [];
     private readonly HashSet<Guid> _expandedTranscriptIds = [];
     private readonly HashSet<Guid> _showingEditsIds = [];
@@ -1233,7 +1457,8 @@ public sealed partial class MainWindow
     private readonly Dictionary<Guid, int> _inlineNoticeVersions = [];
     private readonly Dictionary<Guid, (string FileName, IReadOnlyList<float> Peaks, long DurationMs)> _waveformCache = [];
     private readonly HashSet<Guid> _waveformLoadInFlight = [];
-    private List<DictationHistoryEntry> _lastMatchingHistoryEntries = [];
+    private readonly ObservableCollection<object> _historyRows = [];
+    private readonly Dictionary<Guid, HistoryItemViewModel> _renderedItemsById = [];
     private List<HistoryItemViewModel> _renderedHistoryItems = [];
 
     private void HistoryFilterButton_Click(object sender, RoutedEventArgs e)
@@ -1243,6 +1468,8 @@ public sealed partial class MainWindow
             return;
         }
 
+        _historySearchDebounce.Stop();
+        _allMatchingSelected = false;
         _historyKindFilter = tag switch
         {
             "TranscribeFile" => HistoryKindFilter.TranscribeFile,
@@ -1251,7 +1478,7 @@ public sealed partial class MainWindow
         _historyVisibleLimit = HistoryDiaryPresentation.DefaultPageSize;
 
         UpdateHistoryFilterSegmentButtons();
-        RefreshHistoryView();
+        _ = RefreshHistoryAsync(showLoadingState: false);
     }
 
     private void UpdateHistoryFilterSegmentButtons()
@@ -1279,18 +1506,17 @@ public sealed partial class MainWindow
         }
     }
 
-    private void RefreshHistoryView()
+    private void RenderHistoryPage(
+        IReadOnlyList<DictationHistoryEntry> pageEntries,
+        IReadOnlyDictionary<DateOnly, int> fullDayCounts,
+        string query,
+        DateTimeOffset now,
+        IReadOnlyDictionary<Guid, string?> resolvedRecordingPaths)
     {
-        var query = HistorySearchBox.Text.Trim();
-        var now = DateTimeOffset.Now;
-        var matching = HistoryPresenter.Filter(_history, query, _historyKindFilter, _historyDateRangeFilter, now);
-        _lastMatchingHistoryEntries = matching.ToList();
-
-        var fullDayCounts = HistoryDiaryPresentation.CountByDay(matching);
-        var paged = HistoryDiaryPresentation.TakePage(matching, _historyVisibleLimit);
-        var dayGroups = HistoryDiaryPresentation.GroupByDay(paged.Items, now);
-        var renderedCards = new List<HistoryItemViewModel>(paged.Items.Count);
-        var renderedRows = new List<object>(paged.Items.Count + dayGroups.Count);
+        var dayGroups = HistoryDiaryPresentation.GroupByDay(pageEntries, now);
+        var renderedCards = new List<HistoryItemViewModel>(pageEntries.Count);
+        var nextRenderedById = new Dictionary<Guid, HistoryItemViewModel>(pageEntries.Count);
+        var nextRows = new List<object>(pageEntries.Count + dayGroups.Count);
         var missingWaveforms = new List<(Guid EntryId, string FileName, string Path)>();
         var busy = _isRepolishing || _isBulkDeletingHistory;
         var polishReadiness = GetCurrentPolishReadiness();
@@ -1300,11 +1526,11 @@ public sealed partial class MainWindow
             var totalDayCount = fullDayCounts.TryGetValue(group.Header.Day, out var dayCount)
                 ? dayCount
                 : group.Entries.Count;
-            renderedRows.Add(new HistoryDayHeaderViewModel(group.Header, totalDayCount));
+            nextRows.Add(new HistoryDayHeaderViewModel(group.Header, totalDayCount));
 
             foreach (var entry in group.Entries)
             {
-                var recordingPath = ResolveRecordingPath(entry);
+                var recordingPath = resolvedRecordingPaths.GetValueOrDefault(entry.Id);
                 var hasRecording = recordingPath is not null;
                 IReadOnlyList<float>? cachedPeaks = null;
                 var durationMs = entry.AudioDurationMs ?? 0;
@@ -1331,42 +1557,76 @@ public sealed partial class MainWindow
                     ? _historyDiffCache.GetOrCompute(entry.OriginalText, entry.Text)
                     : HistoryDiffResult.Empty;
                 var editsViewMode = _editsViewModes.GetValueOrDefault(entry.Id, HistoryEditsViewMode.MarkedUp);
+                var isSelected = _selectedHistoryIds.Contains(entry.Id);
+                var isExpanded = _expandedTranscriptIds.Contains(entry.Id);
+                var isCopied = _copyPrimaryResetVersions.ContainsKey(entry.Id);
+                var inlineNotice = _cardInlineNotices.GetValueOrDefault(entry.Id);
 
-                var vm = new HistoryItemViewModel(
-                    entry,
-                    isSelectionMode: _isHistorySelectionMode,
-                    isSelected: _selectedHistoryIds.Contains(entry.Id),
-                    isTranscriptExpanded: _expandedTranscriptIds.Contains(entry.Id),
-                    isShowingEdits: isShowingEdits,
-                    editsViewMode: editsViewMode,
-                    diffResult: diffResult,
-                    isGlobalBusy: busy,
-                    isRepolishingThisCard: _repolishingHistoryEntryId == entry.Id,
-                    isPrimaryPasteTarget: false,
-                    polishReadiness: polishReadiness,
-                    hasAudioRecording: hasRecording,
-                    audioDurationMs: durationMs,
-                    waveformPeaks: cachedPeaks,
-                    playbackSnapshot: _lastPlaybackSnapshot,
-                    isCopiedPrimary: _copyPrimaryResetVersions.ContainsKey(entry.Id),
-                    inlineNotice: _cardInlineNotices.GetValueOrDefault(entry.Id));
+                HistoryItemViewModel vm;
+                if (_renderedItemsById.TryGetValue(entry.Id, out var existing)
+                    && Equals(existing.Entry, entry)
+                    && existing.HasAudioRecording == hasRecording)
+                {
+                    vm = existing;
+                    vm.SetSelectionState(_isHistorySelectionMode, isSelected);
+                    vm.SetTranscriptExpanded(isExpanded);
+                    vm.SetShowingEdits(isShowingEdits, editsViewMode, diffResult);
+                    vm.SetOperationState(busy, _repolishingHistoryEntryId == entry.Id, isPrimaryPasteTarget: false);
+                    vm.SetPolishReadiness(polishReadiness);
+                    if (cachedPeaks is not null && !ReferenceEquals(existing.WaveformPeaks, cachedPeaks))
+                    {
+                        vm.SetWaveformData(cachedPeaks, durationMs);
+                    }
+                    vm.SetPlaybackSnapshot(_lastPlaybackSnapshot);
+                    vm.SetCopiedPrimary(isCopied);
+                    vm.SetInlineNotice(inlineNotice);
+                }
+                else
+                {
+                    vm = new HistoryItemViewModel(
+                        entry,
+                        isSelectionMode: _isHistorySelectionMode,
+                        isSelected: isSelected,
+                        isTranscriptExpanded: isExpanded,
+                        isShowingEdits: isShowingEdits,
+                        editsViewMode: editsViewMode,
+                        diffResult: diffResult,
+                        isGlobalBusy: busy,
+                        isRepolishingThisCard: _repolishingHistoryEntryId == entry.Id,
+                        isPrimaryPasteTarget: false,
+                        polishReadiness: polishReadiness,
+                        hasAudioRecording: hasRecording,
+                        audioDurationMs: durationMs,
+                        waveformPeaks: cachedPeaks,
+                        playbackSnapshot: _lastPlaybackSnapshot,
+                        isCopiedPrimary: isCopied,
+                        inlineNotice: inlineNotice);
+                }
+
                 renderedCards.Add(vm);
-                renderedRows.Add(vm);
+                nextRenderedById[vm.Id] = vm;
+                nextRows.Add(vm);
             }
         }
 
         _renderedHistoryItems = renderedCards;
-        HistoryList.ItemsSource = renderedRows;
+        _renderedItemsById.Clear();
+        foreach (var kv in nextRenderedById)
+        {
+            _renderedItemsById[kv.Key] = kv.Value;
+        }
+
+        ReconcileHistoryRows(nextRows);
         if (HistoryCountText is not null)
         {
-            HistoryCountText.Text = HistoryDiaryPresentation.FormatItemCount(matching.Count);
+            HistoryCountText.Text = HistoryDiaryPresentation.FormatItemCount(_historyMatchingCount);
         }
         if (HistoryLoadMoreContainer is not null && LoadMoreHistoryButton is not null)
         {
-            HistoryLoadMoreContainer.Visibility = paged.HasMore ? Visibility.Visible : Visibility.Collapsed;
-            if (paged.HasMore)
+            HistoryLoadMoreContainer.Visibility = _historyHasMore ? Visibility.Visible : Visibility.Collapsed;
+            if (_historyHasMore)
             {
-                LoadMoreHistoryButton.Content = $"Show older dictations ({paged.RemainingCount} more)";
+                LoadMoreHistoryButton.Content = $"Show older dictations ({_historyRemainingCount} more)";
             }
         }
         if (ResetHistoryFiltersBarButton is not null)
@@ -1377,11 +1637,43 @@ public sealed partial class MainWindow
             ResetHistoryFiltersBarButton.Visibility = hasAnyFilter ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        PopulateHistoryHelpItems();
         UpdateHistoryListVisibility(query, renderedCards.Count);
         UpdateHistorySelectionDependentButtons();
         UpdateHistoryStatusCards();
         ScheduleMissingWaveformLoads(missingWaveforms);
+    }
+
+    private void ReconcileHistoryRows(List<object> nextRows)
+    {
+        var common = Math.Min(_historyRows.Count, nextRows.Count);
+        for (var i = 0; i < common; i++)
+        {
+            var current = _historyRows[i];
+            var next = nextRows[i];
+            if (ReferenceEquals(current, next))
+            {
+                continue;
+            }
+
+            if (current is HistoryDayHeaderViewModel currentHeader
+                && next is HistoryDayHeaderViewModel nextHeader
+                && string.Equals(currentHeader.AccessibilityLabel, nextHeader.AccessibilityLabel, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            _historyRows[i] = next;
+        }
+
+        while (_historyRows.Count > nextRows.Count)
+        {
+            _historyRows.RemoveAt(_historyRows.Count - 1);
+        }
+
+        for (var i = _historyRows.Count; i < nextRows.Count; i++)
+        {
+            _historyRows.Add(nextRows[i]);
+        }
     }
 
     private void RefreshCardSelectionVisuals()
@@ -1401,7 +1693,7 @@ public sealed partial class MainWindow
 
         var busy = _isRepolishing || _isBulkDeletingHistory;
         var activePasteId = _activeHistoryCardId is { } tracked
-            && _renderedHistoryItems.Any(item => item.Id == tracked)
+            && _renderedItemsById.ContainsKey(tracked)
             ? tracked
             : _renderedHistoryItems.FirstOrDefault()?.Id;
         foreach (var item in _renderedHistoryItems)
@@ -1409,10 +1701,10 @@ public sealed partial class MainWindow
             item.SetOperationState(busy, _repolishingHistoryEntryId == item.Id, item.Id == activePasteId);
         }
 
-        ClearHistoryButton.IsEnabled = _history.Count > 0 && !busy;
+        ClearHistoryButton.IsEnabled = _historyTotalStoredCount > 0 && !busy;
         if (HistoryMoreDeleteAllItem is not null)
         {
-            HistoryMoreDeleteAllItem.IsEnabled = _history.Count > 0 && !busy;
+            HistoryMoreDeleteAllItem.IsEnabled = _historyTotalStoredCount > 0 && !busy;
         }
         if (DeleteSelectedHistoryButton is not null)
         {
@@ -1420,9 +1712,11 @@ public sealed partial class MainWindow
         }
         if (HistorySelectAllButton is not null)
         {
-            var allSelected = _lastMatchingHistoryEntries.Count > 0
-                && _lastMatchingHistoryEntries.All(entry => _selectedHistoryIds.Contains(entry.Id));
-            HistorySelectAllButton.IsEnabled = _lastMatchingHistoryEntries.Count > 0 && !busy;
+            var allSelected = _allMatchingSelected
+                || (_historyMatchingCount > 0
+                    && _renderedHistoryItems.Count == _historyMatchingCount
+                    && _renderedHistoryItems.All(item => _selectedHistoryIds.Contains(item.Id)));
+            HistorySelectAllButton.IsEnabled = _historyMatchingCount > 0 && !busy;
             HistorySelectAllButton.Content = allSelected ? "Deselect all matching" : "Select all matching";
         }
         if (HistorySelectionCountText is not null)
@@ -1506,7 +1800,6 @@ public sealed partial class MainWindow
         {
             HistoryDetailReadyHotkeyText.Text = $"Keybind: {_settings.Preferences.Dictation.PushToTalkGesture}";
         }
-        PopulateHistoryHelpItems();
     }
 
     private void UpdateHistoryListVisibility(string query, int itemCount)
@@ -1516,7 +1809,7 @@ public sealed partial class MainWindow
         var hasFilters = hasQuery
             || _historyKindFilter != HistoryKindFilter.Dictation
             || _historyDateRangeFilter != HistoryDateRangeFilter.AnyTime;
-        var showFilteredEmpty = !hasItems && (_history.Count > 0 && hasFilters || hasQuery);
+        var showFilteredEmpty = !hasItems && (_historyTotalStoredCount > 0 && hasFilters || hasQuery);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
         ShowCard(HistoryLoadingState, _isHistoryLoading);
         ShowCard(HistoryList, !_isHistoryLoading && hasItems);
@@ -1670,11 +1963,15 @@ public sealed partial class MainWindow
             return;
         }
 
+        _waveformLoadCts ??= new CancellationTokenSource();
+        var token = _waveformLoadCts.Token;
+        var generation = Volatile.Read(ref _waveformLoadGeneration);
+
         _ = Task.Run(() =>
         {
             foreach (var (entryId, fileName, path) in items)
             {
-                if (_shuttingDownProductWindows)
+                if (_shuttingDownProductWindows || token.IsCancellationRequested || generation != Volatile.Read(ref _waveformLoadGeneration))
                 {
                     return;
                 }
@@ -1691,20 +1988,22 @@ public sealed partial class MainWindow
                 DispatcherQueue?.TryEnqueue(() =>
                 {
                     _waveformLoadInFlight.Remove(entryId);
-                    if (_shuttingDownProductWindows)
+                    if (_shuttingDownProductWindows
+                        || token.IsCancellationRequested
+                        || generation != Volatile.Read(ref _waveformLoadGeneration))
                     {
                         return;
                     }
 
                     _waveformCache[entryId] = (fileName, normalized, durationMs);
-                    var card = _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId);
-                    if (card is not null && string.Equals(card.Entry.AudioFileName, fileName, StringComparison.Ordinal))
+                    if (_renderedItemsById.TryGetValue(entryId, out var card)
+                        && string.Equals(card.Entry.AudioFileName, fileName, StringComparison.Ordinal))
                     {
                         card.SetWaveformData(normalized, durationMs);
                     }
                 });
             }
-        });
+        }, token);
     }
 
     private void SetCardInlineNotice(Guid entryId, string message)
@@ -1712,7 +2011,10 @@ public sealed partial class MainWindow
         _cardInlineNotices[entryId] = message;
         var version = _inlineNoticeVersions.TryGetValue(entryId, out var prev) ? prev + 1 : 1;
         _inlineNoticeVersions[entryId] = version;
-        _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId)?.SetInlineNotice(message);
+        if (_renderedItemsById.TryGetValue(entryId, out var card))
+        {
+            card.SetInlineNotice(message);
+        }
         _ = ClearInlineNoticeAfterDelayAsync(entryId, version);
     }
 
@@ -1720,7 +2022,10 @@ public sealed partial class MainWindow
     {
         _cardInlineNotices.Remove(entryId);
         _inlineNoticeVersions.Remove(entryId);
-        _renderedHistoryItems.FirstOrDefault(item => item.Id == entryId)?.SetInlineNotice(null);
+        if (_renderedItemsById.TryGetValue(entryId, out var card))
+        {
+            card.SetInlineNotice(null);
+        }
     }
 
     private async Task ClearInlineNoticeAfterDelayAsync(Guid entryId, int expectedVersion)
@@ -1883,6 +2188,8 @@ public sealed partial class MainWindow
         public bool IsTemporary { get; }
 
         public bool HasPolishEdits { get; }
+
+        public bool HasAudioRecording => _hasAudioRecording;
 
         public long AudioDurationMs => _audioDurationMs;
 
@@ -2121,6 +2428,9 @@ public sealed partial class MainWindow
             var wasPlaying = _isPlaying;
             var prevPos = _playbackPositionMs;
             var prevDuration = _audioDurationMs;
+            var prevProgress = PlaybackProgress;
+            var prevCurrentClock = PlaybackCurrentClockText;
+            var prevTotalClock = PlaybackTotalClockText;
 
             ApplySnapshotFields(snapshot);
             if (wasActive == _isPlaybackActive
@@ -2131,17 +2441,42 @@ public sealed partial class MainWindow
                 return;
             }
 
-            Notify(
-                nameof(PlaybackButtonGlyph),
-                nameof(PlaybackButtonAutomationName),
-                nameof(CanTogglePlayback),
-                nameof(IsPlaybackActive),
-                nameof(PlaybackProgress),
-                nameof(PlaybackCurrentClockText),
-                nameof(PlaybackTotalClockText),
-                nameof(PlaybackClockText),
-                nameof(PlaybackScrubberLabel),
-                nameof(ActiveCardOutlineVisibility));
+            if (wasPlaying != _isPlaying)
+            {
+                Notify(nameof(PlaybackButtonGlyph), nameof(PlaybackButtonAutomationName), nameof(CanTogglePlayback));
+            }
+
+            if (wasActive != _isPlaybackActive)
+            {
+                Notify(nameof(IsPlaybackActive));
+            }
+
+            if (wasPlaying != _isPlaying)
+            {
+                Notify(nameof(ActiveCardOutlineVisibility));
+            }
+
+            if (Math.Abs(prevProgress - PlaybackProgress) > 1e-6 || wasActive != _isPlaybackActive)
+            {
+                Notify(nameof(PlaybackProgress));
+            }
+
+            var currentClockChanged = !string.Equals(prevCurrentClock, PlaybackCurrentClockText, StringComparison.Ordinal);
+            var totalClockChanged = !string.Equals(prevTotalClock, PlaybackTotalClockText, StringComparison.Ordinal);
+            if (currentClockChanged)
+            {
+                Notify(nameof(PlaybackCurrentClockText));
+            }
+
+            if (totalClockChanged)
+            {
+                Notify(nameof(PlaybackTotalClockText));
+            }
+
+            if (currentClockChanged || totalClockChanged || wasActive != _isPlaybackActive)
+            {
+                Notify(nameof(PlaybackClockText), nameof(PlaybackScrubberLabel));
+            }
         }
 
         private void ApplySnapshotFields(HistoryPlaybackSnapshot snapshot)

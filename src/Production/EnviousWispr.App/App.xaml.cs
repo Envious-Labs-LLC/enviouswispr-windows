@@ -44,7 +44,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly JsonDiagnosticExportService _diagnosticExportService;
     private readonly JsonSettingsStore _settingsStore;
     private readonly JsonPortableProfileService _profileService = new();
-    private readonly JsonHistoryStore _historyStore;
+    private readonly SqliteHistoryStore _historyStore;
     private readonly LocalDictationAudioArchive _dictationAudioArchive;
     private readonly JsonApplicationRunStateStore _runStateStore;
     private readonly WindowsRecoveryTextStore _recoveryTextStore;
@@ -119,7 +119,10 @@ public partial class App : Application, IAsyncDisposable
         _settingsStore = new JsonSettingsStore(Path.Combine(_dataDirectory, "settings.json"));
         var dictationRecordingsDirectory = Path.Combine(_dataDirectory, "recordings", "dictations");
         _dictationAudioArchive = new LocalDictationAudioArchive(dictationRecordingsDirectory);
-        _historyStore = new JsonHistoryStore(Path.Combine(_dataDirectory, "history.json"), dictationRecordingsDirectory);
+        _historyStore = new SqliteHistoryStore(
+            Path.Combine(_dataDirectory, "history.db"),
+            Path.Combine(_dataDirectory, "history.json"),
+            dictationRecordingsDirectory);
         _runStateStore = new JsonApplicationRunStateStore(Path.Combine(_dataDirectory, "run-state.json"));
         _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(_dataDirectory, "recovery.json"));
         // THE LONG-LIVED SESSION OWNERS ARE ONE COMPOSITION'S, SHARED WITH THE TESTS. The shell chooses

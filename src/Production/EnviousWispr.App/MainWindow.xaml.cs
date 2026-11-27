@@ -263,7 +263,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _audioPlayback = new WindowsAudioPlaybackService(DispatcherQueue);
         _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
-        _historyAnnounceDebounce.Tick += OnHistoryAnnounceDue;
+        InitializeHistoryUi();
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.LearnedUndoRequested += pillId => LearnedPillUndoRequested?.Invoke(pillId);
         _overlayWindow.LearnedEnded += pillId => LearnedPillEnded?.Invoke(pillId);
@@ -829,8 +829,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _shuttingDownProductWindows = true;
         // DETACHED, NOT JUST STOPPED. A timer left attached can still tick during shutdown and raise
         // an announcement for a window that is going away.
-        _historyAnnounceDebounce.Stop();
-        _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
+        ShutdownHistoryUi();
         _audioPlayback.StateChanged -= OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed -= OnAudioPlaybackFailed;
         _audioPlayback.Dispose();

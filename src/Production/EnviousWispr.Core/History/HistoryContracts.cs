@@ -194,6 +194,42 @@ public interface IHistoryRepolishService
         CancellationToken cancellationToken = default);
 }
 
+public enum HistoryEntryKindFilter
+{
+    All,
+    Dictation,
+    TranscribeFile,
+}
+
+public sealed record HistoryPageQuery(
+    int RetentionDays,
+    DateTimeOffset Now,
+    int Limit,
+    string SearchQuery = "",
+    HistoryEntryKindFilter KindFilter = HistoryEntryKindFilter.All,
+    DateTimeOffset? CreatedFromUtc = null,
+    DateTimeOffset? CreatedToUtcExclusive = null,
+    TimeZoneInfo? LocalTimeZone = null);
+
+public sealed record HistoryPageResult(
+    IReadOnlyList<DictationHistoryEntry> Entries,
+    HistoryLoadStatus Status,
+    int TotalStoredCount,
+    int TotalMatchingCount,
+    IReadOnlyDictionary<DateOnly, int> DayCounts,
+    AppError? Error = null);
+
+public interface IHistoryQueryStore
+{
+    Task<HistoryPageResult> QueryPageAsync(
+        HistoryPageQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Guid>> QueryMatchingIdsAsync(
+        HistoryPageQuery query,
+        CancellationToken cancellationToken = default);
+}
+
 public interface IHistoryStore
 {
     Task<HistoryLoadResult> LoadAsync(

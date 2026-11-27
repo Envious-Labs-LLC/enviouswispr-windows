@@ -43,6 +43,30 @@ public sealed record HistoryView(HistoryLoadStatus Status, IReadOnlyList<Dictati
     public static HistoryView Closing { get; } = new(HistoryLoadStatus.Missing, [], HistorySummary.Closing);
 }
 
+/// <summary>One bounded page of history entries queried against the store, plus full matching counts.</summary>
+public sealed record HistoryPageView(
+    HistoryLoadStatus Status,
+    IReadOnlyList<DictationHistoryEntry> Entries,
+    HistorySummary Summary,
+    int TotalStoredCount,
+    int TotalMatchingCount,
+    IReadOnlyDictionary<DateOnly, int> DayCounts,
+    bool HasMore,
+    int RemainingCount)
+{
+    private static readonly IReadOnlyDictionary<DateOnly, int> EmptyDays = new Dictionary<DateOnly, int>();
+
+    public static HistoryPageView Closing { get; } = new(
+        HistoryLoadStatus.Missing,
+        [],
+        HistorySummary.Closing,
+        TotalStoredCount: 0,
+        TotalMatchingCount: 0,
+        EmptyDays,
+        HasMore: false,
+        RemainingCount: 0);
+}
+
 /// <summary>How a history command went, and the page that follows it when it worked.</summary>
 /// <param name="View">The reloaded rows after a command that changed the file; null when nothing changed.</param>
 /// <param name="Closing">True when the command was refused or stopped because the presentation is closing; the page says nothing.</param>
@@ -51,6 +75,14 @@ public sealed record HistoryCommandResult(bool Succeeded, HistoryView? View, boo
     public static HistoryCommandResult Untouched { get; } = new(false, null);
 
     public static HistoryCommandResult Refused { get; } = new(false, null, Closing: true);
+}
+
+/// <summary>Outcome of a history store mutation that does not reload the full history list.</summary>
+public sealed record HistoryMutationResult(bool Succeeded, bool Closing = false)
+{
+    public static HistoryMutationResult Applied { get; } = new(Succeeded: true);
+    public static HistoryMutationResult Failed { get; } = new(Succeeded: false);
+    public static HistoryMutationResult ClosingResult { get; } = new(Succeeded: false, Closing: true);
 }
 
 /// <summary>How a repolish command went, and the page that follows it when it worked.</summary>
@@ -145,16 +177,145 @@ public sealed class HistoryPresenter
         var result = await _history
             .LoadAsync(preferences.RetentionDays, _clock.GetUtcNow(), cancellationToken)
             .ConfigureAwait(false);
-        var summary = result.Status switch
-        {
-            HistoryLoadStatus.Invalid => HistorySummary.Invalid,
-            HistoryLoadStatus.Unavailable => HistorySummary.Unavailable,
-            _ when !preferences.IsEnabled => HistorySummary.Off,
-            _ when result.Entries.Count == 0 => HistorySummary.Empty,
-            _ => HistorySummary.Saved,
-        };
-        return new HistoryView(result.Status, result.Entries, summary);
+        return new HistoryView(result.Status, result.Entries, Summarize(result.Status, result.Entries.Count, preferences));
     }
+
+    private static HistorySummary Summarize(HistoryLoadStatus status, int count, HistoryPreferences preferences) => status switch
+    {
+        HistoryLoadStatus.Invalid => HistorySummary.Invalid,
+        HistoryLoadStatus.Unavailable => HistorySummary.Unavailable,
+        _ when !preferences.IsEnabled => HistorySummary.Off,
+        _ when count == 0 => HistorySummary.Empty,
+        _ => HistorySummary.Saved,
+    };
+
+    /// <summary>Queries one filtered page and full day counts without keeping the entire history in memory.</summary>
+    public async Task<HistoryPageView> QueryPageAsync(
+        string query,
+        HistoryKindFilter kind,
+        HistoryDateRangeFilter dateRange,
+        int limit,
+        DateTimeOffset localNow,
+        TimeZoneInfo? localTimeZone = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        if (!_admission.TryEnter(out var lease))
+        {
+            return HistoryPageView.Closing;
+        }
+
+        using (lease)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+            try
+            {
+                var preferences = _preferences();
+                var boundedLimit = Math.Max(0, limit);
+                if (_history is IHistoryQueryStore queryStore)
+                {
+                    var (fromUtc, toUtc) = HistoryDiaryPresentation.GetDateRangeUtcBounds(dateRange, localNow, localTimeZone);
+                    var pageQuery = new HistoryPageQuery(
+                        preferences.RetentionDays,
+                        _clock.GetUtcNow(),
+                        boundedLimit,
+                        query.Trim(),
+                        MapKind(kind),
+                        fromUtc,
+                        toUtc,
+                        localTimeZone);
+                    var pageResult = await queryStore.QueryPageAsync(pageQuery, stop.Token).ConfigureAwait(false);
+                    var remaining = Math.Max(0, pageResult.TotalMatchingCount - pageResult.Entries.Count);
+                    return new HistoryPageView(
+                        pageResult.Status,
+                        pageResult.Entries,
+                        Summarize(pageResult.Status, pageResult.TotalStoredCount, preferences),
+                        pageResult.TotalStoredCount,
+                        pageResult.TotalMatchingCount,
+                        pageResult.DayCounts,
+                        HasMore: remaining > 0,
+                        RemainingCount: remaining);
+                }
+
+                var loaded = await _history
+                    .LoadAsync(preferences.RetentionDays, _clock.GetUtcNow(), stop.Token)
+                    .ConfigureAwait(false);
+                var matching = Filter(loaded.Entries, query, kind, dateRange, localNow, localTimeZone);
+                var paged = HistoryDiaryPresentation.TakePage(matching, boundedLimit);
+                var dayCounts = HistoryDiaryPresentation.CountByDay(matching, localTimeZone);
+                return new HistoryPageView(
+                    loaded.Status,
+                    paged.Items,
+                    Summarize(loaded.Status, loaded.Entries.Count, preferences),
+                    loaded.Entries.Count,
+                    matching.Count,
+                    dayCounts,
+                    paged.HasMore,
+                    paged.RemainingCount);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return HistoryPageView.Closing;
+            }
+        }
+    }
+
+    /// <summary>Queries all matching entry IDs across the store without loading full entry payloads.</summary>
+    public async Task<IReadOnlyList<Guid>> QueryMatchingIdsAsync(
+        string query,
+        HistoryKindFilter kind,
+        HistoryDateRangeFilter dateRange,
+        DateTimeOffset localNow,
+        TimeZoneInfo? localTimeZone = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        if (!_admission.TryEnter(out var lease))
+        {
+            return [];
+        }
+
+        using (lease)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+            try
+            {
+                var preferences = _preferences();
+                if (_history is IHistoryQueryStore queryStore)
+                {
+                    var (fromUtc, toUtc) = HistoryDiaryPresentation.GetDateRangeUtcBounds(dateRange, localNow, localTimeZone);
+                    var pageQuery = new HistoryPageQuery(
+                        preferences.RetentionDays,
+                        _clock.GetUtcNow(),
+                        Limit: 0,
+                        query.Trim(),
+                        MapKind(kind),
+                        fromUtc,
+                        toUtc,
+                        localTimeZone);
+                    return await queryStore.QueryMatchingIdsAsync(pageQuery, stop.Token).ConfigureAwait(false);
+                }
+
+                var loaded = await _history
+                    .LoadAsync(preferences.RetentionDays, _clock.GetUtcNow(), stop.Token)
+                    .ConfigureAwait(false);
+                return Filter(loaded.Entries, query, kind, dateRange, localNow, localTimeZone)
+                    .Select(entry => entry.Id)
+                    .ToArray();
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return [];
+            }
+        }
+    }
+
+    private static HistoryEntryKindFilter MapKind(HistoryKindFilter kind) => kind switch
+    {
+        HistoryKindFilter.Dictation => HistoryEntryKindFilter.Dictation,
+        HistoryKindFilter.TranscribeFile => HistoryEntryKindFilter.TranscribeFile,
+        _ => HistoryEntryKindFilter.All,
+    };
 
     /// <summary>The rows whose text contains the query, or all of them for a blank query.</summary>
     public static IReadOnlyList<DictationHistoryEntry> Filter(IReadOnlyList<DictationHistoryEntry> entries, string query) =>
@@ -202,6 +363,95 @@ public sealed class HistoryPresenter
         ArgumentNullException.ThrowIfNull(entry);
         return entry.EngineId.Contains("file", StringComparison.OrdinalIgnoreCase) ||
                entry.EngineId.Contains("transcribe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Removes one dictation without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> DeleteEntryAsync(Guid id, CancellationToken cancellationToken = default) =>
+        ApplyMutationOnlyAsync(token => _history.DeleteAsync(id, token), cancellationToken);
+
+    /// <summary>Keeps a temporary recovery entry without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> KeepEntryAsync(Guid id, CancellationToken cancellationToken = default) =>
+        ApplyMutationOnlyAsync(token => _history.KeepAsync(id, token), cancellationToken);
+
+    /// <summary>Removes every matching dictation ID without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> DeleteEntriesAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        return ApplyMutationOnlyAsync(token => _history.DeleteManyAsync(ids, token), cancellationToken);
+    }
+
+    /// <summary>Removes every dictation without reloading the full catalog.</summary>
+    public Task<HistoryMutationResult> ClearEntriesAsync(CancellationToken cancellationToken = default) =>
+        ApplyMutationOnlyAsync(token => _history.ClearAsync(token), cancellationToken);
+
+    /// <summary>Re-polishes an existing history entry without reloading the entire catalog.</summary>
+    public async Task<HistoryRepolishResult> RepolishEntryAsync(
+        Guid id,
+        bool copyToClipboard = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_admission.TryEnter(out var lease))
+        {
+            return HistoryRepolishResult.ClosingResult();
+        }
+
+        using (lease)
+        {
+            try
+            {
+                using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+                if (_repolishService is null)
+                {
+                    return HistoryRepolishResult.NoProvider();
+                }
+
+                var repolishResult = await _repolishService
+                    .RepolishAsync(id, copyToClipboard, stop.Token)
+                    .ConfigureAwait(false);
+                if (repolishResult.Succeeded)
+                {
+                    _notifyHistoryChanged?.Invoke();
+                    HistoryChanged?.Invoke();
+                }
+
+                return repolishResult;
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return HistoryRepolishResult.ClosingResult();
+            }
+        }
+    }
+
+    private async Task<HistoryMutationResult> ApplyMutationOnlyAsync(
+        Func<CancellationToken, Task<HistoryOperationResult>> command,
+        CancellationToken cancellationToken)
+    {
+        if (!_admission.TryEnter(out var lease))
+        {
+            return HistoryMutationResult.ClosingResult;
+        }
+
+        using (lease)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+            try
+            {
+                var result = await command(stop.Token).ConfigureAwait(false);
+                if (!result.Succeeded)
+                {
+                    return HistoryMutationResult.Failed;
+                }
+
+                _notifyHistoryChanged?.Invoke();
+                HistoryChanged?.Invoke();
+                return HistoryMutationResult.Applied;
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return HistoryMutationResult.ClosingResult;
+            }
+        }
     }
 
     /// <summary>Removes one dictation. A refusal leaves the rows as they were.</summary>
