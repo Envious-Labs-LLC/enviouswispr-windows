@@ -414,174 +414,8 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Self-Learning Dictionary Undo pill: theme-aware Light/Dark border + smooth countdown rail -->
-                <Grid x:Name="LearnedPillPanel" Margin="14,9,12,11" VerticalAlignment="Center" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Width="36" Height="36" CornerRadius="18" VerticalAlignment="Center" Style="{StaticResource PillLearnedDiscStyle}">
-                        <FontIcon Glyph="&#xE82D;" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource PillLearnedIconStyle}" />
-                    </Border>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource PillLearnedTextSpacing}">
-                        <TextBlock x:Name="LearnedPillTitle" FontSize="15" FontWeight="SemiBold" MaxLines="1" TextTrimming="CharacterEllipsis" MaxWidth="{StaticResource PillLearnedTitleMaxWidth}" AutomationProperties.LiveSetting="Polite" Style="{StaticResource PillLearnedTitleStyle}" />
-                        <TextBlock x:Name="LearnedPillSubtitle" FontSize="14" MaxLines="1" Style="{StaticResource PillLearnedSubtitleStyle}" />
-                    </StackPanel>
-                    <StackPanel x:Name="LearnedPillControls" Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource PillBadgeDotSpacing}" VerticalAlignment="Center" Margin="4,0,0,0">
-                        <Button x:Name="LearnedPillUndoButton" Content="Undo" Click="LearnedUndoButton_Click" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillLearnedUndoButtonStyle}" />
-                        <Button x:Name="LearnedPillCloseButton" Width="28" Height="28" Click="LearnedCloseButton_Click" Style="{StaticResource PillLearnedCloseButtonStyle}" AutomationProperties.Name="Close and keep learned word">
-                            <FontIcon Glyph="&#xE711;" FontSize="12" />
-                        </Button>
-                    </StackPanel>
-                </Grid>
-
-                <!-- Floating Bluetooth Mic Awareness Card (320px, Light/Dark theme-aware, 2px bottom rainbow bar) -->
-                <StackPanel
-                    x:Name="BluetoothAwarenessCardPanel"
-                    Width="{StaticResource PillCardWidth}"
-                    Padding="18,16,18,18"
-                    Spacing="{StaticResource PillCardSpacing}"
-                    Visibility="Collapsed">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="28" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="28" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock
-                            x:Name="BluetoothCardTitle"
-                            Grid.Column="1"
-                            FontSize="16"
-                            FontWeight="SemiBold"
-                            HorizontalAlignment="Center"
-                            Style="{StaticResource PillCardTitleTextStyle}"
-                            Text="Bluetooth mic detected"
-                            TextAlignment="Center"
-                            TextWrapping="Wrap" />
-                        <Button
-                            x:Name="BluetoothCloseButton"
-                            Grid.Column="2"
-                            Width="25"
-                            Height="25"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Top"
-                            AutomationProperties.Name="Close Bluetooth tips"
-                            Click="CardDismissButton_Click"
-                            Style="{StaticResource PillCardCloseButtonStyle}">
-                            <FontIcon FontSize="11" Glyph="&#xE711;" />
-                        </Button>
-                    </Grid>
-                    <TextBlock
-                        x:Name="BluetoothCardSubtitle"
-                        FontSize="14"
-                        HorizontalAlignment="Center"
-                        MaxWidth="{StaticResource PillCardInnerMaxWidth}"
-                        Style="{StaticResource PillCardBodyTextStyle}"
-                        Text="Bluetooth microphones can take a moment on a cold start."
-                        TextAlignment="Center"
-                        TextWrapping="Wrap" />
-                    <StackPanel Spacing="{StaticResource PillCardTipSpacing}">
-                        <Grid ColumnSpacing="{StaticResource PillCardTipSpacing}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Width="34" Height="34" CornerRadius="17" Background="{ThemeResource PillCardTipCircleBrush}" VerticalAlignment="Top">
-                                <FontIcon Glyph="&#xE823;" FontSize="15" Foreground="{ThemeResource PillCardTipIconBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                            <TextBlock Grid.Column="1" FontSize="14" Style="{StaticResource PillCardBodyTextStyle}" Text="After your mic has been idle, wait 1 to 2 seconds before speaking." TextWrapping="Wrap" VerticalAlignment="Center" />
-                        </Grid>
-                        <Grid ColumnSpacing="{StaticResource PillCardTipSpacing}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Width="34" Height="34" CornerRadius="17" Background="{ThemeResource PillCardTipCircleBrush}" VerticalAlignment="Top">
-                                <FontIcon Glyph="&#xE916;" FontSize="15" Foreground="{ThemeResource PillCardTipIconBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                            <TextBlock Grid.Column="1" FontSize="14" Style="{StaticResource PillCardBodyTextStyle}" Text="Microphone readiness keeps follow-up dictations ready for up to 30 seconds (on by default)." TextWrapping="Wrap" VerticalAlignment="Center" />
-                        </Grid>
-                        <Grid ColumnSpacing="{StaticResource PillCardTipSpacing}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Width="34" Height="34" CornerRadius="17" Background="{ThemeResource PillCardTipCircleBrush}" VerticalAlignment="Top">
-                                <FontIcon Glyph="&#xE7F6;" FontSize="15" Foreground="{ThemeResource PillCardTipIconBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                            <TextBlock Grid.Column="1" FontSize="14" Style="{StaticResource PillCardBodyTextStyle}" Text="Built-in or wired mics usually avoid this startup delay." TextWrapping="Wrap" VerticalAlignment="Center" />
-                        </Grid>
-                    </StackPanel>
-                    <TextBlock
-                        x:Name="BluetoothFooterText"
-                        FontSize="12"
-                        HorizontalAlignment="Center"
-                        MaxWidth="{StaticResource PillCardInnerMaxWidth}"
-                        Style="{StaticResource PillCardFooterTextStyle}"
-                        Text="Shown once per launch when Bluetooth is your mic"
-                        TextAlignment="Center"
-                        TextWrapping="Wrap" />
-                    <StackPanel Spacing="{StaticResource PillCardTightSpacing}" HorizontalAlignment="Center">
-                        <Button
-                            x:Name="BluetoothGotItButton"
-                            MinWidth="124"
-                            Click="CardDismissButton_Click"
-                            Content="Got it"
-                            FontSize="14"
-                            FontWeight="SemiBold"
-                            HorizontalAlignment="Center"
-                            Style="{StaticResource PillCardPrimaryButtonStyle}" />
-                        <Button
-                            x:Name="BluetoothAdjustButton"
-                            Click="ActionButton_Click"
-                            Content="Adjust settings"
-                            FontSize="14"
-                            HorizontalAlignment="Center"
-                            Style="{StaticResource PillCardLinkButtonStyle}" />
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Floating AI Polish Setup Card (320px, Light/Dark theme-aware, no X button, no rainbow bar) -->
-                <StackPanel
-                    x:Name="PolishSetupCardPanel"
-                    Width="{StaticResource PillCardWidth}"
-                    Padding="20,18,20,16"
-                    Spacing="{StaticResource PillCardSpacing}"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="PolishSetupTitle"
-                        FontSize="16"
-                        FontWeight="SemiBold"
-                        HorizontalAlignment="Center"
-                        Style="{StaticResource PillCardTitleTextStyle}"
-                        Text="Polish needs setup."
-                        TextAlignment="Center"
-                        TextWrapping="Wrap" />
-                    <TextBlock
-                        x:Name="PolishSetupSubtitle"
-                        FontSize="14"
-                        HorizontalAlignment="Center"
-                        Style="{StaticResource PillCardBodyTextStyle}"
-                        Text="Pasted without AI polish."
-                        TextAlignment="Center"
-                        TextWrapping="Wrap" />
-                    <Button
-                        x:Name="PolishSetupActionButton"
-                        Click="ActionButton_Click"
-                        Content="Set up AI polish"
-                        FontSize="14"
-                        FontWeight="SemiBold"
-                        HorizontalAlignment="Stretch"
-                        Style="{StaticResource PillCardPrimaryButtonStyle}" />
-                    <Button
-                        x:Name="PolishSetupNotNowButton"
-                        Click="CardDismissButton_Click"
-                        Content="Not now"
-                        FontSize="14"
-                        HorizontalAlignment="Center"
-                        Style="{StaticResource PillCardLinkButtonStyle}" />
-                </StackPanel>
+                <!-- Load-on-demand host for LearnedCorrectionPillView, BluetoothAwarenessCardView, and PolishSetupCardView -->
+                <Grid x:Name="DeferredSurfaceHost" Visibility="Collapsed" />
 
                 <!-- Animated bottom countdown rail for Self-Learning Dictionary Undo -->
                 <Border
@@ -591,10 +425,14 @@
                     Margin="20,0,20,1"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Bottom"
+                    RenderTransformOrigin="0,0.5"
                     AutomationProperties.AccessibilityView="Raw"
                     IsHitTestVisible="False"
                     Style="{StaticResource PillLearnedRailStyle}"
                     Visibility="Collapsed">
+                    <Border.RenderTransform>
+                        <ScaleTransform x:Name="LearnedCountdownScale" ScaleX="0" />
+                    </Border.RenderTransform>
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
                             <GradientStop Offset="0.0" Color="{ThemeResource PillLearnedRailStartColor}" />
@@ -612,10 +450,14 @@
                     Margin="20,0,20,2"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Bottom"
+                    RenderTransformOrigin="0,0.5"
                     AutomationProperties.AccessibilityView="Raw"
                     IsHitTestVisible="False"
                     Style="{StaticResource PillLearnedRailStyle}"
                     Visibility="Collapsed">
+                    <Border.RenderTransform>
+                        <ScaleTransform x:Name="EscapeCountdownScale" ScaleX="0" />
+                    </Border.RenderTransform>
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
                             <GradientStop Offset="0.0" Color="{ThemeResource PillLearnedRailStartColor}" />

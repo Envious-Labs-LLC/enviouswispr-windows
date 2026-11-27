@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Overlay.LearnedCorrectionPillView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid
+        x:Name="LearnedPillPanel"
+        Margin="14,9,12,11"
+        VerticalAlignment="Center"
+        ColumnSpacing="{StaticResource BrandSpacingM}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column="0" Width="36" Height="36" CornerRadius="18" VerticalAlignment="Center" Style="{StaticResource PillLearnedDiscStyle}">
+            <FontIcon Glyph="&#xE82D;" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource PillLearnedIconStyle}" />
+        </Border>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource PillLearnedTextSpacing}">
+            <TextBlock
+                x:Name="LearnedPillTitle"
+                FontSize="15"
+                FontWeight="SemiBold"
+                MaxLines="1"
+                TextTrimming="CharacterEllipsis"
+                MaxWidth="{StaticResource PillLearnedTitleMaxWidth}"
+                AutomationProperties.LiveSetting="Polite"
+                Style="{StaticResource PillLearnedTitleStyle}" />
+            <TextBlock
+                x:Name="LearnedPillSubtitle"
+                FontSize="14"
+                MaxLines="1"
+                Style="{StaticResource PillLearnedSubtitleStyle}" />
+        </StackPanel>
+        <StackPanel
+            x:Name="LearnedPillControls"
+            Grid.Column="2"
+            Orientation="Horizontal"
+            Spacing="{StaticResource PillBadgeDotSpacing}"
+            VerticalAlignment="Center"
+            Margin="4,0,0,0">
+            <Button
+                x:Name="LearnedPillUndoButton"
+                Content="Undo"
+                Click="UndoButton_Click"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Style="{StaticResource PillLearnedUndoButtonStyle}" />
+            <Button
+                x:Name="LearnedPillCloseButton"
+                Width="28"
+                Height="28"
+                Click="CloseButton_Click"
+                Style="{StaticResource PillLearnedCloseButtonStyle}"
+                AutomationProperties.Name="Close and keep learned word">
+                <FontIcon Glyph="&#xE711;" FontSize="12" />
+            </Button>
+        </StackPanel>
+    </Grid>
+</UserControl>

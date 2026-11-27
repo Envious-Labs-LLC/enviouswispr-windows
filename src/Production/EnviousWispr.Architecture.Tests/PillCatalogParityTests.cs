@@ -113,10 +113,16 @@ public sealed class PillCatalogParityTests
         {
             Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Presentation", "DictationStatus.cs"),
             Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Presentation", "PillPreviewCatalog.cs"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Presentation", "OverlayPillCatalog.cs"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Presentation", "OverlayExpiryClock.cs"),
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml"),
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"),
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.DiagnosticsAndUpdates.cs"),
-        };
+        }.Concat(Directory.EnumerateFiles(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "Overlay"),
+            "*",
+            SearchOption.TopDirectoryOnly)
+            .Order(StringComparer.Ordinal));
 
         foreach (var path in targets)
         {

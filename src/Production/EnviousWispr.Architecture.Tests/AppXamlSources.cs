@@ -40,4 +40,58 @@ internal static class AppXamlSources
 
         return root;
     }
+
+    internal static IReadOnlyList<string> OverlayAndViewPaths(string repositoryRoot)
+    {
+        var appDir = AppDirectory(repositoryRoot);
+        var paths = new List<string> { Path.Combine(appDir, "DictationOverlayWindow.xaml") };
+        var overlayDir = Path.Combine(appDir, "Overlay");
+        if (Directory.Exists(overlayDir))
+        {
+            paths.AddRange(Directory.EnumerateFiles(overlayDir, "*.xaml", SearchOption.TopDirectoryOnly)
+                .Order(StringComparer.Ordinal));
+        }
+
+        return paths;
+    }
+
+    internal static XDocument LoadOverlayAndViewsDocument(string repositoryRoot)
+    {
+        var paths = OverlayAndViewPaths(repositoryRoot);
+        var root = XDocument.Load(paths[0]);
+        var rootElement = root.Root!;
+        foreach (var viewPath in paths.Skip(1))
+        {
+            var viewDoc = XDocument.Load(viewPath);
+            if (viewDoc.Root is not null)
+            {
+                rootElement.Add(viewDoc.Root);
+            }
+        }
+
+        return root;
+    }
+
+    internal static string LoadOverlayCodeText(string repositoryRoot)
+    {
+        var appDir = AppDirectory(repositoryRoot);
+        var paths = new List<string>();
+        paths.AddRange(Directory.EnumerateFiles(appDir, "DictationOverlayWindow*.cs", SearchOption.TopDirectoryOnly)
+            .Order(StringComparer.Ordinal));
+        var overlayDir = Path.Combine(appDir, "Overlay");
+        if (Directory.Exists(overlayDir))
+        {
+            paths.AddRange(Directory.EnumerateFiles(overlayDir, "*.cs", SearchOption.TopDirectoryOnly)
+                .Order(StringComparer.Ordinal));
+        }
+
+        var catalogPath = Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.Core", "Presentation", "OverlayPillCatalog.cs");
+        if (File.Exists(catalogPath))
+        {
+            paths.Add(catalogPath);
+        }
+
+        return string.Join("\n", paths.Select(File.ReadAllText));
+    }
 }
