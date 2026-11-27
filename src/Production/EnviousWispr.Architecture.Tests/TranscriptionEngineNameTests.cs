@@ -1280,12 +1280,12 @@ public sealed partial class DesignSystemTokenTests
     {
         var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
         var document = XDocument.Load(Path.Combine(root, "MainWindow.xaml"));
-        // Exclude pre-existing MainWindow.Onboarding.cs, whose overlaid checklist status icons
+        // Exclude MainWindow.Onboarding.Rendering.cs, whose overlaid checklist status icons
         // toggle mutually inside the same Grid cell rather than sitting beside a row label.
         var code = string.Join(
             "\n",
             Directory.EnumerateFiles(root, "MainWindow*.cs")
-                .Where(path => !Path.GetFileName(path).Equals("MainWindow.Onboarding.cs", StringComparison.OrdinalIgnoreCase))
+                .Where(path => !Path.GetFileName(path).Equals("MainWindow.Onboarding.Rendering.cs", StringComparison.OrdinalIgnoreCase))
                 .Order()
                 .Select(File.ReadAllText));
 
@@ -2105,7 +2105,7 @@ public sealed partial class DesignSystemTokenTests
             Directory.EnumerateFiles(
                     Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
                     "MainWindow*.cs")
-                .Where(path => !Path.GetFileName(path).Equals("MainWindow.Onboarding.cs", StringComparison.OrdinalIgnoreCase))
+                .Where(path => !Path.GetFileName(path).Equals("MainWindow.Onboarding.Rendering.cs", StringComparison.OrdinalIgnoreCase))
                 .Order()
                 .Select(File.ReadAllText));
 

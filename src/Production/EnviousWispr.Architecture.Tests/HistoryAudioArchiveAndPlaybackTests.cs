@@ -847,7 +847,7 @@ public sealed partial class HistoryAudioArchiveAndPlaybackTests
     public void DictationStartStopsHistoryPlaybackAndBlocksCardPlaybackWhileBusy()
     {
         var root = FindRepositoryRoot();
-        var onboardingCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Onboarding.cs"));
+        var onboardingCs = AppXamlSources.ReadMainWindowOnboardingCodeText(root);
         var historyCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
 
         var setDictationBody = ExtractMethodBody(onboardingCs, "public void SetDictationActive");

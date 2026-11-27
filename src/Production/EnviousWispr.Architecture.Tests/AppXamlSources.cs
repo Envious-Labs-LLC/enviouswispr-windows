@@ -94,4 +94,12 @@ internal static class AppXamlSources
 
         return string.Join("\n", paths.Select(File.ReadAllText));
     }
+
+    internal static string ReadMainWindowOnboardingCodeText(string repositoryRoot)
+    {
+        var appDir = AppDirectory(repositoryRoot);
+        var paths = Directory.EnumerateFiles(appDir, "MainWindow.Onboarding*.cs", SearchOption.TopDirectoryOnly)
+            .Order(StringComparer.Ordinal);
+        return string.Join("\n", paths.Select(File.ReadAllText));
+    }
 }
