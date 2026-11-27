@@ -415,7 +415,8 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
 
         try
         {
-            _ = PruneExpiredAndOverflowCore(connection, query.RetentionDays, query.Now);
+            var removedAudio = PruneExpiredAndOverflowCore(connection, query.RetentionDays, query.Now);
+            _audioJournal.DrainPendingAudioDeletes(removedAudio);
             var whereSql = BuildFilterWhereClause(query, out var parameters);
             var ids = new List<Guid>();
             using var cmd = connection.CreateCommand();
@@ -784,9 +785,6 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
                     }
 
                     tx.Commit();
-                    using var checkpoint = connection.CreateCommand();
-                    checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-                    checkpoint.ExecuteNonQuery();
                 }
                 catch
                 {
@@ -803,6 +801,19 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
             if (_legacyJsonPath is not null)
             {
                 TryDeleteFileQuietly(_legacyJsonPath);
+            }
+
+            if (connection is not null)
+            {
+                try
+                {
+                    using var checkpoint = connection.CreateCommand();
+                    checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                    checkpoint.ExecuteNonQuery();
+                }
+                catch (SqliteException)
+                {
+                }
             }
 
             return new HistoryOperationResult(true);
@@ -989,6 +1000,18 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
         }
 
         tx.Commit();
+        // Ensure migrated WAL frames are durably flushed to the main database file before deleting the legacy JSON source.
+        using (var durable = connection.CreateCommand())
+        {
+            durable.CommandText =
+                """
+                PRAGMA synchronous=FULL;
+                PRAGMA wal_checkpoint(TRUNCATE);
+                PRAGMA synchronous=NORMAL;
+                """;
+            durable.ExecuteNonQuery();
+        }
+
         TryDeleteFileQuietly(_legacyJsonPath!);
         return null;
     }

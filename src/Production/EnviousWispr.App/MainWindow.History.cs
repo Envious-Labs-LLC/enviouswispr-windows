@@ -1204,7 +1204,6 @@ public sealed partial class MainWindow
         }
 
         _audioPlayback.Stop();
-        CancelWaveformLoads();
         var succeeded = await _session.History.ClearEntriesAsync().ConfigureAwait(true);
         if (succeeded is null || _session.Closing)
         {
@@ -1213,6 +1212,7 @@ public sealed partial class MainWindow
 
         if (succeeded.Value)
         {
+            CancelWaveformLoads();
             _expandedTranscriptIds.Clear();
             _showingEditsIds.Clear();
             _editsViewModes.Clear();
