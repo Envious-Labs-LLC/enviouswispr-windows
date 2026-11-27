@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Diagnostics;
 using System.Text.Json;
 using EnviousWispr.Core.Credentials;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
@@ -53,10 +54,10 @@ public sealed class CloudPolishModelCatalog : IDisposable
     {
         ArgumentNullException.ThrowIfNull(apiKeyStore);
         _apiKeyStore = apiKeyStore;
-        _httpClient = messageHandler is null
-            ? new HttpClient()
-            : new HttpClient(messageHandler, disposeHandler: false);
-        _httpClient.Timeout = Timeout.InfiniteTimeSpan;
+        _httpClient = SharedHttpClients.CreateClient(
+            messageHandler,
+            HttpClientProfile.Default,
+            Timeout.InfiniteTimeSpan);
         _requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(15);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_requestTimeout, TimeSpan.Zero);
     }

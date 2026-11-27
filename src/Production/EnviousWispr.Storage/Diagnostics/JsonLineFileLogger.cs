@@ -2,6 +2,7 @@ using System.Security;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.IO;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Diagnostics;
@@ -223,18 +224,6 @@ public sealed class JsonLineFileLogger : IAppLogger
             selected.Reverse();
         }
 
-        var temporaryPath = _path + $".{Guid.NewGuid():N}.tmp";
-        try
-        {
-            File.WriteAllLines(temporaryPath, selected);
-            File.Move(temporaryPath, _path, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-        }
+        AtomicFileWriter.WriteLines(_path, selected, createParentDirectory: false);
     }
 }

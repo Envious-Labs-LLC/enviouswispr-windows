@@ -8,6 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Core\EnviousWispr.Core.csproj" />
-    <ProjectReference Include="..\..\src\Production\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.Storage\EnviousWispr.Storage.csproj" />
   </ItemGroup>
 </Project>

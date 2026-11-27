@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.LLM;
@@ -77,9 +78,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
         }
         _options = options;
         _isUsingAccelerator = options.GpuLayers is > 0;
-        _healthClient = healthHandler is null
-            ? new HttpClient()
-            : new HttpClient(healthHandler, disposeHandler: false);
+        _healthClient = SharedHttpClients.CreateClient(healthHandler);
     }
 
     public bool IsUsingAccelerator => _isUsingAccelerator;

@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using EnviousWispr.Core.Distribution;
+using EnviousWispr.Core.IO;
+using EnviousWispr.Core.Networking;
 
 namespace EnviousWispr.Services.Diagnostics;
 
@@ -140,27 +142,11 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
 
         if (_apiKey is not null)
         {
-            if (messageHandler is not null)
-            {
-                _httpClient = new HttpClient(messageHandler, disposeHandler: false)
-                {
-                    Timeout = TimeSpan.FromSeconds(10),
-                };
-                _ownsHttpClient = true;
-            }
-            else
-            {
-                var handler = new SocketsHttpHandler
-                {
-                    AllowAutoRedirect = false,
-                    ConnectTimeout = TimeSpan.FromSeconds(5),
-                };
-                _httpClient = new HttpClient(handler, disposeHandler: true)
-                {
-                    Timeout = TimeSpan.FromSeconds(10),
-                };
-                _ownsHttpClient = true;
-            }
+            _httpClient = SharedHttpClients.CreateClient(
+                messageHandler,
+                HttpClientProfile.NoRedirect,
+                TimeSpan.FromSeconds(10));
+            _ownsHttpClient = true;
         }
 
         SetUsageMetricsEnabled(usageMetricsEnabled);
@@ -507,10 +493,9 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
                 }
             }
 
-            Directory.CreateDirectory(_dataDirectory);
             var minted = Guid.NewGuid().ToString("D");
             var serialized = JsonSerializer.Serialize(new PersistedTelemetryId(minted), JsonOptions);
-            File.WriteAllText(path, serialized, Encoding.UTF8);
+            AtomicFileWriter.WriteText(path, serialized);
             return minted;
         }
         catch

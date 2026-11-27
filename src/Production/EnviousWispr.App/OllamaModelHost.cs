@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net.Http;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.LLM;
@@ -22,17 +23,15 @@ internal sealed class OllamaModelHost(
 {
     private readonly OllamaCloudCatalogClient _cloudCatalog = cloudCatalog ?? new OllamaCloudCatalogClient();
     private readonly bool _ownsCloudCatalog = cloudCatalog is null;
-    private readonly SocketsHttpHandler _httpHandler = new()
-    {
-        AllowAutoRedirect = false,
-        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-    };
 
     public string? ActiveModelId => activeModelId();
 
     public async Task<OllamaInventory> InspectAsync(string? endpoint, CancellationToken cancellationToken)
     {
-        await using var client = new OllamaApiClient(endpoint, _httpHandler, readinessTimeout: TimeSpan.FromSeconds(3));
+        await using var client = new OllamaApiClient(
+            endpoint,
+            SharedHttpClients.GetHandler(HttpClientProfile.NoRedirect),
+            readinessTimeout: TimeSpan.FromSeconds(3));
         var discovery = await client.DiscoverAsync(cancellationToken).ConfigureAwait(false);
         var server = discovery.Health switch
         {
@@ -112,7 +111,7 @@ internal sealed class OllamaModelHost(
         var timer = Stopwatch.StartNew();
         logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.OllamaModelDownloadStarted, Provider: DiagnosticProvider.Ollama));
         OllamaPullOutcome outcome;
-        await using (var client = new OllamaApiClient(endpoint, _httpHandler))
+        await using (var client = new OllamaApiClient(endpoint, SharedHttpClients.GetHandler(HttpClientProfile.NoRedirect)))
         {
             outcome = await client.PullAsync(modelId, progress, cancellationToken).ConfigureAwait(false);
         }
@@ -141,7 +140,7 @@ internal sealed class OllamaModelHost(
         var timer = Stopwatch.StartNew();
         logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.OllamaModelDownloadStarted, Provider: DiagnosticProvider.Ollama));
         OllamaHostedAddResult result;
-        await using (var client = new OllamaApiClient(endpoint, _httpHandler))
+        await using (var client = new OllamaApiClient(endpoint, SharedHttpClients.GetHandler(HttpClientProfile.NoRedirect)))
         {
             result = await client.ResolveAndAddHostedModelAsync(advertisedId, progress, cancellationToken).ConfigureAwait(false);
         }
@@ -204,7 +203,7 @@ internal sealed class OllamaModelHost(
                 return OllamaWarmupOutcome.Cancelled;
             }
 
-            await using var client = new OllamaApiClient(endpoint, _httpHandler);
+            await using var client = new OllamaApiClient(endpoint, SharedHttpClients.GetHandler(HttpClientProfile.NoRedirect));
             return await client.WarmUpAsync(modelId, effectiveToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -230,7 +229,7 @@ internal sealed class OllamaModelHost(
     {
         var timer = Stopwatch.StartNew();
         OllamaDeleteOutcome outcome;
-        await using (var client = new OllamaApiClient(endpoint, _httpHandler))
+        await using (var client = new OllamaApiClient(endpoint, SharedHttpClients.GetHandler(HttpClientProfile.NoRedirect)))
         {
             outcome = await client.DeleteAsync(modelId, cancellationToken).ConfigureAwait(false);
         }
@@ -285,7 +284,6 @@ internal sealed class OllamaModelHost(
 
     public void Dispose()
     {
-        _httpHandler.Dispose();
         if (_ownsCloudCatalog)
         {
             _cloudCatalog.Dispose();

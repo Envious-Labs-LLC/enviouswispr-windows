@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.History;
+using EnviousWispr.Core.IO;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Settings;
@@ -134,50 +135,50 @@ public static class UserDataExportService
         }
 
         var destination = Path.GetFullPath(destinationPath);
-        var directory = Path.GetDirectoryName(destination);
-        if (string.IsNullOrEmpty(directory))
+        if (string.IsNullOrEmpty(Path.GetDirectoryName(destination)))
         {
             return Failure(AppErrorCode.InvalidData);
         }
 
-        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
         try
         {
-            await using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: false);
-                WriteEntry(archive, ProfileEntryName, JsonSerializer.Serialize(profile, JsonSettingsStore.SerializerOptions));
-                WriteEntry(
-                    archive,
-                    HistoryEntryName,
-                    JsonSerializer.Serialize(
-                        new HistoryExport(
-                            HistorySchemaVersion,
-                            now,
-                            loaded.Entries.Select(entry => new HistoryExportEntry(
-                                entry.Id,
-                                entry.CreatedAt,
-                                entry.Text,
-                                entry.EngineId,
-                                entry.WasPolished,
-                                entry.WasDelivered,
-                                entry.ExpiresAt)).ToArray()),
-                        ReadableJson));
-                if (recoveredRecord is not null)
+            await AtomicFileWriter.WriteWithStreamAsync(
+                destination,
+                (stream, _) =>
                 {
+                    using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
+                    WriteEntry(archive, ProfileEntryName, JsonSerializer.Serialize(profile, JsonSettingsStore.SerializerOptions));
                     WriteEntry(
                         archive,
-                        RecoveredEntryName,
+                        HistoryEntryName,
                         JsonSerializer.Serialize(
-                            new RecoveredExport(recoveredRecord.CreatedAt, recoveredRecord.Text),
+                            new HistoryExport(
+                                HistorySchemaVersion,
+                                now,
+                                loaded.Entries.Select(entry => new HistoryExportEntry(
+                                    entry.Id,
+                                    entry.CreatedAt,
+                                    entry.Text,
+                                    entry.EngineId,
+                                    entry.WasPolished,
+                                    entry.WasDelivered,
+                                    entry.ExpiresAt)).ToArray()),
                             ReadableJson));
-                }
+                    if (recoveredRecord is not null)
+                    {
+                        WriteEntry(
+                            archive,
+                            RecoveredEntryName,
+                            JsonSerializer.Serialize(
+                                new RecoveredExport(recoveredRecord.CreatedAt, recoveredRecord.Text),
+                                ReadableJson));
+                    }
 
-                WriteEntry(archive, ReadMeEntryName, ReadMe);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporaryPath, destination, overwrite: true);
+                    WriteEntry(archive, ReadMeEntryName, ReadMe);
+                    return Task.CompletedTask;
+                },
+                createParentDirectory: false,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             return new UserDataExportResult(true, loaded.Entries.Count, recoveredRecord is not null);
         }
         catch (IOException)
@@ -191,19 +192,6 @@ public static class UserDataExportService
         catch (SecurityException)
         {
             return Failure(AppErrorCode.AccessDenied);
-        }
-        finally
-        {
-            try
-            {
-                File.Delete(temporaryPath);
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
         }
     }
 

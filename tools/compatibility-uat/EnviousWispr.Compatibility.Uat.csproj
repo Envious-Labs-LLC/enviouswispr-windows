@@ -12,7 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Core\EnviousWispr.Core.csproj" />
-    <ProjectReference Include="..\..\src\Production\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.Runtime\EnviousWispr.Runtime.csproj" />
   </ItemGroup>
 
   <ItemGroup>

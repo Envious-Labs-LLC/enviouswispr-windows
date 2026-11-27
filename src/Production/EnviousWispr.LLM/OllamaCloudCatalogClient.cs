@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using EnviousWispr.Core.Networking;
 
 namespace EnviousWispr.LLM;
 
@@ -55,14 +56,10 @@ public sealed class OllamaCloudCatalogClient : IDisposable
         _clock = clock ?? TimeProvider.System;
         _timeout = timeout ?? DefaultTimeout;
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_timeout, TimeSpan.Zero);
-        _httpClient = messageHandler is null
-            ? new HttpClient(new HttpClientHandler
-            {
-                AllowAutoRedirect = false,
-                UseCookies = false,
-            })
-            : new HttpClient(messageHandler, disposeHandler: false);
-        _httpClient.Timeout = Timeout.InfiniteTimeSpan;
+        _httpClient = SharedHttpClients.CreateClient(
+            messageHandler,
+            HttpClientProfile.NoRedirectNoCookies,
+            Timeout.InfiniteTimeSpan);
     }
 
     public IReadOnlyList<string>? CachedIds

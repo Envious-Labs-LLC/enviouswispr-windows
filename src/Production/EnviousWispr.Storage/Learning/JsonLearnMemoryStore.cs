@@ -1,6 +1,7 @@
 using System.Security;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EnviousWispr.Core.IO;
 using EnviousWispr.Core.Learning;
 
 namespace EnviousWispr.Services.Learning;
@@ -478,30 +479,8 @@ public sealed class JsonLearnMemoryStore : ILearnMemoryStore
         return Directory.EnumerateFiles(dir, prefix + "*").ToArray();
     }
 
-    private void WriteAtomically(StoreFile file)
-    {
-        var dir = Path.GetDirectoryName(_filePath)!;
-        var temp = Path.Combine(dir, $".{Path.GetFileName(_filePath)}.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            var json = JsonSerializer.Serialize(file, SerializerOptions);
-            File.WriteAllText(temp, json);
-            File.Move(temp, _filePath, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temp))
-                {
-                    File.Delete(temp);
-                }
-            }
-            catch (Exception exception) when (IsStorageException(exception))
-            {
-            }
-        }
-    }
+    private void WriteAtomically(StoreFile file) =>
+        AtomicFileWriter.WriteJson(_filePath, file, SerializerOptions, createParentDirectory: false);
 
     private FileStream? AcquireExclusiveLock()
     {
