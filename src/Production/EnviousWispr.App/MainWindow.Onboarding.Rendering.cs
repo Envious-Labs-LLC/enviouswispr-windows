@@ -1,10 +1,8 @@
 using System.Globalization;
-using System.Runtime.InteropServices;
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Dictation;
-using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
@@ -13,17 +11,9 @@ using EnviousWispr.Core.Settings;
 using EnviousWispr.ModelDelivery;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
-using EnviousWispr.Services.Input;
-using EnviousWispr.Services.Settings;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
-using Windows.System;
-using Windows.UI.ViewManagement;
 
 namespace EnviousWispr.App;
 

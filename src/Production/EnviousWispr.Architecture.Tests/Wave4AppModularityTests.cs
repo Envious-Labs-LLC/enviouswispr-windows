@@ -1,10 +1,19 @@
 using System.IO;
+using System.Linq;
 using Xunit;
 
 namespace EnviousWispr.Architecture.Tests;
 
 public sealed class Wave4AppModularityTests
 {
+    private static readonly string[] ExpectedOnboardingPartials =
+    [
+        "MainWindow.Onboarding.cs",
+        "MainWindow.Onboarding.Rendering.cs",
+        "MainWindow.Onboarding.Steps.cs",
+        "MainWindow.Onboarding.TimersAndFocus.cs",
+    ];
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -21,16 +30,24 @@ public sealed class Wave4AppModularityTests
         throw new InvalidOperationException("Could not locate repository root.");
     }
 
-    [Theory]
-    [InlineData("MainWindow.Onboarding.cs", 1100)]
-    [InlineData("MainWindow.Onboarding.Steps.cs", 1100)]
-    [InlineData("MainWindow.Onboarding.Rendering.cs", 1100)]
-    [InlineData("MainWindow.Onboarding.TimersAndFocus.cs", 1100)]
-    public void OnboardingPartialFilesExistAndStayUnderLineCeiling(string fileName, int maxLines)
+    [Fact]
+    public void OnboardingPartialFilesExistAndStayUnderLineCeiling()
     {
-        var path = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", fileName);
-        Assert.True(File.Exists(path), $"Expected split partial file '{fileName}' to exist at '{path}'.");
-        var lineCount = File.ReadAllLines(path).Length;
-        Assert.True(lineCount <= maxLines, $"Expected '{fileName}' to stay <= {maxLines} lines, found {lineCount}.");
+        var appDir = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var files = Directory.EnumerateFiles(appDir, "MainWindow.Onboarding*.cs", SearchOption.TopDirectoryOnly)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            ExpectedOnboardingPartials.Order(StringComparer.Ordinal).ToArray(),
+            files.Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
+
+        foreach (var path in files)
+        {
+            var lineCount = File.ReadAllLines(path).Length;
+            Assert.True(
+                lineCount <= 1100,
+                $"Expected '{Path.GetFileName(path)}' to stay <= 1100 lines, found {lineCount}.");
+        }
     }
 }
