@@ -239,6 +239,34 @@ public sealed class YourWordsScaleAndStorageTests
             Assert.Equal(5, afterRollback.Settings.LaunchCount);
             Assert.Equal("OrigWord", Assert.Single(afterRollback.Settings.UserData.CustomWords).Replacement);
         });
+
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            // Failed ResetAsync from an un-split monolithic profile must delete any newly created sidecar
+            // so original monolithic userData stays intact on reload.
+            var settingsPath = Path.Combine(directory, "settings.json");
+            var userDataPath = Path.Combine(directory, "user-data.json");
+            var legacy = AppSettings.Default with
+            {
+                UserData = new ReusableUserData(
+                    [new CustomWordEntry("legacyspoken", "LegacyWord")],
+                    [new SnippetEntry("legacysnip", "LegacyBody")],
+                    hasSeededStarterSnippets: true),
+            };
+            await new JsonSettingsStore(settingsPath).SaveAsync(legacy);
+
+            var splitStore = new JsonSettingsStore(settingsPath, userDataPath);
+            using (new FileStream(settingsPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                var resetFailure = await Record.ExceptionAsync(() => splitStore.ResetAsync(AppSettings.FreshInstall));
+                Assert.True(resetFailure is IOException or UnauthorizedAccessException);
+            }
+
+            Assert.False(File.Exists(userDataPath));
+            var reloaded = await new JsonSettingsStore(settingsPath, userDataPath).LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, reloaded.Status);
+            Assert.Equal("LegacyWord", Assert.Single(reloaded.Settings.UserData.CustomWords).Replacement);
+        });
     }
 
     [Fact]

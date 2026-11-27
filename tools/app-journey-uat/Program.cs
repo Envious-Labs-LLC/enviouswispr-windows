@@ -569,7 +569,7 @@ if (quickAdd)
 {
     // ONBOARDED, SO QUICK ADD OPENS THE DICTIONARY PAGE; THE ADD-A-WORD KEY PINNED TO F9, a single key the injector can
     // drive, as F8 is pinned for the recording key. Nothing else differs from the default profile.
-    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+    await CreateProfileSettingsStore(profileDirectory)
         .SaveAsync(journeyDefaults with
         {
             HasCompletedOnboarding = true,
@@ -583,7 +583,7 @@ else if (languageChange)
 {
     // ONBOARDED, SO THE WINDOW OPENS ON ITS PAGES; WHISPER, SO THE PICKER IS THE ONE THAT COUNTS; AUTOMATIC,
     // SO THE CHANGE TO FRENCH IS A CHANGE. Everything else is the default profile.
-    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+    await CreateProfileSettingsStore(profileDirectory)
         .SaveAsync(journeyDefaults with
         {
             HasCompletedOnboarding = true,
@@ -638,7 +638,7 @@ else if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.Micr
                 []),
         },
     };
-    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+    await CreateProfileSettingsStore(profileDirectory)
         .SaveAsync(journeySettings);
 }
 else if (audioRoute is not null)
@@ -648,14 +648,14 @@ else if (audioRoute is not null)
     // a microphone, so adding `--virtual-cable` to the audible journey also changed what the text
     // pipeline did to the words. The silent journey must differ from the audible one by the endpoint
     // and nothing else.
-    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+    await CreateProfileSettingsStore(profileDirectory)
         .SaveAsync(journeyDefaults with { PreferredMicrophoneId = audioRoute.CaptureId });
 }
 else if (liveMicrophone || syntheticHotkey)
 {
     // A JOURNEY THAT PRESSES THE KEY ALWAYS HAS A PROFILE: without one the app would start on the product default and
     // the harness would press a key nobody bound. Otherwise the default profile, as the silent journey above keeps.
-    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+    await CreateProfileSettingsStore(profileDirectory)
         .SaveAsync(journeyDefaults);
 }
 
@@ -1017,7 +1017,7 @@ try
             // would otherwise run the take on the default and report whatever that happened to show.
             if (!WaitForStoredWhisperLanguage(profileDirectory, "fr", TimeSpan.FromSeconds(10)))
             {
-                var saved = await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json")).LoadAsync();
+                var saved = await CreateProfileSettingsStore(profileDirectory).LoadAsync();
                 throw JourneyExpectationException.Instrument(
                     "The Dictation Settings page's save did not record French; the language change was not staged "
                         + $"(saved {saved.Settings.Preferences.Dictation.WhisperLanguage}).");
@@ -3153,11 +3153,16 @@ static long[] ReadCopyAnswerMilliseconds(string targetResultPath)
     }
 }
 
+static JsonSettingsStore CreateProfileSettingsStore(string profileDirectory) =>
+    new(
+        Path.Combine(profileDirectory, "settings.json"),
+        Path.Combine(profileDirectory, "user-data.json"));
+
 /// <summary>True once the profile's settings file holds the word as a custom word, spoken and written the same.</summary>
 static bool WaitForStoredCustomWord(string profileDirectory, string word, TimeSpan timeout)
 {
     var clock = Stopwatch.StartNew();
-    var store = new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"));
+    var store = CreateProfileSettingsStore(profileDirectory);
     while (clock.Elapsed < timeout)
     {
         try
@@ -3184,7 +3189,7 @@ static bool WaitForStoredCustomWord(string profileDirectory, string word, TimeSp
 static bool WaitForStoredWhisperLanguage(string profileDirectory, string expectedCode, TimeSpan timeout)
 {
     var clock = Stopwatch.StartNew();
-    var store = new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"));
+    var store = CreateProfileSettingsStore(profileDirectory);
     while (clock.Elapsed < timeout)
     {
         try
@@ -3686,6 +3691,8 @@ static void RemoveCleanUserArtifacts(string productRoot)
     }
 
     DeleteRegularFileIfPresent(Path.Combine(productRoot, "settings.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "user-data.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "user-data.json.split"));
     DeleteRegularFileIfPresent(Path.Combine(productRoot, "history.json"));
     DeleteRegularFileIfPresent(Path.Combine(productRoot, "run-state.json"));
     DeleteRegularFileIfPresent(Path.Combine(productRoot, "recovery.json"));
@@ -3788,6 +3795,8 @@ static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedR
     }
 
     DeleteRegularFileIfPresent(Path.Combine(fullPath, "settings.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "user-data.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "user-data.json.split"));
     DeleteRegularFileIfPresent(Path.Combine(fullPath, "history.json"));
     DeleteRegularFileIfPresent(Path.Combine(fullPath, "run-state.json"));
     DeleteRegularFileIfPresent(Path.Combine(fullPath, "recovery.json"));

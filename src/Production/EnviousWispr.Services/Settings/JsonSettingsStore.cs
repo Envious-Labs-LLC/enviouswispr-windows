@@ -383,9 +383,20 @@ public sealed class JsonSettingsStore : ISettingsStore
                 File.Copy(backupPath, _settingsPath, overwrite: true);
             }
 
-            if (_userDataPath is not null && preservedUserData && userDataBackupPath is not null && File.Exists(userDataBackupPath))
+            if (_userDataPath is not null)
             {
-                File.Copy(userDataBackupPath, _userDataPath, overwrite: true);
+                if (preservedUserData && userDataBackupPath is not null && File.Exists(userDataBackupPath))
+                {
+                    File.Copy(userDataBackupPath, _userDataPath, overwrite: true);
+                }
+                else if (!preservedUserData)
+                {
+                    TryDeleteTemporaryFile(_userDataPath);
+                    if (_splitMarkerPath is not null)
+                    {
+                        TryDeleteTemporaryFile(_splitMarkerPath);
+                    }
+                }
             }
 
             throw;
