@@ -10,7 +10,6 @@ using EnviousWispr.ModelDelivery;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
-using EnviousWispr.Services.Distribution;
 
 namespace EnviousWispr.App;
 

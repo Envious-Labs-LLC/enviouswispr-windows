@@ -1,12 +1,6 @@
 using EnviousWispr.App.Services;
-using EnviousWispr.Audio;
-using EnviousWispr.Core.Audio;
-using EnviousWispr.Core.Dictation;
-using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Presentation;
-using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
-using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;

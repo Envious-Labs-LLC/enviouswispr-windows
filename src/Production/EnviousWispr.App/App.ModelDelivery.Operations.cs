@@ -1,17 +1,14 @@
 using System.Globalization;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Diagnostics;
-using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
-using EnviousWispr.LLM;
 using EnviousWispr.ModelDelivery;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
-using EnviousWispr.Services.Distribution;
 
 namespace EnviousWispr.App;
 
