@@ -1589,11 +1589,6 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
     private void OverlayRoot_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         _pointerIsOver = false;
-        if (_isPreviewSession && _previewHoldOpen)
-        {
-            return;
-        }
-
         if (_state == DictationOverlayState.CorrectionLearned
             && _learnedModel?.Phase != LearnedCorrectionPillPhase.Learned)
         {

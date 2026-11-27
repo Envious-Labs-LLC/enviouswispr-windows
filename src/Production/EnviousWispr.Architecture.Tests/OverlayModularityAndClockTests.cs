@@ -94,6 +94,17 @@ public sealed class OverlayModularityAndClockTests
         Assert.NotNull(clock.RecommendedNextInterval(animationsEnabled: true));
         now += TimeSpan.FromSeconds(3);
         Assert.True(clock.Evaluate(heldArm).Expired);
+
+        // Hovering over and exiting a held preview clears hover pause while preserving hold until SetHoldOpen(false).
+        var hoverHeldArm = clock.ArmFixedDwell(TimeSpan.FromSeconds(3), startPaused: false, holdOpen: true);
+        clock.PauseForHover();
+        clock.ResumeFromHover(TimeSpan.FromSeconds(2));
+        Assert.False(clock.IsHoverPaused);
+        Assert.Null(clock.RecommendedNextInterval(animationsEnabled: true));
+        clock.SetHoldOpen(false);
+        Assert.NotNull(clock.RecommendedNextInterval(animationsEnabled: true));
+        now += TimeSpan.FromSeconds(3);
+        Assert.True(clock.Evaluate(hoverHeldArm).Expired);
     }
 
     [Fact]
