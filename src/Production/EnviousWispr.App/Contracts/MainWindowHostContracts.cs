@@ -35,7 +35,6 @@ internal sealed record WindowHistoryHost(
 internal sealed record WindowVocabularyHost(
     Action<DiagnosticSnippetImport>? SnippetImportReported = null,
     Action<DiagnosticWordImport>? WordImportReported = null,
-    Action<string, IReadOnlyList<string>>? MishearingSuggestionsRequested = null,
     Func<(bool HasStoredMemory, int BlockedCount)>? QueryLearnMemoryState = null,
     Func<bool>? ForgetLearnMemory = null,
     Action<IReadOnlyList<CustomWordEntry>>? WordsRemovedFromDictionary = null,

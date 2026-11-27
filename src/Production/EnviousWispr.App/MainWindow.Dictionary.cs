@@ -13,12 +13,8 @@ namespace EnviousWispr.App;
 /// <summary>Dictionary word filtering, mass edit, alias suggestions, vocabulary packs, and word file/clipboard import and export.</summary>
 public sealed partial class MainWindow
 {
-    /// <summary>Asks the app to find out what a word might be misheard as.</summary>
-    /// <remarks>
-    /// The window does not own the polish provider, so it asks rather than calls, exactly as the
-    /// speed check does. The answer comes back through <see cref="SetAliasSuggestions"/>.
-    /// </remarks>
-    public event Action<string, IReadOnlyList<string>>? MishearingSuggestionsRequested;
+    private CancellationTokenSource? _aliasSuggestionsCts;
+    private int _aliasSuggestionsGeneration;
 
     /// <summary>
     /// Asks what speech recognition is likely to hear instead of the word being taught.
@@ -33,7 +29,7 @@ public sealed partial class MainWindow
     /// The aliases already pointing at this same word are sent along, so the model does not spend
     /// its five answers on ones the user already has.
     /// </remarks>
-    internal void SuggestAliasesButton_Click(object sender, RoutedEventArgs e)
+    internal async void SuggestAliasesButton_Click(object sender, RoutedEventArgs e)
     {
         var term = ReplacementBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(term))
@@ -51,11 +47,59 @@ public sealed partial class MainWindow
             .Select(entry => entry.SpokenForm)
             .ToArray();
 
+        _aliasSuggestionsCts?.Cancel();
+        _aliasSuggestionsCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _aliasSuggestionsCts = cts;
+        var generation = ++_aliasSuggestionsGeneration;
+
         SuggestAliasesButton.IsEnabled = false;
         SuggestedAliasesPanel.Children.Clear();
         SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
         SetLiveRegion(SuggestAliasesStatusText, "Asking...", Visibility.Visible);
-        MishearingSuggestionsRequested?.Invoke(term, existing);
+
+        MishearingAdvice advice;
+        try
+        {
+            advice = await _mishearingAdvisor.SuggestAsync(term, existing, cts.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            if (ReferenceEquals(_aliasSuggestionsCts, cts))
+            {
+                _aliasSuggestionsCts = null;
+            }
+            cts.Dispose();
+            return;
+        }
+        catch (Exception)
+        {
+            advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        if (ReferenceEquals(_aliasSuggestionsCts, cts))
+        {
+            _aliasSuggestionsCts = null;
+        }
+        cts.Dispose();
+
+        if (generation != _aliasSuggestionsGeneration
+            || _shuttingDownProductWindows
+            || !IsDictionaryPageLoaded
+            || SuggestAliasesButton is null
+            || SuggestedAliasesPanel is null
+            || SuggestedAliasesScroller is null
+            || SuggestAliasesStatusText is null
+            || !string.Equals(term, ReplacementBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            if (generation == _aliasSuggestionsGeneration && IsDictionaryPageLoaded && SuggestAliasesButton is not null)
+            {
+                SuggestAliasesButton.IsEnabled = true;
+            }
+            return;
+        }
+
+        RenderAliasSuggestions(term, advice);
     }
 
     /// <summary>Shows what came back, or says why nothing did.</summary>
@@ -69,18 +113,9 @@ public sealed partial class MainWindow
     /// word list until they click one. A wrong alias added quietly is a correction that fires on
     /// words they never said, and nothing on screen would connect it back to a suggestion.
     /// </remarks>
-    public void SetAliasSuggestions(string term, MishearingAdvice advice)
+    private void RenderAliasSuggestions(string term, MishearingAdvice advice)
     {
         ArgumentNullException.ThrowIfNull(advice);
-        _activeWordDialogSuggestionSink?.Invoke(term, advice);
-        if (!IsDictionaryPageLoaded
-            || SuggestAliasesButton is null
-            || SuggestedAliasesPanel is null
-            || SuggestedAliasesScroller is null
-            || SuggestAliasesStatusText is null)
-        {
-            return;
-        }
 
         SuggestAliasesButton.IsEnabled = true;
         SuggestedAliasesPanel.Children.Clear();
@@ -91,7 +126,7 @@ public sealed partial class MainWindow
             SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
             SetLiveText(
                 SuggestAliasesStatusText,
-    advice.Status switch
+                advice.Status switch
                 {
                     MishearingAdviceStatus.NothingUsable =>
                         "No likely mishearings came back for that word. Add one yourself when you hear it.",
@@ -99,7 +134,6 @@ public sealed partial class MainWindow
                         "The polish option you have chosen cannot answer this. Pick the built-in model, "
                             + "Ollama, or a cloud provider to use suggestions.",
                     _ => "The suggestion did not come back. Check your polish settings and try again.",
-            
                 });
             return;
         }
@@ -848,6 +882,9 @@ public sealed partial class MainWindow
 
     private void ShutdownUserDataUi()
     {
+        _aliasSuggestionsCts?.Cancel();
+        _aliasSuggestionsCts?.Dispose();
+        _aliasSuggestionsCts = null;
         _dictionaryRefreshCts?.Cancel();
         _dictionaryRefreshCts?.Dispose();
         _dictionaryRefreshCts = null;

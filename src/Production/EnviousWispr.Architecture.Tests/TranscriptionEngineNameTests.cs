@@ -855,12 +855,18 @@ public sealed partial class DesignSystemTokenTests
         }
 
         // THE OTHER PROVIDER BORROWER - the mishearing suggestion - is admitted the same way and
-        // hands the lease's token to the provider.
-        var suggestion = methods.Single(method => method.Identifier.ValueText == "OnMishearingSuggestionsRequested");
-        Assert.Contains("presentation.TryEnter(out var lease)", suggestion.ToString(), StringComparison.Ordinal);
+        // hands a linked token (caller cancellation + lease.Closing) to the provider.
+        var advisorSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "Composition", "AdmittedMishearingAdvisor.cs"));
+        var advisorTree = CSharpSyntaxTree.ParseText(advisorSource).GetRoot();
+        var suggestion = advisorTree.DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "SuggestAsync");
+        Assert.Contains("_presentation.TryEnter(out var lease)", suggestion.ToString(), StringComparison.Ordinal);
+        Assert.Contains("CreateLinkedTokenSource(cancellationToken, lease.Closing)", suggestion.ToString(), StringComparison.Ordinal);
         var suggest = suggestion.DescendantNodes().OfType<InvocationExpressionSyntax>()
             .Single(call => call.Expression.ToString() == "advisor.SuggestAsync");
-        Assert.Contains("lease.Closing", suggest.ArgumentList.Arguments.Select(argument => argument.ToString()));
+        Assert.Contains("linked.Token", suggest.ArgumentList.Arguments.Select(argument => argument.ToString()));
         Assert.NotNull(suggest.Ancestors().OfType<UsingStatementSyntax>().SingleOrDefault(statement => statement.Expression?.ToString() == "lease"));
     }
 

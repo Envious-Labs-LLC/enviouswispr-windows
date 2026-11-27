@@ -62,7 +62,6 @@ internal static class MainWindowHostBinder
         {
             Subscribe(h => _window.SnippetImportReported += h, _vocabulary.SnippetImportReported);
             Subscribe(h => _window.WordImportReported += h, _vocabulary.WordImportReported);
-            Subscribe(h => _window.MishearingSuggestionsRequested += h, _vocabulary.MishearingSuggestionsRequested);
             _window.QueryLearnMemoryState = _vocabulary.QueryLearnMemoryState;
             _window.ForgetLearnMemory = _vocabulary.ForgetLearnMemory;
             _window.WordsRemovedFromDictionary = _vocabulary.WordsRemovedFromDictionary;
@@ -155,7 +154,6 @@ internal static class MainWindowHostBinder
         {
             Unsubscribe(h => _window.SnippetImportReported -= h, _vocabulary.SnippetImportReported);
             Unsubscribe(h => _window.WordImportReported -= h, _vocabulary.WordImportReported);
-            Unsubscribe(h => _window.MishearingSuggestionsRequested -= h, _vocabulary.MishearingSuggestionsRequested);
             _window.QueryLearnMemoryState = null;
             _window.ForgetLearnMemory = null;
             _window.WordsRemovedFromDictionary = null;
