@@ -162,7 +162,7 @@ public sealed partial class MainWindow
         UpdateActivePolishProviderDisplay();
     }
 
-    private async void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
+    internal async void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -200,7 +200,7 @@ public sealed partial class MainWindow
             allowDefaultModel: false).ConfigureAwait(true);
     }
 
-    private void ChangePolishProviderButton_Click(object sender, RoutedEventArgs e)
+    internal void ChangePolishProviderButton_Click(object sender, RoutedEventArgs e)
     {
         if (PolishProviderChooserPanel is not null)
         {
@@ -211,7 +211,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void EgOneChooseProviderButton_Click(object sender, RoutedEventArgs e)
+    internal void EgOneChooseProviderButton_Click(object sender, RoutedEventArgs e)
     {
         if (PolishProviderChooserPanel is not null)
         {
@@ -564,14 +564,14 @@ public sealed partial class MainWindow
         }
     }
 
-    private void EgOneCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void EgOneCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveThreeCardGridLayout(
             EgOneCardsGrid,
             e.NewSize.Width,
             stackThreshold: 700,
             [EgOneFullCardContainer, EgOneMiniCardContainer, EgOneMicroCardContainer]);
 
-    private void EgOneCardFooter_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void EgOneCardFooter_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: string tag } || e.NewSize.Height <= 0)
         {
@@ -695,7 +695,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void EgOneDownloadButton_Click(object sender, RoutedEventArgs e)
+    internal void EgOneDownloadButton_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not string modelId ||
             !EnginePolishPresentation.IsKnownEgOneModelId(modelId))
@@ -707,10 +707,10 @@ public sealed partial class MainWindow
         EgOneModelDownloadRequested?.Invoke(EnginePolishPresentation.NormalizeEgOneModelId(modelId));
     }
 
-    private void CancelEgOneDownloadButton_Click(object sender, RoutedEventArgs e) =>
+    internal void CancelEgOneDownloadButton_Click(object sender, RoutedEventArgs e) =>
         EgOneModelDownloadCancelRequested?.Invoke();
 
-    private async void EgOneRemoveButton_Click(object sender, RoutedEventArgs e)
+    internal async void EgOneRemoveButton_Click(object sender, RoutedEventArgs e)
     {
         if (_session.Closing ||
             (sender as FrameworkElement)?.Tag is not string rawModelId ||
@@ -805,7 +805,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void EgOneSizeCard_Checked(object sender, RoutedEventArgs e)
+    internal void EgOneSizeCard_Checked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _isUpdatingEgOneCards || _settings is null)
         {
@@ -827,7 +827,7 @@ public sealed partial class MainWindow
         _ = TriggerAutoSaveAsync();
     }
 
-    private void EgOneUnloadPolicyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void EgOneUnloadPolicyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -892,7 +892,7 @@ public sealed partial class MainWindow
         _ = TriggerAutoSaveAsync();
     }
 
-    private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
+    internal async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -909,7 +909,7 @@ public sealed partial class MainWindow
         await ApplySelectedPolishProviderCardAsync(selectedIndex, provider).ConfigureAwait(true);
     }
 
-    private async void PolishProviderCardClicked(object sender, RoutedEventArgs e)
+    internal async void PolishProviderCardClicked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -931,7 +931,7 @@ public sealed partial class MainWindow
         await ApplySelectedPolishProviderCardAsync(selectedIndex, provider).ConfigureAwait(true);
     }
 
-    private void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isApplyingSettings || _isUpdatingPolishModelPicker || _settings is null)
         {
@@ -971,7 +971,7 @@ public sealed partial class MainWindow
             OllamaModelCatalog.SameModel(row.Id, current)) == true;
     }
 
-    private async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
+    internal async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         switch (_session.Provider.SaveKey(provider, ApiKeyPasswordBox.Password))
@@ -1011,7 +1011,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void RemoveApiKeyButton_Click(object sender, RoutedEventArgs e)
+    internal async void RemoveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         switch (_session.Provider.CheckKeyRemoval(provider))
@@ -1067,7 +1067,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void RefreshPolishModelsButton_Click(object sender, RoutedEventArgs e)
+    internal async void RefreshPolishModelsButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         if (provider is PolishProvider.None or PolishProvider.EgOne)

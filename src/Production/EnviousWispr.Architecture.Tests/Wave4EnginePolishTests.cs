@@ -209,9 +209,8 @@ public sealed class Wave4EnginePolishTests
     public void MainWindowMarkupHasWave4EngineAndPolishControlsWithoutQaJargon()
     {
         var root = FindRepositoryRoot();
-        var xamlPath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml");
-        var xamlText = File.ReadAllText(xamlPath);
-        var document = XDocument.Parse(xamlText);
+        var xamlText = AppXamlSources.ReadMainWindowAndPagesText(root);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
 
         Assert.DoesNotContain("German (experimental)", xamlText, StringComparison.Ordinal);
         Assert.DoesNotContain("Deterministic cleanup", xamlText, StringComparison.Ordinal);
@@ -276,8 +275,7 @@ public sealed class Wave4EnginePolishTests
     public void EngineAndPolishCardHandlersSyncSelectionCollapseChooserAndPersist()
     {
         var root = FindRepositoryRoot();
-        var mainWindowXaml = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var mainWindowXaml = AppXamlSources.ReadMainWindowAndPagesText(root);
         var mainWindowCode = string.Join(
             "\n",
             Directory.EnumerateFiles(

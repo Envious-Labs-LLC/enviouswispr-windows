@@ -977,7 +977,7 @@ public sealed partial class MainWindow : Window, IDisposable
         return null;
     }
 
-    private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+    internal void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
 
     private static void UpdateListAndEmptyStateVisibility(
@@ -1158,16 +1158,15 @@ public sealed partial class MainWindow : Window, IDisposable
         if (show)
         {
             EnsureOnboardingViewLoaded();
+            ProductNavigation.Visibility = Visibility.Collapsed;
             if (OnboardingView is not null)
             {
                 OnboardingView.Visibility = Visibility.Visible;
                 OnboardingView.LayoutUpdated += FitWindowToOnboardingOnce;
+                // EVERY SHOWING IS A NEW VISIT FROM THE WELCOME: a first run, or "Run setup again" on Diagnostics.
+                BeginOnboardingVisit();
+                FinishOnboardingButton?.Focus(FocusState.Programmatic);
             }
-
-            ProductNavigation.Visibility = Visibility.Collapsed;
-            // EVERY SHOWING IS A NEW VISIT FROM THE WELCOME: a first run, or "Run setup again" on Diagnostics.
-            BeginOnboardingVisit();
-            FinishOnboardingButton?.Focus(FocusState.Programmatic);
         }
         else
         {
@@ -1413,7 +1412,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ScrollPageToTop(SettingsPage);
     }
 
-    private void DictationTab_Click(object sender, RoutedEventArgs e)
+    internal void DictationTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {
@@ -1466,7 +1465,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ScrollPageToTop(SettingsPage);
     }
 
-    private void AppTab_Click(object sender, RoutedEventArgs e)
+    internal void AppTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {

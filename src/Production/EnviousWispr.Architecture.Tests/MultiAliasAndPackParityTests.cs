@@ -349,7 +349,7 @@ public sealed class MultiAliasAndPackParityTests
     public void DictionaryUiIncludesBannerCategoriesMassEditAndAllFivePacksWithSeeAllDrillDown()
     {
         var root = FindRepositoryRoot();
-        var xaml = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var xaml = AppXamlSources.ReadMainWindowAndPagesText(root);
         var editorCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.WordsAndSnippets.cs"));
         var mainCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Dictionary.cs"));
 

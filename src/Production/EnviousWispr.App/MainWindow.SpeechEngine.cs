@@ -200,7 +200,7 @@ public sealed partial class MainWindow
                 + "to set it there."));
     }
 
-    private void LivePreviewToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void LivePreviewToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_isApplyingSettings)
         {
@@ -209,7 +209,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void LivePreviewEngineCard_Checked(object sender, RoutedEventArgs e)
+    internal async void LivePreviewEngineCard_Checked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings)
         {
@@ -220,13 +220,13 @@ public sealed partial class MainWindow
         await TriggerAutoSaveAsync().ConfigureAwait(true);
     }
 
-    private void DownloadLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e) =>
+    internal void DownloadLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e) =>
         PreviewModelDownloadRequested?.Invoke();
 
-    private void CancelLivePreviewWhisperDownloadButton_Click(object sender, RoutedEventArgs e) =>
+    internal void CancelLivePreviewWhisperDownloadButton_Click(object sender, RoutedEventArgs e) =>
         ModelDownloadCancelRequested?.Invoke();
 
-    private async void RemoveLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e)
+    internal async void RemoveLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e)
     {
         if (_session.Closing)
         {
@@ -284,7 +284,7 @@ public sealed partial class MainWindow
         PreviewModelRemoveRequested?.Invoke();
     }
 
-    private void LivePreviewParakeetCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    internal void LivePreviewParakeetCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
         {
@@ -297,7 +297,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void LivePreviewWhisperCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    internal void LivePreviewWhisperCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
         {
@@ -310,7 +310,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void LivePreviewEngineCardsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void LivePreviewEngineCardsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (LivePreviewEngineCardsPanel is null || LivePreviewParakeetCardContainer is null || LivePreviewWhisperCardContainer is null ||
             LivePreviewParakeetCardColumn is null || LivePreviewWhisperCardColumn is null)
@@ -495,7 +495,7 @@ public sealed partial class MainWindow
         _ = TriggerAutoSaveAsync();
     }
 
-    private void EngineCardChecked(object sender, RoutedEventArgs e)
+    internal void EngineCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -512,7 +512,7 @@ public sealed partial class MainWindow
         ApplySelectedEngineCard(selectedEngine);
     }
 
-    private void EngineCardClicked(object sender, RoutedEventArgs e)
+    internal void EngineCardClicked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -544,7 +544,7 @@ public sealed partial class MainWindow
         return false;
     }
 
-    private void ParakeetEngineCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    internal void ParakeetEngineCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
         {
@@ -557,7 +557,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void WhisperEngineCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    internal void WhisperEngineCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
         {
@@ -570,7 +570,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void EngineCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void EngineCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (EngineCardsGrid is null || ParakeetEngineCardContainer is null || WhisperEngineCardContainer is null ||
             ParakeetCardColumn is null || WhisperCardColumn is null)
@@ -593,22 +593,22 @@ public sealed partial class MainWindow
         }
     }
 
-    private void ParakeetDownloadButton_Click(object sender, RoutedEventArgs e)
+    internal void ParakeetDownloadButton_Click(object sender, RoutedEventArgs e)
     {
         ShowSpeechEngineNotice(string.Empty);
         SpeechEngineDownloadRequested?.Invoke(FinalAsrEngine.Parakeet);
     }
 
-    private void WhisperDownloadButton_Click(object sender, RoutedEventArgs e)
+    internal void WhisperDownloadButton_Click(object sender, RoutedEventArgs e)
     {
         ShowSpeechEngineNotice(string.Empty);
         SpeechEngineDownloadRequested?.Invoke(FinalAsrEngine.Whisper);
     }
 
-    private async void ParakeetRemoveButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void ParakeetRemoveButton_Click(object sender, RoutedEventArgs e) =>
         await HandleSpeechEngineRemoveClickAsync(FinalAsrEngine.Parakeet).ConfigureAwait(true);
 
-    private async void WhisperRemoveButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void WhisperRemoveButton_Click(object sender, RoutedEventArgs e) =>
         await HandleSpeechEngineRemoveClickAsync(FinalAsrEngine.Whisper).ConfigureAwait(true);
 
     private async Task HandleSpeechEngineRemoveClickAsync(FinalAsrEngine engine)
@@ -888,13 +888,13 @@ public sealed partial class MainWindow
                 ? EnglishSpelling.British
                 : EnglishSpelling.American;
 
-    private async void WhisperLanguageButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void WhisperLanguageButton_Click(object sender, RoutedEventArgs e) =>
         await OpenLanguagePickerAsync().ConfigureAwait(true);
 
-    private async void PickParakeetLanguageButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void PickParakeetLanguageButton_Click(object sender, RoutedEventArgs e) =>
         await OpenLanguagePickerAsync(FinalAsrEngine.Parakeet).ConfigureAwait(true);
 
-    private async void ResetLanguageToAutoButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void ResetLanguageToAutoButton_Click(object sender, RoutedEventArgs e) =>
         await ApplyPickedLanguageAsync(LanguageCatalog.AutomaticCode).ConfigureAwait(true);
 
     private async Task OpenLanguagePickerAsync(FinalAsrEngine? engineOverride = null)
@@ -987,13 +987,13 @@ public sealed partial class MainWindow
         }
     }
 
-    private void CancelModelDownloadButton_Click(object sender, RoutedEventArgs e) =>
+    internal void CancelModelDownloadButton_Click(object sender, RoutedEventArgs e) =>
         ModelDownloadCancelRequested?.Invoke();
 
-    private void DownloadGraphicsRuntimeButton_Click(object sender, RoutedEventArgs e) =>
+    internal void DownloadGraphicsRuntimeButton_Click(object sender, RoutedEventArgs e) =>
         GraphicsRuntimeDownloadRequested?.Invoke();
 
-    private void CancelGraphicsRuntimeDownloadButton_Click(object sender, RoutedEventArgs e) =>
+    internal void CancelGraphicsRuntimeDownloadButton_Click(object sender, RoutedEventArgs e) =>
         GraphicsRuntimeDownloadCancelRequested?.Invoke();
 
     /// <summary>

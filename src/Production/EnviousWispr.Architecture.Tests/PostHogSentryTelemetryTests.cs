@@ -734,12 +734,7 @@ public sealed class PostHogSentryTelemetryTests
     public void DiagnosticsPageExposesUsageMetricsAndCrashReportsTogglesAndOnboardingHasZeroTelemetryToggles()
     {
         var root = FindRepositoryRoot();
-        var document = XDocument.Load(Path.Combine(
-            root,
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml"));
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
 
         var diagnosticsSection = FindNamed(document, "DiagnosticsSection");
         var usageToggle = FindNamed(diagnosticsSection, "ShareUsageMetricsToggle");

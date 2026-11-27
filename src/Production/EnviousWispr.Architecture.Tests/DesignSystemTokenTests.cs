@@ -464,8 +464,7 @@ public sealed partial class DesignSystemTokenTests
     public void EveryMacSettingsSectionHasAWindowsHome()
     {
         var swift = File.ReadAllText(GetMacSectionSnapshotPath());
-        var markup = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
 
         if (swift.Contains("enum SettingsPage"))
         {
@@ -927,9 +926,8 @@ public sealed partial class DesignSystemTokenTests
             "These pill actions are not answered by name anywhere in the handler, so pressing their "
                 + "button lands on the default page: " + string.Join(", ", unmapped));
 
-        var declaredTags = XDocument
-            .Load(Path.Combine(
-                repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"))
+        var declaredTags = AppXamlSources
+            .LoadMainWindowAndPagesDocument(repositoryRoot)
             .Descendants()
             .Select(element => (string?)element.Attribute("Tag"))
             .Where(tag => tag is not null)
@@ -1472,13 +1470,24 @@ public sealed partial class DesignSystemTokenTests
             // invisible here: its direct writes were never seen, and its announcement was reported
             // missing. Every file of the class is read as one. Ref: #211.
             var stem = Path.GetFileNameWithoutExtension(markup);
+            var isExtractedPageView = string.Equals(
+                Path.GetFileName(Path.GetDirectoryName(markup)),
+                "Pages",
+                StringComparison.OrdinalIgnoreCase);
+            var companionSources = new[] { codeBehind }
+                .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(markup)!, stem + ".*.cs")
+                    .Where(file => !string.Equals(file, codeBehind, StringComparison.OrdinalIgnoreCase))
+                    .Order(StringComparer.Ordinal));
+            if (isExtractedPageView)
+            {
+                companionSources = companionSources.Concat(
+                    Directory.EnumerateFiles(app, "MainWindow*.cs")
+                        .Order(StringComparer.Ordinal));
+            }
+
             var text = string.Join(
                 "\n",
-                new[] { codeBehind }
-                    .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(markup)!, stem + ".*.cs")
-                        .Where(file => !string.Equals(file, codeBehind, StringComparison.OrdinalIgnoreCase))
-                        .Order(StringComparer.Ordinal))
-                    .Select(File.ReadAllText));
+                companionSources.Select(File.ReadAllText));
             foreach (var region in regions)
             {
                 // A DIRECT WRITE IS ONLY A DEFECT WHEN NOTHING ANNOUNCES THAT REGION BY NAME. Two
@@ -2465,7 +2474,8 @@ public sealed partial class DesignSystemTokenTests
         // Every page must be in the row BELOW it. A page left in row 0 is overlapped again, and
         // the symptom - a heading rendered on the notification's background - is easy to miss.
         var pages = grid.Elements()
-            .Where(child => child.Name.LocalName == "ScrollViewer")
+            .Where(child => child.Name.LocalName == "ScrollViewer"
+                || string.Equals((string?)child.Attribute(XName.Get("Name", XamlNamespace)), "HistoryPage", StringComparison.Ordinal))
             .ToArray();
         Assert.True(pages.Length > 0, "No pages were found in the content Grid.");
         foreach (var page in pages)
@@ -2474,6 +2484,13 @@ public sealed partial class DesignSystemTokenTests
             Assert.True(
                 (string?)page.Attribute("Grid.Row") == "1",
                 $"Page '{name}' is not in the content row, so the notification bar overlaps it.");
+        }
+
+        var pagesCode = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.Pages.cs"));
+        foreach (var deferredField in new[] { "_whatsNewPageView", "_dictionaryPageView", "_snippetsPageView", "_settingsPageView" })
+        {
+            Assert.Contains($"Grid.SetRow({deferredField}, 1);", pagesCode, StringComparison.Ordinal);
         }
 
         Assert.Null((string?)bar.Attribute("Canvas.ZIndex"));
@@ -2555,12 +2572,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     private static XDocument LoadMainWindow() =>
-        XDocument.Load(Path.Combine(
-            FindRepositoryRoot(),
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml"));
+        AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
 
     private static XElement FindNamedElement(XDocument document, string name) =>
         document.Descendants().Single(element =>
@@ -2873,8 +2885,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryRowCommittedToggleKeepsItsLabelOutsideTheSwitch()
     {
-        var markup = XDocument.Load(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
 
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
         var toggles = markup.Descendants()
@@ -3099,8 +3110,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EachChoiceInTheStrictnessPickerCarriesTheMeaningItShows()
     {
-        var markup = XDocument.Load(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
 
         var box = markup.Descendants()
@@ -3354,8 +3364,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EverySectionHeaderTakesItsGlyphFromOneAlreadyOnScreen()
     {
-        var markup = XDocument.Load(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
 
         var eyebrows = markup.Descendants()
@@ -3401,7 +3410,7 @@ public sealed partial class DesignSystemTokenTests
             var bound = (string?)marks[0].Attribute("Glyph");
             var source = bound is null
                 ? null
-                : Regex.Match(bound, @"^\{x:Bind\s+(\w+)\.Glyph,\s*Mode=OneTime\s*\}$") is { Success: true } hit
+                : Regex.Match(bound, @"^\{x:Bind\s+(?:Host\.)?(\w+)\.Glyph,\s*Mode=OneTime\s*\}$") is { Success: true } hit
                     ? hit.Groups[1].Value
                     : null;
             if (source is null)
@@ -3797,9 +3806,10 @@ public sealed partial class DesignSystemTokenTests
             Assert.Equal("{StaticResource BrandNumberBoxStyle}", (string?)box.Attribute("Style"));
         }
 
-        // ControlBrushes.xaml holds WindowRoot TextControl* brushes inside ThemeDictionaries and is merged into WindowRoot.Resources so theme switches update dynamically.
-        var windowRoot = FindNamedElement(window, "WindowRoot");
-        var mergedBrushSource = windowRoot
+        // ControlBrushes.xaml holds TextControl* brushes inside ThemeDictionaries and is merged into App.xaml so theme switches update both MainWindow and lazily instantiated PageViews.
+        var appXamlDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "App.xaml"));
+        var mergedBrushSource = appXamlDoc
             .Descendants()
             .FirstOrDefault(e => e.Name.LocalName == "ResourceDictionary"
                 && string.Equals((string?)e.Attribute("Source"), "Theme/ControlBrushes.xaml", StringComparison.Ordinal));

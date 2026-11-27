@@ -147,8 +147,7 @@ public sealed class ChoiceCardColumnTests
         .Where(element => (string?)element.Attribute("Style") == "{StaticResource BrandSelectableCardStyle}")
         .ToList();
 
-    private static XDocument Markup() => XDocument.Load(Path.Combine(
-        RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+    private static XDocument Markup() => AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot());
 
     private static string RepositoryRoot()
     {

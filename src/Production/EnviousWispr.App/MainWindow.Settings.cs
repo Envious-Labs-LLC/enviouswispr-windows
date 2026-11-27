@@ -206,13 +206,13 @@ public sealed partial class MainWindow
     /// choosing a theme repainted the window. Nothing connected them, and a gap between two passing
     /// tests is not a failure inside either.
     /// </remarks>
-    private void SystemThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void SystemThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetThemeSelection(0, triggerSave: true);
 
-    private void LightThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void LightThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetThemeSelection(1, triggerSave: true);
 
-    private void DarkThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void DarkThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetThemeSelection(2, triggerSave: true);
 
     private void SetThemeSelection(int index, bool triggerSave)
@@ -235,10 +235,10 @@ public sealed partial class MainWindow
         ApplySegmentButtonState(DarkThemeSegmentButton, _selectedThemeIndex == 2);
     }
 
-    private void TopPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void TopPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetOverlayPositionSelection(0, triggerSave: true);
 
-    private void BottomPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void BottomPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetOverlayPositionSelection(1, triggerSave: true);
 
     private void SetOverlayPositionSelection(int index, bool triggerSave)
@@ -260,7 +260,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Applies and persists a single-selection Recording Pill card choice immediately.</summary>
-    private async void PillStyleCardChecked(object sender, RoutedEventArgs e)
+    internal async void PillStyleCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings)
         {
@@ -738,7 +738,7 @@ public sealed partial class MainWindow
     /// acted, and flipping again would undo it - so a tap inside the switch's own width is ignored
     /// and the control keeps its own behaviour, including the drag its track supports.
     /// </remarks>
-    private void SettingRow_Tapped(object sender, TappedRoutedEventArgs e)
+    internal void SettingRow_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (sender is not Panel row)
         {
@@ -890,7 +890,7 @@ public sealed partial class MainWindow
 
     private static int OverlayPositionIndex(OverlayPillPosition position) => SettingsPresenter.OverlayPositionIndex(position);
 
-    private void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveThreeCardGridLayout(
             RecordingPillCardsGrid,
             e.NewSize.Width,

@@ -68,7 +68,17 @@ public sealed partial class MainWindow
             isContentPage: true,
             isLoaded: () => _whatsNewLoaded,
             ensureLoaded: EnsureWhatsNewPageLoaded,
-            getElement: () => WhatsNewPage));
+            getElement: () => WhatsNewPage,
+            onShutdown: () =>
+            {
+                if (_whatsNewPageView is { } view)
+                {
+                    view.Detach();
+                    MainContentGrid.Children.Remove(view);
+                    _whatsNewPageView = null;
+                }
+                _whatsNewLoaded = false;
+            }));
 
         _pageRegistry.Register(new WindowPageRegistration(
             WindowPageKey.Dictionary,
@@ -81,6 +91,13 @@ public sealed partial class MainWindow
                 _dictionaryRefreshCts?.Cancel();
                 _dictionaryRefreshCts?.Dispose();
                 _dictionaryRefreshCts = null;
+                if (_dictionaryPageView is { } view)
+                {
+                    view.Detach();
+                    MainContentGrid.Children.Remove(view);
+                    _dictionaryPageView = null;
+                }
+                _dictionaryLoaded = false;
             }));
 
         _pageRegistry.Register(new WindowPageRegistration(
@@ -94,6 +111,13 @@ public sealed partial class MainWindow
                 _snippetRefreshCts?.Cancel();
                 _snippetRefreshCts?.Dispose();
                 _snippetRefreshCts = null;
+                if (_snippetsPageView is { } view)
+                {
+                    view.Detach();
+                    MainContentGrid.Children.Remove(view);
+                    _snippetsPageView = null;
+                }
+                _snippetsLoaded = false;
             }));
 
         _pageRegistry.Register(new WindowPageRegistration(
@@ -107,6 +131,13 @@ public sealed partial class MainWindow
             {
                 CancelKeybindCapture();
                 StopOllamaLivePollTimer();
+                if (_settingsPageView is { } view)
+                {
+                    view.Detach();
+                    MainContentGrid.Children.Remove(view);
+                    _settingsPageView = null;
+                }
+                _settingsLoaded = false;
             }));
 
         _pageRegistry.Register(new WindowPageRegistration(
@@ -115,7 +146,17 @@ public sealed partial class MainWindow
             isLoaded: () => _onboardingLoaded,
             ensureLoaded: EnsureOnboardingViewLoaded,
             getElement: () => OnboardingView,
-            onShutdown: StopOnboardingTimers));
+            onShutdown: () =>
+            {
+                StopOnboardingTimers();
+                if (_onboardingPageView is { } view)
+                {
+                    view.Detach();
+                    ShellContentGrid.Children.Remove(view);
+                    _onboardingPageView = null;
+                }
+                _onboardingLoaded = false;
+            }));
     }
 
     private void OnSettingsPageThemeChanged()
@@ -144,7 +185,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        _ = WindowRoot.FindName(nameof(OnboardingView));
+        _onboardingPageView = new OnboardingPageView(this);
+        ShellContentGrid.Children.Insert(0, _onboardingPageView);
         _onboardingLoaded = OnboardingView is not null;
         if (!_onboardingLoaded)
         {
@@ -168,7 +210,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        _ = WindowRoot.FindName(nameof(WhatsNewPage));
+        _whatsNewPageView = new WhatsNewPageView(this);
+        Grid.SetRow(_whatsNewPageView, 1);
+        MainContentGrid.Children.Add(_whatsNewPageView);
         _whatsNewLoaded = WhatsNewPage is not null;
         if (!_whatsNewLoaded)
         {
@@ -188,7 +232,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        _ = WindowRoot.FindName(nameof(DictionaryPage));
+        _dictionaryPageView = new DictionaryPageView(this);
+        Grid.SetRow(_dictionaryPageView, 1);
+        MainContentGrid.Children.Add(_dictionaryPageView);
         _dictionaryLoaded = DictionaryPage is not null;
         if (!_dictionaryLoaded)
         {
@@ -214,7 +260,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        _ = WindowRoot.FindName(nameof(SnippetsPage));
+        _snippetsPageView = new SnippetsPageView(this);
+        Grid.SetRow(_snippetsPageView, 1);
+        MainContentGrid.Children.Add(_snippetsPageView);
         _snippetsLoaded = SnippetsPage is not null;
         if (!_snippetsLoaded)
         {
@@ -238,7 +286,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        _ = WindowRoot.FindName(nameof(SettingsPage));
+        _settingsPageView = new SettingsPageView(this);
+        Grid.SetRow(_settingsPageView, 1);
+        MainContentGrid.Children.Add(_settingsPageView);
         _settingsLoaded = SettingsPage is not null;
         if (!_settingsLoaded)
         {

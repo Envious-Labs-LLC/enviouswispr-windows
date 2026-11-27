@@ -79,8 +79,7 @@ public sealed class RecordingLevelRailTests
 
         Assert.True(
             TimerAndRailAreSiblings(
-                XDocument.Load(Path.Combine(RepositoryRoot(), "src", "Production",
-                    "EnviousWispr.App", "MainWindow.xaml"))),
+                AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot())),
             "The Level Rail preview draws its meter somewhere other than beside the timer.");
     }
 
@@ -112,8 +111,7 @@ public sealed class RecordingLevelRailTests
             new Regex(@"case RecordingPillDesign\.Classic:.*?Resize\(CapsulePillWidth\(\), RecordingCapsuleHeight\);", RegexOptions.Singleline),
             overlay);
 
-        var markup = XDocument.Load(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot());
         foreach (var cardName in new[] { "CapsulePillButton", "LevelRailPillButton" })
         {
             var card = markup.Descendants().FirstOrDefault(element =>

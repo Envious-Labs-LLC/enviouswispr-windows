@@ -123,10 +123,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheHistoryRowNamesEnginesTheWayTheTranscriptionPageDoes()
     {
-        var xaml = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var xaml = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
 
         Assert.Contains("Content=\"Parakeet\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"Whisper\"", xaml, StringComparison.Ordinal);
@@ -162,10 +159,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryKeybindFieldTellsTheHookWhenItHasFocus()
     {
-        var markup = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
         var code = string.Join(
             "\n",
             Directory.EnumerateFiles(
@@ -1154,10 +1148,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void NoButtonThatOnlyMovesFocusIsAPrimaryAction()
     {
-        var markup = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
 
         var focusButtons = FocusButton().Matches(markup).Select(match => match.Value).ToArray();
 
@@ -1358,8 +1349,9 @@ public sealed partial class DesignSystemTokenTests
     public void EverySectionHasANavRowThatReachesIt()
     {
         var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
-        var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
         var mainWindowSources = Directory.EnumerateFiles(root, "MainWindow*.cs")
+            .Where(path => !path.EndsWith("MainWindow.PageControls.cs", StringComparison.OrdinalIgnoreCase))
             .Order()
             .Select(path => (Path: path, Text: File.ReadAllText(path)))
             .ToArray();
@@ -2170,8 +2162,9 @@ public sealed partial class DesignSystemTokenTests
     public void EveryAppearanceChoiceIsKeptWithoutASaveButton()
     {
         var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
-        var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
         var mainWindowSources = Directory.EnumerateFiles(root, "MainWindow*.cs")
+            .Where(path => !path.EndsWith("MainWindow.PageControls.cs", StringComparison.OrdinalIgnoreCase))
             .Order()
             .Select(path => (Path: path, Text: File.ReadAllText(path)))
             .ToArray();

@@ -25,12 +25,12 @@ public sealed partial class MainWindow
     /// <summary>Runs one file through the app's transcription; null until the app has an engine to offer.</summary>
     public Func<string, IProgress<FileTranscriptionProgress>, CancellationToken, Task<FileTranscriptionResult>>? TranscribeFile { get; set; }
 
-    private async void TranscribeFileChooseButton_Click(object sender, RoutedEventArgs e)
+    internal async void TranscribeFileChooseButton_Click(object sender, RoutedEventArgs e)
     {
         await PickAndStartFileTranscriptionAsync().ConfigureAwait(true);
     }
 
-    private async void TranscribeFileDropZone_PointerPressed(object sender, PointerRoutedEventArgs e)
+    internal async void TranscribeFileDropZone_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (e.OriginalSource is DependencyObject source && IsInsideInteractiveChildButton(source))
         {
@@ -41,13 +41,13 @@ public sealed partial class MainWindow
         await PickAndStartFileTranscriptionAsync().ConfigureAwait(true);
     }
 
-    private void TranscribeFileDropZone_PointerEntered(object sender, PointerRoutedEventArgs e)
+    internal void TranscribeFileDropZone_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         _transcribeFileDropZoneHovering = true;
         UpdateTranscribeDropZoneVisualState();
     }
 
-    private void TranscribeFileDropZone_PointerExited(object sender, PointerRoutedEventArgs e)
+    internal void TranscribeFileDropZone_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         _transcribeFileDropZoneHovering = false;
         UpdateTranscribeDropZoneVisualState();
@@ -77,7 +77,7 @@ public sealed partial class MainWindow
         await StartFileTranscriptionAsync(file.Path).ConfigureAwait(true);
     }
 
-    private void TranscribeFileDropZone_DragOver(object sender, DragEventArgs e)
+    internal void TranscribeFileDropZone_DragOver(object sender, DragEventArgs e)
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
@@ -94,13 +94,13 @@ public sealed partial class MainWindow
         }
     }
 
-    private void TranscribeFileDropZone_DragLeave(object sender, DragEventArgs e)
+    internal void TranscribeFileDropZone_DragLeave(object sender, DragEventArgs e)
     {
         _transcribeFileDropZoneDragActive = false;
         UpdateTranscribeDropZoneVisualState();
     }
 
-    private async void TranscribeFileDropZone_Drop(object sender, DragEventArgs e)
+    internal async void TranscribeFileDropZone_Drop(object sender, DragEventArgs e)
     {
         _transcribeFileDropZoneDragActive = false;
         UpdateTranscribeDropZoneVisualState();
@@ -163,7 +163,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void TranscribeFileCancelButton_Click(object sender, RoutedEventArgs e)
+    internal void TranscribeFileCancelButton_Click(object sender, RoutedEventArgs e)
     {
         _transcribeFileRun?.Cancel();
         SetTranscribeFileStep(FileTranscriptionStepState.ChooseFileStep);
@@ -356,7 +356,7 @@ public sealed partial class MainWindow
         SetLiveRegion(TranscribeFileStatusText, text, Visibility.Visible);
     }
 
-    private void TranscribeFileCopyButton_Click(object sender, RoutedEventArgs e)
+    internal void TranscribeFileCopyButton_Click(object sender, RoutedEventArgs e)
     {
         var package = new DataPackage();
         package.SetText(TranscribeFileResultText.Text);
@@ -394,7 +394,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void TranscribeFileSaveButton_Click(object sender, RoutedEventArgs e)
+    internal async void TranscribeFileSaveButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
         {
@@ -420,7 +420,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void TranscribeFileNewButton_Click(object sender, RoutedEventArgs e)
+    internal void TranscribeFileNewButton_Click(object sender, RoutedEventArgs e)
     {
         if (_transcribeFileRun is not null)
         {

@@ -462,7 +462,7 @@ public sealed partial class MainWindow
     /// sound" sends somebody to look in the wrong place for all three. The verdict is the
     /// controller's; the sentences for the ways a test does not reach one are here.
     /// </remarks>
-    private async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
+    internal async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
     {
         if (_session.MicrophoneTest.IsRunning)
         {
@@ -584,7 +584,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e)
+    internal async void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {

@@ -332,9 +332,8 @@ public sealed class AiPolishEgOneParityTests
     public void MarkupAndCodeRemoveCustomIdFieldAndEnforceCloudKeyGatingAndSafeTeardown()
     {
         var root = FindRepositoryRoot();
-        var xamlPath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml");
-        var xamlText = File.ReadAllText(xamlPath);
-        var document = XDocument.Parse(xamlText);
+        var xamlText = AppXamlSources.ReadMainWindowAndPagesText(root);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
 
         Assert.DoesNotContain("PolishModelTextBox", xamlText, StringComparison.Ordinal);
         Assert.DoesNotContain("custom-ID", xamlText, StringComparison.OrdinalIgnoreCase);
@@ -466,8 +465,8 @@ public sealed class AiPolishEgOneParityTests
         Assert.NotNull(AppSettingsValidator.Validate(invalid, AppErrorStage.SettingsLoad));
 
         var root = FindRepositoryRoot();
-        var xamlText = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var document = XDocument.Parse(xamlText);
+        var xamlText = AppXamlSources.ReadMainWindowAndPagesText(root);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         Assert.NotNull(document.Descendants().FirstOrDefault(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "EgOneUnloadPolicyComboBox"));
         Assert.NotNull(document.Descendants().FirstOrDefault(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "EgOneUnloadImmediatelyNotice"));
         Assert.Equal(7, EnginePolishPresentation.PolishUnloadPolicyChoices.Count);

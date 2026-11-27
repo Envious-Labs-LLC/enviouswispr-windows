@@ -33,7 +33,7 @@ public sealed partial class MainWindow
     /// The aliases already pointing at this same word are sent along, so the model does not spend
     /// its five answers on ones the user already has.
     /// </remarks>
-    private void SuggestAliasesButton_Click(object sender, RoutedEventArgs e)
+    internal void SuggestAliasesButton_Click(object sender, RoutedEventArgs e)
     {
         var term = ReplacementBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(term))
@@ -156,7 +156,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void AddWordButton_Click(object sender, RoutedEventArgs e)
+    internal async void AddWordButton_Click(object sender, RoutedEventArgs e)
     {
         var spoken = SpokenFormBox.Text.Trim();
         var replacement = ReplacementBox.Text.Trim();
@@ -223,7 +223,7 @@ public sealed partial class MainWindow
     /// to remove them is the work this button exists to remove; a separate "deselect all" would be a
     /// second control for the same idea, and macOS uses the one toggle for both.
     /// </remarks>
-    private void SelectAllWordsButton_Click(object sender, RoutedEventArgs e)
+    internal void SelectAllWordsButton_Click(object sender, RoutedEventArgs e)
     {
         var shownCount = DictionaryList.Items.Count;
         if (DictionaryList.SelectionMode != ListViewSelectionMode.Multiple)
@@ -262,7 +262,7 @@ public sealed partial class MainWindow
     /// ordinary action into two steps for no gain; asking before removing fifteen is the difference
     /// between a mistake somebody notices and one they have to rebuild by hand.
     /// </remarks>
-    private async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
+    internal async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
     {
         var selected = DictionaryList.SelectionMode == ListViewSelectionMode.None
             ? Array.Empty<CustomWordEntry>()
@@ -318,7 +318,7 @@ public sealed partial class MainWindow
             InfoBarSeverity.Success);
     }
 
-    private async void FocusAddWordButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void FocusAddWordButton_Click(object sender, RoutedEventArgs e) =>
         await OpenAddWordDialogAsync().ConfigureAwait(true);
 
     /// <summary>
@@ -518,7 +518,7 @@ public sealed partial class MainWindow
         return button;
     }
 
-    private async void ImportWordsButton_Click(object sender, RoutedEventArgs e)
+    internal async void ImportWordsButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add(".csv");
@@ -593,7 +593,7 @@ public sealed partial class MainWindow
     /// It reads the clipboard and does not touch it: the clipboard is somewhere a dictation product
     /// has to be a good citizen, and this app already guards it carefully on the delivery path.
     /// </remarks>
-    private async void PasteWordsButton_Click(object sender, RoutedEventArgs e)
+    internal async void PasteWordsButton_Click(object sender, RoutedEventArgs e)
     {
         string text;
         try
@@ -655,7 +655,7 @@ public sealed partial class MainWindow
     private sealed record ImportConflictOffer(
         string Label, IReadOnlyList<CustomWordEntry> Replacements);
 
-    private async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
         {
@@ -794,7 +794,7 @@ public sealed partial class MainWindow
         return true;
     }
 
-    private void DictionaryTab_Click(object sender, RoutedEventArgs e)
+    internal void DictionaryTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {
@@ -864,7 +864,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void WordFilterChip_Click(object sender, RoutedEventArgs e)
+    internal void WordFilterChip_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {
@@ -882,7 +882,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void WordFilterChipsContainer_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void WordFilterChipsContainer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (WordFilterChipsPrimaryRow is null || WordFilterChipsOverflowRow is null || e.NewSize.Width <= 0)
         {
@@ -964,14 +964,14 @@ public sealed partial class MainWindow
             : Visibility.Collapsed;
     }
 
-    private void QuickAddStepsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void QuickAddStepsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveThreeCardGridLayout(
             QuickAddStepsGrid,
             e.NewSize.Width,
             stackThreshold: 640,
             [QuickAddStep1Card, QuickAddStep2Card, QuickAddStep3Card]);
 
-    private void DictionarySearchClearButton_Click(object sender, RoutedEventArgs e)
+    internal void DictionarySearchClearButton_Click(object sender, RoutedEventArgs e)
     {
         if (DictionarySearchBox is not null)
         {
@@ -980,7 +980,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void MassEditWordsToggle_Click(object sender, RoutedEventArgs e)
+    internal void MassEditWordsToggle_Click(object sender, RoutedEventArgs e)
     {
         _isDictionaryMassEdit = !_isDictionaryMassEdit;
         if (DictionaryList.SelectionMode != ListViewSelectionMode.None)
@@ -997,7 +997,7 @@ public sealed partial class MainWindow
         UpdateSelectionDependentButtons();
     }
 
-    private void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    internal void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (DictionarySearchClearButton is not null)
         {
@@ -1143,7 +1143,7 @@ public sealed partial class MainWindow
         UpdateSelectionDependentButtons();
     }
 
-    private void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e) =>
+    internal void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e) =>
         HandleWordCorrectionToggleChanged(DictionaryEnabledToggle);
 
     public void RefreshLearnMemoryUi()
@@ -1164,7 +1164,7 @@ public sealed partial class MainWindow
         LearnMemorySummaryText.Text = $"Learning memory: {state.BlockedCount} blocked";
     }
 
-    private async void ForgetLearnMemoryButton_Click(object sender, RoutedEventArgs e)
+    internal async void ForgetLearnMemoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (!await ConfirmAsync(
                 "Forget what EnviousWispr remembers about your fixes?",

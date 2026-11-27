@@ -13,15 +13,15 @@ public sealed class MainWindowModularityAndLifecycleTests
     {
         var repositoryRoot = FindRepositoryRoot();
         var appRoot = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var appXamlDoc = XDocument.Load(Path.Combine(appRoot, "App.xaml"));
         var mainWindowDoc = XDocument.Load(Path.Combine(appRoot, "MainWindow.xaml"));
         var controlBrushesDoc = XDocument.Load(Path.Combine(appRoot, "Theme", "ControlBrushes.xaml"));
         var xaml = XNamespace.Get(XamlNamespace);
 
         var windowRoot = FindNamedElement(mainWindowDoc, "WindowRoot");
-        var resourcesElement = windowRoot.Elements().First(e => e.Name.LocalName == "Grid.Resources");
-        Assert.DoesNotContain(resourcesElement.Descendants(), e => e.Name.LocalName == "SolidColorBrush");
+        Assert.Null(windowRoot.Elements().FirstOrDefault(e => e.Name.LocalName == "Grid.Resources"));
 
-        var mergedBrushSource = resourcesElement.Descendants()
+        var mergedBrushSource = appXamlDoc.Descendants()
             .FirstOrDefault(e => e.Name.LocalName == "ResourceDictionary"
                 && string.Equals((string?)e.Attribute("Source"), "Theme/ControlBrushes.xaml", StringComparison.Ordinal));
         Assert.NotNull(mergedBrushSource);
@@ -34,35 +34,50 @@ public sealed class MainWindowModularityAndLifecycleTests
     }
 
     [Fact]
-    public void NonDefaultPagesUseDeferredXLoadAndRegistryActivation()
+    public void NonDefaultPagesUseStandaloneUserControlsAndRegistryActivation()
     {
         var repositoryRoot = FindRepositoryRoot();
         var appRoot = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
         var mainWindowDoc = XDocument.Load(Path.Combine(appRoot, "MainWindow.xaml"));
         var xaml = XNamespace.Get(XamlNamespace);
 
-        foreach (var deferredName in new[] { "OnboardingView", "WhatsNewPage", "DictionaryPage", "SnippetsPage", "SettingsPage" })
+        var deferredPages = new (string ViewFile, string RootElementName, string EnsureMethod)[]
         {
-            var element = FindNamedElement(mainWindowDoc, deferredName);
-            Assert.Equal("False", (string?)element.Attribute(xaml + "Load"));
+            ("OnboardingPageView", "OnboardingView", "EnsureOnboardingViewLoaded"),
+            ("WhatsNewPageView", "WhatsNewPage", "EnsureWhatsNewPageLoaded"),
+            ("DictionaryPageView", "DictionaryPage", "EnsureDictionaryPageLoaded"),
+            ("SnippetsPageView", "SnippetsPage", "EnsureSnippetsPageLoaded"),
+            ("SettingsPageView", "SettingsPage", "EnsureSettingsPageLoaded"),
+        };
+        foreach (var (viewFile, rootName, _) in deferredPages)
+        {
+            Assert.DoesNotContain(
+                mainWindowDoc.Descendants(),
+                e => string.Equals((string?)e.Attribute(xaml + "Name"), rootName, StringComparison.Ordinal));
+
+            var pageXamlPath = Path.Combine(appRoot, "Pages", $"{viewFile}.xaml");
+            var pageCsPath = Path.Combine(appRoot, "Pages", $"{viewFile}.xaml.cs");
+            Assert.True(File.Exists(pageXamlPath), $"Missing standalone page XAML '{pageXamlPath}'.");
+            Assert.True(File.Exists(pageCsPath), $"Missing standalone page code-behind '{pageCsPath}'.");
+
+            var pageDoc = XDocument.Load(pageXamlPath);
+            Assert.Equal("UserControl", pageDoc.Root?.Name.LocalName);
+            _ = FindNamedElement(pageDoc, rootName);
+
+            var pageCs = File.ReadAllText(pageCsPath);
+            Assert.Contains("internal void Detach()", pageCs, StringComparison.Ordinal);
         }
 
-        var historyPage = FindNamedElement(mainWindowDoc, "HistoryPage");
-        Assert.Null(historyPage.Attribute(xaml + "Load"));
+        _ = FindNamedElement(mainWindowDoc, "HistoryPage");
 
         var pagesSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Pages.cs"));
-        foreach (var ensureMethod in new[]
+        foreach (var (viewFile, _, ensureMethod) in deferredPages)
         {
-            "EnsureOnboardingViewLoaded",
-            "EnsureWhatsNewPageLoaded",
-            "EnsureDictionaryPageLoaded",
-            "EnsureSnippetsPageLoaded",
-            "EnsureSettingsPageLoaded",
-        })
-        {
+            Assert.Contains($"new {viewFile}(this)", pagesSource, StringComparison.Ordinal);
             Assert.Contains(ensureMethod, pagesSource, StringComparison.Ordinal);
         }
 
+        Assert.Contains("view.Detach();", pagesSource, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(appRoot, "Pages", "WindowPageRegistry.cs")));
     }
 

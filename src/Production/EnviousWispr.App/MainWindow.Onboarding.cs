@@ -221,7 +221,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
+    internal async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
     {
         switch (CurrentLegacyPanel())
         {
@@ -250,7 +250,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private async void OnboardingSkipButton_Click(object sender, RoutedEventArgs e)
+    internal async void OnboardingSkipButton_Click(object sender, RoutedEventArgs e)
     {
         if (_onboarding.MayFinish(OnboardingExit.SkipWarming) ||
             _onboarding.MayFinish(OnboardingExit.SkipPractice) ||
@@ -262,7 +262,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingRetryButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingRetryButton_Click(object sender, RoutedEventArgs e)
     {
         if ((_onboarding.Model is SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled or SpeechModelDelivery.Missing) &&
             _onboarding.Engine != SpeechEngineReadiness.Ready)
@@ -276,20 +276,20 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingCancelSetupButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingCancelSetupButton_Click(object sender, RoutedEventArgs e)
     {
         _onboarding.RequestCancel();
         ModelDownloadCancelRequested?.Invoke();
         RenderOnboarding();
     }
 
-    private void OnboardingPracticeBox_TextChanged(object sender, TextChangedEventArgs e)
+    internal void OnboardingPracticeBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _onboarding.PracticeTextChanged(OnboardingPracticeBox.Text);
         RenderOnboarding();
     }
 
-    private async void RunSetupAgainButton_Click(object sender, RoutedEventArgs e)
+    internal async void RunSetupAgainButton_Click(object sender, RoutedEventArgs e)
     {
         if (_dictationActive)
         {

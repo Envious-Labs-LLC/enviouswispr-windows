@@ -110,8 +110,7 @@ public sealed class PillDesignPlacementTests
         return "no section";
     }
 
-    private static XDocument Markup() => XDocument.Load(Path.Combine(
-        RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+    private static XDocument Markup() => AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot());
 
     private static string RepositoryRoot()
     {

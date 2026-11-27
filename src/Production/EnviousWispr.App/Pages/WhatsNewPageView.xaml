@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Pages.WhatsNewPageView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:EnviousWispr.Core.Settings"
+    xmlns:local="using:EnviousWispr.App"
+    xmlns:controls="using:EnviousWispr.App.Controls">
+    <ScrollViewer x:Name="WhatsNewPage" x:FieldModifier="internal" AutomationProperties.Name="What’s New page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
+            <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,8">
+                <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="What’s New" />
+                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="The latest improvements and fixes in this release." TextWrapping="Wrap" />
+            </StackPanel>
+            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Version 0.19.0" VerticalAlignment="Center" />
+                        <Border Style="{StaticResource BrandAccentChipStyle}">
+                            <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Windows 11 Fluent" />
+                        </Border>
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="A major Windows 11 native Fluent refresh bringing desktop parity, streamlined vocabulary tools, and hands-free dictation controls." TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Experience and Workspace" />
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE790;" />
+                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Native Windows 11 Fluent design &amp; Mica shell" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Updated navigation, typography, light and dark themes, and Mica backdrop across settings and tools." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE81C;" />
+                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Inline History diary &amp; built-in Feedback dialog" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Browse dictations with inline AI polish diffs, audio waveform playback, one-click copy and paste, and in-app feedback reporting." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
+                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="System tray waveform icon &amp; Fluent tray menu" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="At-a-glance listening status in the notification area with dark-mode native menu actions for your last dictation." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Dictation, Controls, and Polish" />
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE765;" />
+                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Keybind capture &amp; hands-free Auto-Stop" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Press shortcuts directly to assign Push to Talk, Toggle, Cancel, Quick Add, and reuse keys, with configurable silence Auto-Stop." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE890;" />
+                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Recording Pill &amp; live Reading Well preview" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Choose Classic or Level Rail pill styles, top or bottom placement, and optional live transcript preview while speaking." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8D2;" />
+                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Local dictation &amp; AI Polish" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Run Parakeet or Whisper locally on your PC, keep custom words and snippets on-device, and optionally polish with EG-1, Ollama, or your cloud key." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <TextBlock x:Name="WhatsNewBuildInfoText" x:FieldModifier="internal" Foreground="{ThemeResource BrandTextSecondaryBrush}" />
+        </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

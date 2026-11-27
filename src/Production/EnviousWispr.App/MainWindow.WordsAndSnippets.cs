@@ -51,13 +51,13 @@ public sealed partial class MainWindow
 {
     private Action<string, MishearingAdvice>? _activeWordDialogSuggestionSink;
 
-    private async void OpenAddWordDialogButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void OpenAddWordDialogButton_Click(object sender, RoutedEventArgs e) =>
         await OpenAddWordDialogAsync().ConfigureAwait(true);
 
     private async Task OpenAddWordDialogAsync() =>
         await ShowWordEditorDialogAsync(existing: null).ConfigureAwait(true);
 
-    private async void EditWordRowButton_Click(object sender, RoutedEventArgs e)
+    internal async void EditWordRowButton_Click(object sender, RoutedEventArgs e)
     {
         var existing = sender switch
         {
@@ -647,7 +647,7 @@ public sealed partial class MainWindow
         return rows;
     }
 
-    private async void EditSnippetRowButton_Click(object sender, RoutedEventArgs e)
+    internal async void EditSnippetRowButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: SnippetRow { Entry: var existing } })
         {
@@ -910,7 +910,7 @@ public sealed partial class MainWindow
             "Settings storage is unavailable. Your previous settings remain active.",
     };
 
-    private void GoToQuickAddKeybindButton_Click(object sender, RoutedEventArgs e)
+    internal void GoToQuickAddKeybindButton_Click(object sender, RoutedEventArgs e)
     {
         OpenPage("settings-keybinds");
         QuickAddHotkeyTextBox?.Focus(FocusState.Programmatic);

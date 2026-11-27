@@ -22,7 +22,7 @@ public sealed partial class MainWindow
     /// <summary>One word import from another app ended: counts and categories only, for the app's diagnostic log.</summary>
     public event Action<DiagnosticWordImport>? WordImportReported;
 
-    private async void WordsFromAnotherAppButton_Click(object sender, RoutedEventArgs e)
+    internal async void WordsFromAnotherAppButton_Click(object sender, RoutedEventArgs e)
     {
         // Looked for now, because the person asked to see the list - never at launch, never in the background.
         var installed = await Task.Run(() => WordImportApps.All.Where(app => app.IsInstalled).ToArray()).ConfigureAwait(true);

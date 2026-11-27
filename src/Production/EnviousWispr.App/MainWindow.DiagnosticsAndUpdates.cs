@@ -231,7 +231,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void ExportProfileButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportProfileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
         {
@@ -261,7 +261,7 @@ public sealed partial class MainWindow
     /// pipeline here to avoid the round trip would measure a DIFFERENT object from the one every
     /// dictation uses, which is the one thing a speed check must not do.
     /// </remarks>
-    private void RunSpeedCheckButton_Click(object sender, RoutedEventArgs e)
+    internal void RunSpeedCheckButton_Click(object sender, RoutedEventArgs e)
     {
         _speedCheckRunning = true;
         RunSpeedCheckButton.IsEnabled = false;
@@ -324,7 +324,7 @@ public sealed partial class MainWindow
             Visibility.Visible);
     }
 
-    private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
         {
@@ -354,10 +354,10 @@ public sealed partial class MainWindow
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
 
-    private void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e) =>
+    internal void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e) =>
         UpdateCheckRequested?.Invoke();
 
-    private void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
+    internal void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
         UpdateApplyRequested?.Invoke();
 
     public void SetStartupRegistrationInProgress()
@@ -419,7 +419,7 @@ public sealed partial class MainWindow
             });
     }
 
-    private void StartAtLoginToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void StartAtLoginToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _isUpdatingStartupRegistration)
         {
@@ -429,7 +429,7 @@ public sealed partial class MainWindow
         StartupToggleRequested?.Invoke(StartAtLoginToggle.IsOn);
     }
 
-    private async void OpenStartupSettingsButton_Click(object sender, RoutedEventArgs e)
+    internal async void OpenStartupSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -452,7 +452,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
+    internal async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add(".json");
@@ -524,7 +524,7 @@ public sealed partial class MainWindow
         _overlayWindow.PreviewActionPressed += OnOverlayPreviewActionPressed;
     }
 
-    private void PillReviewModeToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void PillReviewModeToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (PillReviewControlsPanel is null)
         {
@@ -544,7 +544,7 @@ public sealed partial class MainWindow
         UpdateSelectedPreviewDescription();
     }
 
-    private void PillPreviewComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void PillPreviewComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (PillReviewModeToggle?.IsOn != true)
         {
@@ -555,10 +555,10 @@ public sealed partial class MainWindow
         UpdateSelectedPreviewDescription();
     }
 
-    private void PillPreviewPlayButton_Click(object sender, RoutedEventArgs e) =>
+    internal void PillPreviewPlayButton_Click(object sender, RoutedEventArgs e) =>
         PlaySelectedPreviewPill();
 
-    private void PillPreviewNextButton_Click(object sender, RoutedEventArgs e)
+    internal void PillPreviewNextButton_Click(object sender, RoutedEventArgs e)
     {
         if (!TryCanUsePillPreview())
         {
@@ -571,7 +571,7 @@ public sealed partial class MainWindow
         PlaySelectedPreviewPill();
     }
 
-    private void PillPreviewDismissButton_Click(object sender, RoutedEventArgs e)
+    internal void PillPreviewDismissButton_Click(object sender, RoutedEventArgs e)
     {
         if (_overlayWindow.IsActiveNonPreview)
         {
@@ -586,7 +586,7 @@ public sealed partial class MainWindow
                 : "No preview pill is currently open.");
     }
 
-    private void PillPreviewHoldOpenToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void PillPreviewHoldOpenToggle_Toggled(object sender, RoutedEventArgs e)
     {
         var holdOpen = PillPreviewHoldOpenToggle.IsOn;
         _overlayWindow.SetPreviewHoldOpen(holdOpen);

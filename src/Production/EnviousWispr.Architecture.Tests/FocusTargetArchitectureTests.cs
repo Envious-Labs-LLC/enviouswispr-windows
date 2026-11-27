@@ -72,8 +72,7 @@ public sealed class FocusTargetArchitectureTests
         Assert.NotNull(AppSettingsValidator.Validate(invalid, AppErrorStage.SettingsLoad));
 
         var root = FindRepositoryRoot();
-        var xamlText = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var document = XDocument.Parse(xamlText);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         Assert.NotNull(document.Descendants().FirstOrDefault(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "ReturnToStartWindowToggle"));
     }
 
