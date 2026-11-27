@@ -97,7 +97,7 @@ public sealed partial class MainWindow
         }
 
         var baseline = _session.Settings.Current.UserData.CustomWords;
-        var plan = CustomWordImport.Plan(batch.Entries, baseline);
+        var plan = await Task.Run(() => CustomWordImport.Plan(batch.Entries, baseline)).ConfigureAwait(true);
         string? staleNotice = null;
         while (true)
         {
@@ -108,7 +108,9 @@ public sealed partial class MainWindow
                 return;
             }
 
-            var result = await CommitVocabularyAsync(_session.VocabularyImport.CommitFromAppAsync(baseline, batch.Entries)).ConfigureAwait(true);
+            var result = await CommitVocabularyAsync(
+                _session.VocabularyImport.CommitFromAppAsync(baseline, batch.Entries),
+                UserDataRefreshScope.Dictionary).ConfigureAwait(true);
             if (!result.Saved)
             {
                 WordImportReported?.Invoke(DiagnosticWordImport.ForPlan(
@@ -116,7 +118,6 @@ public sealed partial class MainWindow
                 return;
             }
 
-            RefreshReusableUserDataViews();
             var outcome = result.Value;
             switch (outcome.Kind)
             {

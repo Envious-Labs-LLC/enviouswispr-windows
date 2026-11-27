@@ -1274,59 +1274,390 @@
                         </Grid>
                     </Grid>
 
-                    <ScrollViewer Grid.Row="1" x:Name="DictionaryPage" AutomationProperties.Name="Dictionary page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
+                    <Grid Grid.Row="1" x:Name="DictionaryPage" AutomationProperties.Name="Dictionary page" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
-                            <Grid ColumnSpacing="{StaticResource BrandSpacingL}" Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                    <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Your Words" />
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Custom terms and vocabulary the app uses to recognize what you say." TextWrapping="Wrap" />
+                            <Grid Margin="0,0,16,0" RowSpacing="{StaticResource BrandSpacingL}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingL}">
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingL}" Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Your Words" />
+                                            <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Custom terms and vocabulary the app uses to recognize what you say." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Grid Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped" VerticalAlignment="Center">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="DictionaryEnabledToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Enable Dictionary" VerticalAlignment="Center" />
+                                            <ToggleSwitch x:Name="DictionaryEnabledToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind DictionaryEnabledToggleLabel, Mode=OneTime}" Toggled="DictionaryEnabledToggle_Toggled" Style="{StaticResource BrandToggleSwitchStyle}" OnContent="" OffContent="" MinWidth="0" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Grid>
+                                    <Border Style="{StaticResource BrandTabStripContainerStyle}">
+                                        <Grid x:Name="DictionaryTabStrip" SizeChanged="SettingsTabStrip_SizeChanged">
+                                            <Button x:Name="DictTabYourWords" Click="DictionaryTab_Click" Tag="your-words" Style="{StaticResource BrandTopTabActiveButtonStyle}">
+                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                    <FontIcon Glyph="&#xE8F1;" FontSize="14" />
+                                                    <TextBlock Text="Your Words" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button x:Name="DictTabPacks" Click="DictionaryTab_Click" Tag="packs" Style="{StaticResource BrandTopTabButtonStyle}">
+                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                    <FontIcon Glyph="&#xE74C;" FontSize="14" />
+                                                    <TextBlock Text="Vocabulary Packs" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button x:Name="DictTabLearnFrom" Click="DictionaryTab_Click" Tag="learn-from" Style="{StaticResource BrandTopTabButtonStyle}">
+                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                    <FontIcon Glyph="&#xE82D;" FontSize="14" />
+                                                    <TextBlock Text="Learn From" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button x:Name="DictTabQuickAdd" Click="DictionaryTab_Click" Tag="quick-add" Style="{StaticResource BrandTopTabButtonStyle}">
+                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                                    <TextBlock Text="Quick Add" />
+                                                </StackPanel>
+                                            </Button>
+                                        </Grid>
+                                    </Border>
                                 </StackPanel>
-                                <Grid Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped" VerticalAlignment="Center">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="DictionaryEnabledToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Enable Dictionary" VerticalAlignment="Center" />
-                                    <ToggleSwitch x:Name="DictionaryEnabledToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind DictionaryEnabledToggleLabel, Mode=OneTime}" Toggled="DictionaryEnabledToggle_Toggled" Style="{StaticResource BrandToggleSwitchStyle}" OnContent="" OffContent="" MinWidth="0" VerticalAlignment="Center" />
+                                <Grid Grid.Row="1">
+                                    <Grid x:Name="DictPanelYourWords" RowSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <Border x:Name="SwitchingAppBannerCard" Grid.Row="0" Padding="14,12,14,12" Style="{StaticResource BrandSettingsCardStyle}">
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="32" Height="32" Style="{StaticResource BrandIconTileStyle}" VerticalAlignment="Center">
+                                                    <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B5;" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Switching from another dictation app?" />
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Import your existing vocabulary from Wispr Flow, Superwhisper, CSV, or a copied list." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <Button x:Name="BannerImportWordsButton" Grid.Column="2" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import from another app or list">
+                                                    <Button.Flyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem Text="From another app" Click="WordsFromAnotherAppButton_Click" />
+                                                            <MenuFlyoutItem Text="Open a file" Click="ImportWordsButton_Click" />
+                                                            <MenuFlyoutItem Text="Paste a list" Click="PasteWordsButton_Click" />
+                                                        </MenuFlyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                        <Border Grid.Row="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                            <Grid RowSpacing="{StaticResource BrandSpacingM}">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingM}">
+                                                    <Grid x:Name="WordListHeaderGrid" ColumnSpacing="{StaticResource BrandSpacingS}" SizeChanged="WordListHeaderGrid_SizeChanged">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock x:Name="WordCountText" Style="{StaticResource BrandSubsectionEyebrowStyle}" TextWrapping="NoWrap" VerticalAlignment="Center" Text="0 WORDS" />
+                                                        <StackPanel x:Name="WordListActionButtonsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <Button x:Name="OpenAddWordDialogButton" Click="OpenAddWordDialogButton_Click" Content="+ Add word" Style="{StaticResource BrandPrimaryButtonStyle}" VerticalAlignment="Center" />
+                                                            <Button x:Name="ImportWordsMenuButton" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import words">
+                                                                <Button.Flyout>
+                                                                    <MenuFlyout>
+                                                                        <MenuFlyoutItem Text="Open a file" Click="ImportWordsButton_Click" />
+                                                                        <MenuFlyoutItem Text="Paste a list" Click="PasteWordsButton_Click" />
+                                                                        <MenuFlyoutItem Text="From another app" Click="WordsFromAnotherAppButton_Click" />
+                                                                    </MenuFlyout>
+                                                                </Button.Flyout>
+                                                            </Button>
+                                                            <Button x:Name="ExportWordsButton" IsEnabled="False" Click="ExportWordsButton_Click" Content="Export" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                                            <Button x:Name="MassEditWordsToggle" Click="MassEditWordsToggle_Click" Content="Mass edit" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <Grid>
+                                                        <TextBox x:Name="DictionarySearchBox" AutomationProperties.Name="Search custom words" Padding="36,6,36,6" PlaceholderText="Search words or mishearings" TextChanged="DictionarySearchBox_TextChanged" />
+                                                        <Button x:Name="DictionarySearchClearButton" Click="DictionarySearchClearButton_Click" AutomationProperties.Name="Clear word search" ToolTipService.ToolTip="Clear search" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0" Padding="6,4" Style="{StaticResource BrandHelpButtonStyle}" Visibility="Collapsed">
+                                                            <FontIcon FontSize="12" Glyph="&#xE711;" />
+                                                        </Button>
+                                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" />
+                                                    </Grid>
+                                                    <StackPanel x:Name="WordFilterChipsContainer" SizeChanged="WordFilterChipsContainer_SizeChanged" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <StackPanel x:Name="WordFilterChipsPrimaryRow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                            <Button x:Name="WordFilterAllChip" Content="All categories" Click="WordFilterChip_Click" Tag="all" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="10,4,10,4" />
+                                                            <Button x:Name="WordFilterGeneralChip" Content="General" Click="WordFilterChip_Click" Tag="general" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                                            <Button x:Name="WordFilterPersonChip" Content="Person" Click="WordFilterChip_Click" Tag="person" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                                            <Button x:Name="WordFilterBrandChip" Content="Brand" Click="WordFilterChip_Click" Tag="brand" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                                            <Button x:Name="WordFilterAcronymChip" Content="Acronym" Click="WordFilterChip_Click" Tag="acronym" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                                            <Button x:Name="WordFilterDomainChip" Content="Domain" Click="WordFilterChip_Click" Tag="domain" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                                            <Button x:Name="WordFilterAutoLearnedChip" Content="Auto-learned" Click="WordFilterChip_Click" Tag="auto-learned" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                                        </StackPanel>
+                                                        <StackPanel x:Name="WordFilterChipsOverflowRow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" />
+                                                    </StackPanel>
+                                                    <Border x:Name="DictionaryMassEditBar" Padding="10,8,10,8" Style="{StaticResource BrandSettingsCardStyle}" Visibility="Collapsed">
+                                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock x:Name="WordSelectionCountText" AutomationProperties.LiveSetting="Polite" VerticalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="SelectAllWordsButton" Grid.Column="1" IsEnabled="False" Click="SelectAllWordsButton_Click" AutomationProperties.HelpText="Selects every word in the list. Press again to clear the selection." Content="Select all" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                            <Button x:Name="RemoveWordButton" Grid.Column="2" IsEnabled="False" Click="RemoveWordButton_Click" Content="Delete selected" Style="{StaticResource BrandDestructiveButtonStyle}" />
+                                                        </Grid>
+                                                    </Border>
+                                                </StackPanel>
+                                                <ListView x:Name="DictionaryList" Grid.Row="1" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Custom dictionary entries" SelectionMode="None">
+                                                    <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel CacheLength="2.0" /></ItemsPanelTemplate></ListView.ItemsPanel>
+                                                    <ListView.ItemContainerTransitions><TransitionCollection /></ListView.ItemContainerTransitions>
+                                                    <ListView.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Padding="4,8,4,8" ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Replacement}" TextAlignment="DetectFromContent" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                                        <Border Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="{Binding CategoryLabel}" />
+                                                                        </Border>
+                                                                        <Border Style="{StaticResource BrandAccentChipStyle}" Visibility="{Binding AutoLearnedVisibility}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="Learned" />
+                                                                        </Border>
+                                                                    </StackPanel>
+                                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding AliasesText}" TextAlignment="DetectFromContent" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                                        <Border Style="{StaticResource BrandAccentChipStyle}" Visibility="{Binding NonDefaultStrictnessVisibility}" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="{Binding StrictnessLabel}" />
+                                                                        </Border>
+                                                                    </StackPanel>
+                                                                </StackPanel>
+                                                                <Button Grid.Column="1" Click="EditWordRowButton_Click" Content="Edit" Tag="{Binding Entry}" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" AutomationProperties.HelpText="Edit this word" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ListView.ItemTemplate>
+                                                </ListView>
+                                                <Border x:Name="DictionaryEmptyState" Grid.Row="1" VerticalAlignment="Top" AutomationProperties.Name="No custom words yet" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
+                                                    <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+                                                        <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8D2;" /></Border>
+                                                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="No custom words yet" TextAlignment="Center" />
+                                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Enter what you say and what EnviousWispr should write, then add your first word." TextAlignment="Center" TextWrapping="Wrap" />
+                                                        <Button HorizontalAlignment="Center" Click="FocusAddWordButton_Click" Content="Add your first word" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+                                    <ScrollViewer x:Name="DictPanelPacks" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                                        <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}" VerticalAlignment="Top">
+                                            <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Vocabulary Packs" />
+                                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Ready-made word lists for specialized terms. Toggle any pack on to fix its terms without adding clutter to Your Words." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <StackPanel x:Name="VocabularyPacksList" Spacing="{StaticResource BrandSpacingS}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </ScrollViewer>
+                                    <ScrollViewer x:Name="DictPanelLearnFrom" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Learn from..." />
+                                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Let EnviousWispr pick up new words on its own, from things you already have." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">
+                                                        <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                    <TextBlock x:Name="LearnFromEditsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Learn new words" />
+                                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Automatically detects when you correct a dictation and adds the corrected word to your dictionary. Undo it from the notification, or remove it later in Your Words." TextWrapping="Wrap" />
+                                                                </StackPanel>
+                                                                <ToggleSwitch x:Name="LearnFromEditsToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind LearnFromEditsToggleLabel, Mode=OneTime}" OnContent="" OffContent="" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" />
+                                                            </Grid>
+                                                            <TextBlock x:Name="LearnFromEditsStatusText" Style="{StaticResource BrandHelperStyle}" Text="Available" />
+                                                            <Grid x:Name="LearnMemoryRow" ColumnSpacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock x:Name="LearnMemorySummaryText" Style="{StaticResource BrandHelperStyle}" Text="Learning memory: 0 blocked" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                                                <Button x:Name="ForgetLearnMemoryButton" Grid.Column="1" Click="ForgetLearnMemoryButton_Click" Content="Forget" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Forget what EnviousWispr remembers about your fixes so blocked words may be learned again." />
+                                                            </Grid>
+                                                            <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                                    <TextBlock x:Name="FixLearnedWordsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Fix words it learned" />
+                                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Use learned words in new recordings and imports. Turn this off to keep using words you added yourself without applying learned corrections." TextWrapping="Wrap" />
+                                                                </StackPanel>
+                                                                <ToggleSwitch x:Name="FixLearnedWordsToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind FixLearnedWordsToggleLabel, Mode=OneTime}" OnContent="" OffContent="" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" />
+                                                            </Grid>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">
+                                                        <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Import word lists" />
+                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Import words from existing dictation apps, files, or pasted lists." TextWrapping="Wrap" />
+                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                                <Button Click="WordsFromAnotherAppButton_Click" Content="From another app" AutomationProperties.Name="Import words from another app" AutomationProperties.HelpText="Bring your dictionary over from another dictation app. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                                <Button Click="ImportWordsButton_Click" Content="Import words" AutomationProperties.HelpText="Reads a file of word pairs. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                                <Button Click="PasteWordsButton_Click" Content="Paste a list" AutomationProperties.HelpText="Reads word pairs you have copied. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                    <ScrollViewer x:Name="DictPanelQuickAdd" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Quick Add from anywhere" />
+                                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Capture a misheard word in any app without switching windows." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <Grid x:Name="QuickAddStepsGrid" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="QuickAddStepsGrid_SizeChanged">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Border x:Name="QuickAddStep1Card" Grid.Column="0" Grid.Row="0" Padding="16" Style="{StaticResource BrandSettingsCardStyle}">
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                                <Border Width="26" Height="26" HorizontalAlignment="Left" Style="{StaticResource BrandAccentChipStyle}" Padding="0">
+                                                                    <TextBlock Text="1" Style="{StaticResource BrandAccentChipTextStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                </Border>
+                                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Highlight a word" TextWrapping="Wrap" />
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Select a misheard word or name in any app you are writing in." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                        <Border x:Name="QuickAddStep2Card" Grid.Column="1" Grid.Row="0" Padding="16" Style="{StaticResource BrandSettingsCardStyle}">
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                                <Border Width="26" Height="26" HorizontalAlignment="Left" Style="{StaticResource BrandAccentChipStyle}" Padding="0">
+                                                                    <TextBlock Text="2" Style="{StaticResource BrandAccentChipTextStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                </Border>
+                                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Trigger Quick Add" TextWrapping="Wrap" />
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Press your Quick Add shortcut to bring up the word editor pre-filled." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                        <Border x:Name="QuickAddStep3Card" Grid.Column="2" Grid.Row="0" Padding="16" Style="{StaticResource BrandSettingsCardStyle}">
+                                                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                                <Border Width="26" Height="26" HorizontalAlignment="Left" Style="{StaticResource BrandAccentChipStyle}" Padding="0">
+                                                                    <TextBlock Text="3" Style="{StaticResource BrandAccentChipTextStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                </Border>
+                                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Choose and save" TextWrapping="Wrap" />
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Confirm what you say and how it should be written, then save." TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </Grid>
+                                                    <Border Padding="14,12" Style="{StaticResource BrandSettingsCardStyle}">
+                                                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Quick Add shortcut" VerticalAlignment="Center" />
+                                                                <Border Style="{StaticResource BrandAccentChipStyle}">
+                                                                    <TextBlock x:Name="QuickAddCurrentShortcutText" Style="{StaticResource BrandRowLabelStyle}" Text="Ctrl+Alt+W" />
+                                                                </Border>
+                                                            </StackPanel>
+                                                            <Button Grid.Column="1" Click="GoToQuickAddKeybindButton_Click" Content="Change shortcut" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                                        </Grid>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Quick manual entry" />
+                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
+                                                            <TextBox x:Name="SpokenFormBox" Grid.Column="1" Header="When I say" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" PlaceholderText="envy wisper" />
+                                                        </Grid>
+                                                        <Grid Grid.Column="1" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
+                                                            <TextBox x:Name="ReplacementBox" Grid.Column="1" Header="Write" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" PlaceholderText="EnviousWispr" />
+                                                        </Grid>
+                                                        <Grid Grid.Column="2" Margin="0,28,0,0" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE710;" />
+                                                            <Button Grid.Column="1" Click="AddWordButton_Click" Content="Add word" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                                        </Grid>
+                                                    </Grid>
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                                        <ComboBox x:Name="WordStrictnessComboBox" Header="How closely it must match" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Left" MinWidth="360" SelectedValuePath="Tag">
+                                                            <ComboBoxItem Content="Balanced (recommended)"><ComboBoxItem.Tag><settings:MatchStrictness>Default</settings:MatchStrictness></ComboBoxItem.Tag></ComboBoxItem>
+                                                            <ComboBoxItem Content="Loose (match similar-sounding words)"><ComboBoxItem.Tag><settings:MatchStrictness>Loose</settings:MatchStrictness></ComboBoxItem.Tag></ComboBoxItem>
+                                                            <ComboBoxItem Content="Strict (exact match only)"><ComboBoxItem.Tag><settings:MatchStrictness>Strict</settings:MatchStrictness></ComboBoxItem.Tag></ComboBoxItem>
+                                                        </ComboBox>
+                                                        <Button x:Name="SuggestAliasesButton" Click="SuggestAliasesButton_Click" Content="Suggest what it might hear" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                        <TextBlock x:Name="SuggestAliasesStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                                                        <ScrollViewer x:Name="SuggestedAliasesScroller" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto" VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled" Visibility="Collapsed">
+                                                            <StackPanel x:Name="SuggestedAliasesPanel" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" />
+                                                        </ScrollViewer>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+                                    </ScrollViewer>
                                 </Grid>
                             </Grid>
-                            <Border Style="{StaticResource BrandTabStripContainerStyle}">
-                                <Grid x:Name="DictionaryTabStrip" SizeChanged="SettingsTabStrip_SizeChanged">
-                                    <Button x:Name="DictTabYourWords" Click="DictionaryTab_Click" Tag="your-words" Style="{StaticResource BrandTopTabActiveButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                            <FontIcon Glyph="&#xE8F1;" FontSize="14" />
-                                            <TextBlock Text="Your Words" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button x:Name="DictTabPacks" Click="DictionaryTab_Click" Tag="packs" Style="{StaticResource BrandTopTabButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                            <FontIcon Glyph="&#xE74C;" FontSize="14" />
-                                            <TextBlock Text="Vocabulary Packs" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button x:Name="DictTabLearnFrom" Click="DictionaryTab_Click" Tag="learn-from" Style="{StaticResource BrandTopTabButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                            <FontIcon Glyph="&#xE82D;" FontSize="14" />
-                                            <TextBlock Text="Learn From" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button x:Name="DictTabQuickAdd" Click="DictionaryTab_Click" Tag="quick-add" Style="{StaticResource BrandTopTabButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                            <FontIcon Glyph="&#xE710;" FontSize="14" />
-                                            <TextBlock Text="Quick Add" />
-                                        </StackPanel>
-                                    </Button>
-                                </Grid>
-                            </Border>
-                            <Grid>
-                                <StackPanel x:Name="DictPanelYourWords" Spacing="{StaticResource BrandSpacingM}">
-                                    <Border x:Name="SwitchingAppBannerCard" Padding="14,12,14,12" Style="{StaticResource BrandSettingsCardStyle}">
+                        </Grid>
+                    </Grid>
+
+                    <Grid Grid.Row="1" x:Name="SnippetsPage" AutomationProperties.Name="Snippets page" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
+                            <Grid Margin="0,0,16,0" RowSpacing="{StaticResource BrandSpacingL}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingL}">
+                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,4">
+                                        <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Snippets" />
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Say your keyword, then a snippet. The saved text lands for you. Snippets stay on this PC and travel in a portable profile export." TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Border Padding="16,12" Style="{StaticResource BrandSettingsCardStyle}">
                                         <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
@@ -1338,22 +1669,106 @@
                                             </Border>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
                                                 <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Switching from another dictation app?" />
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Import your existing vocabulary from Wispr Flow, Superwhisper, CSV, or a copied list." TextWrapping="Wrap" />
+                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Bring your snippets over from Wispr Flow, CSV, exported JSON, or a pasted list." TextWrapping="Wrap" />
                                             </StackPanel>
-                                            <Button x:Name="BannerImportWordsButton" Grid.Column="2" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import from another app or list">
+                                            <Button Grid.Column="2" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import snippets from another app or file">
                                                 <Button.Flyout>
                                                     <MenuFlyout>
-                                                        <MenuFlyoutItem Text="From another app" Click="WordsFromAnotherAppButton_Click" />
-                                                        <MenuFlyoutItem Text="Open a file" Click="ImportWordsButton_Click" />
-                                                        <MenuFlyoutItem Text="Paste a list" Click="PasteWordsButton_Click" />
+                                                        <MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" />
+                                                        <MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" />
+                                                        <MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" />
                                                     </MenuFlyout>
                                                 </Button.Flyout>
                                             </Button>
                                         </Grid>
                                     </Border>
-                                    <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                    <Border Padding="20" Style="{StaticResource BrandSettingsCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <Grid x:Name="WordListHeaderGrid" ColumnSpacing="{StaticResource BrandSpacingS}" SizeChanged="WordListHeaderGrid_SizeChanged">
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="40" Height="40" Style="{StaticResource BrandIconTileStyle}" VerticalAlignment="Top">
+                                                    <TextBlock Text="{}{}" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Paste the text you type over and over, by voice" TextWrapping="Wrap" />
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Say your keyword followed by a trigger phrase anywhere you dictate. AI Polish never rewrites snippets." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <Border Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{ThemeResource BrandButtonRadius}" Padding="12,10">
+                                                <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Say" VerticalAlignment="Center" />
+                                                        <Border Style="{StaticResource BrandAccentChipStyle}">
+                                                            <TextBlock x:Name="SnippetFlowKeywordChipText" Style="{StaticResource BrandAccentChipTextStyle}" Text="backslash" />
+                                                        </Border>
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="+" VerticalAlignment="Center" />
+                                                        <Border Style="{StaticResource BrandNeutralChipStyle}">
+                                                            <TextBlock x:Name="SnippetFlowTriggerChipText" Style="{StaticResource BrandNeutralChipTextStyle}" Text="my email" />
+                                                        </Border>
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="&#x2192;" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                    <TextBlock x:Name="SnippetFlowExpansionText" Grid.Column="1" Style="{StaticResource BrandRowLabelStyle}" Text="john.doe@example.com" MaxLines="1" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                </Grid>
+                                            </Border>
+                                            <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE720;" />
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                                    <Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock x:Name="SnippetKeywordLabel" Style="{StaticResource BrandRowLabelStyle}" Text="Keyword" VerticalAlignment="Center" />
+                                                        <Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About snippet keyword" ToolTipService.ToolTip="What is this?">
+                                                            <FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" />
+                                                            <Button.Flyout>
+                                                                <Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}">
+                                                                    <TextBlock x:Name="SnippetKeywordExample" MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" />
+                                                                </Flyout>
+                                                            </Button.Flyout>
+                                                        </Button>
+                                                    </Grid>
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Say this first, then your trigger. One word." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <TextBox x:Name="SnippetKeywordBox" Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind SnippetKeywordLabel, Mode=OneTime}" AutomationProperties.HelpText="A snippet only fires when you say this word first." MinWidth="180" MaxLength="64" VerticalAlignment="Center" KeyDown="SnippetKeywordBox_KeyDown" LostFocus="SnippetKeywordBox_LostFocus" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                                <Grid Grid.Row="1" RowSpacing="{StaticResource BrandSpacingS}">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <Grid Grid.Row="0" ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="YOUR SNIPPETS" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="SnippetCountText" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <Border Grid.Row="1" Padding="0" Style="{StaticResource BrandSettingsCardStyle}">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <Grid x:Name="SnippetsToolbarGrid" Grid.Row="0" Padding="16,12" ColumnSpacing="{StaticResource BrandSpacingS}" SizeChanged="SnippetsToolbarGrid_SizeChanged">
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
@@ -1362,453 +1777,77 @@
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock x:Name="WordCountText" Style="{StaticResource BrandSubsectionEyebrowStyle}" TextWrapping="NoWrap" VerticalAlignment="Center" Text="0 WORDS" />
-                                                <StackPanel x:Name="WordListActionButtonsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                    <Button x:Name="OpenAddWordDialogButton" Click="OpenAddWordDialogButton_Click" Content="+ Add word" Style="{StaticResource BrandPrimaryButtonStyle}" VerticalAlignment="Center" />
-                                                    <Button x:Name="ImportWordsMenuButton" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import words">
+                                                <Grid x:Name="SnippetSearchContainer">
+                                                    <TextBox x:Name="SnippetSearchBox" AutomationProperties.Name="Search snippets" Padding="36,6,36,6" PlaceholderText="Search snippets" TextChanged="SnippetSearchBox_TextChanged" />
+                                                    <Button x:Name="SnippetSearchClearButton" Click="ClearSnippetSearchButton_Click" AutomationProperties.Name="Clear snippet search" ToolTipService.ToolTip="Clear search" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0" Padding="6,4" Style="{StaticResource BrandHelpButtonStyle}" Visibility="Collapsed">
+                                                        <FontIcon FontSize="12" Glyph="&#xE711;" />
+                                                    </Button>
+                                                    <FontIcon FontSize="14" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" />
+                                                </Grid>
+                                                <StackPanel x:Name="SnippetsToolbarActionsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                    <Button Content="Import" AutomationProperties.Name="Import snippets" AutomationProperties.HelpText="Bring your snippets in from anywhere. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}">
                                                         <Button.Flyout>
                                                             <MenuFlyout>
-                                                                <MenuFlyoutItem Text="Open a file" Click="ImportWordsButton_Click" />
-                                                                <MenuFlyoutItem Text="Paste a list" Click="PasteWordsButton_Click" />
-                                                                <MenuFlyoutItem Text="From another app" Click="WordsFromAnotherAppButton_Click" />
+                                                                <MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" AutomationProperties.HelpText="Paste a list from anywhere: plain lines, CSV, or exported JSON." />
+                                                                <MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" AutomationProperties.HelpText="Pick the EnviousWispr Snippets.json you exported, a CSV, or a plain list. Snippets you already have are left as they are." />
+                                                                <MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" AutomationProperties.HelpText="Bring your snippets over from another dictation app." />
                                                             </MenuFlyout>
                                                         </Button.Flyout>
                                                     </Button>
-                                                    <Button x:Name="ExportWordsButton" IsEnabled="False" Click="ExportWordsButton_Click" Content="Export" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
-                                                    <Button x:Name="MassEditWordsToggle" Click="MassEditWordsToggle_Click" Content="Mass edit" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                                    <Button x:Name="ExportSnippetsButton" Click="ExportSnippetsButton_Click" Content="Export" AutomationProperties.Name="Export snippets" AutomationProperties.HelpText="Saves your snippets and your keyword to a file you can import on another PC or Mac." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                    <Button x:Name="AddSnippetToolbarButton" Click="AddSnippetToolbarButton_Click" Content="+ Add snippet" Style="{StaticResource BrandPrimaryButtonStyle}" />
                                                 </StackPanel>
                                             </Grid>
-                                            <Grid>
-                                                <TextBox x:Name="DictionarySearchBox" AutomationProperties.Name="Search custom words" Padding="36,6,36,6" PlaceholderText="Search words or mishearings" TextChanged="DictionarySearchBox_TextChanged" />
-                                                <Button x:Name="DictionarySearchClearButton" Click="DictionarySearchClearButton_Click" AutomationProperties.Name="Clear word search" ToolTipService.ToolTip="Clear search" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0" Padding="6,4" Style="{StaticResource BrandHelpButtonStyle}" Visibility="Collapsed">
-                                                    <FontIcon FontSize="12" Glyph="&#xE711;" />
-                                                </Button>
-                                                <FontIcon FontSize="14" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" />
-                                            </Grid>
-                                            <StackPanel x:Name="WordFilterChipsContainer" SizeChanged="WordFilterChipsContainer_SizeChanged" Spacing="{StaticResource BrandSpacingXs}">
-                                                <StackPanel x:Name="WordFilterChipsPrimaryRow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                                    <Button x:Name="WordFilterAllChip" Content="All categories" Click="WordFilterChip_Click" Tag="all" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="10,4,10,4" />
-                                                    <Button x:Name="WordFilterGeneralChip" Content="General" Click="WordFilterChip_Click" Tag="general" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                                    <Button x:Name="WordFilterPersonChip" Content="Person" Click="WordFilterChip_Click" Tag="person" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                                    <Button x:Name="WordFilterBrandChip" Content="Brand" Click="WordFilterChip_Click" Tag="brand" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                                    <Button x:Name="WordFilterAcronymChip" Content="Acronym" Click="WordFilterChip_Click" Tag="acronym" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                                    <Button x:Name="WordFilterDomainChip" Content="Domain" Click="WordFilterChip_Click" Tag="domain" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                                    <Button x:Name="WordFilterAutoLearnedChip" Content="Auto-learned" Click="WordFilterChip_Click" Tag="auto-learned" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                                </StackPanel>
-                                                <StackPanel x:Name="WordFilterChipsOverflowRow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" />
-                                            </StackPanel>
-                                            <Border x:Name="DictionaryMassEditBar" Padding="10,8,10,8" Style="{StaticResource BrandSettingsCardStyle}" Visibility="Collapsed">
-                                                <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock x:Name="WordSelectionCountText" AutomationProperties.LiveSetting="Polite" VerticalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Visibility="Collapsed" />
-                                                    <Button x:Name="SelectAllWordsButton" Grid.Column="1" IsEnabled="False" Click="SelectAllWordsButton_Click" AutomationProperties.HelpText="Selects every word in the list. Press again to clear the selection." Content="Select all" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                    <Button x:Name="RemoveWordButton" Grid.Column="2" IsEnabled="False" Click="RemoveWordButton_Click" Content="Delete selected" Style="{StaticResource BrandDestructiveButtonStyle}" />
-                                                </Grid>
-                                            </Border>
-                                            <ListView x:Name="DictionaryList" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Custom dictionary entries" SelectionMode="None">
-                                                <ListView.ItemContainerTransitions><TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection></ListView.ItemContainerTransitions>
+                                            <Border Grid.Row="1" Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                                            <ListView x:Name="SnippetList" Grid.Row="2" Padding="4" SelectionChanged="ListSelectionChanged" ItemClick="SnippetList_ItemClick" IsItemClickEnabled="True" AutomationProperties.Name="Saved snippets" SelectionMode="None">
+                                                <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel CacheLength="2.0" /></ItemsPanelTemplate></ListView.ItemsPanel>
+                                                <ListView.ItemContainerTransitions><TransitionCollection /></ListView.ItemContainerTransitions>
                                                 <ListView.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Grid Padding="4,8,4,8" ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                        <Grid Padding="12,10" ColumnSpacing="{StaticResource BrandSpacingM}">
                                                             <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
                                                                 <ColumnDefinition Width="*" />
                                                                 <ColumnDefinition Width="Auto" />
                                                             </Grid.ColumnDefinitions>
-                                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Replacement}" TextAlignment="DetectFromContent" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                                                    <Border Style="{StaticResource BrandNeutralChipStyle}" VerticalAlignment="Center">
-                                                                        <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="{Binding CategoryLabel}" />
-                                                                    </Border>
-                                                                    <Border Style="{StaticResource BrandAccentChipStyle}" Visibility="{Binding AutoLearnedVisibility}" VerticalAlignment="Center">
-                                                                        <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="Learned" />
-                                                                    </Border>
-                                                                </StackPanel>
-                                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding AliasesText}" TextAlignment="DetectFromContent" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                                                    <Border Style="{StaticResource BrandAccentChipStyle}" Visibility="{Binding NonDefaultStrictnessVisibility}" VerticalAlignment="Center">
-                                                                        <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Text="{Binding StrictnessLabel}" />
-                                                                    </Border>
-                                                                </StackPanel>
+                                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextAlignment="DetectFromContent" VerticalAlignment="Center" />
+                                                                <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="8,2" Visibility="{Binding ExampleVisibility}" VerticalAlignment="Center">
+                                                                    <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="Example" />
+                                                                </Border>
                                                             </StackPanel>
-                                                            <Button Grid.Column="1" Click="EditWordRowButton_Click" Content="Edit" Tag="{Binding Entry}" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" AutomationProperties.HelpText="Edit this word" />
+                                                            <TextBlock Grid.Column="1" Style="{StaticResource BrandHelperStyle}" MaxLines="1" TextTrimming="CharacterEllipsis" Text="{Binding BodyPreview}" TextAlignment="DetectFromContent" VerticalAlignment="Center" />
+                                                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                                <Button Click="EditSnippetRowButton_Click" Content="Edit" Tag="{Binding}" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" AutomationProperties.HelpText="Edit this snippet" />
+                                                                <FontIcon FontSize="12" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE76C;" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                                            </StackPanel>
                                                         </Grid>
                                                     </DataTemplate>
                                                 </ListView.ItemTemplate>
                                             </ListView>
-                                            <Border x:Name="DictionaryEmptyState" AutomationProperties.Name="No custom words yet" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
+                                            <Border x:Name="SnippetNoMatchState" Grid.Row="2" VerticalAlignment="Top" Padding="24" Visibility="Collapsed">
+                                                <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+                                                    <TextBlock x:Name="SnippetNoMatchText" Style="{StaticResource BrandRowLabelStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                                                    <Button HorizontalAlignment="Center" Click="ClearSnippetSearchButton_Click" Content="Clear search" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border x:Name="SnippetEmptyState" Grid.Row="2" VerticalAlignment="Top" AutomationProperties.Name="No snippets yet" Padding="24" Visibility="Collapsed">
                                                 <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                    <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8D2;" /></Border>
-                                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="No custom words yet" TextAlignment="Center" />
-                                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Enter what you say and what EnviousWispr should write, then add your first word." TextAlignment="Center" TextWrapping="Wrap" />
-                                                    <Button HorizontalAlignment="Center" Click="FocusAddWordButton_Click" Content="Add your first word" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                                <Border x:Name="DictPanelPacks" Padding="20" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
-                                    <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                            <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Vocabulary Packs" />
-                                            <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Ready-made word lists for specialized terms. Toggle any pack on to fix its terms without adding clutter to Your Words." TextWrapping="Wrap" />
-                                        </StackPanel>
-                                        <StackPanel x:Name="VocabularyPacksList" Spacing="{StaticResource BrandSpacingS}" />
-                                    </StackPanel>
-                                </Border>
-                                <StackPanel x:Name="DictPanelLearnFrom" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                                    <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Learn from..." />
-                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Let EnviousWispr pick up new words on its own, from things you already have." TextWrapping="Wrap" />
-                                            </StackPanel>
-                                            <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">
-                                                <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                    <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                            <TextBlock x:Name="LearnFromEditsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Learn new words" />
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Automatically detects when you correct a dictation and adds the corrected word to your dictionary. Undo it from the notification, or remove it later in Your Words." TextWrapping="Wrap" />
-                                                        </StackPanel>
-                                                        <ToggleSwitch x:Name="LearnFromEditsToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind LearnFromEditsToggleLabel, Mode=OneTime}" OnContent="" OffContent="" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" />
-                                                    </Grid>
-                                                    <TextBlock x:Name="LearnFromEditsStatusText" Style="{StaticResource BrandHelperStyle}" Text="Available" />
-                                                    <Grid x:Name="LearnMemoryRow" ColumnSpacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBlock x:Name="LearnMemorySummaryText" Style="{StaticResource BrandHelperStyle}" Text="Learning memory: 0 blocked" VerticalAlignment="Center" TextWrapping="Wrap" />
-                                                        <Button x:Name="ForgetLearnMemoryButton" Grid.Column="1" Click="ForgetLearnMemoryButton_Click" Content="Forget" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Forget what EnviousWispr remembers about your fixes so blocked words may be learned again." />
-                                                    </Grid>
-                                                    <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                                    <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                            <TextBlock x:Name="FixLearnedWordsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Fix words it learned" />
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Use learned words in new recordings and imports. Turn this off to keep using words you added yourself without applying learned corrections." TextWrapping="Wrap" />
-                                                        </StackPanel>
-                                                        <ToggleSwitch x:Name="FixLearnedWordsToggle" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind FixLearnedWordsToggleLabel, Mode=OneTime}" OnContent="" OffContent="" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" />
-                                                    </Grid>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Padding="14" Style="{StaticResource BrandSettingsCardStyle}">
-                                                <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Import word lists" />
-                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Import words from existing dictation apps, files, or pasted lists." TextWrapping="Wrap" />
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                        <Button Click="WordsFromAnotherAppButton_Click" Content="From another app" AutomationProperties.Name="Import words from another app" AutomationProperties.HelpText="Bring your dictionary over from another dictation app. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}" />
-                                                        <Button Click="ImportWordsButton_Click" Content="Import words" AutomationProperties.HelpText="Reads a file of word pairs. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
-                                                        <Button Click="PasteWordsButton_Click" Content="Paste a list" AutomationProperties.HelpText="Reads word pairs you have copied. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" />
+                                                    <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE70B;" /></Border>
+                                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="No snippets yet" TextAlignment="Center" />
+                                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Save the text you type over and over. An email address, a signature, a link you always paste." TextAlignment="Center" TextWrapping="Wrap" />
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+                                                        <Button Click="OpenNewSnippetDialogButton_Click" Content="Add your first snippet" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                        <Button x:Name="LoadExampleSnippetsButton" Click="LoadExampleSnippetsButton_Click" Content="Load example snippets" Style="{StaticResource BrandQuietButtonStyle}" />
                                                     </StackPanel>
                                                 </StackPanel>
                                             </Border>
-                                        </StackPanel>
+                                        </Grid>
                                     </Border>
-                                </StackPanel>
-                                <StackPanel x:Name="DictPanelQuickAdd" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                                    <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Quick Add from anywhere" />
-                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Capture a misheard word in any app without switching windows." TextWrapping="Wrap" />
-                                            </StackPanel>
-                                            <Grid x:Name="QuickAddStepsGrid" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="QuickAddStepsGrid_SizeChanged">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                </Grid.RowDefinitions>
-                                                <Border x:Name="QuickAddStep1Card" Grid.Column="0" Grid.Row="0" Padding="16" Style="{StaticResource BrandSettingsCardStyle}">
-                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                        <Border Width="26" Height="26" HorizontalAlignment="Left" Style="{StaticResource BrandAccentChipStyle}" Padding="0">
-                                                            <TextBlock Text="1" Style="{StaticResource BrandAccentChipTextStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                        </Border>
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Highlight a word" TextWrapping="Wrap" />
-                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Select a misheard word or name in any app you are writing in." TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </Border>
-                                                <Border x:Name="QuickAddStep2Card" Grid.Column="1" Grid.Row="0" Padding="16" Style="{StaticResource BrandSettingsCardStyle}">
-                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                        <Border Width="26" Height="26" HorizontalAlignment="Left" Style="{StaticResource BrandAccentChipStyle}" Padding="0">
-                                                            <TextBlock Text="2" Style="{StaticResource BrandAccentChipTextStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                        </Border>
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Trigger Quick Add" TextWrapping="Wrap" />
-                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Press your Quick Add shortcut to bring up the word editor pre-filled." TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </Border>
-                                                <Border x:Name="QuickAddStep3Card" Grid.Column="2" Grid.Row="0" Padding="16" Style="{StaticResource BrandSettingsCardStyle}">
-                                                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                        <Border Width="26" Height="26" HorizontalAlignment="Left" Style="{StaticResource BrandAccentChipStyle}" Padding="0">
-                                                            <TextBlock Text="3" Style="{StaticResource BrandAccentChipTextStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                        </Border>
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Choose and save" TextWrapping="Wrap" />
-                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Confirm what you say and how it should be written, then save." TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </Border>
-                                            </Grid>
-                                            <Border Padding="14,12" Style="{StaticResource BrandSettingsCardStyle}">
-                                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Quick Add shortcut" VerticalAlignment="Center" />
-                                                        <Border Style="{StaticResource BrandAccentChipStyle}">
-                                                            <TextBlock x:Name="QuickAddCurrentShortcutText" Style="{StaticResource BrandRowLabelStyle}" Text="Ctrl+Alt+W" />
-                                                        </Border>
-                                                    </StackPanel>
-                                                    <Button Grid.Column="1" Click="GoToQuickAddKeybindButton_Click" Content="Change shortcut" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
-                                                </Grid>
-                                            </Border>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                            <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Quick manual entry" />
-                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                    <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
-                                                    <TextBox x:Name="SpokenFormBox" Grid.Column="1" Header="When I say" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" PlaceholderText="envy wisper" />
-                                                </Grid>
-                                                <Grid Grid.Column="1" ColumnSpacing="{StaticResource BrandSpacingS}">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                    <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
-                                                    <TextBox x:Name="ReplacementBox" Grid.Column="1" Header="Write" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" PlaceholderText="EnviousWispr" />
-                                                </Grid>
-                                                <Grid Grid.Column="2" Margin="0,28,0,0" ColumnSpacing="{StaticResource BrandSpacingS}">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                    <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE710;" />
-                                                    <Button Grid.Column="1" Click="AddWordButton_Click" Content="Add word" Style="{StaticResource BrandPrimaryButtonStyle}" />
-                                                </Grid>
-                                            </Grid>
-                                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                                <ComboBox x:Name="WordStrictnessComboBox" Header="How closely it must match" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Left" MinWidth="360" SelectedValuePath="Tag">
-                                                    <ComboBoxItem Content="Balanced (recommended)"><ComboBoxItem.Tag><settings:MatchStrictness>Default</settings:MatchStrictness></ComboBoxItem.Tag></ComboBoxItem>
-                                                    <ComboBoxItem Content="Loose (match similar-sounding words)"><ComboBoxItem.Tag><settings:MatchStrictness>Loose</settings:MatchStrictness></ComboBoxItem.Tag></ComboBoxItem>
-                                                    <ComboBoxItem Content="Strict (exact match only)"><ComboBoxItem.Tag><settings:MatchStrictness>Strict</settings:MatchStrictness></ComboBoxItem.Tag></ComboBoxItem>
-                                                </ComboBox>
-                                                <Button x:Name="SuggestAliasesButton" Click="SuggestAliasesButton_Click" Content="Suggest what it might hear" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                <TextBlock x:Name="SuggestAliasesStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
-                                                <ScrollViewer x:Name="SuggestedAliasesScroller" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto" VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled" Visibility="Collapsed">
-                                                    <StackPanel x:Name="SuggestedAliasesPanel" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" />
-                                                </ScrollViewer>
-                                            </StackPanel>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
+                                </Grid>
                             </Grid>
-                        </StackPanel>
                         </Grid>
-                    </ScrollViewer>
-
-                    <ScrollViewer Grid.Row="1" x:Name="SnippetsPage" AutomationProperties.Name="Snippets page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
-                        <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
-                            <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,4">
-                                <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Snippets" />
-                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Say your keyword, then a snippet. The saved text lands for you. Snippets stay on this PC and travel in a portable profile export." TextWrapping="Wrap" />
-                            </StackPanel>
-                            <Border Padding="16,12" Style="{StaticResource BrandSettingsCardStyle}">
-                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Width="32" Height="32" Style="{StaticResource BrandIconTileStyle}" VerticalAlignment="Center">
-                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B5;" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                    </Border>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
-                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Switching from another dictation app?" />
-                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Bring your snippets over from Wispr Flow, CSV, exported JSON, or a pasted list." TextWrapping="Wrap" />
-                                    </StackPanel>
-                                    <Button Grid.Column="2" Content="Import" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" AutomationProperties.Name="Import snippets from another app or file">
-                                        <Button.Flyout>
-                                            <MenuFlyout>
-                                                <MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" />
-                                                <MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" />
-                                                <MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" />
-                                            </MenuFlyout>
-                                        </Button.Flyout>
-                                    </Button>
-                                </Grid>
-                            </Border>
-                            <Border Padding="20" Style="{StaticResource BrandSettingsCardStyle}">
-                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border Width="40" Height="40" Style="{StaticResource BrandIconTileStyle}" VerticalAlignment="Top">
-                                            <TextBlock Text="{}{}" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                        </Border>
-                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                            <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Paste the text you type over and over, by voice" TextWrapping="Wrap" />
-                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Say your keyword followed by a trigger phrase anywhere you dictate. AI Polish never rewrites snippets." TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Grid>
-                                    <Border Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{ThemeResource BrandButtonRadius}" Padding="12,10">
-                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Say" VerticalAlignment="Center" />
-                                                <Border Style="{StaticResource BrandAccentChipStyle}">
-                                                    <TextBlock x:Name="SnippetFlowKeywordChipText" Style="{StaticResource BrandAccentChipTextStyle}" Text="backslash" />
-                                                </Border>
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="+" VerticalAlignment="Center" />
-                                                <Border Style="{StaticResource BrandNeutralChipStyle}">
-                                                    <TextBlock x:Name="SnippetFlowTriggerChipText" Style="{StaticResource BrandNeutralChipTextStyle}" Text="my email" />
-                                                </Border>
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="&#x2192;" VerticalAlignment="Center" />
-                                            </StackPanel>
-                                            <TextBlock x:Name="SnippetFlowExpansionText" Grid.Column="1" Style="{StaticResource BrandRowLabelStyle}" Text="john.doe@example.com" MaxLines="1" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </Border>
-                                    <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE720;" />
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
-                                            <Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock x:Name="SnippetKeywordLabel" Style="{StaticResource BrandRowLabelStyle}" Text="Keyword" VerticalAlignment="Center" />
-                                                <Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About snippet keyword" ToolTipService.ToolTip="What is this?">
-                                                    <FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" />
-                                                    <Button.Flyout>
-                                                        <Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}">
-                                                            <TextBlock x:Name="SnippetKeywordExample" MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" />
-                                                        </Flyout>
-                                                    </Button.Flyout>
-                                                </Button>
-                                            </Grid>
-                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Say this first, then your trigger. One word." TextWrapping="Wrap" />
-                                        </StackPanel>
-                                        <TextBox x:Name="SnippetKeywordBox" Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind SnippetKeywordLabel, Mode=OneTime}" AutomationProperties.HelpText="A snippet only fires when you say this word first." MinWidth="180" MaxLength="64" VerticalAlignment="Center" KeyDown="SnippetKeywordBox_KeyDown" LostFocus="SnippetKeywordBox_LostFocus" />
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
-                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="YOUR SNIPPETS" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="SnippetCountText" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
-                                </Grid>
-                                <Border Padding="0" Style="{StaticResource BrandSettingsCardStyle}">
-                                    <StackPanel>
-                                        <Grid x:Name="SnippetsToolbarGrid" Padding="16,12" ColumnSpacing="{StaticResource BrandSpacingS}" SizeChanged="SnippetsToolbarGrid_SizeChanged">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <Grid x:Name="SnippetSearchContainer">
-                                                <TextBox x:Name="SnippetSearchBox" AutomationProperties.Name="Search snippets" Padding="36,6,36,6" PlaceholderText="Search snippets" TextChanged="SnippetSearchBox_TextChanged" />
-                                                <Button x:Name="SnippetSearchClearButton" Click="ClearSnippetSearchButton_Click" AutomationProperties.Name="Clear snippet search" ToolTipService.ToolTip="Clear search" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0" Padding="6,4" Style="{StaticResource BrandHelpButtonStyle}" Visibility="Collapsed">
-                                                    <FontIcon FontSize="12" Glyph="&#xE711;" />
-                                                </Button>
-                                                <FontIcon FontSize="14" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" />
-                                            </Grid>
-                                            <StackPanel x:Name="SnippetsToolbarActionsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                <Button Content="Import" AutomationProperties.Name="Import snippets" AutomationProperties.HelpText="Bring your snippets in from anywhere. Nothing is added until you review it." Style="{StaticResource BrandQuietButtonStyle}">
-                                                    <Button.Flyout>
-                                                        <MenuFlyout>
-                                                            <MenuFlyoutItem Text="Paste snippets" Click="PasteSnippetsMenuItem_Click" AutomationProperties.HelpText="Paste a list from anywhere: plain lines, CSV, or exported JSON." />
-                                                            <MenuFlyoutItem Text="Open a file" Click="OpenSnippetsFileMenuItem_Click" AutomationProperties.HelpText="Pick the EnviousWispr Snippets.json you exported, a CSV, or a plain list. Snippets you already have are left as they are." />
-                                                            <MenuFlyoutItem Text="From another app" Click="SnippetsFromAnotherAppMenuItem_Click" AutomationProperties.HelpText="Bring your snippets over from another dictation app." />
-                                                        </MenuFlyout>
-                                                    </Button.Flyout>
-                                                </Button>
-                                                <Button x:Name="ExportSnippetsButton" Click="ExportSnippetsButton_Click" Content="Export" AutomationProperties.Name="Export snippets" AutomationProperties.HelpText="Saves your snippets and your keyword to a file you can import on another PC or Mac." Style="{StaticResource BrandQuietButtonStyle}" />
-                                                <Button x:Name="AddSnippetToolbarButton" Click="AddSnippetToolbarButton_Click" Content="+ Add snippet" Style="{StaticResource BrandPrimaryButtonStyle}" />
-                                            </StackPanel>
-                                        </Grid>
-                                        <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
-                                        <ListView x:Name="SnippetList" Padding="4" SelectionChanged="ListSelectionChanged" ItemClick="SnippetList_ItemClick" IsItemClickEnabled="True" AutomationProperties.Name="Saved snippets" SelectionMode="None">
-                                            <ListView.ItemContainerTransitions><TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection></ListView.ItemContainerTransitions>
-                                            <ListView.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Grid Padding="12,10" ColumnSpacing="{StaticResource BrandSpacingM}">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="Auto" />
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextAlignment="DetectFromContent" VerticalAlignment="Center" />
-                                                            <Border Style="{StaticResource BrandNeutralChipStyle}" Padding="8,2" Visibility="{Binding ExampleVisibility}" VerticalAlignment="Center">
-                                                                <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="Example" />
-                                                            </Border>
-                                                        </StackPanel>
-                                                        <TextBlock Grid.Column="1" Style="{StaticResource BrandHelperStyle}" MaxLines="1" TextTrimming="CharacterEllipsis" Text="{Binding BodyPreview}" TextAlignment="DetectFromContent" VerticalAlignment="Center" />
-                                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                                            <Button Click="EditSnippetRowButton_Click" Content="Edit" Tag="{Binding}" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" AutomationProperties.HelpText="Edit this snippet" />
-                                                            <FontIcon FontSize="12" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE76C;" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                                        </StackPanel>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ListView.ItemTemplate>
-                                        </ListView>
-                                        <Border x:Name="SnippetNoMatchState" Padding="24" Visibility="Collapsed">
-                                            <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                <TextBlock x:Name="SnippetNoMatchText" Style="{StaticResource BrandRowLabelStyle}" TextAlignment="Center" TextWrapping="Wrap" />
-                                                <Button HorizontalAlignment="Center" Click="ClearSnippetSearchButton_Click" Content="Clear search" Style="{StaticResource BrandQuietButtonStyle}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="SnippetEmptyState" AutomationProperties.Name="No snippets yet" Padding="24" Visibility="Collapsed">
-                                            <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE70B;" /></Border>
-                                                <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="No snippets yet" TextAlignment="Center" />
-                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Save the text you type over and over. An email address, a signature, a link you always paste." TextAlignment="Center" TextWrapping="Wrap" />
-                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                    <Button Click="OpenNewSnippetDialogButton_Click" Content="Add your first snippet" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                    <Button x:Name="LoadExampleSnippetsButton" Click="LoadExampleSnippetsButton_Click" Content="Load example snippets" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-                        </StackPanel>
-                        </Grid>
-                    </ScrollViewer>
+                    </Grid>
 
                     <ScrollViewer Grid.Row="1" x:Name="SettingsPage" AutomationProperties.Name="Settings page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <Grid>

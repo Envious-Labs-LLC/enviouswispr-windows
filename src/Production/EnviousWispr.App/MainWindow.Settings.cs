@@ -414,20 +414,73 @@ public sealed partial class MainWindow
             _settings.Preferences.Dictation.EnglishSpelling);
     }
 
-    private void RefreshReusableUserDataViews()
+    [Flags]
+    private enum UserDataRefreshScope
     {
-        var snippets = _settings.UserData.Snippets;
-        RefreshDictionaryView();
-        RefreshVocabularyPacksPanel();
-        RefreshSnippetKeywordViews(force: false);
-        RefreshSnippetList(snippets);
-        UpdateSelectionDependentButtons();
+        None = 0,
+        Dictionary = 1,
+        VocabularyPacks = 2,
+        Snippets = 4,
+        All = Dictionary | VocabularyPacks | Snippets,
+    }
+
+    private void RefreshReusableUserDataViews() =>
+        ApplyUserDataRefresh(UserDataRefreshScope.All);
+
+    private void ApplyUserDataRefresh(UserDataRefreshScope scope)
+    {
+        if (scope.HasFlag(UserDataRefreshScope.Dictionary))
+        {
+            _dictionaryViewDirty = true;
+            if (DictionaryPage.Visibility == Visibility.Visible)
+            {
+                ScheduleDictionaryRefresh(debounce: false);
+            }
+            else
+            {
+                var wordsCount = _settings?.UserData.CustomWords.Count ?? 0;
+                if (WordCountText is not null)
+                {
+                    var wordUnit = wordsCount == 1 ? "WORD" : "WORDS";
+                    WordCountText.Text = $"{wordsCount} {wordUnit}";
+                }
+
+                UpdateSelectionDependentButtons();
+            }
+        }
+
+        if (scope.HasFlag(UserDataRefreshScope.VocabularyPacks))
+        {
+            RefreshVocabularyPacksPanel();
+        }
+
+        if (scope.HasFlag(UserDataRefreshScope.Snippets))
+        {
+            var snippets = _settings?.UserData.Snippets ?? (IReadOnlyList<SnippetEntry>)Array.Empty<SnippetEntry>();
+            RefreshSnippetKeywordViews(force: false);
+            _snippetsViewDirty = true;
+            if (SnippetsPage.Visibility == Visibility.Visible)
+            {
+                ScheduleSnippetRefresh(debounce: false);
+            }
+            else
+            {
+                if (SnippetCountText is not null)
+                {
+                    SnippetCountText.Text = snippets.Count == 0
+                        ? string.Empty
+                        : SnippetImportCopy.CountLabel(snippets.Count, snippets.Count, searching: false);
+                }
+
+                UpdateSelectionDependentButtons();
+            }
+        }
     }
 
     public void SyncExternalSettingsUpdate()
     {
         _settings = _session.Settings.Current;
-        RefreshReusableUserDataViews();
+        ApplyUserDataRefresh(UserDataRefreshScope.Dictionary);
         RefreshLearnMemoryUi();
     }
 

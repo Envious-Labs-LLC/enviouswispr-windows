@@ -116,7 +116,9 @@ public partial class App : Application, IAsyncDisposable
             new JsonLineFileLogger(diagnosticPath, enabled: false),
             telemetryTransport);
         _diagnosticExportService = new JsonDiagnosticExportService(diagnosticPath);
-        _settingsStore = new JsonSettingsStore(Path.Combine(_dataDirectory, "settings.json"));
+        _settingsStore = new JsonSettingsStore(
+            Path.Combine(_dataDirectory, "settings.json"),
+            Path.Combine(_dataDirectory, "user-data.json"));
         var dictationRecordingsDirectory = Path.Combine(_dataDirectory, "recordings", "dictations");
         _dictationAudioArchive = new LocalDictationAudioArchive(dictationRecordingsDirectory);
         _historyStore = new SqliteHistoryStore(

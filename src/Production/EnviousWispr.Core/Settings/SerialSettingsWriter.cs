@@ -111,16 +111,22 @@ public sealed class SerialSettingsWriter : IDisposable
 
         try
         {
-            var (next, value) = change(_current);
-
-            // THE VERY VALUE IT ALREADY HOLDS IS NOT WRITTEN. A change that decided to change nothing - a refused
-            // snippet, an import whose list moved under its review - returns the settings it was handed, and
-            // saving them would rewrite the file for nothing and could fail a refusal with a storage error.
-            if (!ReferenceEquals(next, _current))
+            var value = await Task.Run(async () =>
             {
-                await _store.SaveAsync(next, cancellationToken).ConfigureAwait(false);
-                _current = next;
-            }
+                var (next, computed) = change(_current);
+
+                // THE VERY VALUE IT ALREADY HOLDS IS NOT WRITTEN. A change that decided to change nothing - a refused
+                // snippet, an import whose list moved under its review - returns the settings it was handed, and
+                // saving them would rewrite the file for nothing and could fail a refusal with a storage error.
+                if (!ReferenceEquals(next, _current))
+                {
+                    await _store.SaveAsync(next, cancellationToken).ConfigureAwait(false);
+                    _current = next;
+                }
+
+                return computed;
+            }, cancellationToken).ConfigureAwait(false);
+
             return new SettingsUpdateOutcome<T>(null, value);
         }
         catch (Exception exception) when (

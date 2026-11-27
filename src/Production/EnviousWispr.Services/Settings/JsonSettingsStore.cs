@@ -22,25 +22,64 @@ public sealed class JsonSettingsStore : ISettingsStore
         },
     };
 
+    internal static readonly JsonSerializerOptions CompactSerializerOptions = new(SerializerOptions)
+    {
+        WriteIndented = false,
+    };
+
     private readonly string _settingsPath;
+    private readonly string? _userDataPath;
+    private readonly object _stateLock = new();
+    private AppSettings? _lastSavedHeader;
+    private ReusableUserData? _lastSavedUserData;
+    private bool _needsSplitMigration;
 
     public JsonSettingsStore(string settingsPath)
+        : this(settingsPath, userDataPath: null)
+    {
+    }
+
+    public JsonSettingsStore(string settingsPath, string? userDataPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
         _settingsPath = Path.GetFullPath(settingsPath);
+        _userDataPath = string.IsNullOrWhiteSpace(userDataPath) ? null : Path.GetFullPath(userDataPath);
     }
 
-    public async Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default)
-    {
-        if (!File.Exists(_settingsPath))
-        {
-            // THE ONE PLACE A FRESH INSTALL IS KNOWN: no file has ever been written here. It gets the example
-            // snippets; every other status below starts from the plain defaults (SnippetStarters).
-            return new SettingsLoadResult(AppSettings.FreshInstall, SettingsLoadStatus.Missing);
-        }
+    public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() => LoadCoreAsync(cancellationToken), cancellationToken);
 
+    private async Task<SettingsLoadResult> LoadCoreAsync(CancellationToken cancellationToken)
+    {
         try
         {
+            if (!File.Exists(_settingsPath))
+            {
+                if (_userDataPath is not null && File.Exists(_userDataPath))
+                {
+                    var recoveredUserData = await ReadUserDataFileAsync(_userDataPath, cancellationToken).ConfigureAwait(false);
+                    if (recoveredUserData is null)
+                    {
+                        return Invalid();
+                    }
+
+                    var recovered = ApplyUserDataPostLoadNormalization(AppSettings.FreshInstall with { UserData = recoveredUserData });
+                    var recoveredValidationError = AppSettingsValidator.Validate(recovered, AppErrorStage.SettingsLoad);
+                    if (recoveredValidationError is not null)
+                    {
+                        return Invalid(error: recoveredValidationError);
+                    }
+
+                    UpdateSavedSnapshots(CreateSlimSettings(recovered), recovered.UserData, needsSplitMigration: true);
+                    return new SettingsLoadResult(recovered, SettingsLoadStatus.Missing);
+                }
+
+                UpdateSavedSnapshots(null, null, needsSplitMigration: false);
+                // THE ONE PLACE A FRESH INSTALL IS KNOWN: no file has ever been written here. It gets the example
+                // snippets; every other status below starts from the plain defaults (SnippetStarters).
+                return new SettingsLoadResult(AppSettings.FreshInstall, SettingsLoadStatus.Missing);
+            }
+
             var json = await File.ReadAllTextAsync(_settingsPath, cancellationToken).ConfigureAwait(false);
             using var document = JsonDocument.Parse(json);
             if (!document.RootElement.TryGetProperty("schemaVersion", out var versionElement) ||
@@ -92,15 +131,33 @@ public sealed class JsonSettingsStore : ISettingsStore
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
-            if (settings is not null && schemaVersion < AppSettings.CurrentSchemaVersion)
+            if (settings is null)
+            {
+                return Invalid(schemaVersion);
+            }
+
+            if (schemaVersion < AppSettings.CurrentSchemaVersion)
             {
                 settings = SeedEgOneModelIdIfMissing(settings);
             }
+
+            var userDataFileExisted = _userDataPath is not null && File.Exists(_userDataPath);
+            if (userDataFileExisted)
+            {
+                var splitUserData = await ReadUserDataFileAsync(_userDataPath!, cancellationToken).ConfigureAwait(false);
+                if (splitUserData is null)
+                {
+                    return Invalid(schemaVersion);
+                }
+
+                settings = settings with { UserData = splitUserData };
+            }
+
             // A FILE WRITTEN BEFORE SEPARATE USAGE METRICS AND CRASH REPORTS EXISTED stored a single
             // shareAnonymousTelemetry boolean. When sendCrashReports was not yet present in the file,
             // carry that prior remote-sharing choice into SendCrashReports so an existing user who
             // had opted out of remote telemetry stays opted out of crash reports on upgrade (#40).
-            if (settings is { Observability: not null } &&
+            if (settings.Observability is not null &&
                 schemaVersion < AppSettings.CurrentSchemaVersion &&
                 document.RootElement.TryGetProperty("observability", out var observabilityElement) &&
                 observabilityElement.ValueKind == JsonValueKind.Object &&
@@ -117,7 +174,7 @@ public sealed class JsonSettingsStore : ISettingsStore
 
             // A FILE FROM BEFORE THE LAST-DICTATION SHORTCUTS gains their defaults on load; one that already gave
             // Alt+Shift+Z to another key keeps its own binding rather than being refused and reset. Ref: #206.
-            if (settings is { Preferences.Dictation: not null } && schemaVersion < LastDictationShortcutsSchema)
+            if (settings.Preferences.Dictation is not null && schemaVersion < LastDictationShortcutsSchema)
             {
                 settings = settings with
                 {
@@ -128,22 +185,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 };
             }
 
-            if (settings?.UserData is { CustomWords.Count: > 1 } userData)
-            {
-                var normalized = CustomWordEntry.NormalizeLegacyEntries(userData.CustomWords);
-                if (!ReferenceEquals(normalized, userData.CustomWords))
-                {
-                    settings = settings with { UserData = userData.WithCustomWords(normalized) };
-                }
-            }
-
-            if (settings?.UserData is { HasSeededStarterSnippets: false } unseededUserData)
-            {
-                var seededUserData = unseededUserData.Snippets.Count == 0
-                    ? unseededUserData.WithSnippets(SnippetStarters.All).WithHasSeededStarterSnippets(true)
-                    : unseededUserData.WithHasSeededStarterSnippets(true);
-                settings = settings with { UserData = seededUserData };
-            }
+            settings = ApplyUserDataPostLoadNormalization(settings);
 
             var validationError = AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad);
             if (validationError is not null)
@@ -151,10 +193,22 @@ public sealed class JsonSettingsStore : ISettingsStore
                 return Invalid(schemaVersion, validationError);
             }
 
+            if (_userDataPath is not null)
+            {
+                if (userDataFileExisted)
+                {
+                    UpdateSavedSnapshots(CreateSlimSettings(settings), settings.UserData, needsSplitMigration: false);
+                }
+                else
+                {
+                    UpdateSavedSnapshots(null, null, needsSplitMigration: true);
+                }
+            }
+
             var status = schemaVersion == AppSettings.CurrentSchemaVersion
                 ? SettingsLoadStatus.Loaded
                 : SettingsLoadStatus.Migrated;
-            return new SettingsLoadResult(settings!, status, SourceSchemaVersion: schemaVersion);
+            return new SettingsLoadResult(settings, status, SourceSchemaVersion: schemaVersion);
         }
         catch (JsonException)
         {
@@ -174,22 +228,77 @@ public sealed class JsonSettingsStore : ISettingsStore
         }
     }
 
-    public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        return Task.Run(() => SaveCoreAsync(settings, cancellationToken), cancellationToken);
+    }
+
+    private async Task SaveCoreAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
         if (AppSettingsValidator.Validate(settings, AppErrorStage.SettingsSave) is not null)
         {
             throw new ArgumentException("Settings must use the current schema and contain valid values.", nameof(settings));
         }
 
-        await WriteAtomicallyAsync(settings, _settingsPath, cancellationToken).ConfigureAwait(false);
+        if (_userDataPath is null)
+        {
+            await WriteAtomicallyAsync(settings, _settingsPath, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var slimSettings = CreateSlimSettings(settings);
+        AppSettings? lastHeader;
+        ReusableUserData? lastUserData;
+        bool needsSplitMigration;
+        lock (_stateLock)
+        {
+            lastHeader = _lastSavedHeader;
+            lastUserData = _lastSavedUserData;
+            needsSplitMigration = _needsSplitMigration;
+        }
+
+        var writeUserData = needsSplitMigration ||
+            !File.Exists(_userDataPath) ||
+            lastUserData is null ||
+            (!ReferenceEquals(settings.UserData, lastUserData) && !Equals(settings.UserData, lastUserData));
+        var writeSettings = needsSplitMigration ||
+            !File.Exists(_settingsPath) ||
+            lastHeader is null ||
+            !Equals(slimSettings, lastHeader);
+
+        // Write dedicated user-data store FIRST so an interrupted legacy migration leaves complete
+        // words and snippets on disk rather than an emptied monolithic settings.json.
+        if (writeUserData)
+        {
+            await WriteAtomicallyAsync(
+                settings.UserData,
+                _userDataPath,
+                fence: null,
+                CompactSerializerOptions,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        if (writeSettings)
+        {
+            await WriteAtomicallyAsync(slimSettings, _settingsPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        UpdateSavedSnapshots(slimSettings, settings.UserData, needsSplitMigration: false);
     }
 
-    public async Task<SettingsResetResult> ResetAsync(
+    public Task<SettingsResetResult> ResetAsync(
         AppSettings replacement,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(replacement);
+        return Task.Run(() => ResetCoreAsync(replacement, cancellationToken), cancellationToken);
+    }
+
+    private async Task<SettingsResetResult> ResetCoreAsync(
+        AppSettings replacement,
+        CancellationToken cancellationToken)
+    {
         if (AppSettingsValidator.Validate(replacement, AppErrorStage.SettingsReset) is not null)
         {
             throw new ArgumentException("Replacement settings must use the current schema and contain valid values.", nameof(replacement));
@@ -198,22 +307,50 @@ public sealed class JsonSettingsStore : ISettingsStore
         var directory = GetParentDirectory(_settingsPath);
         Directory.CreateDirectory(directory);
         var backupPath = _settingsPath + ".previous";
-        var preservedPreviousData = File.Exists(_settingsPath);
+        var preservedSettingsData = File.Exists(_settingsPath);
+        var userDataBackupPath = _userDataPath is null ? null : _userDataPath + ".previous";
+        var preservedUserData = _userDataPath is not null && File.Exists(_userDataPath);
+        var preservedPreviousData = preservedSettingsData || preservedUserData;
 
-        if (preservedPreviousData)
+        if (preservedSettingsData)
         {
             File.Copy(_settingsPath, backupPath, overwrite: true);
         }
 
+        if (preservedUserData && userDataBackupPath is not null)
+        {
+            File.Copy(_userDataPath!, userDataBackupPath, overwrite: true);
+        }
+
         try
         {
-            await WriteAtomicallyAsync(replacement, _settingsPath, cancellationToken).ConfigureAwait(false);
+            if (_userDataPath is null)
+            {
+                await WriteAtomicallyAsync(replacement, _settingsPath, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var slimReplacement = CreateSlimSettings(replacement);
+                await WriteAtomicallyAsync(
+                    replacement.UserData,
+                    _userDataPath,
+                    fence: null,
+                    CompactSerializerOptions,
+                    cancellationToken).ConfigureAwait(false);
+                await WriteAtomicallyAsync(slimReplacement, _settingsPath, cancellationToken).ConfigureAwait(false);
+                UpdateSavedSnapshots(slimReplacement, replacement.UserData, needsSplitMigration: false);
+            }
         }
         catch
         {
-            if (preservedPreviousData && File.Exists(backupPath))
+            if (preservedSettingsData && File.Exists(backupPath))
             {
                 File.Copy(backupPath, _settingsPath, overwrite: true);
+            }
+
+            if (_userDataPath is not null && preservedUserData && userDataBackupPath is not null && File.Exists(userDataBackupPath))
+            {
+                File.Copy(userDataBackupPath, _userDataPath, overwrite: true);
             }
 
             throw;
@@ -222,21 +359,73 @@ public sealed class JsonSettingsStore : ISettingsStore
         return new SettingsResetResult(preservedPreviousData);
     }
 
+    private static async Task<ReusableUserData?> ReadUserDataFileAsync(string userDataPath, CancellationToken cancellationToken)
+    {
+        var json = await File.ReadAllTextAsync(userDataPath, cancellationToken).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<ReusableUserData>(json, SerializerOptions);
+    }
+
+    private static AppSettings ApplyUserDataPostLoadNormalization(AppSettings settings)
+    {
+        if (settings.UserData is { CustomWords.Count: > 1 } userData)
+        {
+            var normalized = CustomWordEntry.NormalizeLegacyEntries(userData.CustomWords);
+            if (!ReferenceEquals(normalized, userData.CustomWords))
+            {
+                settings = settings with { UserData = userData.WithCustomWords(normalized) };
+            }
+        }
+
+        if (settings.UserData is { HasSeededStarterSnippets: false } unseededUserData)
+        {
+            var seededUserData = unseededUserData.Snippets.Count == 0
+                ? unseededUserData.WithSnippets(SnippetStarters.All).WithHasSeededStarterSnippets(true)
+                : unseededUserData.WithHasSeededStarterSnippets(true);
+            settings = settings with { UserData = seededUserData };
+        }
+
+        return settings;
+    }
+
+    private static AppSettings CreateSlimSettings(AppSettings settings) =>
+        settings with
+        {
+            UserData = ReusableUserData.Empty.WithHasSeededStarterSnippets(settings.UserData.HasSeededStarterSnippets),
+        };
+
+    private void UpdateSavedSnapshots(AppSettings? slimHeader, ReusableUserData? userData, bool needsSplitMigration)
+    {
+        lock (_stateLock)
+        {
+            _lastSavedHeader = slimHeader;
+            _lastSavedUserData = userData;
+            _needsSplitMigration = needsSplitMigration;
+        }
+    }
+
     internal static Task WriteAtomicallyAsync<T>(
         T value,
         string destinationPath,
         CancellationToken cancellationToken) =>
-        WriteAtomicallyAsync(value, destinationPath, fence: null, cancellationToken);
+        WriteAtomicallyAsync(value, destinationPath, fence: null, serializerOptions: null, cancellationToken);
 
     /// <summary>
     /// Writes the value to a temporary file and makes it the record in one move - under the fence
     /// when one is given, so a record the exit has abandoned is never replaced. False when the fence
     /// refused; the temporary file is deleted either way.
     /// </summary>
+    internal static Task<bool> WriteAtomicallyAsync<T>(
+        T value,
+        string destinationPath,
+        PublicationFence? fence,
+        CancellationToken cancellationToken) =>
+        WriteAtomicallyAsync(value, destinationPath, fence, serializerOptions: null, cancellationToken);
+
     internal static async Task<bool> WriteAtomicallyAsync<T>(
         T value,
         string destinationPath,
         PublicationFence? fence,
+        JsonSerializerOptions? serializerOptions,
         CancellationToken cancellationToken)
     {
         var directory = GetParentDirectory(destinationPath);
@@ -247,7 +436,7 @@ public sealed class JsonSettingsStore : ISettingsStore
 
         try
         {
-            var json = JsonSerializer.Serialize(value, SerializerOptions);
+            var json = JsonSerializer.Serialize(value, serializerOptions ?? SerializerOptions);
             await File.WriteAllTextAsync(temporaryPath, json, cancellationToken).ConfigureAwait(false);
             if (fence is null)
             {

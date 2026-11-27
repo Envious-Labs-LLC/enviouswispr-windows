@@ -2,6 +2,8 @@ using EnviousWispr.Core.Settings;
 using EnviousWispr.Presentation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.System;
 
 namespace EnviousWispr.App;
@@ -483,7 +485,6 @@ public sealed partial class MainWindow
                 }
 
                 PublishSettings();
-                ApplySettingsToControls();
                 if (existing is { LearnedAliases.Count: > 0 })
                 {
                     var remainingAliases = aliases.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -497,8 +498,8 @@ public sealed partial class MainWindow
                         RefreshLearnMemoryUi();
                     }
                 }
+                ApplyUserDataRefresh(UserDataRefreshScope.Dictionary);
                 ShowMessage("Dictionary saved", "The change was saved locally.", InfoBarSeverity.Success);
-                RefreshReusableUserDataViews();
             }
             finally
             {
@@ -526,6 +527,10 @@ public sealed partial class MainWindow
                         RefreshLearnMemoryUi();
                         ShowMessage("Word deleted", $"\u201C{existing.Replacement}\u201D was removed.", InfoBarSeverity.Informational);
                     }
+                    else if (removed.Saved)
+                    {
+                        ShowMessage("Nothing was removed", "That word changed or was removed while you were editing it.", InfoBarSeverity.Warning);
+                    }
                 }
             }
         }
@@ -534,6 +539,21 @@ public sealed partial class MainWindow
             _activeWordDialogSuggestionSink = null;
         }
     }
+
+    public sealed record PackTermRow(string Canonical, string AliasesText);
+
+    private static readonly Lazy<DataTemplate> PackTermTemplate = new(() =>
+        (DataTemplate)XamlReader.Load(
+            """
+            <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+                <Border Padding="12,10" Margin="0,4,0,4" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="8">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding Canonical}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding AliasesText}" Foreground="{ThemeResource BrandTextSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+            """));
 
     private async Task ShowPackDetailDialogAsync(VocabularyPack pack)
     {
@@ -544,58 +564,49 @@ public sealed partial class MainWindow
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(searchBox, $"Search {pack.Name} pack");
 
         var countText = Text($"{pack.FixCount} terms", "BrandHelperStyle");
-        var termsList = new StackPanel { Spacing = 8 };
+        var allRows = pack.Terms
+            .Select(term => new PackTermRow(term.Canonical, string.Join(", ", term.Aliases)))
+            .ToArray();
+        var visibleRows = new EnviousWispr.App.Collections.BulkObservableCollection<PackTermRow>();
+        var termsListView = new ListView
+        {
+            MaxHeight = 380,
+            SelectionMode = ListViewSelectionMode.None,
+            ItemsSource = visibleRows,
+            ItemTemplate = PackTermTemplate.Value,
+            ItemContainerTransitions = new TransitionCollection(),
+        };
+        var itemStyle = new Style(typeof(ListViewItem));
+        itemStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+        termsListView.ItemContainerStyle = itemStyle;
+
+        var noMatchText = Text(string.Empty, "BrandBodyStyle");
+        noMatchText.Visibility = Visibility.Collapsed;
 
         void RebuildTerms(string query)
         {
-            termsList.Children.Clear();
             var trimmed = query?.Trim() ?? string.Empty;
             var filtered = trimmed.Length == 0
-                ? pack.Terms
-                : pack.Terms.Where(t =>
-                        t.Canonical.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ||
-                        t.Aliases.Any(a => a.Contains(trimmed, StringComparison.OrdinalIgnoreCase)))
+                ? allRows
+                : allRows.Where(row =>
+                        row.Canonical.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ||
+                        row.AliasesText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
                     .ToArray();
 
             countText.Text = trimmed.Length == 0
                 ? $"{pack.FixCount} terms"
-                : $"{filtered.Count} of {pack.FixCount} terms";
+                : $"{filtered.Length} of {pack.FixCount} terms";
 
-            if (filtered.Count == 0)
-            {
-                termsList.Children.Add(Text($"No terms match \u201C{trimmed}\u201D.", "BrandBodyStyle"));
-                return;
-            }
-
-            foreach (var term in filtered)
-            {
-                var card = new Border
-                {
-                    Padding = new Thickness(12, 10, 12, 10),
-                    Style = (Style)Application.Current.Resources["BrandSettingsCardStyle"],
-                    Child = new StackPanel
-                    {
-                        Spacing = 2,
-                        Children =
-                        {
-                            Text(term.Canonical, "BrandRowLabelStyle"),
-                            Text(string.Join(", ", term.Aliases), "BrandHelperStyle"),
-                        },
-                    },
-                };
-                termsList.Children.Add(card);
-            }
+            visibleRows.ReplaceAll(filtered);
+            var empty = filtered.Length == 0;
+            termsListView.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+            noMatchText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+            noMatchText.Text = empty ? $"No terms match \u201C{trimmed}\u201D." : string.Empty;
         }
 
         searchBox.TextChanged += (_, _) => RebuildTerms(searchBox.Text);
         RebuildTerms(string.Empty);
-
-        var scroll = new ScrollViewer
-        {
-            Content = termsList,
-            MaxHeight = 380,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        };
 
         var dialog = new ContentDialog
         {
@@ -607,7 +618,8 @@ public sealed partial class MainWindow
                 Text(pack.Description, "BrandBodyStyle"),
                 searchBox,
                 countText,
-                scroll),
+                termsListView,
+                noMatchText),
         };
 
         await dialog.ShowAsync().AsTask().ConfigureAwait(true);
@@ -867,9 +879,8 @@ public sealed partial class MainWindow
                 }
 
                 PublishSettings();
-                ApplySettingsToControls();
+                ApplyUserDataRefresh(UserDataRefreshScope.Snippets);
                 ShowMessage("Snippet saved", "The change was saved locally.", InfoBarSeverity.Success);
-                RefreshReusableUserDataViews();
             }
             finally
             {
@@ -882,13 +893,10 @@ public sealed partial class MainWindow
         var result = await dialog.ShowAsync().AsTask().ConfigureAwait(true);
         if (result == ContentDialogResult.Secondary && existing is not null)
         {
-            var deleted = await CommitVocabularyAsync(
+            await CommitVocabularyAsync(
                 _session.Vocabulary.RemoveSnippetAsync(existing),
-                "Snippet deleted").ConfigureAwait(true);
-            if (deleted)
-            {
-                RefreshReusableUserDataViews();
-            }
+                "Snippet deleted",
+                scope: UserDataRefreshScope.Snippets).ConfigureAwait(true);
         }
     }
 
