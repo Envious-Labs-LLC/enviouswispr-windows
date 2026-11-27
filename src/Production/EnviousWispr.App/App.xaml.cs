@@ -356,6 +356,10 @@ public partial class App : Application, IAsyncDisposable
             _diagnosticExportService,
             _ollamaModelHost,
             historyRepolishService);
+        var mishearingAdvisor = new AdmittedMishearingAdvisor(
+            CurrentPolishSetup,
+            _resourceArbiter,
+            _presentation);
         _window = new MainWindow(
             settings,
             _presentation,
@@ -366,7 +370,8 @@ public partial class App : Application, IAsyncDisposable
                 _updateService.IsStoreInstalled,
                 _updateService.InstalledVersion,
                 _dataDirectory,
-                observability.SendCrashReports));
+                observability.SendCrashReports),
+            mishearingAdvisor);
         InitializeSelfLearning();
         _windowHostBinding = MainWindowHostBinder.Attach(_window, BuildMainWindowHostContracts());
         _window.RefreshLearnMemoryUi();

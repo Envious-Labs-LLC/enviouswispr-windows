@@ -49,8 +49,6 @@ public sealed class DictionaryWordRow
 /// <summary>In-place add/edit dialogs for Your Words, pack inspection, and Quick Add shortcut guidance.</summary>
 public sealed partial class MainWindow
 {
-    private Action<string, MishearingAdvice>? _activeWordDialogSuggestionSink;
-
     internal async void OpenAddWordDialogButton_Click(object sender, RoutedEventArgs e) =>
         await OpenAddWordDialogAsync().ConfigureAwait(true);
 
@@ -313,8 +311,42 @@ public sealed partial class MainWindow
         Grid.SetColumn(addAliasButton, 1);
         aliasEntryGrid.Children.Add(addAliasButton);
 
+        CancellationTokenSource? activeSuggestionCts = null;
+        var suggestionGeneration = 0;
+        var isDialogOpen = true;
+
+        void EndSuggestionSession()
+        {
+            isDialogOpen = false;
+            suggestionGeneration++;
+            var previous = Interlocked.Exchange(ref activeSuggestionCts, null);
+            if (previous is not null)
+            {
+                try
+                {
+                    previous.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
+        }
+
         replacementBox.TextChanged += (_, _) =>
         {
+            suggestionGeneration++;
+            var previous = Interlocked.Exchange(ref activeSuggestionCts, null);
+            if (previous is not null)
+            {
+                try
+                {
+                    previous.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
+
             if (!categoryManuallyChosen)
             {
                 var inferred = WordCategoryFormatting.Classify(replacementBox.Text);
@@ -324,15 +356,18 @@ public sealed partial class MainWindow
                     ?? categoryBox.SelectedItem;
             }
 
+            suggestMoreButton.IsEnabled = true;
+            polishSuggestionStatus.Text = string.Empty;
+            polishSuggestionStatus.Visibility = Visibility.Collapsed;
             aiSuggestions.Clear();
             RebuildSuggestionChips();
         };
 
         var polishReady = _settings?.Preferences.Polish.Provider is { } provider && provider != PolishProvider.None;
-        suggestMoreButton.Visibility = polishReady && MishearingSuggestionsRequested is not null
+        suggestMoreButton.Visibility = polishReady
             ? Visibility.Visible
             : Visibility.Collapsed;
-        suggestMoreButton.Click += (_, _) =>
+        suggestMoreButton.Click += async (_, _) =>
         {
             var canonical = replacementBox.Text.Trim();
             if (canonical.Length == 0)
@@ -342,39 +377,79 @@ public sealed partial class MainWindow
                 return;
             }
 
+            var requestGeneration = ++suggestionGeneration;
+            var cts = new CancellationTokenSource();
+            var previous = Interlocked.Exchange(ref activeSuggestionCts, cts);
+            if (previous is not null)
+            {
+                try
+                {
+                    previous.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
+
             suggestMoreButton.IsEnabled = false;
             polishSuggestionStatus.Text = "Asking AI polish for variants...";
             polishSuggestionStatus.Visibility = Visibility.Visible;
+
             try
             {
-                MishearingSuggestionsRequested?.Invoke(canonical, aliases.ToArray());
-            }
-            catch
-            {
+                MishearingAdvice advice;
+                try
+                {
+                    advice = await _mishearingAdvisor.SuggestAsync(canonical, aliases.ToArray(), cts.Token)
+                        .ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (isDialogOpen && requestGeneration == suggestionGeneration)
+                    {
+                        suggestMoreButton.IsEnabled = true;
+                        polishSuggestionStatus.Text = string.Empty;
+                        polishSuggestionStatus.Visibility = Visibility.Collapsed;
+                    }
+                    return;
+                }
+                catch (Exception)
+                {
+                    advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+                }
+
+                if (!isDialogOpen
+                    || requestGeneration != suggestionGeneration
+                    || cts.IsCancellationRequested
+                    || !string.Equals(canonical, replacementBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    if (isDialogOpen && requestGeneration == suggestionGeneration)
+                    {
+                        suggestMoreButton.IsEnabled = true;
+                    }
+                    return;
+                }
+
                 suggestMoreButton.IsEnabled = true;
-                polishSuggestionStatus.Text = "Could not query AI polish right now. Offline suggestions remain available.";
+                if (advice.Status == MishearingAdviceStatus.Suggested && advice.Suggestions.Count > 0)
+                {
+                    aiSuggestions.Clear();
+                    aiSuggestions.AddRange(advice.Suggestions);
+                    polishSuggestionStatus.Visibility = Visibility.Collapsed;
+                    RebuildSuggestionChips();
+                }
+                else
+                {
+                    polishSuggestionStatus.Text = advice.Status == MishearingAdviceStatus.NotSupported
+                        ? "Your current polish option cannot suggest variants. Offline suggestions remain available."
+                        : "No extra AI polish variants returned. Offline suggestions remain available.";
+                    polishSuggestionStatus.Visibility = Visibility.Visible;
+                }
             }
-        };
-
-        _activeWordDialogSuggestionSink = (term, advice) =>
-        {
-            if (!string.Equals(term.Trim(), replacementBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+            finally
             {
-                return;
-            }
-
-            suggestMoreButton.IsEnabled = true;
-            if (advice.Status == MishearingAdviceStatus.Suggested && advice.Suggestions.Count > 0)
-            {
-                aiSuggestions.Clear();
-                aiSuggestions.AddRange(advice.Suggestions);
-                polishSuggestionStatus.Visibility = Visibility.Collapsed;
-                RebuildSuggestionChips();
-            }
-            else
-            {
-                polishSuggestionStatus.Text = "No extra AI polish variants returned. Offline suggestions remain available.";
-                polishSuggestionStatus.Visibility = Visibility.Visible;
+                Interlocked.CompareExchange(ref activeSuggestionCts, null, cts);
+                cts.Dispose();
             }
         };
 
@@ -509,34 +584,37 @@ public sealed partial class MainWindow
             }
         };
 
+        dialog.Closed += (_, _) => EndSuggestionSession();
+        ContentDialogResult result;
         try
         {
-            var result = await dialog.ShowAsync().AsTask().ConfigureAwait(true);
-            if (result == ContentDialogResult.Secondary && existing is not null)
-            {
-                if (await ConfirmAsync(
-                        $"Delete \u201C{existing.Replacement}\u201D?",
-                        "This removes the word and all its mishearings from Your Words.",
-                        "Delete").ConfigureAwait(true))
-                {
-                    var removed = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAndReportAsync(new[] { existing }))
-                        .ConfigureAwait(true);
-                    if (removed.Saved && removed.Value.Count > 0)
-                    {
-                        WordsRemovedFromDictionary?.Invoke(removed.Value);
-                        RefreshLearnMemoryUi();
-                        ShowMessage("Word deleted", $"\u201C{existing.Replacement}\u201D was removed.", InfoBarSeverity.Informational);
-                    }
-                    else if (removed.Saved)
-                    {
-                        ShowMessage("Nothing was removed", "That word changed or was removed while you were editing it.", InfoBarSeverity.Warning);
-                    }
-                }
-            }
+            result = await dialog.ShowAsync().AsTask().ConfigureAwait(true);
         }
         finally
         {
-            _activeWordDialogSuggestionSink = null;
+            EndSuggestionSession();
+        }
+
+        if (result == ContentDialogResult.Secondary && existing is not null)
+        {
+            if (await ConfirmAsync(
+                    $"Delete \u201C{existing.Replacement}\u201D?",
+                    "This removes the word and all its mishearings from Your Words.",
+                    "Delete").ConfigureAwait(true))
+            {
+                var removed = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAndReportAsync(new[] { existing }))
+                    .ConfigureAwait(true);
+                if (removed.Saved && removed.Value.Count > 0)
+                {
+                    WordsRemovedFromDictionary?.Invoke(removed.Value);
+                    RefreshLearnMemoryUi();
+                    ShowMessage("Word deleted", $"\u201C{existing.Replacement}\u201D was removed.", InfoBarSeverity.Informational);
+                }
+                else if (removed.Saved)
+                {
+                    ShowMessage("Nothing was removed", "That word changed or was removed while you were editing it.", InfoBarSeverity.Warning);
+                }
+            }
         }
     }
 

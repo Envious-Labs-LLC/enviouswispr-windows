@@ -130,6 +130,8 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </summary>
     private readonly WindowPresentationSession _session;
 
+    private readonly IMishearingAdvisor _mishearingAdvisor;
+
     private readonly bool _telemetryAvailable;
 
     private readonly bool _launchedCrashReports;
@@ -150,14 +152,17 @@ public sealed partial class MainWindow : Window, IDisposable
     public MainWindow(
         AppSettings settings,
         WindowPresentationSession session,
-        WindowLaunch launch)
+        WindowLaunch launch,
+        IMishearingAdvisor mishearingAdvisor)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(launch);
+        ArgumentNullException.ThrowIfNull(mishearingAdvisor);
 
         _settings = settings;
         _session = session;
+        _mishearingAdvisor = mishearingAdvisor;
         _telemetryAvailable = launch.TelemetryAvailable;
         _launchedCrashReports = launch.LaunchedCrashReports;
         var settingsLoadStatus = launch.SettingsLoadStatus;

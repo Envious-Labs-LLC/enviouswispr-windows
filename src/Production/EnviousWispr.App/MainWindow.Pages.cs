@@ -88,6 +88,7 @@ public sealed partial class MainWindow
             getElement: () => DictionaryPage,
             onShutdown: () =>
             {
+                InvalidateAliasSuggestions(clearSurface: false);
                 _dictionaryRefreshCts?.Cancel();
                 _dictionaryRefreshCts?.Dispose();
                 _dictionaryRefreshCts = null;

@@ -91,7 +91,6 @@ public partial class App
         new(
             SnippetImportReported: OnSnippetImportReported,
             WordImportReported: OnWordImportReported,
-            MishearingSuggestionsRequested: OnMishearingSuggestionsRequested,
             QueryLearnMemoryState: () =>
                 _learnMemoryStore is { } store
                     ? (store.HasStoredMemory, store.BlockedCount)
