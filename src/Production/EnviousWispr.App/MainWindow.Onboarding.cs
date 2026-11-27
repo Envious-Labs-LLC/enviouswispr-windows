@@ -111,6 +111,9 @@ public sealed partial class MainWindow
     /// <summary>Applies selected speech/polish engines in the background when skipping the Downloads screen.</summary>
     public Func<FinalAsrEngine, OnboardingPolishChoiceKind, string?, string?, Task>? ApplyOnboardingEnginesChoice { get; set; }
 
+    /// <summary>Refreshes on-disk model probe state before deciding whether the Downloads screen can be skipped.</summary>
+    public Func<FinalAsrEngine, string?, Task<(bool SpeechInstalled, bool PolishInstalled)>>? ProbeOnboardingModelsInstalled { get; set; }
+
     internal static SpeechModelDelivery ToSpeechModelDelivery(OnboardingDownloadStage stage) => stage switch
     {
         OnboardingDownloadStage.Pending => SpeechModelDelivery.Missing,
@@ -1209,6 +1212,14 @@ public sealed partial class MainWindow
 
     private async Task AdvanceFromPolishChoiceAsync()
     {
+        if (ProbeOnboardingModelsInstalled is { } probeModels)
+        {
+            var egOneTarget = _onboarding.RequiresLocalEgOne
+                ? EgOneModelCatalog.NormalizeOrDefault(_onboarding.Choices.EgOneModelId)
+                : null;
+            _ = await probeModels(_onboarding.Choices.SpeechEngine, egOneTarget).ConfigureAwait(true);
+        }
+
         SyncLiveInventoryToOnboarding();
         var speechInstalled = _onboarding.Choices.SpeechEngine == FinalAsrEngine.Whisper
             ? _whisperModelState.IsInstalled
@@ -2245,7 +2256,7 @@ public sealed partial class MainWindow
         var rec = _onboardingRecommendation ?? ComputeOnboardingRecommendation(_onboarding.Choices.LanguageCode);
         _onboardingRecommendation = rec;
         var profile = _hardwareProfile ?? HardwareProfileSummary.GetCurrent();
-        OnboardingPolishHardwareBadgeText.Text = $"This PC: {profile.SummaryText}";
+        OnboardingPolishHardwareBadgeText.Text = profile.SummaryText;
 
         OnboardingPolishLowSpecCard.Visibility = rec.Polish.LowSpecPolishAdvisory
             ? Visibility.Visible
@@ -2355,7 +2366,7 @@ public sealed partial class MainWindow
         var rec = _onboardingRecommendation ?? ComputeOnboardingRecommendation(_onboarding.Choices.LanguageCode);
         _onboardingRecommendation = rec;
         var profile = _hardwareProfile ?? HardwareProfileSummary.GetCurrent();
-        OnboardingSeeAllHardwareBadgeText.Text = $"This PC: {profile.SummaryText}";
+        OnboardingSeeAllHardwareBadgeText.Text = profile.SummaryText;
 
         var isCloudTab = _onboardingSeeAllCloudTab || TryGetCloudProvider(_onboarding.Choices.PolishChoice, out _);
         ApplySegmentButtonState(OnboardingPolishTabLocalButton, !isCloudTab);

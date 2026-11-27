@@ -402,6 +402,7 @@ public partial class App : Application, IAsyncDisposable
         _window.OnboardingKeyRehearsalActiveChanged += OnOnboardingKeyRehearsalActiveChanged;
         _window.ApplyOnboardingRecordingKey = TryApplyOnboardingRecordingKeyAsync;
         _window.ApplyOnboardingEnginesChoice = ApplyOnboardingSelectedEnginesAsync;
+        _window.ProbeOnboardingModelsInstalled = ProbeOnboardingModelsInstalledAsync;
         _window.TranscribeFile = TranscribeFileAsync;
         _window.ExportUserData = ExportUserDataAsync;
         _window.DeleteAllData = DeleteAllData;
@@ -612,6 +613,7 @@ public partial class App : Application, IAsyncDisposable
             window.OnboardingKeyRehearsalActiveChanged -= OnOnboardingKeyRehearsalActiveChanged;
             window.ApplyOnboardingRecordingKey = null;
             window.ApplyOnboardingEnginesChoice = null;
+            window.ProbeOnboardingModelsInstalled = null;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
             DetachSelfLearningFromWindow(window);

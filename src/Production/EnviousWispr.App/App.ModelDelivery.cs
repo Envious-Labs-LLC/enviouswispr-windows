@@ -1956,6 +1956,24 @@ public partial class App
         return (totalBytes, diskBytes);
     }
 
+    private async Task<(bool SpeechInstalled, bool PolishInstalled)> ProbeOnboardingModelsInstalledAsync(
+        FinalAsrEngine speechEngine,
+        string? egOneModelId)
+    {
+        await PresentModelDeliveryAsync().ConfigureAwait(true);
+        var speechState = await ProbeSpeechEngineModelAsync(speechEngine).ConfigureAwait(true);
+        var polishInstalled = true;
+        if (!string.IsNullOrWhiteSpace(egOneModelId))
+        {
+            await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            var normalized = EgOneModelCatalog.NormalizeOrDefault(egOneModelId);
+            var egState = await ProbeEgOneModelAsync(normalized).ConfigureAwait(true);
+            polishInstalled = egState.IsInstalled;
+        }
+
+        return (speechState.IsInstalled, polishInstalled);
+    }
+
     private async Task<bool> ApplyOnboardingSpeechChoiceAsync(FinalAsrEngine engine)
     {
         var current = _presentation?.Settings.Current ?? _settings;
