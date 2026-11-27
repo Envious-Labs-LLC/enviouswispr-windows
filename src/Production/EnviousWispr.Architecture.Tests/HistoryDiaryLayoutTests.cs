@@ -220,8 +220,7 @@ public sealed class HistoryDiaryLayoutTests
                 or "CardDeleteButton_Click");
         Assert.Equal(4, flyoutActionCount);
 
-        var historyCode = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        var historyCode = AppXamlSources.ReadMainWindowHistoryCodeText(repositoryRoot);
         Assert.Contains("package.SetText(card.DisplayedCopyText);", historyCode, StringComparison.Ordinal);
         Assert.Contains("SecondaryDateLabel", historyCode, StringComparison.Ordinal);
         Assert.Contains("Title = \"Delete dictation?\"", historyCode, StringComparison.Ordinal);
