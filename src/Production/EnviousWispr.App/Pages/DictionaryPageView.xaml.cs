@@ -43,9 +43,7 @@ public sealed partial class DictionaryPageView : UserControl
             _visibilityCallbackToken = 0;
         }
 
-        _dictionaryRefreshCts?.Cancel();
-        _dictionaryRefreshCts?.Dispose();
-        _dictionaryRefreshCts = null;
+        InvalidatePendingRefresh();
         _dictionaryRowCache = null;
         _dictionaryRows.Clear();
     }
@@ -59,6 +57,7 @@ public sealed partial class DictionaryPageView : UserControl
             return;
         }
 
+        InvalidatePendingRefresh();
         var wordUnit = allWords.Count == 1 ? "WORD" : "WORDS";
         WordCountText.Text = $"{allWords.Count} {wordUnit}";
         UpdateSelectionUi(allWords.Count);
@@ -311,30 +310,40 @@ public sealed partial class DictionaryPageView : UserControl
 
     private void WordsFromAnotherAppButton_Click(object sender, RoutedEventArgs e) => Host.WordsFromAnotherAppButton_Click(sender, e);
 
-    private void ScheduleRefresh(IReadOnlyList<CustomWordEntry> allWords, bool debounce)
+    private void InvalidatePendingRefresh()
     {
+        _dictionaryRefreshGeneration++;
         _dictionaryRefreshCts?.Cancel();
         _dictionaryRefreshCts?.Dispose();
+        _dictionaryRefreshCts = null;
+    }
+
+    private void ScheduleRefresh(IReadOnlyList<CustomWordEntry> allWords, bool debounce)
+    {
+        InvalidatePendingRefresh();
         var cts = new CancellationTokenSource();
         _dictionaryRefreshCts = cts;
-        var generation = ++_dictionaryRefreshGeneration;
+        var generation = _dictionaryRefreshGeneration;
+        var cachedSnapshot = _dictionaryRowCache;
         var category = _wordFilterCategory;
         var query = DictionarySearchBox?.Text?.Trim() ?? string.Empty;
 
         if (!debounce && allWords.Count < 128)
         {
-            var rows = BuildFilteredDictionaryRows(allWords, category, query);
-            ApplyFilteredDictionaryRows(rows, allWords.Count);
+            var build = BuildFilteredDictionaryRows(allWords, category, query, cachedSnapshot);
+            _dictionaryRowCache = build.NextCache;
+            ApplyFilteredDictionaryRows(build.Rows, allWords.Count);
             return;
         }
 
-        _ = RefreshDictionaryAsync(allWords, category, query, debounce, generation, cts.Token);
+        _ = RefreshDictionaryAsync(allWords, category, query, cachedSnapshot, debounce, generation, cts.Token);
     }
 
     private async Task RefreshDictionaryAsync(
         IReadOnlyList<CustomWordEntry> allWords,
         string category,
         string query,
+        (IReadOnlyList<CustomWordEntry> Source, DictionaryWordRow[] Rows)? cachedSnapshot,
         bool debounce,
         int generation,
         CancellationToken cancellationToken)
@@ -346,37 +355,46 @@ public sealed partial class DictionaryPageView : UserControl
                 await Task.Delay(150, cancellationToken).ConfigureAwait(true);
             }
 
-            if (cancellationToken.IsCancellationRequested || generation != _dictionaryRefreshGeneration || Host.IsClosing)
+            if (cancellationToken.IsCancellationRequested
+                || generation != _dictionaryRefreshGeneration
+                || _visibilityCallbackToken == 0
+                || Host.IsClosing)
             {
                 return;
             }
 
-            var rows = await Task.Run(
-                () => BuildFilteredDictionaryRows(allWords, category, query),
+            var build = await Task.Run(
+                () => BuildFilteredDictionaryRows(allWords, category, query, cachedSnapshot),
                 cancellationToken).ConfigureAwait(true);
 
-            if (cancellationToken.IsCancellationRequested || generation != _dictionaryRefreshGeneration || Host.IsClosing)
+            if (cancellationToken.IsCancellationRequested
+                || generation != _dictionaryRefreshGeneration
+                || _visibilityCallbackToken == 0
+                || Host.IsClosing)
             {
                 return;
             }
 
-            ApplyFilteredDictionaryRows(rows, allWords.Count);
+            _dictionaryRowCache = build.NextCache;
+            ApplyFilteredDictionaryRows(build.Rows, allWords.Count);
         }
         catch (OperationCanceledException)
         {
         }
     }
 
-    private DictionaryWordRow[] BuildFilteredDictionaryRows(
+    private static (DictionaryWordRow[] Rows, (IReadOnlyList<CustomWordEntry> Source, DictionaryWordRow[] Rows) NextCache) BuildFilteredDictionaryRows(
         IReadOnlyList<CustomWordEntry> allWords,
         string category,
-        string query)
+        string query,
+        (IReadOnlyList<CustomWordEntry> Source, DictionaryWordRow[] Rows)? cachedSnapshot)
     {
-        var cached = _dictionaryRowCache;
         DictionaryWordRow[] allRows;
-        if (cached is { Source: var cachedSource } && ReferenceEquals(cachedSource, allWords))
+        (IReadOnlyList<CustomWordEntry> Source, DictionaryWordRow[] Rows) nextCache;
+        if (cachedSnapshot is { Source: var cachedSource } && ReferenceEquals(cachedSource, allWords))
         {
-            allRows = cached.Value.Rows;
+            allRows = cachedSnapshot.Value.Rows;
+            nextCache = cachedSnapshot.Value;
         }
         else
         {
@@ -386,25 +404,25 @@ public sealed partial class DictionaryPageView : UserControl
                 allRows[i] = new DictionaryWordRow(allWords[i]);
             }
 
-            _dictionaryRowCache = (allWords, allRows);
+            nextCache = (allWords, allRows);
         }
 
         var noCategoryFilter = string.IsNullOrWhiteSpace(category) ||
             string.Equals(category, "all", StringComparison.OrdinalIgnoreCase);
         if (noCategoryFilter && string.IsNullOrEmpty(query))
         {
-            return allRows;
+            return (allRows, nextCache);
         }
 
         var matching = VocabularyPresenter.FilterWords(allWords, category, query);
         if (matching.Count == 0)
         {
-            return [];
+            return ([], nextCache);
         }
 
         if (matching.Count == allRows.Length)
         {
-            return allRows;
+            return (allRows, nextCache);
         }
 
         var byEntry = new Dictionary<CustomWordEntry, DictionaryWordRow>(allRows.Length, ReferenceEqualityComparer.Instance);
@@ -421,7 +439,7 @@ public sealed partial class DictionaryPageView : UserControl
                 : new DictionaryWordRow(matching[i]);
         }
 
-        return result;
+        return (result, nextCache);
     }
 
     private void ApplyFilteredDictionaryRows(DictionaryWordRow[] rows, int totalCount)

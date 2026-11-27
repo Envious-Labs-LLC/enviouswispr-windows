@@ -135,9 +135,21 @@ public sealed class DictionaryMassEditTests
 
         var removeMethod = FindMainWindowMethod(root, "RemoveWordButton_Click");
         Assert.DoesNotContain(
-            removeMethod.Body!.DescendantNodes().OfType<MemberAccessExpressionSyntax>(),
-            member => IsDictionaryListMember(member, "SelectedItems"));
-        Assert.Contains("GetSelectedWords()", removeMethod.Body!.ToString(), StringComparison.Ordinal);
+            removeMethod.Body!.DescendantNodes().OfType<IdentifierNameSyntax>(),
+            id => id.Identifier.ValueText == "SelectedItems");
+
+        var selectedDecl = removeMethod.Body!.DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .Single(v => v.Identifier.ValueText == "selected");
+        Assert.Contains(
+            selectedDecl.Initializer!.Value.DescendantNodes().OfType<MemberBindingExpressionSyntax>(),
+            binding => binding.Name.Identifier.ValueText == "GetSelectedWords");
+        var removeInvocation = removeMethod.Body!.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .Single(inv => inv.Expression.ToString().EndsWith("RemoveWordsAndReportAsync", StringComparison.Ordinal));
+        Assert.Contains(
+            removeInvocation.ArgumentList.Arguments,
+            arg => arg.Expression is IdentifierNameSyntax id && id.Identifier.ValueText == "selected");
 
         var selectAllMethod = FindDictionaryPageMethod(root, "SelectAllWordsButton_Click");
         var selectAllBody = selectAllMethod.Body!;

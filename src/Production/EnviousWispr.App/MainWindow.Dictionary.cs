@@ -877,14 +877,6 @@ public sealed partial class MainWindow
         }
     }
 
-    private void InitializeUserDataUi()
-    {
-        if (SnippetList is not null)
-        {
-            SnippetList.ItemsSource = _snippetRows;
-        }
-    }
-
     private void ShutdownUserDataUi()
     {
         InvalidateAliasSuggestions(clearSurface: false);
