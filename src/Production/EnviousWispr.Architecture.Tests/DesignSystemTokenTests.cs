@@ -3761,10 +3761,11 @@ public sealed partial class DesignSystemTokenTests
     public void InterruptedDictationRecoveryDoesNotRaisePersistentTopInfoBarBanner()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var method = CSharpSyntaxTree.ParseText(AppXamlSources.ReadMainWindowHistoryCodeText(repositoryRoot))
-            .GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var method = AppXamlSources.MainWindowHistoryPaths(repositoryRoot)
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path)
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
             .Single(m => m.Identifier.ValueText == "SetRecoveredText");
 
         var body = method.Body!.ToString();

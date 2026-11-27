@@ -1,4 +1,3 @@
-using System.Globalization;
 using EnviousWispr.App.Controls;
 using EnviousWispr.App.Services;
 using EnviousWispr.Core.Credentials;
