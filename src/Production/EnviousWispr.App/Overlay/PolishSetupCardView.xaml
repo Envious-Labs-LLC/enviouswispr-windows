@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Overlay.PolishSetupCardView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel
+        x:Name="PolishSetupCardPanel"
+        Width="{StaticResource PillCardWidth}"
+        Padding="20,18,20,16"
+        Spacing="{StaticResource PillCardSpacing}">
+        <TextBlock
+            x:Name="PolishSetupTitle"
+            FontSize="16"
+            FontWeight="SemiBold"
+            HorizontalAlignment="Center"
+            Style="{StaticResource PillCardTitleTextStyle}"
+            Text="Polish needs setup."
+            TextAlignment="Center"
+            TextWrapping="Wrap" />
+        <TextBlock
+            x:Name="PolishSetupSubtitle"
+            FontSize="14"
+            HorizontalAlignment="Center"
+            Style="{StaticResource PillCardBodyTextStyle}"
+            Text="Pasted without AI polish."
+            TextAlignment="Center"
+            TextWrapping="Wrap" />
+        <Button
+            x:Name="PolishSetupActionButton"
+            Click="SetupActionButton_Click"
+            Content="Set up AI polish"
+            FontSize="14"
+            FontWeight="SemiBold"
+            HorizontalAlignment="Stretch"
+            Style="{StaticResource PillCardPrimaryButtonStyle}" />
+        <Button
+            x:Name="PolishSetupNotNowButton"
+            Click="NotNowButton_Click"
+            Content="Not now"
+            FontSize="14"
+            HorizontalAlignment="Center"
+            Style="{StaticResource PillCardLinkButtonStyle}" />
+    </StackPanel>
+</UserControl>

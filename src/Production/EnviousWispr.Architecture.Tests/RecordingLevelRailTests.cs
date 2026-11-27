@@ -51,8 +51,7 @@ public sealed class RecordingLevelRailTests
         var railWidth = bars.Sum(bar => double.Parse(
             (string?)bar.Attribute("Width") ?? "0", CultureInfo.InvariantCulture))
             + BarSpacing * (bars.Count - 1);
-        var overlay = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"));
+        var overlay = AppXamlSources.LoadOverlayCodeText(RepositoryRoot());
         var railConst = Regex.Match(overlay, @"LevelRailBarsWidth\s*=\s*(?<w>\d+(?:\.\d+)?)\s*;");
         var paddingConst = Regex.Match(overlay, @"CapsuleHorizontalPadding\s*=\s*(?<p>\d+)\s*;");
         Assert.True(railConst.Success && paddingConst.Success);

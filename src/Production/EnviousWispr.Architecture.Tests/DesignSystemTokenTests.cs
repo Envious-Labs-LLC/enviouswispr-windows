@@ -663,14 +663,8 @@ public sealed partial class DesignSystemTokenTests
     public void OverlayUsesDeclaredPillTokensAndNoUndersizedText()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var overlayPath = Path.Combine(
-            repositoryRoot,
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "DictationOverlayWindow.xaml");
-        var overlayCodeBehindPath = overlayPath + ".cs";
-        var overlay = XDocument.Load(overlayPath);
+        var overlay = AppXamlSources.LoadOverlayAndViewsDocument(repositoryRoot);
+        var overlayCode = AppXamlSources.LoadOverlayCodeText(repositoryRoot);
         var declaredPillKeys = LoadThemeDictionaries(repositoryRoot, "PillTokens.xaml")["Light"]
             .Elements()
             .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
@@ -711,7 +705,7 @@ public sealed partial class DesignSystemTokenTests
             .Select(match => match.Groups["key"].Value)
             .Where(key => key.StartsWith("Pill", StringComparison.Ordinal))
             .Concat(CodeBehindPillStyleRegex()
-                .Matches(File.ReadAllText(overlayCodeBehindPath))
+                .Matches(overlayCode)
                 .Cast<Match>()
                 .Select(match => match.Value))
             .Distinct(StringComparer.Ordinal)
@@ -794,8 +788,8 @@ public sealed partial class DesignSystemTokenTests
     {
         var repositoryRoot = FindRepositoryRoot();
         var overlay = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App",
-            "DictationOverlayWindow.xaml.cs"));
+            repositoryRoot, "src", "Production", "EnviousWispr.Core", "Presentation",
+            "OverlayPillCatalog.cs"));
 
         // THE REAL ENUM, NOT ITS FORMATTING. The first draft read the members out of the source
         // with a regex anchored on four spaces, a word and a comma, so writing `Advisory = 4,`
@@ -2139,10 +2133,12 @@ public sealed partial class DesignSystemTokenTests
         var unknown = new List<string>();
         var checkedCount = 0;
 
-        foreach (var view in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        var viewPaths = new[] { Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml") }
+            .Concat(AppXamlSources.OverlayAndViewPaths(root));
+        foreach (var path in viewPaths)
         {
-            var document = XDocument.Load(Path.Combine(
-                root, "src", "Production", "EnviousWispr.App", view));
+            var view = Path.GetFileName(path);
+            var document = XDocument.Load(path);
 
             foreach (var element in document.Descendants())
             {
@@ -2246,10 +2242,13 @@ public sealed partial class DesignSystemTokenTests
         var offenders = new List<string>();
         var checkedControls = 0;
 
-        foreach (var view in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        var repoRoot = FindRepositoryRoot();
+        var viewPaths = new[] { Path.Combine(repoRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml") }
+            .Concat(AppXamlSources.OverlayAndViewPaths(repoRoot));
+        foreach (var path in viewPaths)
         {
-            var document = XDocument.Load(Path.Combine(
-                FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", view));
+            var view = Path.GetFileName(path);
+            var document = XDocument.Load(path);
 
             foreach (var element in document.Descendants())
             {

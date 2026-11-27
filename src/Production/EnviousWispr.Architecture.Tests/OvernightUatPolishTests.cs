@@ -115,7 +115,6 @@ public sealed class OvernightUatPolishTests
     {
         var root = FindRepositoryRoot();
         var xamlPath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml");
-        var codePath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs");
 
         var doc = XDocument.Load(xamlPath);
         var overlayRoot = FindNamed(doc, "OverlayRoot");
@@ -124,20 +123,25 @@ public sealed class OvernightUatPolishTests
         var handsFreeBadge = FindNamed(doc, "WellHandsFreeBadge");
         Assert.Equal("8,2", (string?)handsFreeBadge.Attribute("Padding"));
 
-        var code = File.ReadAllText(codePath);
-        var headerHeightMatch = Regex.Match(code, @"private\s+const\s+int\s+ReadingWellHeaderHeight\s*=\s*(?<height>\d+);");
+        var code = AppXamlSources.LoadOverlayCodeText(root);
+        var headerHeightMatch = Regex.Match(code, @"ReadingWellHeaderHeight\s*=\s*(?<height>\d+);");
         Assert.True(headerHeightMatch.Success);
         Assert.True(int.Parse(headerHeightMatch.Groups["height"].Value, CultureInfo.InvariantCulture) >= 36);
 
-        var tree = CSharpSyntaxTree.ParseText(code).GetRoot();
-        var applySurface = tree.DescendantNodes()
+        var surfaceText = File.ReadAllText(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "Overlay", "OverlayChromeAnimator.cs"));
+        var surfaceTree = CSharpSyntaxTree.ParseText(surfaceText).GetRoot();
+        var applySurface = surfaceTree.DescendantNodes()
             .OfType<MethodDeclarationSyntax>()
             .Single(m => m.Identifier.ValueText == "ApplySurface")
             .ToString();
-        Assert.Contains("OverlayRoot.CornerRadius = new CornerRadius(0);", applySurface, StringComparison.Ordinal);
+        Assert.Contains("_overlayRoot.CornerRadius = new CornerRadius(0);", applySurface, StringComparison.Ordinal);
         Assert.DoesNotContain("radius + WindowBleed", applySurface, StringComparison.Ordinal);
 
-        var clipMethod = tree.DescendantNodes()
+        var hostText = File.ReadAllText(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "Overlay", "OverlayWin32Host.cs"));
+        var hostTree = CSharpSyntaxTree.ParseText(hostText).GetRoot();
+        var clipMethod = hostTree.DescendantNodes()
             .OfType<MethodDeclarationSyntax>()
             .Single(m => m.Identifier.ValueText == "ClipToPillShape")
             .ToString();
