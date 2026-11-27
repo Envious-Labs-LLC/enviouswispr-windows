@@ -477,14 +477,23 @@ public sealed partial class MainWindow
             return;
         }
 
-        var query = HistorySearchBox.Text.Trim();
+        var expectedQuery = HistorySearchBox.Text.Trim();
+        var expectedKind = _historyKindFilter;
+        var expectedDateRange = _historyDateRangeFilter;
+        var expectedQueryVersion = Volatile.Read(ref _historyQueryVersion);
         var matchingIds = await _session.History.QueryMatchingIdsAsync(
-            query,
-            _historyKindFilter,
-            _historyDateRangeFilter,
+            expectedQuery,
+            expectedKind,
+            expectedDateRange,
             DateTimeOffset.Now,
             TimeZoneInfo.Local).ConfigureAwait(true);
-        if (_session.Closing || _shuttingDownProductWindows || matchingIds.Count == 0)
+        if (_session.Closing
+            || _shuttingDownProductWindows
+            || matchingIds.Count == 0
+            || !string.Equals(expectedQuery, HistorySearchBox?.Text.Trim() ?? string.Empty, StringComparison.Ordinal)
+            || expectedKind != _historyKindFilter
+            || expectedDateRange != _historyDateRangeFilter
+            || expectedQueryVersion != Volatile.Read(ref _historyQueryVersion))
         {
             return;
         }
@@ -1248,6 +1257,7 @@ public sealed partial class MainWindow
 
         HistoryPageView pageView;
         Dictionary<Guid, string?> resolvedPaths;
+        IReadOnlyList<Guid>? existingIdsForSelection = null;
         try
         {
             pageView = await _session.History
@@ -1268,6 +1278,26 @@ public sealed partial class MainWindow
                 || version != _historyQueryVersion)
             {
                 return;
+            }
+
+            if (_selectedHistoryIds.Count > 0)
+            {
+                existingIdsForSelection = await _session.History
+                    .QueryMatchingIdsAsync(
+                        string.Empty,
+                        HistoryKindFilter.All,
+                        HistoryDateRangeFilter.AnyTime,
+                        localNow,
+                        TimeZoneInfo.Local,
+                        cts.Token)
+                    .ConfigureAwait(true);
+                if (_session.Closing
+                    || _shuttingDownProductWindows
+                    || cts.IsCancellationRequested
+                    || version != _historyQueryVersion)
+                {
+                    return;
+                }
             }
 
             var pageEntries = pageView.Entries;
@@ -1294,7 +1324,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        ApplyHistoryPageView(pageView, query, localNow, resolvedPaths);
+        ApplyHistoryPageView(pageView, query, localNow, resolvedPaths, existingIdsForSelection);
     }
 
     private void CancelActiveHistoryQuery()
@@ -1361,13 +1391,23 @@ public sealed partial class MainWindow
         HistoryPageView pageView,
         string query,
         DateTimeOffset localNow,
-        IReadOnlyDictionary<Guid, string?> resolvedRecordingPaths)
+        IReadOnlyDictionary<Guid, string?> resolvedRecordingPaths,
+        IReadOnlyList<Guid>? existingIdsForSelection = null)
     {
         _historyLoadStatus = pageView.Status;
         _historyTotalStoredCount = pageView.TotalStoredCount;
         _historyMatchingCount = pageView.TotalMatchingCount;
         _historyHasMore = pageView.HasMore;
         _historyRemainingCount = pageView.RemainingCount;
+
+        if (_selectedHistoryIds.Count > 0 && existingIdsForSelection is not null)
+        {
+            var existingSet = new HashSet<Guid>(existingIdsForSelection);
+            if (_selectedHistoryIds.RemoveWhere(id => !existingSet.Contains(id)) > 0)
+            {
+                _allMatchingSelected = false;
+            }
+        }
 
         if (_historyTotalStoredCount == 0
             && _audioPlayback.CurrentState.ActiveEntryId is { } activePlaybackId)

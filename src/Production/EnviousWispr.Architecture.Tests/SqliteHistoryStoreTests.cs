@@ -139,7 +139,30 @@ public sealed class SqliteHistoryStoreTests
 
             Assert.True(File.Exists(dbPath));
             Assert.False(File.Exists(jsonPath));
-            Assert.True(File.Exists($"{jsonPath}.migrated"));
+            Assert.False(File.Exists($"{jsonPath}.migrated"));
+
+            // Interrupted migration (empty DB already created before commit) must still migrate legacy JSON on retry.
+            var interruptedDir = Path.Combine(directory, "interrupted");
+            Directory.CreateDirectory(interruptedDir);
+            var interruptedJson = Path.Combine(interruptedDir, "history.json");
+            var interruptedDb = Path.Combine(interruptedDir, "history.db");
+            using (var emptyInit = new SqliteHistoryStore(interruptedDb))
+            {
+                Assert.True((await emptyInit.AddAsync(older, 30, Now)).Succeeded);
+                Assert.True((await emptyInit.ClearAsync()).Succeeded);
+            }
+            Assert.True(File.Exists(interruptedDb));
+            using (var preJson = new JsonHistoryStore(interruptedJson))
+            {
+                Assert.True((await preJson.AddAsync(newer, 30, Now)).Succeeded);
+            }
+            using (var retryStore = new SqliteHistoryStore(interruptedDb, interruptedJson))
+            {
+                var retried = await retryStore.LoadAsync(30, Now);
+                Assert.Equal(HistoryLoadStatus.Loaded, retried.Status);
+                Assert.Equal(newer.Id, Assert.Single(retried.Entries).Id);
+            }
+            Assert.False(File.Exists(interruptedJson));
 
             // Corrupt legacy JSON must fail closed and avoid creating history.db
             var corruptDir = Path.Combine(directory, "corrupt");

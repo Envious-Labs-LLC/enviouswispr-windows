@@ -800,6 +800,11 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
                 stagedDeletes,
                 cleanRemainingTempFiles: true);
             _audioJournal.DeletePendingDeletesManifest();
+            if (_legacyJsonPath is not null)
+            {
+                TryDeleteFileQuietly(_legacyJsonPath);
+            }
+
             return new HistoryOperationResult(true);
         }
         catch (Exception exception)
@@ -825,8 +830,7 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
         {
             if (_legacyJsonPath is not null && File.Exists(_legacyJsonPath))
             {
-                var migrated = MigrateLegacyJsonCore(out connection, out error, cancellationToken);
-                return migrated;
+                return MigrateLegacyJsonCore(out connection, out error, cancellationToken);
             }
 
             LocalDictationAudioArchive.RecoverStagedDeletes(
@@ -841,6 +845,16 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
         {
             connection = OpenAndEnsureSchemaCore();
             _connection = connection;
+            if (_legacyJsonPath is not null && File.Exists(_legacyJsonPath))
+            {
+                if (!HasCompletedLegacyMigration(connection))
+                {
+                    return CompletePendingLegacyMigrationCore(connection, out error, cancellationToken);
+                }
+
+                TryDeleteFileQuietly(_legacyJsonPath);
+            }
+
             return null;
         }
         catch (Exception exception)
@@ -905,26 +919,15 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
         try
         {
             connection = OpenAndEnsureSchemaCore();
-            using var tx = connection.BeginTransaction();
-            // Insert oldest-to-newest so rowid DESC preserves newest-first tie ordering identical to JsonHistoryStore.
-            for (var i = legacyResult.Entries.Count - 1; i >= 0; i--)
+            var result = CompletePendingLegacyMigrationCore(connection, out error, cancellationToken, preloadedLegacy: legacyResult);
+            if (result is not null)
             {
-                InsertEntryCore(connection, tx, legacyResult.Entries[i]);
+                CloseConnection();
+                DeleteDatabaseArtifactsQuietly();
+                return result;
             }
 
-            tx.Commit();
             _connection = connection;
-
-            var migratedPath = $"{_legacyJsonPath}.migrated";
-            try
-            {
-                File.Move(_legacyJsonPath!, migratedPath, overwrite: true);
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or SecurityException)
-            {
-            }
-
             return null;
         }
         catch (Exception exception)
@@ -934,6 +937,90 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
             var mapped = MapLoadException(exception);
             error = mapped.Error;
             return mapped;
+        }
+    }
+
+    private HistoryLoadResult? CompletePendingLegacyMigrationCore(
+        SqliteConnection connection,
+        out AppError? error,
+        CancellationToken cancellationToken,
+        HistoryLoadResult? preloadedLegacy = null)
+    {
+        error = null;
+        HistoryLoadResult legacyResult;
+        if (preloadedLegacy is not null)
+        {
+            legacyResult = preloadedLegacy;
+        }
+        else
+        {
+            using var legacyStore = new JsonHistoryStore(_legacyJsonPath!, _recordingsDirectory);
+            legacyResult = legacyStore
+                .LoadAsync(RetentionDays.HistoryMinimum, DateTimeOffset.UtcNow, cancellationToken)
+                .GetAwaiter()
+                .GetResult();
+        }
+        if (legacyResult.Status is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable)
+        {
+            error = legacyResult.Error;
+            return legacyResult;
+        }
+
+        using var tx = connection.BeginTransaction();
+        // Insert oldest-to-newest so rowid DESC preserves newest-first tie ordering identical to JsonHistoryStore.
+        for (var i = legacyResult.Entries.Count - 1; i >= 0; i--)
+        {
+            var entry = legacyResult.Entries[i];
+            if (!EntryExistsCore(connection, tx, entry.Id))
+            {
+                InsertEntryCore(connection, tx, entry);
+            }
+        }
+
+        using (var meta = connection.CreateCommand())
+        {
+            meta.Transaction = tx;
+            meta.CommandText =
+                """
+                INSERT OR REPLACE INTO history_meta (key, value)
+                VALUES ('legacy_json_migrated', '1');
+                """;
+            meta.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        TryDeleteFileQuietly(_legacyJsonPath!);
+        return null;
+    }
+
+    private static bool HasCompletedLegacyMigration(SqliteConnection connection)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT value FROM history_meta WHERE key = 'legacy_json_migrated' LIMIT 1;";
+        return string.Equals(cmd.ExecuteScalar() as string, "1", StringComparison.Ordinal);
+    }
+
+    private static bool EntryExistsCore(SqliteConnection connection, SqliteTransaction tx, Guid id)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT 1 FROM history_entries WHERE id = $id LIMIT 1;";
+        cmd.Parameters.AddWithValue("$id", id.ToString("D"));
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    private static void TryDeleteFileQuietly(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
         }
     }
 
@@ -984,6 +1071,10 @@ public sealed class SqliteHistoryStore : IHistoryStore, IHistoryQueryStore, IDis
                 ddl.Transaction = tx;
                 ddl.CommandText =
                     $"""
+                    CREATE TABLE IF NOT EXISTS history_meta (
+                        key TEXT PRIMARY KEY NOT NULL,
+                        value TEXT NOT NULL
+                    );
                     CREATE TABLE IF NOT EXISTS history_entries (
                         id TEXT PRIMARY KEY NOT NULL,
                         created_at_utc_ticks INTEGER NOT NULL,
