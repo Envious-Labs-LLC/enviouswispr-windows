@@ -1,14 +1,33 @@
+using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Presentation;
 
+/// <summary>Kinds of scenes in the 7-beat closing walkthrough aligned with macOS FilmScript.</summary>
+public enum OnboardingClosingBeatKind
+{
+    Ready,
+    Apps,
+    Land,
+    Copied,
+    Learn,
+    More,
+    Yours,
+}
+
+/// <summary>Static title, caption, timing, and screen-reader summary for one Closing walkthrough beat.</summary>
+public sealed record OnboardingClosingBeat(
+    int Index,
+    OnboardingClosingBeatKind Kind,
+    double DurationSeconds,
+    string Title,
+    string Subtitle,
+    string SpokenSummaryTemplate);
+
 /// <summary>Every sentence the first-run flow chooses from its state, in one place.</summary>
 /// <remarks>
-/// macOS's WORDS WHERE macOS HAS THEM. The practice sentences are <c>PracticeScreenCopy</c> in
-/// <c>PracticeScreen.swift</c>; the warm-up sentences are <c>WarmingScreenV2</c>; the setup sentences are
-/// <c>OnboardingV2View.swift</c>. A sentence differs only where the Mac one would be untrue here, and each such
-/// place says why. Sentences fixed in the window's markup are not repeated here; these are the ones chosen
-/// from state, which is what makes them worth testing without a window.
+/// Aligned with macOS #4528 and adapted truthfully for Windows (Microphone-only permissions, Ctrl+V paste,
+/// system tray icon, and Windows hardware notes). Must remain free of em-dashes and en-dashes.
 /// </remarks>
 public static class OnboardingCopy
 {
@@ -18,7 +37,7 @@ public static class OnboardingCopy
 
     public const string Retry = "Retry";
 
-    public const string Cancelling = "Cancelling…";
+    public const string Cancelling = "Cancelling\u2026";
 
     /// <summary>The speech model row's line while nothing more specific is known.</summary>
     public const string OneTimeSetup = "One-time setup";
@@ -27,7 +46,7 @@ public static class OnboardingCopy
     public const string EngineUnavailable =
         "Local transcription could not start on this PC. Try again, or check the Transcription page later.";
 
-    public const string StartingEngine = "Starting local transcription…";
+    public const string StartingEngine = "Starting local transcription\u2026";
 
     public const string WarmingTitle = "Warming up";
 
@@ -37,11 +56,6 @@ public static class OnboardingCopy
 
     public const string WarmingFailedSubtitle = "The speech engine did not finish waking up.";
 
-    /// <summary>
-    /// NOT macOS's WORDS, BECAUSE macOS's PROMISE IS NOT TRUE HERE. macOS says the first press may just wake the
-    /// engine and the next will dictate; on Windows an engine that failed to start stays down until it is
-    /// started again, so a press would not wake it.
-    /// </summary>
     public const string WarmingFailedMessage =
         "You can try again, or skip ahead and fix it later on the Transcription page.";
 
@@ -50,6 +64,18 @@ public static class OnboardingCopy
     public const string WarmingSkip = "In a hurry? Skip ahead";
 
     public const string WarmingSkipAfterFailure = "Skip and finish setup";
+
+    public const string GateTitle = "Getting ready";
+
+    public const string GateSkipAhead = "Skip ahead";
+
+    public const string GateContinueWithoutPolish = "Continue without AI polish";
+
+    public const string GatePolishDownloadingNotice =
+        "Local AI polish is still downloading. Wait for it to finish, or skip ahead while it finishes in the background.";
+
+    public const string GatePolishFailedNotice =
+        "The AI polish model could not be downloaded just now. You can retry, or continue without AI polish for now.";
 
     public const string PracticeFootnote = "Your recording indicator appears while you hold the key.";
 
@@ -61,8 +87,82 @@ public static class OnboardingCopy
 
     public const string FinishWithoutModel = "Finish setup without it";
 
-    /// <summary>"Step 2 of 5", said the same way on screen and to a screen reader.</summary>
-    public static string StepOf(int step) => $"Step {step} of {OnboardingFlow.ScreenCount}";
+    public static IReadOnlyList<OnboardingClosingBeat> ClosingBeats { get; } =
+    [
+        new(
+            Index: 0,
+            Kind: OnboardingClosingBeatKind.Ready,
+            DurationSeconds: 3.5,
+            Title: "Congratulations! You are all set.",
+            Subtitle: "Here is a quick refresher.",
+            SpokenSummaryTemplate: "Congratulations! You are all set. Speech model: {speech}. AI polish: {polish}. Dictation key: {key}."),
+        new(
+            Index: 1,
+            Kind: OnboardingClosingBeatKind.Apps,
+            DurationSeconds: 4.5,
+            Title: "Works in any app with a text box.",
+            Subtitle: "Email, chat, docs, code and more.",
+            SpokenSummaryTemplate: "Works in any app with a text box. Email, chat, docs, code and more."),
+        new(
+            Index: 2,
+            Kind: OnboardingClosingBeatKind.Land,
+            DurationSeconds: 7.5,
+            Title: "Hold your key and talk.",
+            Subtitle: "Click away while speaking; your words land back where you started.",
+            SpokenSummaryTemplate: "Hold {key} and talk. Click away while speaking; your words land back where you started."),
+        new(
+            Index: 3,
+            Kind: OnboardingClosingBeatKind.Copied,
+            DurationSeconds: 6.5,
+            Title: "No text box selected?",
+            Subtitle: "EnviousWispr copies your words so you can press Ctrl+V anywhere.",
+            SpokenSummaryTemplate: "No text box selected? EnviousWispr copies your words so you can press Ctrl+V anywhere."),
+        new(
+            Index: 4,
+            Kind: OnboardingClosingBeatKind.Learn,
+            DurationSeconds: 6.0,
+            Title: "Fix a word once.",
+            Subtitle: "Edit a misheard word by hand and EnviousWispr learns it for next time.",
+            SpokenSummaryTemplate: "Fix a word once by editing it in place, and EnviousWispr learns it for next time."),
+        new(
+            Index: 5,
+            Kind: OnboardingClosingBeatKind.More,
+            DurationSeconds: 4.5,
+            Title: "And there is a lot more.",
+            Subtitle: "Find all of it in Settings whenever you like.",
+            SpokenSummaryTemplate: "And there is a lot more. Find snippets, vocabulary, and styles in Settings whenever you like."),
+        new(
+            Index: 6,
+            Kind: OnboardingClosingBeatKind.Yours,
+            DurationSeconds: 3.0,
+            Title: "You're all set.",
+            Subtitle: "Find EnviousWispr in your system tray.",
+            SpokenSummaryTemplate: "You're all set. Find EnviousWispr in your system tray."),
+    ];
+
+    public static string FormatClosingSummary(
+        OnboardingClosingBeat beat,
+        string speechModelName,
+        string? polishName,
+        string keyLabel)
+    {
+        ArgumentNullException.ThrowIfNull(beat);
+        var effectiveSpeech = string.IsNullOrWhiteSpace(speechModelName) ? "Parakeet" : speechModelName;
+        var effectivePolish = string.IsNullOrWhiteSpace(polishName) ? "Off for now" : polishName;
+        var effectiveKey = string.IsNullOrWhiteSpace(keyLabel) ? "your dictation key" : keyLabel;
+
+        return beat.SpokenSummaryTemplate
+            .Replace("{speech}", effectiveSpeech, StringComparison.Ordinal)
+            .Replace("{polish}", effectivePolish, StringComparison.Ordinal)
+            .Replace("{key}", effectiveKey, StringComparison.Ordinal);
+    }
+
+    public static string StepOf(int step) => StepOf(step, OnboardingFlow.LegacyShellStepCount);
+
+    public static string StepOf(int step, int totalSteps) => $"Step {step} of {totalSteps}";
+
+    public static string StepOf(OnboardingStep step) =>
+        StepOf(OnboardingFlow.PrimaryStepNumberFor(step), OnboardingFlow.PrimaryStepCount);
 
     /// <summary>The recording key's checklist line.</summary>
     public static string KeyLine(OnboardingFlow flow)
@@ -70,7 +170,7 @@ public static class OnboardingCopy
         ArgumentNullException.ThrowIfNull(flow);
         return flow.RecordingKey is { } key
             ? $"Your key: {key}"
-            : flow.RecordingKeyProblem ?? "Getting your keybind ready…";
+            : flow.RecordingKeyProblem ?? "Getting your keybind ready\u2026";
     }
 
     /// <summary>What the Ready screen says the key does.</summary>
@@ -84,7 +184,7 @@ public static class OnboardingCopy
         return state switch
         {
             OnboardingPracticeState.CannotHear => "We cannot hear you",
-            OnboardingPracticeState.Listening => "Listening…",
+            OnboardingPracticeState.Listening => "Listening\u2026",
             OnboardingPracticeState.SomethingBroke => "That did not work",
             OnboardingPracticeState.MissedTheBox => "Click the box first",
             OnboardingPracticeState.SaidNothing => "All quiet",
@@ -112,8 +212,6 @@ public static class OnboardingCopy
                 : $"Go ahead. Let go of {shortcut} when you are done.",
             OnboardingPracticeState.SomethingBroke =>
                 "Something went wrong on our side, not yours.\nTry once more, or skip ahead and dictate anywhere.",
-            // WHERE THE WORDS WENT IS SAID AS IT HAPPENED. macOS always says the clipboard, because a missed box
-            // there always falls back to it; on Windows a take can also be delivered into another window.
             OnboardingPracticeState.MissedTheBox => missedTo == OnboardingTakeDelivery.Delivered
                 ? $"We heard you. The box was not selected, so your words went to another window.\nClick inside the box, then {(toggle ? "press" : "hold")} {shortcut} again."
                 : $"We heard you. The box was not selected, so your words went to the clipboard.\nClick inside the box, then {(toggle ? "press" : "hold")} {shortcut} again.",

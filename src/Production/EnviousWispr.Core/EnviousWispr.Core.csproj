@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\Packs\*.json" />
+    <EmbeddedResource Include="Onboarding\setup-rules.json" LogicalName="onboarding/setup-rules.json" />
   </ItemGroup>
 
   <ItemGroup>

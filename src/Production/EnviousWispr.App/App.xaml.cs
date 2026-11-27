@@ -379,6 +379,9 @@ public partial class App : Application, IAsyncDisposable
         _window.LoadStartupRegistration = () => _startupRegistration.GetStatusAsync(_startupCancellation.Token);
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.OnboardingDualDownloadRequested += OnOnboardingDualDownloadRequested;
+        _window.OnboardingDualDownloadCancelRequested += OnOnboardingDualDownloadCancelRequested;
+        _window.OnboardingDualDownloadRetryRequested += OnOnboardingDualDownloadRetryRequested;
         _window.EgOneModelDownloadRequested += OnEgOneModelDownloadRequested;
         _window.EgOneModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.EgOneModelRemoveRequested += OnEgOneModelRemoveRequested;
@@ -582,6 +585,9 @@ public partial class App : Application, IAsyncDisposable
             window.LoadStartupRegistration = null;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.OnboardingDualDownloadRequested -= OnOnboardingDualDownloadRequested;
+            window.OnboardingDualDownloadCancelRequested -= OnOnboardingDualDownloadCancelRequested;
+            window.OnboardingDualDownloadRetryRequested -= OnOnboardingDualDownloadRetryRequested;
             window.EgOneModelDownloadRequested -= OnEgOneModelDownloadRequested;
             window.EgOneModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
             window.EgOneModelRemoveRequested -= OnEgOneModelRemoveRequested;

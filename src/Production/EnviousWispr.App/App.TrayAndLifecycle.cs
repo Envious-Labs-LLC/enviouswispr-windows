@@ -616,6 +616,7 @@ public partial class App
             _startupCancellation.Cancel();
             _modelDownload?.Cancel();
             _graphicsRuntimeDownload?.Cancel();
+            _onboardingDownloadCancellation?.Cancel();
         },
         ReleaseInputs: (LifetimeStep[])
         [
@@ -653,6 +654,7 @@ public partial class App
             new LifetimeStep("startup", () => Join(Interlocked.Exchange(ref _startup, null))),
             new LifetimeStep("model delivery", () => Join(Interlocked.Exchange(ref _modelDelivery, null))),
             new LifetimeStep("graphics runtime delivery", () => Join(Interlocked.Exchange(ref _graphicsRuntimeDelivery, null))),
+            new LifetimeStep("onboarding model delivery", () => Join(Interlocked.Exchange(ref _onboardingDelivery, null))),
             new LifetimeStep("polish warm-up", async () =>
             {
                 if (_polishWarmup is { } warmup)

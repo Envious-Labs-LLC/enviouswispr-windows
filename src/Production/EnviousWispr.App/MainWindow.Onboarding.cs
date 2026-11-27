@@ -1,6 +1,8 @@
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.ModelDelivery;
 using EnviousWispr.Presentation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -10,22 +12,26 @@ using Microsoft.UI.Xaml.Input;
 
 namespace EnviousWispr.App;
 
-/// <summary>The first-run flow's five screens: drawing what <see cref="OnboardingFlow"/> decides, and telling it what happened.</summary>
-/// <remarks>
-/// THE DECISIONS ARE NOT HERE. Which screen, what may move it on, what a take's ending means and every Windows
-/// difference from macOS live in <see cref="OnboardingFlow"/> and are tested there; the sentences chosen from state
-/// are <see cref="OnboardingCopy"/>. This file reads the live facts the window already receives - the engine, the
-/// model download, the microphone switch, the recording key, the dictation edges - hands them over, and draws the
-/// answer. Nothing here probes anything of its own: every readiness source is the one the rest of the window shows.
-/// </remarks>
+/// <summary>
+/// Minimal compile and runtime bridge mapping <see cref="OnboardingFlow"/> onto the existing
+/// 5-panel <c>OnboardingView</c> until Wave C introduces the full 14-screen XAML UI.
+/// </summary>
 public sealed partial class MainWindow
 {
+    private enum LegacyOnboardingPanel
+    {
+        Welcome,
+        Checklist,
+        Permission,
+        Ready,
+        WarmingUp,
+        Practice,
+    }
+
     private const string WelcomeSubtitle = "The privacy-first dictation app built for Windows.";
 
-    /// <summary>How long a completed checklist stays on screen before the permission, so the ticks read as a beat.</summary>
     private static readonly TimeSpan ChecklistCompleteBeat = TimeSpan.FromMilliseconds(800);
 
-    /// <summary>How often a blocked microphone switch is read again while a screen is waiting on it: macOS's permission poll.</summary>
     private static readonly TimeSpan MicrophonePollInterval = TimeSpan.FromSeconds(2);
 
     private readonly OnboardingFlow _onboarding = new();
@@ -34,25 +40,19 @@ public sealed partial class MainWindow
 
     private readonly DispatcherTimer _onboardingMicrophonePoll = new() { Interval = MicrophonePollInterval };
 
-    /// <summary>The engine's own sentence, shown on the checklist once it is ready ("ready on the processor" is true and worth saying).</summary>
     private string _onboardingEngineSentence = OnboardingCopy.StartingEngine;
 
-    /// <summary>The last word from the model download, for the checklist's line and bar.</summary>
     private ModelDeliveryPresentation? _onboardingModel;
 
     private MicrophoneReadiness? _onboardingMicrophone;
 
-    /// <summary>True between a dictation's first edge and its last, from the session's own record of it.</summary>
     private bool _dictationActive;
 
-    /// <summary>True once the warm-up screen has been up for its display floor.</summary>
     private bool _warmingFloorElapsed;
 
     private string? _welcomeTitle;
 
-    private OnboardingScreen? _drawnScreen;
-
-    private OnboardingSetupPhase? _drawnPhase;
+    private LegacyOnboardingPanel? _drawnPanel;
 
     private OnboardingPracticeState? _drawnPractice;
 
@@ -60,23 +60,66 @@ public sealed partial class MainWindow
 
     private OnboardingChecklistStatus? _drawnModelItem;
 
-    /// <summary>True while the keyboard's last control was hidden and nothing on the screen could take it yet.</summary>
     private bool _onboardingFocusOrphaned;
 
-    /// <summary>The person asked for local transcription to be started again, from the checklist or the warm-up.</summary>
     public event Action? TranscriptionRetryRequested;
 
-    /// <summary>A dictation take has completed and the session is idle again.</summary>
     public event Action? DictationEnded;
 
-    /// <summary>Whether local transcription can take a dictation, said by the code that started it.</summary>
+    public event Action<string, string?, bool>? OnboardingDualDownloadRequested;
+
+    public event Action? OnboardingDualDownloadCancelRequested;
+
+    public event Action? OnboardingDualDownloadRetryRequested;
+
+    internal static SpeechModelDelivery ToSpeechModelDelivery(OnboardingDownloadStage stage) => stage switch
+    {
+        OnboardingDownloadStage.Pending => SpeechModelDelivery.Missing,
+        OnboardingDownloadStage.Downloading => SpeechModelDelivery.Downloading,
+        OnboardingDownloadStage.Activating => SpeechModelDelivery.Activating,
+        OnboardingDownloadStage.Installed => SpeechModelDelivery.Installed,
+        OnboardingDownloadStage.Cancelled => SpeechModelDelivery.Cancelled,
+        OnboardingDownloadStage.Failed => SpeechModelDelivery.Failed,
+        OnboardingDownloadStage.CannotDownload => SpeechModelDelivery.CannotDownload,
+        _ => SpeechModelDelivery.Unknown,
+    };
+
+    internal void RequestOnboardingDualDownload(string speechModelId, string? polishModelId, bool parallelDownloads) =>
+        OnboardingDualDownloadRequested?.Invoke(speechModelId, polishModelId, parallelDownloads);
+
+    internal void CancelOnboardingDualDownload() =>
+        OnboardingDualDownloadCancelRequested?.Invoke();
+
+    internal void RetryOnboardingDualDownload() =>
+        OnboardingDualDownloadRetryRequested?.Invoke();
+
+    internal void ObserveOnboardingDownloadSnapshot(OnboardingDownloadSnapshot snapshot)
+    {
+        _onboarding.ReportModel(ToSpeechModelDelivery(snapshot.Speech.Stage));
+        if (snapshot.Polish is { } polish)
+        {
+            _onboarding.ReportPolishModel(ToSpeechModelDelivery(polish.Stage));
+        }
+
+        RenderOnboarding();
+    }
+
+    private LegacyOnboardingPanel CurrentLegacyPanel() => _onboarding.Step switch
+    {
+        OnboardingStep.Welcome => LegacyOnboardingPanel.Welcome,
+        OnboardingStep.Downloads => LegacyOnboardingPanel.Checklist,
+        OnboardingStep.Permissions => LegacyOnboardingPanel.Permission,
+        OnboardingStep.Key => LegacyOnboardingPanel.Ready,
+        OnboardingStep.GettingReady => LegacyOnboardingPanel.WarmingUp,
+        _ => LegacyOnboardingPanel.Practice,
+    };
+
     public void SetTranscriptionReadiness(SpeechEngineReadiness readiness)
     {
         _onboarding.ReportEngine(readiness);
         RenderOnboarding();
     }
 
-    /// <summary>A dictation began or ended, from the edge the session records in its run state.</summary>
     public void SetDictationActive(bool active)
     {
         var ended = _dictationActive && !active;
@@ -85,14 +128,13 @@ public sealed partial class MainWindow
         {
             _audioPlayback.Stop();
         }
+
         RunSetupAgainButton.IsEnabled = !active;
         if (ended)
         {
             _onboarding.TakeEnded(OnboardingPracticeBox.Text);
             if (_onboarding.PracticeState == OnboardingPracticeState.MissedTheBox && OnboardingView.Visibility == Visibility.Visible)
             {
-                // PUT THE CURSOR BACK, so the next attempt cannot miss for the same reason. The advice is useless if
-                // acting on it needs a click nobody was told about (macOS, founder-found in live UAT).
                 OnboardingPracticeBox.Focus(FocusState.Programmatic);
             }
 
@@ -102,7 +144,6 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    /// <summary>Hands a status to the practice box, which needs to know when a take starts and whether it failed.</summary>
     private void ObserveStatusForOnboarding(DictationStatus status)
     {
         if (OnboardingView.Visibility != Visibility.Visible)
@@ -110,7 +151,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (_onboarding.Screen == OnboardingScreen.Practice)
+        if (CurrentLegacyPanel() == LegacyOnboardingPanel.Practice)
         {
             if (status.State == DictationOverlayState.Recording && !_onboarding.TakeInFlight)
             {
@@ -123,18 +164,14 @@ public sealed partial class MainWindow
             }
         }
 
-        // THE ENGINE'S OWN SENTENCE MAY HAVE CHANGED TOO, and the checklist shows it once the engine is ready.
         RenderOnboarding();
     }
 
-    /// <summary>Where a take's words went, as the delivery reported it.</summary>
     private void ObserveDeliveryForOnboarding(DeliveryLanding landing) =>
         _onboarding.TakeDelivered(OnboardingTakeDeliveries.For(landing));
 
     private void ObserveModelForOnboarding(ModelDeliveryPresentation presentation)
     {
-        // THE GRAPHICS RUNTIME SHARES THE RECORD AND SAYS NOTHING ABOUT THE SPEECH MODEL. Only a stage the delivery
-        // code set moves the checklist.
         if (presentation.Stage == SpeechModelDelivery.Unknown)
         {
             return;
@@ -164,14 +201,12 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    /// <summary>Starts a visit at the welcome screen.</summary>
     private void BeginOnboardingVisit()
     {
         _welcomeTitle ??= OnboardingTitle.Text;
         _onboarding.Begin();
         OnboardingPracticeBox.Text = string.Empty;
-        _drawnScreen = null;
-        _drawnPhase = null;
+        _drawnPanel = null;
         _drawnPractice = null;
         _drawnWarming = null;
         _drawnModelItem = null;
@@ -180,23 +215,21 @@ public sealed partial class MainWindow
 
     private async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
     {
-        switch (_onboarding.Screen)
+        switch (CurrentLegacyPanel())
         {
-            case OnboardingScreen.Welcome:
-                _onboarding.GetStarted();
+            case LegacyOnboardingPanel.Welcome:
+                _onboarding.StartLegacyShellFromWelcome();
                 break;
-            case OnboardingScreen.SettingUp when _onboarding.SetupPhase == OnboardingSetupPhase.Checklist:
-                _onboarding.AdvanceToPermission();
+            case LegacyOnboardingPanel.Checklist:
+                _onboarding.AdvanceLegacyChecklistToPermissions();
                 break;
-            case OnboardingScreen.SettingUp:
-                // READ AGAIN AT THE PRESS, as macOS rechecks Accessibility at Continue: the switch can be turned off
-                // between two polls, and a stale answer here is the whole failure the gate exists to prevent.
-                _onboarding.ContinueFromPermission(WindowsMicrophoneConsent.Read());
+            case LegacyOnboardingPanel.Permission:
+                _onboarding.ContinueFromPermissions(WindowsMicrophoneConsent.Read());
                 break;
-            case OnboardingScreen.Ready:
-                _onboarding.BeginWarming();
+            case LegacyOnboardingPanel.Ready:
+                _onboarding.BeginLegacyWarming();
                 break;
-            case OnboardingScreen.Practice:
+            case LegacyOnboardingPanel.Practice:
                 if (_onboarding.MayFinish(OnboardingExit.FinishSetup))
                 {
                     await FinishOnboardingAsync().ConfigureAwait(true);
@@ -211,10 +244,11 @@ public sealed partial class MainWindow
 
     private async void OnboardingSkipButton_Click(object sender, RoutedEventArgs e)
     {
-        // BOTH SKIPS FINISH SETUP, as on macOS: the warm-up's "skip ahead" and the practice's "skip this step" are
-        // each the person choosing not to wait, and neither leaves them anywhere but the app.
-        if (_onboarding.MayFinish(OnboardingExit.SkipWarming) || _onboarding.MayFinish(OnboardingExit.SkipPractice) ||
-            _onboarding.MayFinish(OnboardingExit.SkipUnavailableModel))
+        if (_onboarding.MayFinish(OnboardingExit.SkipWarming) ||
+            _onboarding.MayFinish(OnboardingExit.SkipPractice) ||
+            _onboarding.MayFinish(OnboardingExit.SkipUnavailableModel) ||
+            _onboarding.MayFinish(OnboardingExit.SkipAheadWithoutPolish) ||
+            _onboarding.MayFinish(OnboardingExit.ContinueWithoutPolish))
         {
             await FinishOnboardingAsync().ConfigureAwait(true);
         }
@@ -247,11 +281,6 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    /// <summary>"Run setup again" on Diagnostics: the flow from the welcome, where macOS keeps its Restart Onboarding.</summary>
-    /// <remarks>
-    /// STORED AS NOT DONE, AS macOS STORES IT, so a person who closes the app part way through meets setup again on
-    /// the next launch rather than a half-finished visit. Nothing else is touched.
-    /// </remarks>
     private async void RunSetupAgainButton_Click(object sender, RoutedEventArgs e)
     {
         if (_dictationActive)
@@ -287,7 +316,6 @@ public sealed partial class MainWindow
         HistoryNavItem.Focus(FocusState.Programmatic);
     }
 
-    /// <summary>Draws the current screen, and carries out the moves the flow says are due.</summary>
     private void RenderOnboarding()
     {
         if (OnboardingView.Visibility != Visibility.Visible)
@@ -296,22 +324,22 @@ public sealed partial class MainWindow
             return;
         }
 
-        // THE MOVES THE FLOW DECIDES ARE DUE, before anything is drawn, so the screen is drawn once in its new state.
         if (_onboarding.ShouldStartDownload)
         {
             _onboarding.DownloadStarted();
             ModelDownloadRequested?.Invoke();
         }
 
-        if (_onboarding.Screen == OnboardingScreen.WarmingUp && _warmingFloorElapsed)
+        if (CurrentLegacyPanel() == LegacyOnboardingPanel.WarmingUp && _warmingFloorElapsed)
         {
             _onboarding.BeginPractice();
         }
 
-        var screenChanged = _drawnScreen != _onboarding.Screen || _drawnPhase != _onboarding.SetupPhase;
+        var currentPanel = CurrentLegacyPanel();
+        var screenChanged = _drawnPanel != currentPanel;
         if (screenChanged)
         {
-            ArmBeatFor(_onboarding.Screen);
+            ArmBeatFor(currentPanel);
         }
 
         ArmMicrophonePoll();
@@ -320,28 +348,29 @@ public sealed partial class MainWindow
             ArmBeat(ChecklistCompleteBeat);
         }
 
-        OnboardingStepText.Text = OnboardingCopy.StepOf(_onboarding.StepNumber);
-        SetPanel(OnboardingWelcomePanel, OnboardingScreen.Welcome);
-        OnboardingChecklistPanel.Visibility = _onboarding.Screen == OnboardingScreen.SettingUp &&
-            _onboarding.SetupPhase == OnboardingSetupPhase.Checklist ? Visibility.Visible : Visibility.Collapsed;
-        OnboardingPermissionPanel.Visibility = _onboarding.Screen == OnboardingScreen.SettingUp &&
-            _onboarding.SetupPhase == OnboardingSetupPhase.Permission ? Visibility.Visible : Visibility.Collapsed;
-        SetPanel(OnboardingReadyPanel, OnboardingScreen.Ready);
-        SetPanel(OnboardingWarmingPanel, OnboardingScreen.WarmingUp);
-        SetPanel(OnboardingPracticePanel, OnboardingScreen.Practice);
-        OnboardingFooterText.Visibility = _onboarding.Screen == OnboardingScreen.Welcome ? Visibility.Visible : Visibility.Collapsed;
+        var stepNumber = _onboarding.LegacyStepNumber;
+        OnboardingStepText.Text = OnboardingCopy.StepOf(stepNumber);
+        SetPanel(OnboardingWelcomePanel, LegacyOnboardingPanel.Welcome);
+        SetPanel(OnboardingChecklistPanel, LegacyOnboardingPanel.Checklist);
+        SetPanel(OnboardingPermissionPanel, LegacyOnboardingPanel.Permission);
+        SetPanel(OnboardingReadyPanel, LegacyOnboardingPanel.Ready);
+        SetPanel(OnboardingWarmingPanel, LegacyOnboardingPanel.WarmingUp);
+        SetPanel(OnboardingPracticePanel, LegacyOnboardingPanel.Practice);
+        OnboardingFooterText.Visibility = currentPanel == LegacyOnboardingPanel.Welcome
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
-        var (title, subtitle) = _onboarding.Screen switch
+        var (title, subtitle) = currentPanel switch
         {
-            OnboardingScreen.Welcome => (_welcomeTitle ?? OnboardingTitle.Text, WelcomeSubtitle),
-            OnboardingScreen.SettingUp when _onboarding.SetupPhase == OnboardingSetupPhase.Permission =>
+            LegacyOnboardingPanel.Welcome => (_welcomeTitle ?? OnboardingTitle.Text, WelcomeSubtitle),
+            LegacyOnboardingPanel.Permission =>
                 ("Almost there. Just one permission.", "This lets EnviousWispr listen for you."),
-            OnboardingScreen.SettingUp => ("Warming up the AI…", _onboarding.Model is SpeechModelDelivery.Missing
+            LegacyOnboardingPanel.Checklist => ("Warming up the AI\u2026", _onboarding.Model is SpeechModelDelivery.Missing
                     or SpeechModelDelivery.Downloading or SpeechModelDelivery.Cancelled or SpeechModelDelivery.Failed
                 ? "Downloading the local speech model so EnviousWispr can run privately on your PC."
                 : "Setting up the local speech model so EnviousWispr can run privately on your PC."),
-            OnboardingScreen.Ready => ("Ready to Wispr!", "This is the key you dictate with.\nPress GET STARTED! to try it."),
-            OnboardingScreen.WarmingUp => _onboarding.WarmingOutcome == OnboardingWarmingOutcome.Failed
+            LegacyOnboardingPanel.Ready => ("Ready to Wispr!", "This is the key you dictate with.\nPress GET STARTED! to try it."),
+            LegacyOnboardingPanel.WarmingUp => _onboarding.WarmingOutcome == OnboardingWarmingOutcome.Failed
                 ? (OnboardingCopy.WarmingFailedTitle, OnboardingCopy.WarmingFailedSubtitle)
                 : (OnboardingCopy.WarmingTitle, OnboardingCopy.WarmingSubtitle),
             _ => (
@@ -371,20 +400,19 @@ public sealed partial class MainWindow
 
         if (screenChanged)
         {
-            _drawnScreen = _onboarding.Screen;
-            _drawnPhase = _onboarding.SetupPhase;
+            _drawnPanel = currentPanel;
             _drawnPractice = _onboarding.PracticeState;
             _drawnWarming = _onboarding.WarmingOutcome;
             OnboardingScroll.ChangeView(null, 0, null, disableAnimation: true);
             FocusOnboardingScreen();
-            Announce($"{OnboardingCopy.StepOf(_onboarding.StepNumber)}. {title}. {subtitle}");
+            Announce($"{OnboardingCopy.StepOf(stepNumber)}. {title}. {subtitle}");
         }
-        else if (_onboarding.Screen == OnboardingScreen.Practice && _drawnPractice != _onboarding.PracticeState)
+        else if (currentPanel == LegacyOnboardingPanel.Practice && _drawnPractice != _onboarding.PracticeState)
         {
             _drawnPractice = _onboarding.PracticeState;
             Announce($"{title}. {subtitle}");
         }
-        else if (_onboarding.Screen == OnboardingScreen.WarmingUp && _drawnWarming != _onboarding.WarmingOutcome)
+        else if (currentPanel == LegacyOnboardingPanel.WarmingUp && _drawnWarming != _onboarding.WarmingOutcome)
         {
             _drawnWarming = _onboarding.WarmingOutcome;
             Announce($"{title}. {subtitle}");
@@ -395,8 +423,8 @@ public sealed partial class MainWindow
         }
     }
 
-    private void SetPanel(UIElement panel, OnboardingScreen screen) =>
-        panel.Visibility = _onboarding.Screen == screen ? Visibility.Visible : Visibility.Collapsed;
+    private void SetPanel(UIElement panel, LegacyOnboardingPanel targetPanel) =>
+        panel.Visibility = CurrentLegacyPanel() == targetPanel ? Visibility.Visible : Visibility.Collapsed;
 
     private void DrawChecklist()
     {
@@ -427,8 +455,6 @@ public sealed partial class MainWindow
         OnboardingKeyErrorMark.Visibility = key == OnboardingChecklistStatus.Error ? Visibility.Visible : Visibility.Collapsed;
         OnboardingHotkeyText.Text = OnboardingCopy.KeyLine(_onboarding);
 
-        // THE NOTE UNDER THE CARD SAYS WHAT STOPPED AND WHAT TO DO, as macOS's does: an error with Retry, a pause with
-        // "Try setup again", or "Cancelling…" while a cancel drains. Nothing at all while the setup is simply working.
         var note = _onboarding.CancelRequested
             ? OnboardingCopy.Cancelling
             : _onboarding.SetupPaused
@@ -452,7 +478,8 @@ public sealed partial class MainWindow
         if (_drawnModelItem != item)
         {
             _drawnModelItem = item;
-            if (item == OnboardingChecklistStatus.Error && _onboarding.Screen == OnboardingScreen.SettingUp &&
+            if (item == OnboardingChecklistStatus.Error &&
+                CurrentLegacyPanel() == LegacyOnboardingPanel.Checklist &&
                 OnboardingRetryButton.Visibility == Visibility.Visible)
             {
                 OnboardingRetryButton.Focus(FocusState.Programmatic);
@@ -463,7 +490,7 @@ public sealed partial class MainWindow
     private void DrawPermission()
     {
         var readiness = _onboardingMicrophone;
-        SetLiveText(OnboardingMicrophoneText, readiness?.Sentence ?? "Checking Windows audio devices…");
+        SetLiveText(OnboardingMicrophoneText, readiness?.Sentence ?? "Checking Windows audio devices\u2026");
         var allowed = _onboarding.MicrophoneConsent == MicrophoneConsent.Allowed;
         OnboardingMicrophoneAllowedBadge.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
         OnboardingMicrophonePrivacyButton.Visibility = !allowed && (readiness?.OffersPrivacySettings ?? false)
@@ -473,7 +500,7 @@ public sealed partial class MainWindow
 
     private void DrawReady()
     {
-        OnboardingKeycapText.Text = _onboarding.RecordingKey ?? "…";
+        OnboardingKeycapText.Text = _onboarding.RecordingKey ?? "\u2026";
         OnboardingKeyUsageText.Text = _onboarding.RecordingKey is null
             ? OnboardingCopy.KeyLine(_onboarding)
             : OnboardingCopy.KeyUsage(_onboarding.RecordingMode);
@@ -487,19 +514,17 @@ public sealed partial class MainWindow
     {
         var outcome = _onboarding.WarmingOutcome;
         OnboardingWarmingActivity.Visibility = outcome == OnboardingWarmingOutcome.Failed ? Visibility.Collapsed : Visibility.Visible;
-        OnboardingWarmingRing.IsActive = _onboarding.Screen == OnboardingScreen.WarmingUp && outcome != OnboardingWarmingOutcome.Failed;
+        OnboardingWarmingRing.IsActive = CurrentLegacyPanel() == LegacyOnboardingPanel.WarmingUp && outcome != OnboardingWarmingOutcome.Failed;
         OnboardingWarmingFailure.Visibility = outcome == OnboardingWarmingOutcome.Failed ? Visibility.Visible : Visibility.Collapsed;
         SetLiveText(
             OnboardingWarmingFailureText,
             outcome == OnboardingWarmingOutcome.Failed ? OnboardingCopy.WarmingFailedMessage : string.Empty);
-        // A CAPTION SAYING NOTHING ELSE IS NEEDED DOES NOT SIT BESIDE A PANEL ASKING FOR A RETRY (macOS, local review).
         OnboardingWarmingCaption.Visibility = outcome == OnboardingWarmingOutcome.Failed ? Visibility.Collapsed : Visibility.Visible;
         DrawWarmRow(OnboardingWarmMicMark, OnboardingWarmMicPending, _onboarding.MicrophoneAllowed);
         DrawWarmRow(OnboardingWarmKeyMark, OnboardingWarmKeyPending, _onboarding.RecordingKey is not null);
         DrawWarmRow(OnboardingWarmEngineMark, OnboardingWarmEnginePending, outcome == OnboardingWarmingOutcome.Ready);
     }
 
-    /// <summary>A tick or an empty ring, both declared in the markup so each takes its colour from a theme token.</summary>
     private static void DrawWarmRow(FontIcon done, FontIcon pending, bool isDone)
     {
         done.Visibility = isDone ? Visibility.Visible : Visibility.Collapsed;
@@ -509,22 +534,22 @@ public sealed partial class MainWindow
     private void DrawPractice()
     {
         var cannotHear = _onboarding.PracticeState == OnboardingPracticeState.CannotHear;
-        // A SINGLE SPACE, NOT EMPTY, so the line keeps its height when there is nothing to say (macOS).
         OnboardingPracticeFootnote.Text = cannotHear || _onboarding.PracticeSucceeded ? " " : OnboardingCopy.PracticeFootnote;
         OnboardingPracticeMicrophoneButton.Visibility = cannotHear ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void DrawFooter()
     {
-        var (label, help, visible, enabled) = _onboarding.Screen switch
+        var currentPanel = CurrentLegacyPanel();
+        var (label, help, visible, enabled) = currentPanel switch
         {
-            OnboardingScreen.Welcome => ("Get Started", "Starts setup.", true, true),
-            OnboardingScreen.SettingUp when _onboarding.SetupPhase == OnboardingSetupPhase.Checklist =>
+            LegacyOnboardingPanel.Welcome => ("Get Started", "Starts setup.", true, true),
+            LegacyOnboardingPanel.Checklist =>
                 ("Continue", "Available once the speech model is ready.", true, _onboarding.ChecklistComplete),
-            OnboardingScreen.SettingUp =>
+            LegacyOnboardingPanel.Permission =>
                 ("Continue", "Available once Windows allows microphone access.", true, _onboarding.MicrophoneAllowed),
-            OnboardingScreen.Ready => ("GET STARTED!", "Checks the speech engine, then opens a box to try your first dictation.", true, true),
-            OnboardingScreen.WarmingUp => ("Continue", string.Empty, false, false),
+            LegacyOnboardingPanel.Ready => ("GET STARTED!", "Checks the speech engine, then opens a box to try your first dictation.", true, true),
+            LegacyOnboardingPanel.WarmingUp => ("Continue", string.Empty, false, false),
             _ => ("FINISH SETUP", "Available once your first dictation has reached the box. Opens EnviousWispr History.", true, _onboarding.CanFinishPractice),
         };
         FinishOnboardingButton.Content = label;
@@ -532,15 +557,15 @@ public sealed partial class MainWindow
         FinishOnboardingButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         FinishOnboardingButton.IsEnabled = enabled;
 
-        var (skip, skipVisible, skipEnabled) = _onboarding.Screen switch
+        var (skip, skipVisible, skipEnabled) = currentPanel switch
         {
-            OnboardingScreen.WarmingUp => (
+            LegacyOnboardingPanel.WarmingUp => (
                 _onboarding.WarmingOutcome == OnboardingWarmingOutcome.Failed
                     ? OnboardingCopy.WarmingSkipAfterFailure
                     : OnboardingCopy.WarmingSkip,
                 true,
                 true),
-            OnboardingScreen.Practice => (
+            LegacyOnboardingPanel.Practice => (
                 _onboarding.TakeInFlight ? OnboardingCopy.PracticeBusy : OnboardingCopy.PracticeSkip,
                 true,
                 _onboarding.CanSkipPractice),
@@ -552,21 +577,14 @@ public sealed partial class MainWindow
         OnboardingSkipButton.IsEnabled = skipEnabled;
     }
 
-    /// <summary>Puts keyboard focus where the new screen's first action is.</summary>
-    /// <remarks>
-    /// THE FIRST CANDIDATE THAT CAN TAKE FOCUS, IN THE SCREEN'S READING ORDER. A collapsed or disabled control refuses
-    /// focus without a word, so a single fixed target left the keyboard nowhere whenever that one was not on screen.
-    /// </remarks>
     private void FocusOnboardingScreen()
     {
-        Control[] candidates = _onboarding.Screen switch
+        Control[] candidates = CurrentLegacyPanel() switch
         {
-            OnboardingScreen.Practice => [OnboardingPracticeBox, OnboardingPracticeMicrophoneButton, OnboardingSkipButton],
-            OnboardingScreen.WarmingUp => [OnboardingWarmingRetryButton, OnboardingSkipButton],
-            OnboardingScreen.SettingUp when _onboarding.SetupPhase == OnboardingSetupPhase.Permission =>
-                [OnboardingMicrophonePrivacyButton, FinishOnboardingButton],
-            OnboardingScreen.SettingUp =>
-                [OnboardingCancelSetupButton, OnboardingRetryButton, FinishOnboardingButton, OnboardingSkipButton],
+            LegacyOnboardingPanel.Practice => [OnboardingPracticeBox, OnboardingPracticeMicrophoneButton, OnboardingSkipButton],
+            LegacyOnboardingPanel.WarmingUp => [OnboardingWarmingRetryButton, OnboardingSkipButton],
+            LegacyOnboardingPanel.Permission => [OnboardingMicrophonePrivacyButton, FinishOnboardingButton],
+            LegacyOnboardingPanel.Checklist => [OnboardingCancelSetupButton, OnboardingRetryButton, FinishOnboardingButton, OnboardingSkipButton],
             _ => [FinishOnboardingButton],
         };
         _onboardingFocusOrphaned = candidates.FirstOrDefault(CanTakeFocus)?.Focus(FocusState.Programmatic) != true;
@@ -575,7 +593,6 @@ public sealed partial class MainWindow
     private static bool CanTakeFocus(Control control) =>
         control.IsEnabled && IsOnAVisiblePage(control);
 
-    /// <summary>The control holding the keyboard inside the setup view, if one does.</summary>
     private Control? FocusedOnboardingControl() =>
         OnboardingView.XamlRoot is { } root &&
         FocusManager.GetFocusedElement(root) is Control focused &&
@@ -583,15 +600,6 @@ public sealed partial class MainWindow
             ? focused
             : null;
 
-    /// <summary>Moves the keyboard on when the control holding it has just been hidden or disabled.</summary>
-    /// <remarks>
-    /// MEASURED ON THE RUNNING APP: pressing Cancel collapsed it while it held focus, and the accessibility tree went
-    /// on reporting the collapsed button as focused, so the next Tab started from a control nobody could see. Cancel
-    /// becomes "Try setup again", Retry becomes Cancel, FINISH SETUP is held during a take; any of them can be under
-    /// the focus when it goes, so the rescue is general rather than one pair's. And the replacement is not always
-    /// on screen at the same moment - "Try setup again" arrives only once the cancel has drained - so a focus left
-    /// with nowhere to go is remembered and placed on the next render that has somewhere.
-    /// </remarks>
     private void RescueOnboardingFocus(Control? focusedBefore)
     {
         if (focusedBefore is not null && !CanTakeFocus(focusedBefore))
@@ -605,11 +613,11 @@ public sealed partial class MainWindow
         }
     }
 
-    private static bool IsInside(DependencyObject element, DependencyObject container)
+    private static bool IsInside(DependencyObject element, DependencyObject ancestor)
     {
-        for (var node = element; node is not null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+        for (var current = element; current is not null; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
         {
-            if (ReferenceEquals(node, container))
+            if (ReferenceEquals(current, ancestor))
             {
                 return true;
             }
@@ -618,12 +626,6 @@ public sealed partial class MainWindow
         return false;
     }
 
-    /// <summary>Says the new screen once, the way the release-notes mark does.</summary>
-    /// <remarks>
-    /// A NOTIFICATION, NOT A LIVE REGION ON THE TITLE. The title changes on every screen and a live region there would
-    /// be read on top of the focus moving to the screen's first control; one notification carrying the step, the
-    /// heading and the line under it is heard once, and MostRecent drops a screen skipped past before it was read.
-    /// </remarks>
     private void Announce(string text)
     {
         var peer = FrameworkElementAutomationPeer.FromElement(OnboardingTitle)
@@ -635,12 +637,11 @@ public sealed partial class MainWindow
             "EnviousWisprSetupStep");
     }
 
-    /// <summary>Arms the display beat a screen needs on arrival: the warm-up's floor.</summary>
-    private void ArmBeatFor(OnboardingScreen screen)
+    private void ArmBeatFor(LegacyOnboardingPanel panel)
     {
         _onboardingBeat.Stop();
         _warmingFloorElapsed = false;
-        if (screen == OnboardingScreen.WarmingUp)
+        if (panel == LegacyOnboardingPanel.WarmingUp)
         {
             ArmBeat(OnboardingFlow.WarmingDisplayFloor);
         }
@@ -658,29 +659,21 @@ public sealed partial class MainWindow
     private void OnOnboardingBeat(object? sender, object e)
     {
         _onboardingBeat.Stop();
-        if (_onboarding.Screen == OnboardingScreen.WarmingUp)
+        if (CurrentLegacyPanel() == LegacyOnboardingPanel.WarmingUp)
         {
             _warmingFloorElapsed = true;
         }
         else
         {
-            _onboarding.AdvanceToPermission();
+            _onboarding.AdvanceLegacyChecklistToPermissions();
         }
 
         RenderOnboarding();
     }
 
-    /// <summary>Reads the Windows switch again every two seconds while a screen is waiting on it.</summary>
-    /// <remarks>
-    /// macOS polls its permissions every two seconds while the permission screen is up, and again from the practice
-    /// screen while it cannot hear. Windows raises nothing when the switch is turned on, so the same poll, scoped to
-    /// the same two waits, is the only way the screen can notice without a click. A registry read; nothing heavier.
-    /// </remarks>
     private void ArmMicrophonePoll()
     {
-        var waiting = (_onboarding.Screen == OnboardingScreen.SettingUp &&
-                _onboarding.SetupPhase == OnboardingSetupPhase.Permission &&
-                !_onboarding.MicrophoneAllowed) ||
+        var waiting = (CurrentLegacyPanel() == LegacyOnboardingPanel.Permission && !_onboarding.MicrophoneAllowed) ||
             _onboarding.PracticeState == OnboardingPracticeState.CannotHear;
         if (!waiting)
         {
@@ -703,7 +696,6 @@ public sealed partial class MainWindow
             return;
         }
 
-        // THE SWITCH CAME ON: the full read, devices included, so the row names the microphone it will use.
         _onboardingMicrophonePoll.Stop();
         try
         {
