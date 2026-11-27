@@ -457,9 +457,11 @@ public sealed partial class MainWindow
                 : -1;
 
     private FinalAsrEngine SelectedFinalEngine() =>
-        WhisperEngineCard?.IsChecked == true
-            ? FinalAsrEngine.Whisper
-            : FinalAsrEngine.Parakeet;
+        WhisperEngineCard is null
+            ? (_settings?.Preferences.Dictation.FinalEngine ?? _lastActiveEngine ?? FinalAsrEngine.Parakeet)
+            : WhisperEngineCard.IsChecked == true
+                ? FinalAsrEngine.Whisper
+                : FinalAsrEngine.Parakeet;
 
     private void SetSelectedFinalEngineCards(FinalAsrEngine selectedEngine)
     {
@@ -715,12 +717,13 @@ public sealed partial class MainWindow
 
     public void ShowSpeechEngineNotice(string message)
     {
+        var normalized = message ?? string.Empty;
+        _latestSpeechEngineNotice = normalized;
         if (SpeechEngineNoticeText is null || SpeechEngineNoticeBanner is null)
         {
             return;
         }
 
-        var normalized = message ?? string.Empty;
         SetLiveText(SpeechEngineNoticeText, normalized);
         SpeechEngineNoticeBanner.Visibility = string.IsNullOrWhiteSpace(normalized)
             ? Visibility.Collapsed
@@ -879,9 +882,11 @@ public sealed partial class MainWindow
     }
 
     private EnglishSpelling SelectedEnglishSpelling() =>
-        EnglishSpellingComboBox?.SelectedIndex == 1
-            ? EnglishSpelling.British
-            : EnglishSpelling.American;
+        EnglishSpellingComboBox is null
+            ? _settings?.Preferences.Dictation.EnglishSpelling ?? EnglishSpelling.American
+            : EnglishSpellingComboBox.SelectedIndex == 1
+                ? EnglishSpelling.British
+                : EnglishSpelling.American;
 
     private async void WhisperLanguageButton_Click(object sender, RoutedEventArgs e) =>
         await OpenLanguagePickerAsync().ConfigureAwait(true);
@@ -1000,6 +1005,18 @@ public sealed partial class MainWindow
     /// </remarks>
     public void SetGraphicsRuntimeDelivery(ModelDeliveryPresentation? presentation)
     {
+        _hasGraphicsRuntimeSnapshot = true;
+        _latestGraphicsRuntimeDelivery = presentation;
+        if (!IsSettingsPageLoaded
+            || GraphicsRuntimeRow is null
+            || GraphicsRuntimeStatusText is null
+            || GraphicsRuntimeProgress is null
+            || DownloadGraphicsRuntimeButton is null
+            || CancelGraphicsRuntimeDownloadButton is null)
+        {
+            return;
+        }
+
         if (presentation is null)
         {
             GraphicsRuntimeRow.Visibility = Visibility.Collapsed;

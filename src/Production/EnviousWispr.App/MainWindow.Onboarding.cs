@@ -129,11 +129,19 @@ public sealed partial class MainWindow
             _audioPlayback.Stop();
         }
 
-        RunSetupAgainButton.IsEnabled = !active;
+        if (RunSetupAgainButton is not null)
+        {
+            RunSetupAgainButton.IsEnabled = !active;
+        }
+
         if (ended)
         {
-            _onboarding.TakeEnded(OnboardingPracticeBox.Text);
-            if (_onboarding.PracticeState == OnboardingPracticeState.MissedTheBox && OnboardingView.Visibility == Visibility.Visible)
+            var practiceText = OnboardingPracticeBox?.Text ?? string.Empty;
+            _onboarding.TakeEnded(practiceText);
+            if (_onboarding.PracticeState == OnboardingPracticeState.MissedTheBox
+                && IsOnboardingLoaded
+                && OnboardingView is { Visibility: Visibility.Visible }
+                && OnboardingPracticeBox is not null)
             {
                 OnboardingPracticeBox.Focus(FocusState.Programmatic);
             }
@@ -146,7 +154,7 @@ public sealed partial class MainWindow
 
     private void ObserveStatusForOnboarding(DictationStatus status)
     {
-        if (OnboardingView.Visibility != Visibility.Visible)
+        if (!IsOnboardingLoaded || OnboardingView is not { Visibility: Visibility.Visible })
         {
             return;
         }
@@ -155,7 +163,7 @@ public sealed partial class MainWindow
         {
             if (status.State == DictationOverlayState.Recording && !_onboarding.TakeInFlight)
             {
-                _onboarding.TakeStarted(OnboardingPracticeBox.Text);
+                _onboarding.TakeStarted(OnboardingPracticeBox?.Text ?? string.Empty);
             }
             else if (status.State is DictationOverlayState.Error or DictationOverlayState.Distress
                 or DictationOverlayState.Advisory)
@@ -318,7 +326,7 @@ public sealed partial class MainWindow
 
     private void RenderOnboarding()
     {
-        if (OnboardingView.Visibility != Visibility.Visible)
+        if (!IsOnboardingLoaded || OnboardingView is not { Visibility: Visibility.Visible })
         {
             StopOnboardingTimers();
             return;

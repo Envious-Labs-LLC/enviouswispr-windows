@@ -77,6 +77,13 @@ public sealed partial class MainWindow
 
     public void SetUpdateCheckInProgress()
     {
+        _updateCheckInProgress = true;
+        _updateInstallInProgress = false;
+        if (!IsSettingsPageLoaded || CheckForUpdatesButton is null || ApplyUpdateButton is null || UpdateStatusText is null)
+        {
+            return;
+        }
+
         CheckForUpdatesButton.IsEnabled = false;
         ApplyUpdateButton.IsEnabled = false;
         SetLiveText(UpdateStatusText, "Checking the Microsoft Store for updates…");
@@ -84,6 +91,13 @@ public sealed partial class MainWindow
 
     public void SetUpdateInstallInProgress()
     {
+        _updateInstallInProgress = true;
+        _updateCheckInProgress = false;
+        if (!IsSettingsPageLoaded || CheckForUpdatesButton is null || ApplyUpdateButton is null || UpdateStatusText is null)
+        {
+            return;
+        }
+
         CheckForUpdatesButton.IsEnabled = false;
         ApplyUpdateButton.IsEnabled = false;
         SetLiveText(UpdateStatusText, "Asking the Microsoft Store to install the update…");
@@ -91,11 +105,20 @@ public sealed partial class MainWindow
 
     public void SetUpdateStatus(UpdateOperationResult result)
     {
+        _updateCheckInProgress = false;
+        _updateInstallInProgress = false;
+        _latestUpdateResult = result;
+
         // A BUSY REFUSAL CHANGES NOTHING ABOUT WHAT THE STORE OFFERED. Every other answer is the Store's
         // latest word, and only an available update can be installed.
         if (result.Status is not (UpdateOperationStatus.BusyDictating or UpdateOperationStatus.BusyTranscribingFile))
         {
             _updateOffered = result.CanApply;
+        }
+
+        if (!IsSettingsPageLoaded || CheckForUpdatesButton is null || ApplyUpdateButton is null || UpdateStatusText is null)
+        {
+            return;
         }
 
         // WINDOWS IS ABOUT TO CLOSE THE APP ONCE THE STORE IS INSTALLING, so nothing is offered after it.
@@ -261,6 +284,11 @@ public sealed partial class MainWindow
     /// </remarks>
     private void SetSpeedCheckAvailability(bool available)
     {
+        if (RunSpeedCheckButton is null || SpeedCheckUnavailableText is null)
+        {
+            return;
+        }
+
         RunSpeedCheckButton.IsEnabled = available && !_speedCheckRunning;
         SetLiveVisibility(SpeedCheckUnavailableText, available ? Visibility.Collapsed : Visibility.Visible);
     }
@@ -276,6 +304,13 @@ public sealed partial class MainWindow
         // Not an unconditional re-enable. A dictation can begin between the click and the answer,
         // and handing the button back then would undo the greying the moment it was needed.
         _speedCheckRunning = false;
+        _hasSpeedCheckResult = true;
+        _latestSpeedCheckSummary = summary;
+        if (!IsSettingsPageLoaded || SpeedCheckResultText is null)
+        {
+            return;
+        }
+
         SetSpeedCheckAvailability(_currentOverlayState != DictationOverlayState.Recording);
         SetLiveRegion(
             SpeedCheckResultText,
@@ -329,6 +364,11 @@ public sealed partial class MainWindow
     {
         _startupOperationGeneration++;
         _startupOperationInProgress = true;
+        if (!IsSettingsPageLoaded || StartAtLoginToggle is null || StartAtLoginStatusText is null)
+        {
+            return;
+        }
+
         StartAtLoginToggle.IsEnabled = false;
         SetLiveText(StartAtLoginStatusText, "Updating Windows startup settings…");
     }
@@ -338,6 +378,15 @@ public sealed partial class MainWindow
         ArgumentNullException.ThrowIfNull(result);
         _startupOperationGeneration++;
         _startupOperationInProgress = false;
+        _latestStartupRegistration = result;
+        if (!IsSettingsPageLoaded
+            || StartAtLoginToggle is null
+            || OpenStartupSettingsButton is null
+            || StartAtLoginStatusText is null)
+        {
+            return;
+        }
+
         _isUpdatingStartupRegistration = true;
         try
         {
@@ -437,6 +486,11 @@ public sealed partial class MainWindow
 
     private void UpdateDiagnosticsStatusText(bool storedSendCrashReports)
     {
+        if (DiagnosticsStatusText is null)
+        {
+            return;
+        }
+
         SetLiveText(
             DiagnosticsStatusText,
             storedSendCrashReports != _launchedCrashReports

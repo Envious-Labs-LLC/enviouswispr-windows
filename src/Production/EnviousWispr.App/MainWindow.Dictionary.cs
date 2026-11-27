@@ -73,6 +73,15 @@ public sealed partial class MainWindow
     {
         ArgumentNullException.ThrowIfNull(advice);
         _activeWordDialogSuggestionSink?.Invoke(term, advice);
+        if (!IsDictionaryPageLoaded
+            || SuggestAliasesButton is null
+            || SuggestedAliasesPanel is null
+            || SuggestedAliasesScroller is null
+            || SuggestAliasesStatusText is null)
+        {
+            return;
+        }
+
         SuggestAliasesButton.IsEnabled = true;
         SuggestedAliasesPanel.Children.Clear();
         // Shown by the SetLiveRegion call below, which sets text and visibility together.

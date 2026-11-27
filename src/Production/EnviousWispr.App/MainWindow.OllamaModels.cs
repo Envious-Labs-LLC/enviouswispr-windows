@@ -25,6 +25,11 @@ public sealed partial class MainWindow
     /// <summary>Shows the block for Ollama and looks at Ollama; for any other provider hides it, stops the timer, and stops a download.</summary>
     private void ShowOllamaModels(PolishProvider provider)
     {
+        if (!IsSettingsPageLoaded || OllamaModelsRow is null || OllamaModelList is null)
+        {
+            return;
+        }
+
         var visible = provider == PolishProvider.Ollama && OllamaModels is not null;
         OllamaModelsRow.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         UpdateOllamaLivePollTimer();
@@ -99,7 +104,9 @@ public sealed partial class MainWindow
 
     private async Task PollOllamaModelsSilentlyAsync()
     {
-        if (_session.Closing ||
+        if (!IsSettingsPageLoaded ||
+            OllamaEndpointTextBox is null ||
+            _session.Closing ||
             OllamaModels is not { } models ||
             PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != PolishProvider.Ollama)
         {
@@ -130,7 +137,7 @@ public sealed partial class MainWindow
 
     private async Task RefreshOllamaModelsAsync()
     {
-        if (OllamaModels is not { } models)
+        if (!IsSettingsPageLoaded || OllamaEndpointTextBox is null || OllamaModels is not { } models)
         {
             return;
         }

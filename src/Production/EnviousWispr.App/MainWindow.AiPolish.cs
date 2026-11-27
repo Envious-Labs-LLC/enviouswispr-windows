@@ -399,12 +399,13 @@ public sealed partial class MainWindow
 
     public void ShowEgOneNotice(string message)
     {
+        var normalized = message ?? string.Empty;
+        _latestEgOneNotice = normalized;
         if (EgOneNoticeText is null || EgOneNoticeBanner is null)
         {
             return;
         }
 
-        var normalized = message ?? string.Empty;
         SetLiveText(EgOneNoticeText, normalized);
         EgOneNoticeBanner.Visibility = string.IsNullOrWhiteSpace(normalized)
             ? Visibility.Collapsed
@@ -1098,6 +1099,11 @@ public sealed partial class MainWindow
         OllamaModelChange? ollamaChange = null,
         bool silentPoll = false)
     {
+        if (!IsSettingsPageLoaded || PolishModelPicker is null || OllamaEndpointTextBox is null)
+        {
+            return;
+        }
+
         if (ollamaChange is null && !silentPoll)
         {
             ShowOllamaModels(provider);
@@ -1256,6 +1262,15 @@ public sealed partial class MainWindow
 
     private void RefreshApiKeyStatus()
     {
+        if (!IsSettingsPageLoaded
+            || ApiKeyPasswordBox is null
+            || SaveApiKeyButton is null
+            || RemoveApiKeyButton is null
+            || ApiKeyStatusText is null)
+        {
+            return;
+        }
+
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         var isCloudProvider = IsCloudProvider(provider);
         ApiKeyPasswordBox.IsEnabled = isCloudProvider;

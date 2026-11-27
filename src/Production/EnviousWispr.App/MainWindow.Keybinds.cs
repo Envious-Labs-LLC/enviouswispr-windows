@@ -436,7 +436,13 @@ public sealed partial class MainWindow
     /// </remarks>
     private void RefreshKeybindConflicts()
     {
-        if (_isUpdatingCaptureDisplay)
+        if (_isUpdatingCaptureDisplay
+            || !IsSettingsPageLoaded
+            || HotkeyTextBox is null
+            || CancelHotkeyTextBox is null
+            || QuickAddHotkeyTextBox is null
+            || PasteLastHotkeyTextBox is null
+            || CopyLastHotkeyTextBox is null)
         {
             return;
         }

@@ -1,3 +1,4 @@
+using EnviousWispr.App.Contracts;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Settings;
@@ -86,51 +87,39 @@ public partial class App
                     : _polishResource),
             new DeterministicLearnedWordChecker());
 
-    private void AttachSelfLearningToWindow(MainWindow window)
-    {
-        window.QueryLearnMemoryState = () =>
-            _learnMemoryStore is { } store
-                ? (store.HasStoredMemory, store.BlockedCount)
-                : (false, 0);
-        window.ForgetLearnMemory = () =>
-        {
-            if (_learnMemoryStore is not { } store)
+    private WindowVocabularyHost BuildVocabularyHostContract() =>
+        new(
+            SnippetImportReported: OnSnippetImportReported,
+            WordImportReported: OnWordImportReported,
+            MishearingSuggestionsRequested: OnMishearingSuggestionsRequested,
+            QueryLearnMemoryState: () =>
+                _learnMemoryStore is { } store
+                    ? (store.HasStoredMemory, store.BlockedCount)
+                    : (false, 0),
+            ForgetLearnMemory: () =>
             {
-                return false;
-            }
+                if (_learnMemoryStore is not { } store)
+                {
+                    return false;
+                }
 
-            var cleared = store.ForgetAll();
-            if (cleared)
-            {
-                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.LearnMemoryForgotten));
-            }
+                var cleared = store.ForgetAll();
+                if (cleared)
+                {
+                    _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.LearnMemoryForgotten));
+                }
 
-            return cleared;
-        };
-        window.WordsRemovedFromDictionary = entries =>
-            _learnedCoordinator?.RecordManualWordRemovals(entries);
-        window.LearnedAliasesRemovedFromDictionary = (replacement, aliases) =>
-            _learnedCoordinator?.RecordManualAliasRemovals(replacement, aliases);
-        window.ExportLearnMemory = () => _learnMemoryStore?.ExportEntries();
-        window.ImportLearnMemory = entries => _learnMemoryStore?.ImportEntries(entries);
-        window.LearnedPillUndoRequested += RequestLearnedCorrectionUndo;
-        window.LearnedPillUndoActiveRequested += RequestActiveLearnedCorrectionUndo;
-        window.LearnedPillEnded += OnLearnedPillEnded;
-        window.RefreshLearnMemoryUi();
-    }
-
-    private void DetachSelfLearningFromWindow(MainWindow window)
-    {
-        window.QueryLearnMemoryState = null;
-        window.ForgetLearnMemory = null;
-        window.WordsRemovedFromDictionary = null;
-        window.LearnedAliasesRemovedFromDictionary = null;
-        window.ExportLearnMemory = null;
-        window.ImportLearnMemory = null;
-        window.LearnedPillUndoRequested -= RequestLearnedCorrectionUndo;
-        window.LearnedPillUndoActiveRequested -= RequestActiveLearnedCorrectionUndo;
-        window.LearnedPillEnded -= OnLearnedPillEnded;
-    }
+                return cleared;
+            },
+            WordsRemovedFromDictionary: entries =>
+                _learnedCoordinator?.RecordManualWordRemovals(entries),
+            LearnedAliasesRemovedFromDictionary: (replacement, aliases) =>
+                _learnedCoordinator?.RecordManualAliasRemovals(replacement, aliases),
+            ExportLearnMemory: () => _learnMemoryStore?.ExportEntries(),
+            ImportLearnMemory: entries => _learnMemoryStore?.ImportEntries(entries),
+            LearnedPillUndoRequested: RequestLearnedCorrectionUndo,
+            LearnedPillUndoActiveRequested: RequestActiveLearnedCorrectionUndo,
+            LearnedPillEnded: OnLearnedPillEnded);
 
     private void PublishSelfLearningSettings()
     {

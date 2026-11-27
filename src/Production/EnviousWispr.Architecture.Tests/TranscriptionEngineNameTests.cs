@@ -328,7 +328,7 @@ public sealed partial class DesignSystemTokenTests
         var markup = File.ReadAllText(
             Path.Combine(
                 FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+                "src", "Production", "EnviousWispr.App", "Theme", "ControlBrushes.xaml"));
 
         string[] severities = ["Error", "Warning", "Success", "Informational"];
 

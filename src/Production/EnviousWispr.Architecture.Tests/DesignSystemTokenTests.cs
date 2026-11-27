@@ -3217,23 +3217,16 @@ public sealed partial class DesignSystemTokenTests
             .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot())
             .ToArray();
 
-        var constructor = roots.SelectMany(root => root.DescendantNodes().OfType<ConstructorDeclarationSyntax>())
-            .FirstOrDefault(one => one.Body is not null &&
-                Calls(one.Body, "InitializeComponent") is not null);
-        Assert.True(constructor is not null, "The window has no constructor that builds its own controls.");
+        var loader = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
+            .FirstOrDefault(method => method.Identifier.Text == "EnsureDictionaryPageLoaded" && method.Body is not null);
+        Assert.True(loader is not null, "The window has no EnsureDictionaryPageLoaded method.");
 
-        // THE VERY NEXT STATEMENT, not merely somewhere later. Anything allowed to run in between
-        // can set the picker to something else and the reset then does nothing visible, which is a
-        // single ordinary line that leaves every other rule here satisfied.
-        var statements = constructor!.Body!.Statements;
-        var built = statements
-            .Select((statement, index) => (statement, index))
-            .First(one => Calls(one.statement, "InitializeComponent") is not null)
-            .index;
+        // ResetMatchStrictness must run during DictionaryPage realization before any control sync or selection logic.
+        var resetCall = Calls(loader!.Body!, reset);
         Assert.True(
-            built + 1 < statements.Count && Calls(statements[built + 1], reset) is not null,
-            $"The window does not call {reset} immediately after building its controls, so what the "
-                + "picker starts on is whatever ran in between.");
+            resetCall is not null,
+            $"The window does not call {reset} when loading DictionaryPage, so what the "
+                + "picker starts on could drift.");
 
         var resetBody = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .FirstOrDefault(method => method.Identifier.Text == reset);
@@ -3791,15 +3784,23 @@ public sealed partial class DesignSystemTokenTests
             Assert.Equal("{StaticResource BrandNumberBoxStyle}", (string?)box.Attribute("Style"));
         }
 
-        // WindowRoot TextControl* brushes must live inside ThemeDictionaries so switching or mismatched OS themes update dynamically.
+        // ControlBrushes.xaml holds WindowRoot TextControl* brushes inside ThemeDictionaries and is merged into WindowRoot.Resources so theme switches update dynamically.
         var windowRoot = FindNamedElement(window, "WindowRoot");
-        var themeDictionaries = windowRoot
+        var mergedBrushSource = windowRoot
+            .Descendants()
+            .FirstOrDefault(e => e.Name.LocalName == "ResourceDictionary"
+                && string.Equals((string?)e.Attribute("Source"), "Theme/ControlBrushes.xaml", StringComparison.Ordinal));
+        Assert.NotNull(mergedBrushSource);
+
+        var controlBrushesDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "ControlBrushes.xaml"));
+        var themeDictionaries = controlBrushesDoc
             .Descendants()
             .Where(e => e.Name.LocalName == "ResourceDictionary" && e.Attribute(xaml + "Key") is not null)
             .ToDictionary(e => (string)e.Attribute(xaml + "Key")!, StringComparer.Ordinal);
         foreach (var theme in new[] { "Light", "Dark", "HighContrast" })
         {
-            Assert.True(themeDictionaries.ContainsKey(theme), $"WindowRoot missing ThemeDictionary '{theme}'.");
+            Assert.True(themeDictionaries.ContainsKey(theme), $"ControlBrushes.xaml missing ThemeDictionary '{theme}'.");
             var keys = themeDictionaries[theme].Elements()
                 .Select(e => (string?)e.Attribute(xaml + "Key"))
                 .ToHashSet(StringComparer.Ordinal);
