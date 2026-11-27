@@ -357,9 +357,7 @@ public partial class App : Application, IAsyncDisposable
             _ollamaModelHost,
             historyRepolishService);
         var mishearingAdvisor = new AdmittedMishearingAdvisor(
-            () => _polishProvider,
-            () => _polishUsesLocalRuntime,
-            EffectivePolishResource,
+            CurrentPolishSetup,
             _resourceArbiter,
             _presentation);
         _window = new MainWindow(

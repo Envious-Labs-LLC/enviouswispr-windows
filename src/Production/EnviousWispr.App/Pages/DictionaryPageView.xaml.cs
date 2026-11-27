@@ -65,6 +65,8 @@ public sealed partial class DictionaryPageView : UserControl
 
     private void RemoveWordButton_Click(object sender, RoutedEventArgs e) => Host.RemoveWordButton_Click(sender, e);
 
+    private void ReplacementBox_TextChanged(object sender, TextChangedEventArgs e) => Host.ReplacementBox_TextChanged(sender, e);
+
     private void SelectAllWordsButton_Click(object sender, RoutedEventArgs e) => Host.SelectAllWordsButton_Click(sender, e);
 
     private void SettingRow_Tapped(object sender, TappedRoutedEventArgs e) => Host.SettingRow_Tapped(sender, e);

@@ -16,6 +16,50 @@ public sealed partial class MainWindow
     private CancellationTokenSource? _aliasSuggestionsCts;
     private int _aliasSuggestionsGeneration;
 
+    internal void ReplacementBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        InvalidateAliasSuggestions(clearSurface: true);
+
+    private void InvalidateAliasSuggestions(bool clearSurface)
+    {
+        _aliasSuggestionsGeneration++;
+        var previous = Interlocked.Exchange(ref _aliasSuggestionsCts, null);
+        if (previous is not null)
+        {
+            try
+            {
+                previous.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        if (!clearSurface || !IsDictionaryPageLoaded)
+        {
+            return;
+        }
+
+        if (SuggestAliasesButton is not null)
+        {
+            SuggestAliasesButton.IsEnabled = true;
+        }
+
+        if (SuggestedAliasesPanel is not null)
+        {
+            SuggestedAliasesPanel.Children.Clear();
+        }
+
+        if (SuggestedAliasesScroller is not null)
+        {
+            SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
+        }
+
+        if (SuggestAliasesStatusText is not null)
+        {
+            SetLiveRegion(SuggestAliasesStatusText, string.Empty, Visibility.Collapsed);
+        }
+    }
+
     /// <summary>
     /// Asks what speech recognition is likely to hear instead of the word being taught.
     /// </summary>
@@ -47,59 +91,71 @@ public sealed partial class MainWindow
             .Select(entry => entry.SpokenForm)
             .ToArray();
 
-        _aliasSuggestionsCts?.Cancel();
-        _aliasSuggestionsCts?.Dispose();
+        InvalidateAliasSuggestions(clearSurface: false);
         var cts = new CancellationTokenSource();
         _aliasSuggestionsCts = cts;
-        var generation = ++_aliasSuggestionsGeneration;
+        var generation = _aliasSuggestionsGeneration;
 
         SuggestAliasesButton.IsEnabled = false;
         SuggestedAliasesPanel.Children.Clear();
         SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
         SetLiveRegion(SuggestAliasesStatusText, "Asking...", Visibility.Visible);
 
-        MishearingAdvice advice;
         try
         {
-            advice = await _mishearingAdvisor.SuggestAsync(term, existing, cts.Token).ConfigureAwait(true);
-        }
-        catch (OperationCanceledException)
-        {
-            if (ReferenceEquals(_aliasSuggestionsCts, cts))
+            MishearingAdvice advice;
+            try
             {
-                _aliasSuggestionsCts = null;
+                advice = await _mishearingAdvisor.SuggestAsync(term, existing, cts.Token).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                if (generation == _aliasSuggestionsGeneration && !_shuttingDownProductWindows && IsDictionaryPageLoaded)
+                {
+                    if (SuggestAliasesButton is not null)
+                    {
+                        SuggestAliasesButton.IsEnabled = true;
+                    }
+
+                    if (SuggestAliasesStatusText is not null)
+                    {
+                        SetLiveRegion(SuggestAliasesStatusText, string.Empty, Visibility.Collapsed);
+                    }
+                }
+                return;
+            }
+            catch (Exception)
+            {
+                advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
+            if (generation != _aliasSuggestionsGeneration
+                || cts.IsCancellationRequested
+                || _shuttingDownProductWindows
+                || !IsDictionaryPageLoaded
+                || SuggestAliasesButton is null
+                || SuggestedAliasesPanel is null
+                || SuggestedAliasesScroller is null
+                || SuggestAliasesStatusText is null
+                || !string.Equals(term, ReplacementBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                if (generation == _aliasSuggestionsGeneration && IsDictionaryPageLoaded && SuggestAliasesButton is not null)
+                {
+                    SuggestAliasesButton.IsEnabled = true;
+                }
+                return;
+            }
+
+            RenderAliasSuggestions(term, advice);
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _aliasSuggestionsCts, null, cts), cts))
+            {
+                // Cleared active slot so late cancellations become no-ops before Dispose.
             }
             cts.Dispose();
-            return;
         }
-        catch (Exception)
-        {
-            advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        if (ReferenceEquals(_aliasSuggestionsCts, cts))
-        {
-            _aliasSuggestionsCts = null;
-        }
-        cts.Dispose();
-
-        if (generation != _aliasSuggestionsGeneration
-            || _shuttingDownProductWindows
-            || !IsDictionaryPageLoaded
-            || SuggestAliasesButton is null
-            || SuggestedAliasesPanel is null
-            || SuggestedAliasesScroller is null
-            || SuggestAliasesStatusText is null
-            || !string.Equals(term, ReplacementBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            if (generation == _aliasSuggestionsGeneration && IsDictionaryPageLoaded && SuggestAliasesButton is not null)
-            {
-                SuggestAliasesButton.IsEnabled = true;
-            }
-            return;
-        }
-
-        RenderAliasSuggestions(term, advice);
     }
 
     /// <summary>Shows what came back, or says why nothing did.</summary>
@@ -882,9 +938,7 @@ public sealed partial class MainWindow
 
     private void ShutdownUserDataUi()
     {
-        _aliasSuggestionsCts?.Cancel();
-        _aliasSuggestionsCts?.Dispose();
-        _aliasSuggestionsCts = null;
+        InvalidateAliasSuggestions(clearSurface: false);
         _dictionaryRefreshCts?.Cancel();
         _dictionaryRefreshCts?.Dispose();
         _dictionaryRefreshCts = null;

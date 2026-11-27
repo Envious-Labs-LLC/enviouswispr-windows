@@ -8,6 +8,7 @@ using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using Xunit;
 
@@ -15,6 +16,8 @@ namespace EnviousWispr.Architecture.Tests;
 
 public sealed class AdmittedMishearingAdvisorTests
 {
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
+
     private sealed class NonAdvisorProvider : IPolishProvider
     {
         public string ProviderId => "non-advisor";
@@ -34,6 +37,8 @@ public sealed class AdmittedMishearingAdvisorTests
 
         public bool ThrowOnSuggest { get; set; }
 
+        public bool ReturnFailedOnCancellation { get; set; }
+
         public CancellationToken ObservedToken { get; private set; }
 
         public Task Entered => _entered.Task;
@@ -51,6 +56,11 @@ public sealed class AdmittedMishearingAdvisorTests
             ObservedToken = cancellationToken;
             _entered.TrySetResult();
             await _unwindGate.Task.ConfigureAwait(false);
+            if (ReturnFailedOnCancellation && cancellationToken.IsCancellationRequested)
+            {
+                return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             if (ThrowOnSuggest)
             {
@@ -63,20 +73,38 @@ public sealed class AdmittedMishearingAdvisorTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class CountingResourceLease : IAsyncDisposable
+    private sealed class BlockingResourceLease : IAsyncDisposable
     {
-        public int DisposeCount { get; private set; }
+        private readonly TaskCompletionSource _disposeEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _disposeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _disposeCount;
 
-        public ValueTask DisposeAsync()
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public bool DeferDispose { get; init; }
+
+        public Task DisposeEntered => _disposeEntered.Task;
+
+        public void AllowDispose() => _disposeGate.TrySetResult();
+
+        public async ValueTask DisposeAsync()
         {
-            DisposeCount++;
-            return ValueTask.CompletedTask;
+            Interlocked.Increment(ref _disposeCount);
+            _disposeEntered.TrySetResult();
+            if (DeferDispose)
+            {
+                await _disposeGate.Task.ConfigureAwait(false);
+            }
         }
     }
 
-    private sealed class FakeAdmission(CountingResourceLease lease) : IRuntimeResourceAdmission
+    private sealed class SpyAdmission(BlockingResourceLease lease) : IRuntimeResourceAdmission
     {
         public int AcquireCount { get; private set; }
+
+        public bool ThrowObjectDisposed { get; set; }
+
+        public CancellationToken ObservedToken { get; private set; }
 
         public Task<RuntimeResourceAcquireResult> AcquireAsync(
             RuntimeResourceKind resource,
@@ -85,6 +113,9 @@ public sealed class AdmittedMishearingAdvisorTests
             CancellationToken cancellationToken = default)
         {
             AcquireCount++;
+            ObservedToken = cancellationToken;
+            ObjectDisposedException.ThrowIf(ThrowObjectDisposed, "arbiter");
+
             return Task.FromResult(new RuntimeResourceAcquireResult(Succeeded: true, lease));
         }
     }
@@ -162,7 +193,7 @@ public sealed class AdmittedMishearingAdvisorTests
     {
         public event EventHandler<AudioLevel>? LevelChanged { add { } remove { } }
         public bool IsCapturing => false;
-        public int LastPacketCount => 0;
+        public int LastPacketCount => IsCapturing ? 10 : 0;
         public int LastSilentPacketCount => 0;
         public float LastPeak => 0f;
         public float LastRootMeanSquare => 0f;
@@ -203,10 +234,10 @@ public sealed class AdmittedMishearingAdvisorTests
         bool usesLocalRuntime = false,
         IRuntimeResourceAdmission? admission = null) =>
         new(
-            getProvider: () => provider,
-            usesLocalRuntime: () => usesLocalRuntime,
-            resolveLocalResource: _ => RuntimeResourceKind.Cpu,
-            resourceArbiter: admission ?? new FakeAdmission(new CountingResourceLease()),
+            getPolishSetup: () => provider is null
+                ? null
+                : new PolishSetup(provider, usesLocalRuntime, RuntimeResourceKind.Cpu, "test-model"),
+            resourceArbiter: admission ?? new SpyAdmission(new BlockingResourceLease()),
             presentation: session);
 
     [Fact]
@@ -227,64 +258,92 @@ public sealed class AdmittedMishearingAdvisorTests
         await using var session = CreateSession();
         var advisor = CreateAdvisor(session, new BlockingAdvisorProvider());
 
-        await session.DrainAsync();
+        await session.DrainAsync().WaitAsync(TestTimeout);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             advisor.SuggestAsync("EnviousWispr", []));
     }
 
     [Fact]
-    public async Task SuggestAsyncLinksClosingCancellationAndHoldsDrainUntilProviderUnwinds()
+    public async Task SuggestAsyncLinksClosingCancellationAndHoldsDrainUntilResourceLeaseDisposes()
     {
         await using var session = CreateSession();
         var provider = new BlockingAdvisorProvider();
-        var advisor = CreateAdvisor(session, provider);
+        var lease = new BlockingResourceLease { DeferDispose = true };
+        var admission = new SpyAdmission(lease);
+        var advisor = CreateAdvisor(session, provider, usesLocalRuntime: true, admission: admission);
 
-        var suggestTask = advisor.SuggestAsync("EnviousWispr", []);
-        await provider.Entered;
+        Task<MishearingAdvice> suggestTask;
+        Task drainTask;
+        try
+        {
+            suggestTask = advisor.SuggestAsync("EnviousWispr", []);
+            await provider.Entered.WaitAsync(TestTimeout);
 
-        var drainTask = session.DrainAsync();
-        await Task.Delay(50);
-        Assert.False(drainTask.IsCompleted);
-        Assert.True(provider.ObservedToken.IsCancellationRequested);
+            Assert.True(admission.ObservedToken.CanBeCanceled);
+            drainTask = session.DrainAsync();
+            Assert.False(drainTask.IsCompleted);
+            Assert.True(provider.ObservedToken.IsCancellationRequested);
+            Assert.True(admission.ObservedToken.IsCancellationRequested);
 
-        provider.AllowUnwind();
-        await drainTask;
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestTask);
+            provider.AllowUnwind();
+            await lease.DisposeEntered.WaitAsync(TestTimeout);
+            Assert.False(drainTask.IsCompleted);
+        }
+        finally
+        {
+            provider.AllowUnwind();
+            lease.AllowDispose();
+        }
+
+        await drainTask.WaitAsync(TestTimeout);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestTask.WaitAsync(TestTimeout));
+        Assert.Equal(1, lease.DisposeCount);
     }
 
     [Fact]
-    public async Task SuggestAsyncPropagatesCallerCancellationWithoutPollutingResults()
+    public async Task SuggestAsyncPropagatesCallerCancellationAndRejectsSwallowedFailedOutcome()
     {
         await using var session = CreateSession();
-        var provider = new BlockingAdvisorProvider();
+        var provider = new BlockingAdvisorProvider { ReturnFailedOnCancellation = true };
         var advisor = CreateAdvisor(session, provider);
 
         using var cts = new CancellationTokenSource();
-        var suggestTask = advisor.SuggestAsync("EnviousWispr", [], cts.Token);
-        await provider.Entered;
+        Task<MishearingAdvice> suggestTask;
+        try
+        {
+            suggestTask = advisor.SuggestAsync("EnviousWispr", [], cts.Token);
+            await provider.Entered.WaitAsync(TestTimeout);
 
-        cts.Cancel();
-        Assert.True(provider.ObservedToken.IsCancellationRequested);
-        provider.AllowUnwind();
+            cts.Cancel();
+            Assert.True(provider.ObservedToken.IsCancellationRequested);
+        }
+        finally
+        {
+            provider.AllowUnwind();
+        }
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestTask);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestTask.WaitAsync(TestTimeout));
     }
 
     [Fact]
-    public async Task SuggestAsyncAcquiresAndDisposesLocalRuntimeResourceLeaseEvenOnProviderError()
+    public async Task SuggestAsyncMapsDisposedAdmissionFailureToFailedWhenTokenIsLiveAndDisposesLeaseOnce()
     {
         await using var session = CreateSession();
         var provider = new BlockingAdvisorProvider { ThrowOnSuggest = true };
-        var lease = new CountingResourceLease();
-        var admission = new FakeAdmission(lease);
+        var lease = new BlockingResourceLease();
+        var admission = new SpyAdmission(lease);
         var advisor = CreateAdvisor(session, provider, usesLocalRuntime: true, admission: admission);
 
         provider.AllowUnwind();
-        var advice = await advisor.SuggestAsync("EnviousWispr", []);
+        var advice = await advisor.SuggestAsync("EnviousWispr", []).WaitAsync(TestTimeout);
 
         Assert.Equal(MishearingAdviceStatus.Failed, advice.Status);
         Assert.Equal(1, admission.AcquireCount);
         Assert.Equal(1, lease.DisposeCount);
+
+        admission.ThrowObjectDisposed = true;
+        var disposedAdvice = await advisor.SuggestAsync("EnviousWispr", []).WaitAsync(TestTimeout);
+        Assert.Equal(MishearingAdviceStatus.Failed, disposedAdvice.Status);
     }
 }
