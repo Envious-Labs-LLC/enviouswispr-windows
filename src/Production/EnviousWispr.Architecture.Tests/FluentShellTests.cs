@@ -246,7 +246,7 @@ public sealed class FluentShellTests
             "Audio stays on this PC; dictated text stays local unless you turn on cloud polish. Anonymous usage metrics and crash reports are on by default to help us catch broken updates, and can be turned off anytime in Diagnostics.",
             onboardingTexts);
         Assert.Contains(
-            "Change it any time on the Keybinds page. A new key starts working the next time EnviousWispr opens.",
+            "Your chosen key applies immediately for practice and everyday dictation. Change it any time on the Keybinds page.",
             onboardingTexts);
 
         var permissions = FindNamed(document, "PermissionsSection");
@@ -260,6 +260,64 @@ public sealed class FluentShellTests
             text => text!.Contains(
                 "Anonymous usage metrics and crash reports are on by default and never include dictated text, audio, API keys, or file paths. You can turn either off anytime in Diagnostics.",
                 StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OnboardingViewDeclaresAllThirteenScreensAndCoreControls()
+    {
+        var root = FindRepositoryRoot();
+        var document = XDocument.Load(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var onboarding = FindNamed(document, "OnboardingView");
+
+        foreach (var name in new[]
+        {
+            "OnboardingChromeBar",
+            "OnboardingBackButton",
+            "OnboardingProgressGrid",
+            "OnboardingDownloadPillButton",
+            "OnboardingWelcomePanel",
+            "OnboardingRainbowLipsContainer",
+            "OnboardingLanguagePanel",
+            "OnboardingLanguageSearchBox",
+            "OnboardingDetectAutoCard",
+            "OnboardingSuggestedLanguageButton",
+            "OnboardingLanguageListView",
+            "OnboardingSpeechPickPanel",
+            "OnboardingOpenSpeechCompareButton",
+            "OnboardingSpeechComparePanel",
+            "OnboardingParakeetCompareCard",
+            "OnboardingWhisperCompareCard",
+            "OnboardingPolishIntroPanel",
+            "OnboardingPolishPickPanel",
+            "OnboardingPolishLowSpecCard",
+            "OnboardingOpenPolishSeeAllButton",
+            "OnboardingPolishSeeAllPanel",
+            "OnboardingSeeAllLocalPanel",
+            "OnboardingSeeAllCloudPanel",
+            "OnboardingCloudOpenAiButton",
+            "OnboardingCloudGeminiButton",
+            "OnboardingCloudClaudeButton",
+            "OnboardingCloudApiKeyBox",
+            "OnboardingCloudCheckKeyButton",
+            "OnboardingCloudModelComboBox",
+            "OnboardingDownloadsPanel",
+            "OnboardingPermissionsPanel",
+            "OnboardingOpenMicSettingsButton",
+            "OnboardingKeyPanel",
+            "OnboardingKeycapButton",
+            "OnboardingRehearsalHoldCard",
+            "OnboardingRehearsalDoubleTapCard",
+            "OnboardingGettingReadyPanel",
+            "OnboardingPracticePanel",
+            "OnboardingPracticeBox",
+            "OnboardingClosingPanel",
+            "OnboardingClosingDotsPanel",
+            "OnboardingClosingWatchAgainButton",
+            "FinishOnboardingButton",
+        })
+        {
+            Assert.NotNull(FindNamed(onboarding, name));
+        }
     }
 
     [Fact]

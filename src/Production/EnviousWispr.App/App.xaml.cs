@@ -398,6 +398,9 @@ public partial class App : Application, IAsyncDisposable
         _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
         _window.ManualDictationToggleRequested += OnManualDictationToggleRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
+        _window.OnboardingKeyRehearsalActiveChanged += OnOnboardingKeyRehearsalActiveChanged;
+        _window.ApplyOnboardingRecordingKey = TryApplyOnboardingRecordingKeyAsync;
+        _window.ApplyOnboardingEnginesChoice = ApplyOnboardingSelectedEnginesAsync;
         _window.TranscribeFile = TranscribeFileAsync;
         _window.ExportUserData = ExportUserDataAsync;
         _window.DeleteAllData = DeleteAllData;
@@ -604,6 +607,9 @@ public partial class App : Application, IAsyncDisposable
             window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
             window.ManualDictationToggleRequested -= OnManualDictationToggleRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
+            window.OnboardingKeyRehearsalActiveChanged -= OnOnboardingKeyRehearsalActiveChanged;
+            window.ApplyOnboardingRecordingKey = null;
+            window.ApplyOnboardingEnginesChoice = null;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
             DetachSelfLearningFromWindow(window);

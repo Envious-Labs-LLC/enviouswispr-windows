@@ -256,6 +256,12 @@ public sealed class OnboardingFlow
         }
     }
 
+    public bool NeedsDownloadStart =>
+        Step == OnboardingStep.Downloads &&
+        !_startedDownloadThisVisit &&
+        (Model != SpeechModelDelivery.Installed ||
+         (RequiresLocalEgOne && PolishModel != SpeechModelDelivery.Installed));
+
     public int LegacyStepNumber => Step switch
     {
         OnboardingStep.Welcome => 1,
@@ -815,6 +821,32 @@ public sealed class OnboardingFlow
 
         CompleteClosing();
         return true;
+    }
+
+    public void SetClosingBeat(int index)
+    {
+        if (Step != OnboardingStep.Closing)
+        {
+            return;
+        }
+
+        var clamped = Math.Clamp(index, 0, OnboardingCopy.ClosingBeats.Count - 1);
+        if (ClosingBeatIndex != clamped)
+        {
+            ClosingBeatIndex = clamped;
+            Touch();
+        }
+    }
+
+    public void RestartClosing()
+    {
+        if (Step != OnboardingStep.Closing)
+        {
+            return;
+        }
+
+        ClosingBeatIndex = 0;
+        Touch();
     }
 
     public void CompleteClosing()

@@ -682,6 +682,7 @@ public sealed partial class MainWindow
         _activeSpeechDownloadEngine = downloadingEngine;
         RenderSpeechEngineCards();
         UpdateActiveEngineDisplay();
+        SyncLiveInventoryToOnboarding();
     }
 
     public void SetSpeechEngineDelivery(FinalAsrEngine engine, ModelDeliveryPresentation presentation)
@@ -711,6 +712,7 @@ public sealed partial class MainWindow
             : null;
         RenderSpeechEngineCards();
         UpdateActiveEngineDisplay();
+        SyncLiveInventoryToOnboarding();
     }
 
     public void ShowSpeechEngineNotice(string message)
@@ -1002,11 +1004,13 @@ public sealed partial class MainWindow
     {
         if (presentation is null)
         {
+            _cudaRuntimeAvailable = false;
             GraphicsRuntimeRow.Visibility = Visibility.Collapsed;
             UpdateSpeechEngineOptionsCardVisibility();
             return;
         }
 
+        _cudaRuntimeAvailable = presentation.Stage == SpeechModelDelivery.Installed;
         GraphicsRuntimeRow.Visibility = Visibility.Visible;
         SetLiveText(GraphicsRuntimeStatusText, presentation.Text);
         GraphicsRuntimeProgress.Visibility = presentation.Percent is null ? Visibility.Collapsed : Visibility.Visible;

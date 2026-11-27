@@ -104,6 +104,25 @@
     <x:Double x:Key="BrandOnboardingPracticeBoxHeight">132</x:Double>
     <!-- The Ready screen's keycap: the key's name set in the title style with room around it, as macOS draws it. -->
     <Thickness x:Key="BrandOnboardingKeycapPadding">32,14,32,14</Thickness>
+    <Thickness x:Key="BrandOnboardingChromePadding">24,14,24,0</Thickness>
+    <x:Double x:Key="BrandOnboardingChromeHeight">44</x:Double>
+    <Thickness x:Key="BrandOnboardingDownloadPillPadding">12,6,12,6</Thickness>
+    <x:Double x:Key="BrandOnboardingProgressSegmentHeight">4</x:Double>
+    <CornerRadius x:Key="BrandOnboardingProgressSegmentRadius">2</CornerRadius>
+    <x:Double x:Key="BrandOnboardingWelcomeMaxWidth">700</x:Double>
+    <x:Double x:Key="BrandOnboardingHeroMaxWidth">760</x:Double>
+    <x:Double x:Key="BrandOnboardingNarrowCardMaxWidth">720</x:Double>
+    <x:Double x:Key="BrandOnboardingLanguageListHeight">250</x:Double>
+    <x:Double x:Key="BrandOnboardingKeycapMinWidth">200</x:Double>
+    <x:Double x:Key="BrandOnboardingKeycapMinHeight">64</x:Double>
+    <CornerRadius x:Key="BrandOnboardingKeycapRadius">12</CornerRadius>
+    <x:Double x:Key="BrandOnboardingLipBarWidth">6</x:Double>
+    <CornerRadius x:Key="BrandOnboardingLipBarRadius">3</CornerRadius>
+    <x:Double x:Key="BrandOnboardingFilmCardMinHeight">220</x:Double>
+    <x:Double x:Key="BrandOnboardingClosingDotSize">10</x:Double>
+    <CornerRadius x:Key="BrandOnboardingClosingDotRadius">5</CornerRadius>
+    <x:Double x:Key="BrandOnboardingKeycapFontSize">22</x:Double>
+    <x:Double x:Key="BrandOnboardingGreetingFontSize">24</x:Double>
     <x:Double x:Key="BrandTitleBarLogoSize">20</x:Double>
     <x:Double x:Key="BrandHelpGlyphSize">15</x:Double>
     <x:Double x:Key="BrandHelpButtonHitSize">24</x:Double>

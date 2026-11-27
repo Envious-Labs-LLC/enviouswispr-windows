@@ -1928,6 +1928,64 @@ public partial class App
         }).ConfigureAwait(true);
     }
 
+    private async Task ApplyOnboardingSelectedEnginesAsync(
+        FinalAsrEngine speechEngine,
+        OnboardingPolishChoiceKind polishChoice,
+        string? egOneModelId,
+        string? cloudModelId)
+    {
+        if (Leaving)
+        {
+            return;
+        }
+
+        var polishProvider = polishChoice switch
+        {
+            OnboardingPolishChoiceKind.EgOne => PolishProvider.EgOne,
+            OnboardingPolishChoiceKind.Ollama => PolishProvider.Ollama,
+            OnboardingPolishChoiceKind.OpenAI => PolishProvider.OpenAI,
+            OnboardingPolishChoiceKind.Claude => PolishProvider.Anthropic,
+            OnboardingPolishChoiceKind.Gemini => PolishProvider.Gemini,
+            _ => PolishProvider.None,
+        };
+
+        var normalizedEgOne = polishProvider == PolishProvider.EgOne && !string.IsNullOrWhiteSpace(egOneModelId)
+            ? EgOneModelCatalog.NormalizeOrDefault(egOneModelId)
+            : null;
+        var resolvedModelId = polishProvider switch
+        {
+            PolishProvider.EgOne => normalizedEgOne ?? EgOneModelCatalog.MiniId,
+            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini => string.IsNullOrWhiteSpace(cloudModelId)
+                ? _polishModelSource?.RecommendedModel(polishProvider)
+                : cloudModelId.Trim(),
+            _ => null,
+        };
+
+        var saved = await TrySaveOnboardingSettingsAsync(latest => latest with
+        {
+            Preferences = latest.Preferences with
+            {
+                Dictation = latest.Preferences.Dictation with { FinalEngine = speechEngine },
+                Polish = latest.Preferences.Polish with
+                {
+                    Provider = polishProvider,
+                    EgOneModelId = normalizedEgOne ?? latest.Preferences.Polish.EgOneModelId,
+                    ModelId = resolvedModelId,
+                },
+            },
+        }).ConfigureAwait(true);
+        if (!saved || Leaving)
+        {
+            return;
+        }
+
+        await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
+        if (!Leaving)
+        {
+            await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
+        }
+    }
+
     private async Task<bool> ApplyOnboardingPolishChoiceAsync(string egOneModelId)
     {
         var current = _presentation?.Settings.Current ?? _settings;
