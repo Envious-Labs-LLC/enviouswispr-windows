@@ -1,6 +1,7 @@
 using System.Security;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EnviousWispr.Core.IO;
 
 namespace EnviousWispr.Core.Feedback;
 
@@ -55,21 +56,7 @@ public sealed class FeedbackDraftStore
 
         lock (_lock)
         {
-            Directory.CreateDirectory(_directory);
-            var temporaryPath = Path.Combine(
-                _directory,
-                $".{Path.GetFileName(FilePath)}.{Guid.NewGuid():N}.tmp");
-
-            try
-            {
-                var json = JsonSerializer.Serialize(draft, SerializerOptions);
-                File.WriteAllText(temporaryPath, json);
-                File.Move(temporaryPath, FilePath, overwrite: true);
-            }
-            finally
-            {
-                TryDeleteFile(temporaryPath);
-            }
+            AtomicFileWriter.WriteJson(FilePath, draft, SerializerOptions);
         }
     }
 

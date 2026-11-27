@@ -287,7 +287,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         string? previousLeft,
         string? previousValue)
     {
-        if (GetForegroundWindow() != request.Target.Value)
+        if (WindowsTargetWindowNative.CurrentForegroundWindow() != request.Target.Value)
         {
             return PasteArrivalStatus.Unreadable;
         }
@@ -395,97 +395,18 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         string? observedLeft,
         string? observedValue,
         string? previousLeft,
-        string? previousValue = null)
-    {
-        var normalizedExpected = NormalizeArrivalText(insertedText).Trim();
-        if (string.IsNullOrEmpty(normalizedExpected))
-        {
-            return PasteArrivalStatus.Unreadable;
-        }
-
-        if (observedLeft is null && observedValue is null)
-        {
-            return PasteArrivalStatus.Unreadable;
-        }
-
-        if (observedLeft is not null)
-        {
-            if (previousLeft is null && previousValue is null)
-            {
-                return PasteArrivalStatus.Unreadable;
-            }
-
-            var normalizedLeft = NormalizeArrivalText(observedLeft).TrimEnd();
-            if (previousLeft is not null)
-            {
-                var normalizedPreviousLeft = NormalizeArrivalText(previousLeft).TrimEnd();
-                var previousAlreadyEndedWithExpected = !string.IsNullOrEmpty(normalizedPreviousLeft) &&
-                    normalizedPreviousLeft.EndsWith(normalizedExpected, StringComparison.Ordinal);
-                if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal) &&
-                    (!previousAlreadyEndedWithExpected ||
-                     normalizedLeft.Length >= normalizedPreviousLeft.Length + normalizedExpected.Length))
-                {
-                    return PasteArrivalStatus.Confirmed;
-                }
-            }
-            else if (previousValue is not null)
-            {
-                var normalizedPrevValue = NormalizeArrivalText(previousValue).TrimEnd();
-                if (normalizedLeft.EndsWith(normalizedExpected, StringComparison.Ordinal) &&
-                    CountOccurrences(normalizedLeft, normalizedExpected) > CountOccurrences(normalizedPrevValue, normalizedExpected))
-                {
-                    return PasteArrivalStatus.Confirmed;
-                }
-            }
-
-            return PasteArrivalStatus.NotObserved;
-        }
-
-        // ValuePattern-only controls have no TextPattern caret, so compare against a pre-paste value
-        // baseline rather than confirming stale text that was already in the box before the paste.
-        if (previousValue is null)
-        {
-            return PasteArrivalStatus.Unreadable;
-        }
-
-        var normalizedValue = NormalizeArrivalText(observedValue!).TrimEnd();
-        var normalizedPreviousValue = NormalizeArrivalText(previousValue).TrimEnd();
-        return CountOccurrences(normalizedValue, normalizedExpected) > CountOccurrences(normalizedPreviousValue, normalizedExpected)
-            ? PasteArrivalStatus.Confirmed
-            : PasteArrivalStatus.NotObserved;
-    }
-
-    private static int CountOccurrences(string haystack, string needle)
-    {
-        if (string.IsNullOrEmpty(needle) || string.IsNullOrEmpty(haystack))
-        {
-            return 0;
-        }
-
-        var count = 0;
-        var index = 0;
-        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
-        {
-            count++;
-            index += needle.Length;
-        }
-
-        return count;
-    }
-
-    private static string NormalizeArrivalText(string value) =>
-        value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        string? previousValue = null) =>
+        WindowsTextDeliveryPolicy.EvaluateArrival(
+            insertedText,
+            observedLeft,
+            observedValue,
+            previousLeft,
+            previousValue);
 
     internal static PasteKeystrokeKind ResolveCommitKeystroke(
         CaretContext context,
-        WindowsPasteRule commitRule)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(commitRule);
-        return context.TargetKind == TextTargetKind.Terminal
-            ? PasteKeystrokeKind.ShiftInsert
-            : commitRule.Keystroke;
-    }
+        WindowsPasteRule commitRule) =>
+        WindowsTextDeliveryPolicy.ResolveCommitKeystroke(context, commitRule);
 
     /// <summary>What the commit refuses with when the target, read again just before the write, is not the one the context was captured from - or cannot be read.</summary>
     /// <remarks>
@@ -493,67 +414,26 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     /// target says so; accessibility that did not answer the second time says that, with the reason
     /// the capture gave; a target that is gone, or whose caret moved, is a changed target.
     /// </remarks>
-    internal static TextDeliveryRefusalReason RevalidationRefusal(TargetContextResult current)
-    {
-        ArgumentNullException.ThrowIfNull(current);
-        return current.Status switch
-        {
-            TargetContextStatus.Elevated => TextDeliveryRefusalReason.ElevatedTarget,
-            TargetContextStatus.Protected => TextDeliveryRefusalReason.ProtectedField,
-            TargetContextStatus.AccessibilityUnavailable => current.RefusalReason != TextDeliveryRefusalReason.None
-                ? current.RefusalReason
-                : TextDeliveryRefusalReason.AccessibilityUnavailable,
-            _ => TextDeliveryRefusalReason.TargetChanged,
-        };
-    }
+    internal static TextDeliveryRefusalReason RevalidationRefusal(TargetContextResult current) =>
+        WindowsTextDeliveryPolicy.RevalidationRefusal(current);
 
     /// <summary>The preflight the paste runs on its own thread, with what accessibility refused translated here, inside the adapter; anything else it throws is a defect and comes out.</summary>
-    internal static TextDeliveryRefusalReason GuardedPreflight(Func<TextDeliveryRefusalReason> preflight)
-    {
-        ArgumentNullException.ThrowIfNull(preflight);
-        try
-        {
-            return preflight();
-        }
-        catch (AutomationRefusalException)
-        {
-            return TextDeliveryRefusalReason.AccessibilityUnavailable;
-        }
-    }
+    internal static TextDeliveryRefusalReason GuardedPreflight(Func<TextDeliveryRefusalReason> preflight) =>
+        WindowsTextDeliveryPolicy.GuardedPreflight(preflight);
 
     internal static bool CaretUnchanged(CaretContext expected, CaretContext actual) =>
-        expected.Target == actual.Target &&
-        string.Equals(expected.FocusedElementId, actual.FocusedElementId, StringComparison.Ordinal) &&
-        expected.TargetKind == actual.TargetKind &&
-        expected.LeftReachedDocumentStart == actual.LeftReachedDocumentStart &&
-        expected.RightReachedDocumentEnd == actual.RightReachedDocumentEnd &&
-        expected.HasTextContext == actual.HasTextContext &&
-        expected.IsScreenDerived == actual.IsScreenDerived &&
-        expected.IsUrlBarField == actual.IsUrlBarField &&
-        string.Equals(expected.Left, actual.Left, StringComparison.Ordinal) &&
-        string.Equals(expected.Selection, actual.Selection, StringComparison.Ordinal) &&
-        string.Equals(expected.Right, actual.Right, StringComparison.Ordinal);
+        WindowsTextDeliveryPolicy.CaretUnchanged(expected, actual);
 
     internal static TextDeliveryRefusalReason CompatibilityRefusal(
         TextTargetKind targetKind,
-        string text) => targetKind switch
-    {
-        TextTargetKind.Terminal when text.IndexOfAny(['\r', '\n']) >= 0 =>
-            TextDeliveryRefusalReason.UnsafeMultilineTarget,
-        TextTargetKind.Game => TextDeliveryRefusalReason.UnsupportedTarget,
-        _ => TextDeliveryRefusalReason.None,
-    };
+        string text) =>
+        WindowsTextDeliveryPolicy.CompatibilityRefusal(targetKind, text);
 
     internal static bool CanUseDirectValueWrite(
         CaretContext context,
         TextCommitRequest request,
         WindowsPasteRule rule) =>
-        !rule.SkipDirectValueWrite &&
-        context.TargetKind == TextTargetKind.StandardEdit &&
-        context.SupportsDirectValueWrite &&
-        context.DirectValueWriteAtEnd &&
-        context.Selection.Length == 0 &&
-        request.Text.Text.Length <= request.Options.MaximumDirectValueCharacters;
+        WindowsTextDeliveryPolicy.CanUseDirectValueWrite(context, request, rule);
 
     private static TextCommitResult? TryDirectValueWrite(
         TextCommitRequest request,
@@ -677,7 +557,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 }
 
                 Thread.Sleep(25);
-                if (GetForegroundWindow() != target.Value)
+                if (WindowsTargetWindowNative.CurrentForegroundWindow() != target.Value)
                 {
                     return new TargetContextResult(
                         TargetContextStatus.TargetChanged,
@@ -816,12 +696,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 element.Current.ClassName ?? string.Empty,
                 element.Current.ControlType == ControlType.Document));
 
-    private static bool IsEditableReplacementCandidate(FocusedElementFacts focus) =>
-        !focus.IsPassword &&
-        focus.IsEnabled &&
-        focus.IsKeyboardFocusable &&
-        (focus.IsControlEdit || focus.IsControlDocument);
-
     internal static FocusEvaluationResult EvaluateFocusedElement(
         TargetWindowId target,
         FocusedElementFacts? focus,
@@ -829,207 +703,15 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool isExplicitHistoryPaste,
         Func<string?, bool, WindowsPasteRule> resolvePolicy,
         bool allowSameWindowEditableReplacement = true,
-        bool? focusProcessMatchesTarget = null)
-    {
-        ArgumentNullException.ThrowIfNull(resolvePolicy);
-        if (focus is null)
-        {
-            return new FocusEvaluationResult(
-                new TargetContextResult(
-                    TargetContextStatus.AccessibilityUnavailable,
-                    RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
-                WindowFallbackOnly: false,
-                EffectiveFocusId: string.Empty,
-                Rule: null);
-        }
-
-        var processMatches = focusProcessMatchesTarget ?? (focus.ProcessId == target.ProcessId);
-
-        if (target.FocusedElementId is null)
-        {
-            // Live dictation and Undo must never guess a target when neither a UIA RuntimeId nor a
-            // distinct Win32 child control HWND was captured when dictation started.
-            if (!isExplicitHistoryPaste)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.AccessibilityUnavailable,
-                        RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            // Explicit History Paste has no prior dictation caret to drift from, but still requires
-            // live UIA confirmation that focus is inside target.ProcessId and is not a password field.
-            if (!processMatches)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.AccessibilityUnavailable,
-                        RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            if (focus.IsPassword)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.Protected,
-                        EmptyContext(target, string.Empty, TextTargetKind.Unknown),
-                        TextDeliveryRefusalReason.ProtectedField),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            if (!focus.HasKeyboardFocus)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.TargetChanged,
-                        RefusalReason: TextDeliveryRefusalReason.TargetChanged),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            var historyRule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
-            if (!historyRule.AllowsWindowFallbackWithoutFocusedElement)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.AccessibilityUnavailable,
-                        EmptyContext(target, string.Empty, historyRule.TargetKind),
-                        TextDeliveryRefusalReason.UnsupportedTarget),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            var liveHistoryId = !string.IsNullOrEmpty(focus.RuntimeId)
-                ? focus.RuntimeId
-                : (win32ChildFocusId ?? string.Empty);
-            return new FocusEvaluationResult(
-                Failure: null,
-                WindowFallbackOnly: true,
-                EffectiveFocusId: liveHistoryId,
-                Rule: historyRule);
-        }
-
-        if (target.FocusedElementId.StartsWith(WindowsWindowIdentity.Win32FocusPrefix, StringComparison.Ordinal))
-        {
-            if (!focus.HasKeyboardFocus)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.TargetChanged,
-                        RefusalReason: TextDeliveryRefusalReason.TargetChanged),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            if (!processMatches)
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.AccessibilityUnavailable,
-                        RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            if (focus.IsPassword)
-            {
-                var protectedRule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
-                var protectedFocusId = !string.IsNullOrEmpty(focus.RuntimeId)
-                    ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
-                    : (win32ChildFocusId ?? target.FocusedElementId);
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.Protected,
-                        EmptyContext(target, protectedFocusId, protectedRule.TargetKind),
-                        TextDeliveryRefusalReason.ProtectedField),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: protectedFocusId,
-                    Rule: protectedRule);
-            }
-
-            var exactWin32Match = string.Equals(win32ChildFocusId, target.FocusedElementId, StringComparison.Ordinal);
-            var resolvedWin32Id = !string.IsNullOrEmpty(focus.RuntimeId)
-                ? WindowsWindowIdentity.CombineFocusIdentity(win32ChildFocusId, focus.RuntimeId)
-                : win32ChildFocusId;
-            if (!exactWin32Match &&
-                (!allowSameWindowEditableReplacement ||
-                 !IsEditableReplacementCandidate(focus) ||
-                 string.IsNullOrEmpty(resolvedWin32Id)))
-            {
-                return new FocusEvaluationResult(
-                    new TargetContextResult(
-                        TargetContextStatus.TargetChanged,
-                        RefusalReason: TextDeliveryRefusalReason.TargetChanged),
-                    WindowFallbackOnly: false,
-                    EffectiveFocusId: string.Empty,
-                    Rule: null);
-            }
-
-            var effectiveWin32Id = resolvedWin32Id ?? target.FocusedElementId;
-            var win32Rule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
-            return new FocusEvaluationResult(
-                Failure: null,
-                WindowFallbackOnly: false,
-                EffectiveFocusId: effectiveWin32Id,
-                Rule: win32Rule);
-        }
-
-        if (!processMatches || !focus.HasKeyboardFocus)
-        {
-            return new FocusEvaluationResult(
-                new TargetContextResult(
-                    TargetContextStatus.TargetChanged,
-                    RefusalReason: TextDeliveryRefusalReason.TargetChanged),
-                WindowFallbackOnly: false,
-                EffectiveFocusId: string.Empty,
-                Rule: null);
-        }
-
-        var rule = resolvePolicy(focus.ClassName, focus.IsControlEdit);
-        if (focus.IsPassword)
-        {
-            return new FocusEvaluationResult(
-                new TargetContextResult(
-                    TargetContextStatus.Protected,
-                    EmptyContext(target, focus.RuntimeId, rule.TargetKind),
-                    TextDeliveryRefusalReason.ProtectedField),
-                WindowFallbackOnly: false,
-                EffectiveFocusId: focus.RuntimeId,
-                Rule: rule);
-        }
-
-        if (!string.Equals(focus.RuntimeId, target.FocusedElementId, StringComparison.Ordinal) &&
-            (!allowSameWindowEditableReplacement ||
-             !IsEditableReplacementCandidate(focus) ||
-             string.IsNullOrEmpty(focus.RuntimeId)))
-        {
-            return new FocusEvaluationResult(
-                new TargetContextResult(
-                    TargetContextStatus.TargetChanged,
-                    RefusalReason: TextDeliveryRefusalReason.TargetChanged),
-                WindowFallbackOnly: false,
-                EffectiveFocusId: string.Empty,
-                Rule: null);
-        }
-
-        return new FocusEvaluationResult(
-            Failure: null,
-            WindowFallbackOnly: false,
-            EffectiveFocusId: focus.RuntimeId,
-            Rule: rule);
-    }
+        bool? focusProcessMatchesTarget = null) =>
+        WindowsTextDeliveryPolicy.EvaluateFocusedElement(
+            target,
+            focus,
+            win32ChildFocusId,
+            isExplicitHistoryPaste,
+            resolvePolicy,
+            allowSameWindowEditableReplacement,
+            focusProcessMatchesTarget);
 
     internal sealed record FocusEvaluationResult(
         TargetContextResult? Failure,
@@ -1166,38 +848,14 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         TargetWindowId target,
         string focusedId,
         TextTargetKind targetKind,
-        string? baselineValue = null) => new(
-        target,
-        focusedId,
-        targetKind,
-        Left: string.Empty,
-        Selection: string.Empty,
-        Right: string.Empty,
-        LeftReachedDocumentStart: false,
-        RightReachedDocumentEnd: false,
-        HasTextContext: false,
-        SupportsDirectValueWrite: false,
-        DirectValueWriteAtEnd: false,
-        IsScreenDerived: targetKind == TextTargetKind.Terminal,
-        BaselineValue: baselineValue);
+        string? baselineValue = null) =>
+        WindowsTextDeliveryPolicy.EmptyContext(target, focusedId, targetKind, baselineValue);
 
     internal static WindowsPasteRule ResolveTargetPolicy(
         TargetWindowId target,
         string? elementClassName,
-        bool isControlEdit)
-    {
-        var processName = !string.IsNullOrWhiteSpace(target.ProcessName)
-            ? target.ProcessName
-            : WindowsWindowIdentity.TryGetProcessName(target.ProcessId);
-        var windowClassName = WindowsWindowIdentity.TryGetClassName(target.Value);
-        var fullscreen = IsFullscreen(target.Value);
-        return WindowsPastePolicy.Resolve(
-            processName,
-            windowClassName,
-            elementClassName,
-            isControlEdit,
-            fullscreen);
-    }
+        bool isControlEdit) =>
+        WindowsTextDeliveryPolicy.ResolveTargetPolicy(target, elementClassName, isControlEdit);
 
     private static bool IsUrlBarField(
         AutomationElement element,
@@ -1221,58 +879,20 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private static TargetContextStatus ActivateAndValidateWindow(
         TargetWindowId target,
         UiaPreparationBudget budget,
-        out bool wasReactivated)
-    {
-        wasReactivated = false;
-        if (!target.IsValid || !IsWindow(target.Value))
-        {
-            return TargetContextStatus.TargetUnavailable;
-        }
-
-        _ = GetWindowThreadProcessId(target.Value, out var currentProcessId);
-        if (target.ProcessId == 0 || currentProcessId != target.ProcessId)
-        {
-            return TargetContextStatus.TargetChanged;
-        }
-
-        var integrity = WindowsWindowIdentity.TryIsHigherIntegrityProcess(target.ProcessId);
-        if (integrity is null or true)
-        {
-            return TargetContextStatus.Elevated;
-        }
-
-        if (GetForegroundWindow() != target.Value)
-        {
-            wasReactivated = true;
-            _ = WindowsWindowIdentity.TryRestoreAndFocus(target.Value);
-            while (GetForegroundWindow() != target.Value && !budget.IsExhausted)
-            {
-                Thread.Sleep(25);
-            }
-        }
-
-        return GetForegroundWindow() == target.Value
-            ? TargetContextStatus.Available
-            : TargetContextStatus.TargetChanged;
-    }
+        out bool wasReactivated) =>
+        WindowsTargetWindowNative.ActivateAndValidateWindow(target, budget, out wasReactivated);
 
     private static TextDeliveryRefusalReason PreflightInput(
         TargetWindowId target,
         CaretContext expected,
         TextDeliveryOptions options)
     {
-        if (GetForegroundWindow() != target.Value)
+        if (!WindowsTargetWindowNative.IsSameForegroundWindowAndProcess(target))
         {
             return TextDeliveryRefusalReason.TargetChanged;
         }
 
-        _ = GetWindowThreadProcessId(target.Value, out var processId);
-        if (processId != target.ProcessId)
-        {
-            return TextDeliveryRefusalReason.TargetChanged;
-        }
-
-        if (AnyInputKeyHeld())
+        if (WindowsTargetWindowNative.AnyInputKeyHeld())
         {
             return TextDeliveryRefusalReason.InputStateUnsafe;
         }
@@ -1287,63 +907,19 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     /// says; mapping its status alone read it as "accessibility unavailable". The status is the
     /// answer only when the capture gave no reason of its own.
     /// </remarks>
-    internal static TextDeliveryRefusalReason PreflightRefusal(TargetContextResult current, CaretContext expected)
-    {
-        ArgumentNullException.ThrowIfNull(current);
-        ArgumentNullException.ThrowIfNull(expected);
-        if (current.Status != TargetContextStatus.Available || current.Context is null)
-        {
-            return current.RefusalReason != TextDeliveryRefusalReason.None
-                ? current.RefusalReason
-                : RefusalFor(current.Status);
-        }
+    internal static TextDeliveryRefusalReason PreflightRefusal(TargetContextResult current, CaretContext expected) =>
+        WindowsTextDeliveryPolicy.PreflightRefusal(current, expected);
 
-        return CaretUnchanged(expected, current.Context)
-            ? TextDeliveryRefusalReason.None
-            : TextDeliveryRefusalReason.TargetChanged;
-    }
-
-    private static void ValidateOptions(TextDeliveryOptions options)
-    {
-        if (options.ContextWindowCharacters is < 1 or > 4_096)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "The context window must be between 1 and 4096 characters.");
-        }
-
-        if (options.MaximumDirectValueCharacters is < 1 or > 1_048_576)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "The direct-value limit must be between 1 and 1048576 characters.");
-        }
-    }
-
-    private static bool AnyInputKeyHeld() =>
-        IsKeyHeld(VkControl) ||
-        IsKeyHeld(VkMenu) ||
-        IsKeyHeld(VkShift) ||
-        IsKeyHeld(VkLeftWindows) ||
-        IsKeyHeld(VkRightWindows) ||
-        IsKeyHeld(VkV);
-
-    private static bool IsKeyHeld(int virtualKey) =>
-        (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    private static void ValidateOptions(TextDeliveryOptions options) =>
+        WindowsTextDeliveryPolicy.ValidateOptions(options);
 
     private static string RuntimeId(AutomationElement element) =>
         element.GetRuntimeId() is { Length: > 0 } runtimeId
             ? string.Join('.', runtimeId)
             : string.Empty;
 
-    private static TextDeliveryRefusalReason RefusalFor(TargetContextStatus status) => status switch
-    {
-        TargetContextStatus.TargetUnavailable => TextDeliveryRefusalReason.TargetUnavailable,
-        TargetContextStatus.TargetChanged => TextDeliveryRefusalReason.TargetChanged,
-        TargetContextStatus.Protected => TextDeliveryRefusalReason.ProtectedField,
-        TargetContextStatus.Elevated => TextDeliveryRefusalReason.ElevatedTarget,
-        _ => TextDeliveryRefusalReason.AccessibilityUnavailable,
-    };
+    private static TextDeliveryRefusalReason RefusalFor(TargetContextStatus status) =>
+        WindowsTextDeliveryPolicy.RefusalFor(status);
 
     /// <summary>
     /// The boundary of one UI Automation call: what Windows accessibility refuses inside it is thrown
@@ -1385,73 +961,6 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     /// <summary>Whether an exception is one a UI Automation call refused, answered as "accessibility unavailable" rather than escaping.</summary>
     internal static bool IsExpectedAutomationFailure(Exception exception) => exception is AutomationRefusalException;
-
-    private static bool IsFullscreen(nint window)
-    {
-        if (!GetWindowRect(window, out var windowRect))
-        {
-            return false;
-        }
-
-        var monitor = MonitorFromWindow(window, MonitorDefaultToNearest);
-        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-        return monitor != 0 &&
-            GetMonitorInfo(monitor, ref info) &&
-            windowRect.Left <= info.Monitor.Left &&
-            windowRect.Top <= info.Monitor.Top &&
-            windowRect.Right >= info.Monitor.Right &&
-            windowRect.Bottom >= info.Monitor.Bottom;
-    }
-
-    private const uint MonitorDefaultToNearest = 2;
-    private const int VkShift = 0x10;
-    private const int VkControl = 0x11;
-    private const int VkMenu = 0x12;
-    private const int VkV = 0x56;
-    private const int VkLeftWindows = 0x5B;
-    private const int VkRightWindows = 0x5C;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Rect
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MonitorInfo
-    {
-        public int Size;
-        public Rect Monitor;
-        public Rect Work;
-        public uint Flags;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern nint GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindow(nint window);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
-
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int virtualKey);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetWindowRect(nint window, out Rect rect);
-
-    [DllImport("user32.dll")]
-    private static extern nint MonitorFromWindow(nint window, uint flags);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
 }
 
 /// <summary>What Windows accessibility refused inside one UI Automation call, with the refusal it gave; raised only by <see cref="WindowsTextTargetAdapter.Automation{T}"/>.</summary>

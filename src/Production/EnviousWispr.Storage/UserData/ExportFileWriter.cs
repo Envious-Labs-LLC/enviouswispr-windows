@@ -1,4 +1,4 @@
-using System.Text;
+using EnviousWispr.Core.IO;
 
 namespace EnviousWispr.Services.UserData;
 
@@ -28,34 +28,16 @@ public static class ExportFileWriter
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         ArgumentNullException.ThrowIfNull(text);
         var full = Path.GetFullPath(destination);
-        var folder = Path.GetDirectoryName(full)
-            ?? throw new IOException("The export destination has no folder.");
-        // A SHORT FIXED NAME, NOT THE DESTINATION'S NAME PLUS A SUFFIX: a chosen name near the 255-character limit
-        // on one path component would otherwise make the temporary's name too long, and the export would fail.
-        var temporary = Path.Combine(folder, $".ew-export-{Guid.NewGuid():N}.tmp");
-        try
+        if (Path.GetDirectoryName(full) is null)
         {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(text);
-                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
-
-            File.Move(temporary, full, overwrite: true);
+            throw new IOException("The export destination has no folder.");
         }
-        catch
-        {
-            try
-            {
-                File.Delete(temporary);
-            }
-            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
-            {
-                // The export already failed and says so; a temporary that cannot be removed is left, named as one.
-            }
 
-            throw;
-        }
+        await AtomicFileWriter.WriteTextAsync(
+            full,
+            text,
+            flushToDisk: true,
+            createParentDirectory: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

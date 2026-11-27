@@ -3,6 +3,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.History;
+using EnviousWispr.Core.IO;
 
 namespace EnviousWispr.Services.History;
 
@@ -46,16 +47,10 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
             return null;
         }
 
-        var tempPath = Path.Combine(
-            RecordingsDirectory,
-            $".{fileName}.{Guid.NewGuid():N}.tmp");
-
         try
         {
-            Directory.CreateDirectory(RecordingsDirectory);
             var bytes = WaveFile.EncodeMono(audio.Samples.Span, audio.SampleRate);
-            File.WriteAllBytes(tempPath, bytes);
-            File.Move(tempPath, targetPath, overwrite: true);
+            AtomicFileWriter.WriteBytes(targetPath, bytes);
 
             var durationMs = WaveFile.ComputeDurationMs(audio.Samples.Length, audio.SampleRate);
             return new ArchivedDictationAudio(fileName, durationMs);
@@ -64,10 +59,6 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
             exception is IOException or UnauthorizedAccessException or SecurityException or ArgumentException)
         {
             return null;
-        }
-        finally
-        {
-            TryDeletePath(tempPath);
         }
     }
 

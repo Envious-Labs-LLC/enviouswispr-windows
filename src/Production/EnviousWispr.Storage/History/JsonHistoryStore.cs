@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.History;
+using EnviousWispr.Core.IO;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.History;
@@ -425,33 +426,16 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
         IReadOnlyList<DictationHistoryEntry> entries,
         CancellationToken cancellationToken)
     {
-        var directory = Path.GetDirectoryName(_historyPath)
-            ?? throw new InvalidOperationException("The history path must have a parent directory.");
-        Directory.CreateDirectory(directory);
-        var temporaryPath = Path.Combine(
-            directory,
-            $".{Path.GetFileName(_historyPath)}.{Guid.NewGuid():N}.tmp");
-        try
+        if (Path.GetDirectoryName(_historyPath) is null)
         {
-            var json = JsonSerializer.Serialize(
-                new HistoryDocument(CurrentSchemaVersion, entries),
-                SerializerOptions);
-            await File.WriteAllTextAsync(temporaryPath, json, cancellationToken).ConfigureAwait(false);
-            File.Move(temporaryPath, _historyPath, overwrite: true);
+            throw new InvalidOperationException("The history path must have a parent directory.");
         }
-        finally
-        {
-            try
-            {
-                File.Delete(temporaryPath);
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
-        }
+
+        _ = await AtomicFileWriter.WriteJsonAsync(
+            _historyPath,
+            new HistoryDocument(CurrentSchemaVersion, entries),
+            SerializerOptions,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static DictationHistoryEntry[] Retain(

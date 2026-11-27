@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Polish;
 
 namespace EnviousWispr.LLM;
@@ -79,10 +80,10 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_readinessTimeout, TimeSpan.Zero);
         // NO REDIRECTS: the endpoint is checked to be this PC, and a redirect would send the request wherever the
         // answer pointed. A loopback Ollama never redirects. Ref: #213 review.
-        _httpClient = messageHandler is null
-            ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
-            : new HttpClient(messageHandler, disposeHandler: false);
-        _httpClient.Timeout = Timeout.InfiniteTimeSpan;
+        _httpClient = SharedHttpClients.CreateClient(
+            messageHandler,
+            HttpClientProfile.NoRedirect,
+            Timeout.InfiniteTimeSpan);
     }
 
     public Uri? Endpoint => _endpoint;

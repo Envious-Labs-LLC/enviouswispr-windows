@@ -37,9 +37,11 @@
     <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
     <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
     <ProjectReference Include="..\EnviousWispr.Presentation\EnviousWispr.Presentation.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Runtime\EnviousWispr.Runtime.csproj" />
     <ProjectReference Include="..\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\EnviousWispr.ExitProbe\EnviousWispr.ExitProbe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Storage\EnviousWispr.Storage.csproj" />
   </ItemGroup>
 
   <ItemGroup>

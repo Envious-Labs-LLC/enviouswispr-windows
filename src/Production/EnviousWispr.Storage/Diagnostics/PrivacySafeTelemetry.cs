@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text;
 using System.Threading.Channels;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Diagnostics;
@@ -75,7 +76,7 @@ public sealed class HttpPrivacySafeTelemetryTransport : IPrivacySafeTelemetryTra
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         _endpoint = endpoint;
-        _client = client ?? new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        _client = client ?? SharedHttpClients.CreateClient(timeout: TimeSpan.FromSeconds(5));
         _ownsClient = client is null;
     }
 

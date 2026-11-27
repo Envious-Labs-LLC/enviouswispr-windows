@@ -13,6 +13,6 @@
     <ProjectReference Include="..\..\src\Production\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Core\EnviousWispr.Core.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\..\src\Production\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.Runtime\EnviousWispr.Runtime.csproj" />
   </ItemGroup>
 </Project>

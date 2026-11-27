@@ -15,12 +15,14 @@ public sealed class ProjectDependencyTests
             ["EnviousWispr.LLM"] = ["EnviousWispr.Core"],
             ["EnviousWispr.Pipeline"] = ["EnviousWispr.Analyzers", "EnviousWispr.Core", "EnviousWispr.PostProcessing"],
             ["EnviousWispr.Presentation"] = ["EnviousWispr.Analyzers", "EnviousWispr.Core"],
+            ["EnviousWispr.Runtime"] = ["EnviousWispr.Core"],
             ["EnviousWispr.RuntimeWorker"] = ["EnviousWispr.ASR", "EnviousWispr.Core"],
             // The exit probe: a host process that leaves through the shell's ApplicationLifetime
             // (linked as source from App/Composition), so a test can watch a real escalation end a
             // real process. Pipeline for the shutdown report and the budget, Core for the log.
             ["EnviousWispr.ExitProbe"] = ["EnviousWispr.Core", "EnviousWispr.Pipeline"],
             ["EnviousWispr.Services"] = ["EnviousWispr.Core"],
+            ["EnviousWispr.Storage"] = ["EnviousWispr.Core"],
             ["EnviousWispr.ModelDelivery"] = ["EnviousWispr.Core"],
             ["EnviousWispr.App"] =
             [
@@ -33,8 +35,10 @@ public sealed class ProjectDependencyTests
                 "EnviousWispr.Pipeline",
                 "EnviousWispr.PostProcessing",
                 "EnviousWispr.Presentation",
+                "EnviousWispr.Runtime",
                 "EnviousWispr.RuntimeWorker",
                 "EnviousWispr.Services",
+                "EnviousWispr.Storage",
             ],
             ["EnviousWispr.Architecture.Tests"] =
             [
@@ -47,8 +51,10 @@ public sealed class ProjectDependencyTests
                 "EnviousWispr.Pipeline",
                 "EnviousWispr.PostProcessing",
                 "EnviousWispr.Presentation",
+                "EnviousWispr.Runtime",
                 "EnviousWispr.RuntimeWorker",
                 "EnviousWispr.Services",
+                "EnviousWispr.Storage",
             ],
         };
 

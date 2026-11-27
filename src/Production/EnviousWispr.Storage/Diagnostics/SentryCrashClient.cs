@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EnviousWispr.Core.Networking;
 
 namespace EnviousWispr.Services.Diagnostics;
 
@@ -87,27 +88,11 @@ public sealed class SentryCrashClient : IDisposable
         if (sendCrashReportsAtLaunch && dsn is not null)
         {
             _dsn = dsn;
-            if (messageHandler is not null)
-            {
-                _httpClient = new HttpClient(messageHandler, disposeHandler: false)
-                {
-                    Timeout = TimeSpan.FromSeconds(10),
-                };
-                _ownsHttpClient = true;
-            }
-            else
-            {
-                var handler = new SocketsHttpHandler
-                {
-                    AllowAutoRedirect = false,
-                    ConnectTimeout = TimeSpan.FromSeconds(5),
-                };
-                _httpClient = new HttpClient(handler, disposeHandler: true)
-                {
-                    Timeout = TimeSpan.FromSeconds(10),
-                };
-                _ownsHttpClient = true;
-            }
+            _httpClient = SharedHttpClients.CreateClient(
+                messageHandler,
+                HttpClientProfile.NoRedirect,
+                TimeSpan.FromSeconds(10));
+            _ownsHttpClient = true;
         }
 
         InitializeDefaultScope(usageMetricsEnabled, postHogDistinctId);

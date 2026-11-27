@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Feedback;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Services.Diagnostics;
 
 namespace EnviousWispr.Services.Feedback;
@@ -453,26 +454,11 @@ public sealed partial class SentryFeedbackSender : ISentryFeedbackTransport, IDi
         }
     }
 
-    private static (HttpClient Client, bool OwnsClient) CreateHttpClient(HttpMessageHandler? messageHandler)
-    {
-        if (messageHandler is not null)
-        {
-            return (new HttpClient(messageHandler, disposeHandler: false)
-            {
-                Timeout = TimeSpan.FromSeconds(10),
-            }, true);
-        }
-
-        var handler = new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            ConnectTimeout = TimeSpan.FromSeconds(5),
-        };
-        return (new HttpClient(handler, disposeHandler: true)
-        {
-            Timeout = TimeSpan.FromSeconds(10),
-        }, true);
-    }
+    private static (HttpClient Client, bool OwnsClient) CreateHttpClient(HttpMessageHandler? messageHandler) =>
+        (SharedHttpClients.CreateClient(
+            messageHandler,
+            HttpClientProfile.NoRedirect,
+            TimeSpan.FromSeconds(10)), true);
 
     [GeneratedRegex(@"(?i)\b(?:sk-[A-Za-z0-9_\-]{17,}|phc_[A-Za-z0-9_\-]{16,}|sntrys_[A-Za-z0-9_\-]{13,}|key_[A-Za-z0-9_\-]{16,})", RegexOptions.CultureInvariant)]
     private static partial Regex EmbeddedApiKeyRegex();

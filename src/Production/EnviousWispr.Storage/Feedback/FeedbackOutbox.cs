@@ -2,6 +2,7 @@ using System.Security;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Feedback;
+using EnviousWispr.Core.IO;
 
 namespace EnviousWispr.Services.Feedback;
 
@@ -409,35 +410,15 @@ public sealed class FeedbackOutbox : IDisposable
         OutboxState state,
         CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(_directory);
-        var temporaryPath = Path.Combine(
-            _directory,
-            $".{Path.GetFileName(FilePath)}.{Guid.NewGuid():N}.tmp");
-
-        try
-        {
-            var document = new OutboxDocumentV2(
-                SchemaVersion: 2,
-                Entries: state.Entries,
-                NotBeforeUtc: state.NotBeforeUtc);
-            var json = JsonSerializer.Serialize(document, SerializerOptions);
-            await File.WriteAllTextAsync(temporaryPath, json, cancellationToken).ConfigureAwait(false);
-            File.Move(temporaryPath, FilePath, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporaryPath))
-                {
-                    File.Delete(temporaryPath);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
-            {
-                // Best-effort temporary cleanup.
-            }
-        }
+        var document = new OutboxDocumentV2(
+            SchemaVersion: 2,
+            Entries: state.Entries,
+            NotBeforeUtc: state.NotBeforeUtc);
+        _ = await AtomicFileWriter.WriteJsonAsync(
+            FilePath,
+            document,
+            SerializerOptions,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private sealed record OutboxState(

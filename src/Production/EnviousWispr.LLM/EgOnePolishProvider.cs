@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
@@ -76,9 +77,7 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         _runtime = runtime;
         _modelId = options.ModelId;
         _inferenceTimeout = options.EffectiveInferenceTimeout;
-        _httpClient = messageHandler is null
-            ? new HttpClient()
-            : new HttpClient(messageHandler, disposeHandler: false);
+        _httpClient = SharedHttpClients.CreateClient(messageHandler);
     }
 
     public string ProviderId => "eg-one";

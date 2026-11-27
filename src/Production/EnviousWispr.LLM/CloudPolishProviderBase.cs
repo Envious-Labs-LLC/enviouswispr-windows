@@ -4,6 +4,7 @@ using System.Text.Json;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Networking;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
@@ -34,10 +35,10 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
         _apiKeyStore = apiKeyStore;
         Options = options;
         _requestTimeout = options.EffectiveRequestTimeout;
-        _httpClient = messageHandler is null
-            ? new HttpClient()
-            : new HttpClient(messageHandler, disposeHandler: false);
-        _httpClient.Timeout = Timeout.InfiniteTimeSpan;
+        _httpClient = SharedHttpClients.CreateClient(
+            messageHandler,
+            HttpClientProfile.Default,
+            Timeout.InfiniteTimeSpan);
         _delay = delay ?? Task.Delay;
     }
 
