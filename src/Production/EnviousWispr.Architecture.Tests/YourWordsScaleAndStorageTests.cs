@@ -195,6 +195,53 @@ public sealed class YourWordsScaleAndStorageTests
     }
 
     [Fact]
+    public async Task SplitJsonSettingsStoreDetectsMissingSidecarAndRollsBackFailedTwoFileSave()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var settingsPath = Path.Combine(directory, "settings.json");
+            var userDataPath = Path.Combine(directory, "user-data.json");
+            var store = new JsonSettingsStore(settingsPath, userDataPath);
+
+            var baseline = AppSettings.Default with
+            {
+                LaunchCount = 5,
+                UserData = new ReusableUserData(
+                    [new CustomWordEntry("origword", "OrigWord")],
+                    [new SnippetEntry("origsnip", "OrigBody")],
+                    hasSeededStarterSnippets: true),
+            };
+            await store.SaveAsync(baseline);
+
+            // 1. Delete user-data.json after split -> load reports StorageUnavailable rather than empty legacy profile.
+            File.Delete(userDataPath);
+            var missingSidecar = await new JsonSettingsStore(settingsPath, userDataPath).LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Unavailable, missingSidecar.Status);
+            Assert.False(File.Exists(userDataPath));
+
+            // Re-seed clean state to test rollback when settings.json write fails mid-commit.
+            await store.SaveAsync(baseline);
+            using var lockStream = new FileStream(settingsPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            var changedBoth = baseline with
+            {
+                LaunchCount = 9,
+                UserData = baseline.UserData.WithCustomWords(
+                    [new CustomWordEntry("updatedword", "UpdatedWord")]),
+            };
+
+            var saveFailure = await Record.ExceptionAsync(() => store.SaveAsync(changedBoth));
+            Assert.True(saveFailure is IOException or UnauthorizedAccessException);
+            lockStream.Dispose();
+
+            // Reload must still contain the previous consistent state (neither partial update persisted).
+            var afterRollback = await new JsonSettingsStore(settingsPath, userDataPath).LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, afterRollback.Status);
+            Assert.Equal(5, afterRollback.Settings.LaunchCount);
+            Assert.Equal("OrigWord", Assert.Single(afterRollback.Settings.UserData.CustomWords).Replacement);
+        });
+    }
+
+    [Fact]
     public async Task SplitJsonSettingsStoreRoundTripsFiveThousandWordsAndOneThousandSnippetsFast()
     {
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>

@@ -29,6 +29,7 @@ public sealed class JsonSettingsStore : ISettingsStore
 
     private readonly string _settingsPath;
     private readonly string? _userDataPath;
+    private readonly string? _splitMarkerPath;
     private readonly object _stateLock = new();
     private AppSettings? _lastSavedHeader;
     private ReusableUserData? _lastSavedUserData;
@@ -44,6 +45,7 @@ public sealed class JsonSettingsStore : ISettingsStore
         ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
         _settingsPath = Path.GetFullPath(settingsPath);
         _userDataPath = string.IsNullOrWhiteSpace(userDataPath) ? null : Path.GetFullPath(userDataPath);
+        _splitMarkerPath = _userDataPath is null ? null : _userDataPath + ".split";
     }
 
     public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
@@ -142,6 +144,15 @@ public sealed class JsonSettingsStore : ISettingsStore
             }
 
             var userDataFileExisted = _userDataPath is not null && File.Exists(_userDataPath);
+            if (_userDataPath is not null && !userDataFileExisted && _splitMarkerPath is not null && File.Exists(_splitMarkerPath))
+            {
+                // The profile was already split into slim settings.json + user-data.json, and user-data.json
+                // is now missing. Do NOT treat slim settings.json as a legacy profile (which would overwrite
+                // user data with empty lists on next save); report storage unavailable instead.
+                UpdateSavedSnapshots(null, null, needsSplitMigration: false);
+                return Unavailable(AppErrorCode.StorageUnavailable);
+            }
+
             if (userDataFileExisted)
             {
                 var splitUserData = await ReadUserDataFileAsync(_userDataPath!, cancellationToken).ConfigureAwait(false);
@@ -268,7 +279,17 @@ public sealed class JsonSettingsStore : ISettingsStore
             !Equals(slimSettings, lastHeader);
 
         // Write dedicated user-data store FIRST so an interrupted legacy migration leaves complete
-        // words and snippets on disk rather than an emptied monolithic settings.json.
+        // words and snippets on disk rather than an emptied monolithic settings.json. If both files
+        // are updated in the same commit and writing settings.json fails or is cancelled, roll back
+        // user-data.json so the next launch never sees a partially applied profile.
+        byte[]? previousUserDataBytes = null;
+        var trackRollback = writeUserData && writeSettings;
+        var userDataExistedBefore = File.Exists(_userDataPath);
+        if (trackRollback && userDataExistedBefore)
+        {
+            previousUserDataBytes = await File.ReadAllBytesAsync(_userDataPath, cancellationToken).ConfigureAwait(false);
+        }
+
         if (writeUserData)
         {
             await WriteAtomicallyAsync(
@@ -281,9 +302,22 @@ public sealed class JsonSettingsStore : ISettingsStore
 
         if (writeSettings)
         {
-            await WriteAtomicallyAsync(slimSettings, _settingsPath, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await WriteAtomicallyAsync(slimSettings, _settingsPath, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (trackRollback)
+                {
+                    await RestoreOrDeleteUserDataAsync(_userDataPath, previousUserDataBytes).ConfigureAwait(false);
+                }
+
+                throw;
+            }
         }
 
+        EnsureSplitMarker();
         UpdateSavedSnapshots(slimSettings, settings.UserData, needsSplitMigration: false);
     }
 
@@ -338,6 +372,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                     CompactSerializerOptions,
                     cancellationToken).ConfigureAwait(false);
                 await WriteAtomicallyAsync(slimReplacement, _settingsPath, cancellationToken).ConfigureAwait(false);
+                EnsureSplitMarker();
                 UpdateSavedSnapshots(slimReplacement, replacement.UserData, needsSplitMigration: false);
             }
         }
@@ -400,6 +435,57 @@ public sealed class JsonSettingsStore : ISettingsStore
             _lastSavedHeader = slimHeader;
             _lastSavedUserData = userData;
             _needsSplitMigration = needsSplitMigration;
+        }
+    }
+
+    private void EnsureSplitMarker()
+    {
+        if (_splitMarkerPath is null || File.Exists(_splitMarkerPath))
+        {
+            return;
+        }
+
+        var markerDirectory = GetParentDirectory(_splitMarkerPath);
+        Directory.CreateDirectory(markerDirectory);
+        File.WriteAllText(_splitMarkerPath, "v1");
+    }
+
+    private static async Task RestoreOrDeleteUserDataAsync(string userDataPath, byte[]? previousBytes)
+    {
+        try
+        {
+            if (previousBytes is null)
+            {
+                if (File.Exists(userDataPath))
+                {
+                    File.Delete(userDataPath);
+                }
+
+                return;
+            }
+
+            var directory = GetParentDirectory(userDataPath);
+            var temporaryPath = Path.Combine(
+                directory,
+                $".{Path.GetFileName(userDataPath)}.rollback.{Guid.NewGuid():N}.tmp");
+            try
+            {
+                await File.WriteAllBytesAsync(temporaryPath, previousBytes, CancellationToken.None).ConfigureAwait(false);
+                File.Move(temporaryPath, userDataPath, overwrite: true);
+            }
+            finally
+            {
+                TryDeleteTemporaryFile(temporaryPath);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        catch (SecurityException)
+        {
         }
     }
 
