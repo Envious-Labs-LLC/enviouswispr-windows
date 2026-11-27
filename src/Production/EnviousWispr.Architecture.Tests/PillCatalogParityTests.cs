@@ -193,11 +193,11 @@ public sealed class PillCatalogParityTests
         }
 
         var root = FindRepositoryRoot();
-        var mainWindowSource = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
-        var tree = CSharpSyntaxTree.ParseText(mainWindowSource);
-        var setSessionStatus = tree.GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var setSessionStatus = AppXamlSources.MainWindowShellPaths(root)
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path))
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
             .Single(method => method.Identifier.Text == "SetSessionStatus");
 
         var identifiers = setSessionStatus

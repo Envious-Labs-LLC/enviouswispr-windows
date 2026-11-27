@@ -112,4 +112,28 @@ internal static class AppXamlSources
 
     internal static string ReadMainWindowHistoryCodeText(string repositoryRoot) =>
         string.Join("\n", MainWindowHistoryPaths(repositoryRoot).Select(File.ReadAllText));
+
+    internal static IEnumerable<string> AppModelDeliveryPaths(string repositoryRoot)
+    {
+        var appDir = AppDirectory(repositoryRoot);
+        return Directory.EnumerateFiles(appDir, "App.ModelDelivery*.cs", SearchOption.TopDirectoryOnly)
+            .Order(StringComparer.Ordinal);
+    }
+
+    internal static string ReadAppModelDeliveryCodeText(string repositoryRoot) =>
+        string.Join("\n", AppModelDeliveryPaths(repositoryRoot).Select(File.ReadAllText));
+
+    internal static IEnumerable<string> MainWindowShellPaths(string repositoryRoot)
+    {
+        var appDir = AppDirectory(repositoryRoot);
+        return
+        [
+            Path.Combine(appDir, "MainWindow.xaml.cs"),
+            Path.Combine(appDir, "MainWindow.Navigation.cs"),
+            Path.Combine(appDir, "MainWindow.ChromeAndFeedback.cs"),
+        ];
+    }
+
+    internal static string ReadMainWindowShellCodeText(string repositoryRoot) =>
+        string.Join("\n", MainWindowShellPaths(repositoryRoot).Select(File.ReadAllText));
 }

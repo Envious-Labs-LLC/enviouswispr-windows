@@ -360,8 +360,7 @@ public sealed class AiPolishEgOneParityTests
                 .Select(File.ReadAllText));
         var ollamaCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.OllamaModels.cs"));
-        var deliveryCode = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
+        var deliveryCode = AppXamlSources.ReadAppModelDeliveryCodeText(root);
         var appCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.Polish.cs"));
 

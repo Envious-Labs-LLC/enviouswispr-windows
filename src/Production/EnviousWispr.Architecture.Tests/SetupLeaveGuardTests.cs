@@ -233,7 +233,7 @@ public sealed class SetupLeaveGuardTests
     public void MainWindowWiresLeaveGuardsAcrossAllExitRoutesWithoutRecursiveNavigationLoops()
     {
         var root = FindRepositoryRoot();
-        var mainWindow = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var mainWindow = AppXamlSources.ReadMainWindowShellCodeText(root);
         var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Shell.cs"));
         var leaveGuards = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.SetupLeaveGuards.cs"));
 
