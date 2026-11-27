@@ -39,7 +39,7 @@ public sealed class DictionaryMassEditTests
             string.Equals((string?)element.Attribute(XamlNamespace + "Name"), "MassEditWordsToggle", StringComparison.Ordinal));
         Assert.Equal("{StaticResource BrandQuietButtonStyle}", (string?)toggleButton.Attribute("Style"));
 
-        var method = FindMainWindowMethod(root, "MassEditWordsToggle_Click");
+        var method = FindDictionaryPageMethod(root, "MassEditWordsToggle_Click");
         var styleAssignments = method.Body!.DescendantNodes()
             .OfType<AssignmentExpressionSyntax>()
             .Where(assignment => assignment.Left is MemberAccessExpressionSyntax member
@@ -74,7 +74,7 @@ public sealed class DictionaryMassEditTests
     public void MassEditWordsToggleClickClearsSelectedItemsOnlyWhileSelectionEnabledAndBeforeSwitchingToNone()
     {
         var root = FindRepositoryRoot();
-        var method = FindMainWindowMethod(root, "MassEditWordsToggle_Click");
+        var method = FindDictionaryPageMethod(root, "MassEditWordsToggle_Click");
         var body = method.Body!;
 
         var selectionModeAssignments = body.DescendantNodes()
@@ -113,7 +113,7 @@ public sealed class DictionaryMassEditTests
     {
         var root = FindRepositoryRoot();
 
-        var updateMethod = FindMainWindowMethod(root, "UpdateSelectionDependentButtons");
+        var updateMethod = FindDictionaryPageMethod(root, "UpdateSelectionUi");
         var updateSelectedAccesses = updateMethod.Body!.DescendantNodes()
             .OfType<MemberAccessExpressionSyntax>()
             .Where(member => IsDictionaryListMember(member, "SelectedItems"))
@@ -121,19 +121,37 @@ public sealed class DictionaryMassEditTests
         Assert.NotEmpty(updateSelectedAccesses);
         Assert.All(updateSelectedAccesses, access => Assert.True(
             IsGuardedByConditionalNonNoneSelectionMode(access),
-            "UpdateSelectionDependentButtons must guard DictionaryList.SelectedItems with DictionaryList.SelectionMode."));
+            "UpdateSelectionUi must guard DictionaryList.SelectedItems with DictionaryList.SelectionMode."));
 
-        var removeMethod = FindMainWindowMethod(root, "RemoveWordButton_Click");
-        var removeSelectedAccesses = removeMethod.Body!.DescendantNodes()
+        var getSelectedMethod = FindDictionaryPageMethod(root, "GetSelectedWords");
+        var getSelectedAccesses = (getSelectedMethod.ExpressionBody as SyntaxNode ?? getSelectedMethod.Body!).DescendantNodes()
             .OfType<MemberAccessExpressionSyntax>()
             .Where(member => IsDictionaryListMember(member, "SelectedItems"))
             .ToArray();
-        Assert.NotEmpty(removeSelectedAccesses);
-        Assert.All(removeSelectedAccesses, access => Assert.True(
+        Assert.NotEmpty(getSelectedAccesses);
+        Assert.All(getSelectedAccesses, access => Assert.True(
             IsGuardedByConditionalNonNoneSelectionMode(access),
-            "RemoveWordButton_Click must guard DictionaryList.SelectedItems with DictionaryList.SelectionMode."));
+            "GetSelectedWords must guard DictionaryList.SelectedItems with DictionaryList.SelectionMode."));
 
-        var selectAllMethod = FindMainWindowMethod(root, "SelectAllWordsButton_Click");
+        var removeMethod = FindMainWindowMethod(root, "RemoveWordButton_Click");
+        Assert.DoesNotContain(
+            removeMethod.Body!.DescendantNodes().OfType<IdentifierNameSyntax>(),
+            id => id.Identifier.ValueText == "SelectedItems");
+
+        var selectedDecl = removeMethod.Body!.DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .Single(v => v.Identifier.ValueText == "selected");
+        Assert.Contains(
+            selectedDecl.Initializer!.Value.DescendantNodes().OfType<MemberBindingExpressionSyntax>(),
+            binding => binding.Name.Identifier.ValueText == "GetSelectedWords");
+        var removeInvocation = removeMethod.Body!.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .Single(inv => inv.Expression.ToString().EndsWith("RemoveWordsAndReportAsync", StringComparison.Ordinal));
+        Assert.Contains(
+            removeInvocation.ArgumentList.Arguments,
+            arg => arg.Expression is IdentifierNameSyntax id && id.Identifier.ValueText == "selected");
+
+        var selectAllMethod = FindDictionaryPageMethod(root, "SelectAllWordsButton_Click");
         var selectAllBody = selectAllMethod.Body!;
         var earlyReturnGuards = selectAllBody.Statements
             .OfType<IfStatementSyntax>()
@@ -152,6 +170,86 @@ public sealed class DictionaryMassEditTests
         Assert.All(selectAllAccesses, access => Assert.True(
             access.SpanStart > guard.Span.End,
             "SelectAllWordsButton_Click must ensure DictionaryList.SelectionMode == Multiple before accessing SelectedItems or SelectAll."));
+    }
+
+    [Fact]
+    public void DictionaryPageViewOwnsSearchFilterAndSelectionControlsWithoutMainWindowForwarding()
+    {
+        var root = FindRepositoryRoot();
+        var appDir = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var pageControls = File.ReadAllText(Path.Combine(appDir, "MainWindow.PageControls.cs"));
+        var pageControlsRoot = CSharpSyntaxTree.ParseText(pageControls, path: "MainWindow.PageControls.cs").GetRoot();
+        var forwardingProperties = pageControlsRoot.DescendantNodes()
+            .OfType<PropertyDeclarationSyntax>()
+            .Select(p => p.Identifier.ValueText)
+            .ToHashSet(StringComparer.Ordinal);
+
+        string[] ownedControlForwarders =
+        [
+            "ExportWordsButton",
+            "MassEditWordsToggle",
+            "DictionarySearchBox",
+            "DictionarySearchClearButton",
+            "WordFilterChipsPrimaryRow",
+            "WordFilterAllChip",
+            "WordFilterGeneralChip",
+            "WordFilterPersonChip",
+            "WordFilterBrandChip",
+            "WordFilterAcronymChip",
+            "WordFilterDomainChip",
+            "WordFilterAutoLearnedChip",
+            "WordFilterChipsOverflowRow",
+            "DictionaryMassEditBar",
+            "WordSelectionCountText",
+            "SelectAllWordsButton",
+            "RemoveWordButton",
+            "DictionaryList",
+            "DictionaryEmptyState",
+        ];
+
+        foreach (var controlName in ownedControlForwarders)
+        {
+            Assert.DoesNotContain(controlName, forwardingProperties);
+        }
+
+        var dictViewSource = File.ReadAllText(Path.Combine(appDir, "Pages", "DictionaryPageView.xaml.cs"));
+        var dictViewMethods = CSharpSyntaxTree.ParseText(dictViewSource, path: "DictionaryPageView.xaml.cs")
+            .GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Select(m => m.Identifier.ValueText)
+            .ToHashSet(StringComparer.Ordinal);
+        var mainDictSource = File.ReadAllText(Path.Combine(appDir, "MainWindow.Dictionary.cs"));
+        var mainDictMethods = CSharpSyntaxTree.ParseText(mainDictSource, path: "MainWindow.Dictionary.cs")
+            .GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Select(m => m.Identifier.ValueText)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var methodName in new[]
+        {
+            "MassEditWordsToggle_Click",
+            "SelectAllWordsButton_Click",
+            "DictionarySearchBox_TextChanged",
+            "DictionarySearchClearButton_Click",
+            "WordFilterChip_Click",
+            "WordFilterChipsContainer_SizeChanged",
+        })
+        {
+            Assert.Contains(methodName, dictViewMethods);
+            Assert.DoesNotContain(methodName, mainDictMethods);
+        }
+    }
+
+    private static MethodDeclarationSyntax FindDictionaryPageMethod(string root, string methodName)
+    {
+        var codePath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "Pages", "DictionaryPageView.xaml.cs");
+        return CSharpSyntaxTree.ParseText(File.ReadAllText(codePath), path: codePath)
+            .GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(m => m.Identifier.ValueText == methodName);
     }
 
     private static XElement FindStyle(XDocument document, string key) =>

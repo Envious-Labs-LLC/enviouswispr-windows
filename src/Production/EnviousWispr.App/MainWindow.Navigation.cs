@@ -338,7 +338,7 @@ public sealed partial class MainWindow
                 ApplyResponsiveTabStripLayout(DictionaryTabStrip);
             }
 
-            FlushPendingDictionaryRefresh();
+            _dictionaryPageView?.FlushPendingRefresh(CurrentCustomWords);
         }
         else if (pageKey == Pages.WindowPageKey.Snippets)
         {

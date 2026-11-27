@@ -356,25 +356,9 @@ public sealed partial class MainWindow
     {
         UpdateHistorySelectionDependentButtons();
 
-        if (IsDictionaryPageLoaded
-            && RemoveWordButton is not null
-            && SelectAllWordsButton is not null
-            && WordSelectionCountText is not null
-            && DictionaryList is not null
-            && ExportWordsButton is not null)
+        if (IsDictionaryPageLoaded)
         {
-            var selectedWords = DictionaryList.SelectionMode == ListViewSelectionMode.None
-                ? 0
-                : DictionaryList.SelectedItems.Count;
-            RemoveWordButton.IsEnabled = selectedWords > 0;
-            SelectAllWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
-
-            SetLiveRegion(
-                WordSelectionCountText,
-                selectedWords > 1 ? $"{selectedWords} selected" : string.Empty,
-                selectedWords > 1 ? Visibility.Visible : Visibility.Collapsed);
-
-            ExportWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
+            _dictionaryPageView?.UpdateSelectionUi(CurrentCustomWords.Count);
         }
 
         if (IsSnippetsPageLoaded && ExportSnippetsButton is not null)
@@ -440,24 +424,11 @@ public sealed partial class MainWindow
 
     private void ApplyUserDataRefresh(UserDataRefreshScope scope)
     {
-        if (scope.HasFlag(UserDataRefreshScope.Dictionary))
+        if (scope.HasFlag(UserDataRefreshScope.Dictionary) && IsDictionaryPageLoaded)
         {
-            _dictionaryViewDirty = true;
-            if (IsDictionaryPageLoaded && DictionaryPage is { Visibility: Visibility.Visible })
-            {
-                ScheduleDictionaryRefresh(debounce: false);
-            }
-            else if (IsDictionaryPageLoaded)
-            {
-                var wordsCount = _settings?.UserData.CustomWords.Count ?? 0;
-                if (WordCountText is not null)
-                {
-                    var wordUnit = wordsCount == 1 ? "WORD" : "WORDS";
-                    WordCountText.Text = $"{wordsCount} {wordUnit}";
-                }
-
-                UpdateSelectionDependentButtons();
-            }
+            _dictionaryPageView?.ApplyWords(
+                CurrentCustomWords,
+                isPageVisible: DictionaryPage is { Visibility: Visibility.Visible });
         }
 
         if (scope.HasFlag(UserDataRefreshScope.VocabularyPacks) && IsDictionaryPageLoaded)

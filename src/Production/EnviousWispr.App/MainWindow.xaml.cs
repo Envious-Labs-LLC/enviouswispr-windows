@@ -184,7 +184,6 @@ public sealed partial class MainWindow : Window, IDisposable
         _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
         InitializeHistoryUi();
-        InitializeUserDataUi();
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.LearnedUndoRequested += pillId => LearnedPillUndoRequested?.Invoke(pillId);
         _overlayWindow.LearnedEnded += pillId => LearnedPillEnded?.Invoke(pillId);
