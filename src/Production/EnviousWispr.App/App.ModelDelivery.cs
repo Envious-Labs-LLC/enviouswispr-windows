@@ -50,6 +50,7 @@ public partial class App
     private OnboardingDownloadCoordinator? _activeOnboardingCoordinator;
     private Task? _onboardingDelivery;
     private (string SpeechModelId, string? PolishModelId, bool ParallelDownloads)? _lastOnboardingDownloadRequest;
+    private (string SpeechModelId, string? PolishModelId, bool ParallelDownloads)? _pendingOnboardingDownloadRequest;
     private IReadOnlyList<string> _missingModelIds = [];
     private string? _activeDownloadModelId;
     private bool _activeDeliveryMirrorsSelectedEngine;
@@ -1673,19 +1674,42 @@ public partial class App
 
     private void OnOnboardingDualDownloadRequested(string speechModelId, string? polishModelId, bool parallelDownloads)
     {
-        if (_onboardingDelivery is { IsCompleted: false } || Leaving)
+        if (Leaving)
         {
             return;
         }
 
-        _lastOnboardingDownloadRequest = (speechModelId, polishModelId, parallelDownloads);
+        var request = (speechModelId, polishModelId, parallelDownloads);
+        if (_onboardingDelivery is { IsCompleted: false })
+        {
+            if (Nullable.Equals(_lastOnboardingDownloadRequest, request))
+            {
+                return;
+            }
+
+            _pendingOnboardingDownloadRequest = request;
+            _onboardingDownloadCancellation?.Cancel();
+            return;
+        }
+
+        _pendingOnboardingDownloadRequest = null;
+        _lastOnboardingDownloadRequest = request;
         _onboardingDelivery = DeliverOnboardingDualModelsAsync(speechModelId, polishModelId, parallelDownloads);
     }
 
-    private void OnOnboardingDualDownloadCancelRequested() => _onboardingDownloadCancellation?.Cancel();
+    private void OnOnboardingDualDownloadCancelRequested()
+    {
+        _pendingOnboardingDownloadRequest = null;
+        _onboardingDownloadCancellation?.Cancel();
+    }
 
     private void OnOnboardingDualDownloadSkipPolishRequested()
     {
+        if (_pendingOnboardingDownloadRequest is { } pending)
+        {
+            _pendingOnboardingDownloadRequest = pending with { PolishModelId = null };
+        }
+
         if (_lastOnboardingDownloadRequest is { } req)
         {
             _lastOnboardingDownloadRequest = req with { PolishModelId = null };
@@ -1834,6 +1858,15 @@ public partial class App
         {
             _activeOnboardingCoordinator = null;
             _onboardingDownloadCancellation = null;
+            if (_pendingOnboardingDownloadRequest is { } pending && !Leaving)
+            {
+                _pendingOnboardingDownloadRequest = null;
+                _lastOnboardingDownloadRequest = pending;
+                _onboardingDelivery = DeliverOnboardingDualModelsAsync(
+                    pending.SpeechModelId,
+                    pending.PolishModelId,
+                    pending.ParallelDownloads);
+            }
         }
     }
 

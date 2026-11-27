@@ -66,6 +66,8 @@ public sealed partial class MainWindow
     private bool _onboardingFocusOrphaned;
 
     private PolishProvider _onboardingCloudProvider = PolishProvider.OpenAI;
+    private int _onboardingCloudCheckGeneration;
+    private (string SpeechModelId, string? PolishModelId)? _activeRequestedDownloadPair;
     private bool _onboardingSeeAllCloudTab;
     private bool _onboardingIsUpdatingLanguageUi;
     private bool _onboardingIsUpdatingCards;
@@ -124,11 +126,19 @@ public sealed partial class MainWindow
     internal void RequestOnboardingDualDownload(string speechModelId, string? polishModelId, bool parallelDownloads) =>
         OnboardingDualDownloadRequested?.Invoke(speechModelId, polishModelId, parallelDownloads);
 
-    internal void CancelOnboardingDualDownload() =>
+    internal void CancelOnboardingDualDownload()
+    {
+        _activeRequestedDownloadPair = null;
         OnboardingDualDownloadCancelRequested?.Invoke();
+    }
 
     internal void SkipOnboardingPolishDownload()
     {
+        if (_activeRequestedDownloadPair is { } pair)
+        {
+            _activeRequestedDownloadPair = (pair.SpeechModelId, null);
+        }
+
         if (_onboardingDownloadSnapshot is { Polish: not null } snap)
         {
             var updatedPlan = snap.Plan with
@@ -383,23 +393,22 @@ public sealed partial class MainWindow
 
         _onboardingStateLoaded = true;
         SyncLiveInventoryToOnboarding();
-        if (_onboarding.Step == OnboardingStep.Downloads && _onboarding.NeedsDownloadStart)
+        if (_onboarding.Step >= OnboardingStep.Downloads && _onboarding.Step < OnboardingStep.Closing)
         {
             StartOnboardingDownloadsIfNeeded();
-        }
-        else if (_onboarding.Step >= OnboardingStep.Downloads &&
-                 !_onboarding.NeedsDownloadStart &&
-                 _onboarding.Model == SpeechModelDelivery.Installed &&
-                 _onboarding.Engine != SpeechEngineReadiness.Ready &&
-                 _onboarding.PolishModel == SpeechModelDelivery.Installed &&
-                 _settings.Preferences.Dictation.FinalEngine != _onboarding.Choices.SpeechEngine &&
-                 ApplyOnboardingEnginesChoice is { } applyEngines)
-        {
-            _ = applyEngines(
-                _onboarding.Choices.SpeechEngine,
-                _onboarding.Choices.PolishChoice,
-                _onboarding.Choices.EgOneModelId,
-                _onboarding.Choices.CloudModelId);
+            if (_onboarding.Model == SpeechModelDelivery.Installed &&
+                _onboarding.Engine != SpeechEngineReadiness.Ready &&
+                _onboarding.PolishModel == SpeechModelDelivery.Installed &&
+                _settings.Preferences.Dictation.FinalEngine != _onboarding.Choices.SpeechEngine &&
+                _onboardingDownloadSnapshot?.IsRunning != true &&
+                ApplyOnboardingEnginesChoice is { } applyEngines)
+            {
+                _ = applyEngines(
+                    _onboarding.Choices.SpeechEngine,
+                    _onboarding.Choices.PolishChoice,
+                    _onboarding.Choices.EgOneModelId,
+                    _onboarding.Choices.CloudModelId);
+            }
         }
 
         RenderOnboarding();
@@ -414,6 +423,8 @@ public sealed partial class MainWindow
 
         CancelOnboardingKeyCapture();
         _onboardingDownloadSnapshot = null;
+        _activeRequestedDownloadPair = null;
+        _onboardingCloudCheckGeneration++;
         _onboardingHoldRehearsed = false;
         _onboardingDoubleTapRehearsed = false;
         _onboardingRehearsalKeyDown = false;
@@ -677,16 +688,8 @@ public sealed partial class MainWindow
                 {
                     QueueOnboardingCheckpointSave();
                 }
-                else if (_onboarding.MayFinish(OnboardingExit.SkipAheadWithoutPolish))
+                else if (TrySkipPolishFromGettingReady())
                 {
-                    SkipOnboardingPolishDownload();
-                    _onboarding.SkipAheadWithoutPolish();
-                    QueueOnboardingCheckpointSave();
-                }
-                else if (_onboarding.MayFinish(OnboardingExit.ContinueWithoutPolish))
-                {
-                    SkipOnboardingPolishDownload();
-                    _onboarding.ContinueWithoutAiPolish();
                     QueueOnboardingCheckpointSave();
                 }
                 else if (_onboarding.Model == SpeechModelDelivery.Installed &&
@@ -752,17 +755,7 @@ public sealed partial class MainWindow
                 break;
 
             case OnboardingStep.GettingReady:
-                if (_onboarding.MayFinish(OnboardingExit.SkipAheadWithoutPolish))
-                {
-                    SkipOnboardingPolishDownload();
-                    _onboarding.SkipAheadWithoutPolish();
-                }
-                else if (_onboarding.MayFinish(OnboardingExit.ContinueWithoutPolish))
-                {
-                    SkipOnboardingPolishDownload();
-                    _onboarding.ContinueWithoutAiPolish();
-                }
-
+                _ = TrySkipPolishFromGettingReady();
                 QueueOnboardingCheckpointSave();
                 RenderOnboarding();
                 break;
@@ -936,6 +929,8 @@ public sealed partial class MainWindow
 
     private void OnboardingPolishTabLocalButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingCloudCheckGeneration++;
+        OnboardingCloudApiKeyBox.Password = string.Empty;
         _onboardingSeeAllCloudTab = false;
         if (_onboarding.Choices.PolishChoice != OnboardingPolishChoiceKind.EgOne)
         {
@@ -962,6 +957,7 @@ public sealed partial class MainWindow
             return;
         }
 
+        _onboardingCloudCheckGeneration++;
         _onboardingSeeAllCloudTab = false;
         _onboarding.SelectPolish(OnboardingPolishChoiceKind.EgOne, EgOneModelCatalog.NormalizeOrDefault(modelId));
         SyncLiveInventoryToOnboarding();
@@ -988,6 +984,12 @@ public sealed partial class MainWindow
 
     private void SelectOnboardingCloudProvider(PolishProvider provider)
     {
+        if (_onboardingCloudProvider != provider)
+        {
+            OnboardingCloudApiKeyBox.Password = string.Empty;
+        }
+
+        _onboardingCloudCheckGeneration++;
         _onboardingCloudProvider = provider;
         var kind = ToOnboardingPolishKind(provider);
         var defaultModel = _session.Provider.RecommendedModel(provider) ?? GetDefaultCloudModelFallback(provider);
@@ -1000,6 +1002,8 @@ public sealed partial class MainWindow
         QueueOnboardingCheckpointSave();
         PopulateOnboardingCloudModels(provider, [defaultModel], currentModel);
         RefreshOnboardingCloudKeyStatusText(provider);
+        OnboardingCloudCheckKeyButton.IsEnabled = !string.IsNullOrWhiteSpace(OnboardingCloudApiKeyBox.Password) ||
+            _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
     }
 
     private static OnboardingPolishChoiceKind ToOnboardingPolishKind(PolishProvider provider) => provider switch
@@ -1117,12 +1121,18 @@ public sealed partial class MainWindow
             return;
         }
 
+        var generation = ++_onboardingCloudCheckGeneration;
         SetLiveText(OnboardingCloudKeyStatusText, $"Checking {ProviderDisplayName(provider)} key...");
         OnboardingCloudCheckKeyButton.IsEnabled = false;
         try
         {
             var listing = await _session.Provider.ListModelsAsync(provider, null).ConfigureAwait(true);
-            if (listing is null || _session.Closing)
+            if (listing is null ||
+                _session.Closing ||
+                _onboarding.Step != OnboardingStep.PolishSeeAll ||
+                !_onboardingSeeAllCloudTab ||
+                _onboardingCloudProvider != provider ||
+                generation != _onboardingCloudCheckGeneration)
             {
                 return;
             }
@@ -1150,15 +1160,40 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingCloudClearKeyButton_Click(object sender, RoutedEventArgs e)
+    private async void OnboardingCloudClearKeyButton_Click(object sender, RoutedEventArgs e)
     {
-        OnboardingCloudApiKeyBox.Password = string.Empty;
-        if (_session.Provider.CheckKeyRemoval(_onboardingCloudProvider) == ApiKeyRemovalCheck.Confirm)
+        var provider = _onboardingCloudProvider;
+        if (!string.IsNullOrEmpty(OnboardingCloudApiKeyBox.Password))
         {
-            _ = _session.Provider.RemoveKey(_onboardingCloudProvider);
+            OnboardingCloudApiKeyBox.Password = string.Empty;
+            RefreshOnboardingCloudKeyStatusText(provider);
+            OnboardingCloudCheckKeyButton.IsEnabled = _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
+            return;
         }
 
-        RefreshOnboardingCloudKeyStatusText(_onboardingCloudProvider);
+        if (_session.Provider.CheckKeyRemoval(provider) == ApiKeyRemovalCheck.Confirm)
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = WindowRoot.XamlRoot,
+                Title = $"Remove the stored {ProviderDisplayName(provider)} key?",
+                Content = "This deletes the EnviousWispr credential from Windows Credential Manager. You can add one again anytime.",
+                PrimaryButtonText = "Remove key",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary ||
+                _session.Closing ||
+                _onboardingCloudProvider != provider)
+            {
+                return;
+            }
+
+            _ = _session.Provider.RemoveKey(provider);
+        }
+
+        RefreshOnboardingCloudKeyStatusText(provider);
+        OnboardingCloudCheckKeyButton.IsEnabled = _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
     }
 
     private void OnboardingCloudModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1203,17 +1238,31 @@ public sealed partial class MainWindow
 
     private void StartOnboardingDownloadsIfNeeded()
     {
-        if (!_onboarding.NeedsDownloadStart)
+        var speechInstalled = _onboarding.Choices.SpeechEngine == FinalAsrEngine.Whisper
+            ? _whisperModelState.IsInstalled
+            : _parakeetModelState.IsInstalled;
+        var polishInstalled = !_onboarding.RequiresLocalEgOne ||
+            ResolveEgOneDisplayState(EgOneModelCatalog.NormalizeOrDefault(_onboarding.Choices.EgOneModelId)).IsInstalled;
+        if (speechInstalled && polishInstalled)
+        {
+            return;
+        }
+
+        var speechModelId = _onboarding.Choices.SpeechModelId;
+        var polishModelId = _onboarding.RequiresLocalEgOne
+            ? EgOneModelCatalog.NormalizeOrDefault(_onboarding.Choices.EgOneModelId)
+            : null;
+        var requestedPair = (speechModelId, polishModelId);
+        if (!_onboarding.NeedsDownloadStart &&
+            _onboardingDownloadSnapshot?.IsRunning == true &&
+            _activeRequestedDownloadPair == requestedPair)
         {
             return;
         }
 
         _onboarding.DownloadStarted();
+        _activeRequestedDownloadPair = requestedPair;
         var rec = _onboardingRecommendation ?? ComputeOnboardingRecommendation(_onboarding.Choices.LanguageCode);
-        var speechModelId = _onboarding.Choices.SpeechModelId;
-        var polishModelId = _onboarding.RequiresLocalEgOne
-            ? EgOneModelCatalog.NormalizeOrDefault(_onboarding.Choices.EgOneModelId)
-            : null;
         if (OnboardingDualDownloadRequested is not null)
         {
             RequestOnboardingDualDownload(speechModelId, polishModelId, rec.Polish.ParallelDownloads);
@@ -1280,19 +1329,35 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingGateSkipPolishButton_Click(object sender, RoutedEventArgs e)
+    private bool TrySkipPolishFromGettingReady()
     {
         if (_onboarding.MayFinish(OnboardingExit.SkipAheadWithoutPolish))
         {
             SkipOnboardingPolishDownload();
-            _ = _onboarding.SkipAheadWithoutPolish();
+            if (_onboarding.SkipAheadWithoutPolish())
+            {
+                _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
+                SyncLiveInventoryToOnboarding();
+                return true;
+            }
         }
         else if (_onboarding.MayFinish(OnboardingExit.ContinueWithoutPolish))
         {
             SkipOnboardingPolishDownload();
-            _ = _onboarding.ContinueWithoutAiPolish();
+            if (_onboarding.ContinueWithoutAiPolish())
+            {
+                _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
+                SyncLiveInventoryToOnboarding();
+                return true;
+            }
         }
-        else
+
+        return false;
+    }
+
+    private void OnboardingGateSkipPolishButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TrySkipPolishFromGettingReady())
         {
             OnboardingSkipPolishAndAdvance_Click(sender, e);
             return;

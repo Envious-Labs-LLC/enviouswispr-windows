@@ -144,6 +144,8 @@ public partial class App
                 ("Recording", canonicalGesture),
                 ("Cancel", current.Preferences.Dictation.CancelGesture),
                 ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
+                ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
+                ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
             ]);
         if (conflicts.Count > 0)
         {
@@ -166,17 +168,27 @@ public partial class App
              (SingleInstanceLock.IsHeld(_releaseIdentity.SingleInstanceKey) ||
               SingleInstanceLock.IsHeld(globalHotkeyKey)));
 
-        Task<bool> SaveShortcutAsync() => TrySaveOnboardingSettingsAsync(latest => latest with
+        async Task<bool> SaveShortcutAsync()
         {
-            Preferences = latest.Preferences with
+            try
             {
-                Dictation = latest.Preferences.Dictation with
+                return await TrySaveOnboardingSettingsAsync(latest => latest with
                 {
-                    PushToTalkGesture = canonicalGesture,
-                    RecordingMode = recordingMode,
-                },
-            },
-        });
+                    Preferences = latest.Preferences with
+                    {
+                        Dictation = latest.Preferences.Dictation with
+                        {
+                            PushToTalkGesture = canonicalGesture,
+                            RecordingMode = recordingMode,
+                        },
+                    },
+                }).ConfigureAwait(true);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
 
         if (suppressGlobalHook)
         {
