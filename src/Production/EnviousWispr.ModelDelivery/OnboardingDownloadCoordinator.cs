@@ -469,7 +469,35 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
         var activationCallback = isSpeech ? _onSpeechInstalledAsync : _onPolishInstalledAsync;
         if (activationCallback is not null && !cancellationToken.IsCancellationRequested)
         {
-            await activationCallback(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await activationCallback(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+            {
+                var failureMessage = isSpeech
+                    ? "Downloaded the speech model, but local transcription could not start. Retry to try again."
+                    : "Downloaded the AI polish model, but local polish could not start. Retry to try again.";
+                lock (_sync)
+                {
+                    var current = isSpeech ? _speechState : _polishState!;
+                    UpdateSlotLocked(isSpeech, current with
+                    {
+                        Stage = OnboardingDownloadStage.Failed,
+                        CanRetry = true,
+                        CanCancel = false,
+                        StatusDetail = failureMessage,
+                    });
+                    _failureMessage ??= failureMessage;
+                }
+
+                PublishSnapshot();
+                return;
+            }
         }
 
         if (!cancellationToken.IsCancellationRequested)

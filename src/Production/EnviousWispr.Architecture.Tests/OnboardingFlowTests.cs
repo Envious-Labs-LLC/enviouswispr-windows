@@ -423,6 +423,44 @@ public sealed class OnboardingFlowTests
 
         flow.ReportRecordingKey("Ctrl+Win", DictationRecordingMode.PushToTalk);
         Assert.Equal("Your key: Ctrl+Win", OnboardingCopy.KeyLine(flow));
+        Assert.True(flow.RecordingKeyHasGestures);
+
+        flow.ReportRecordingKey("F8", DictationRecordingMode.Toggle);
+        Assert.False(flow.RecordingKeyHasGestures);
+    }
+
+    [Fact]
+    public void UnknownMicrophoneConsentPassesSetupGateAndListeningSurvivesBlockedMicUpdate()
+    {
+        var flow = CreateFlowAtStep(
+            OnboardingStep.Permissions,
+            mic: MicrophoneConsent.Unknown);
+        Assert.True(flow.MicrophoneAllowed);
+        Assert.True(flow.ContinueFromPermissions(MicrophoneConsent.Unknown));
+        Assert.Equal(OnboardingStep.Key, flow.Step);
+
+        flow.ContinueFromKey();
+        Assert.Equal(OnboardingStep.Practice, flow.Step);
+
+        flow.TakeStarted("");
+        Assert.Equal(OnboardingPracticeState.Listening, flow.PracticeState);
+        flow.ReportMicrophone(MicrophoneConsent.Blocked);
+        Assert.Equal(OnboardingPracticeState.Listening, flow.PracticeState);
+
+        flow.TakeEnded("");
+        Assert.Equal(OnboardingPracticeState.SaidNothing, flow.PracticeState);
+    }
+
+    [Fact]
+    public void WizardStepNumbersMatchTotalMilestonesCleanly()
+    {
+        foreach (var step in Enum.GetValues<OnboardingStep>())
+        {
+            var number = OnboardingFlow.PrimaryStepNumberFor(step);
+            Assert.InRange(number, 1, OnboardingFlow.PrimaryStepCount);
+        }
+
+        Assert.Equal("Step 11 of 11", OnboardingCopy.StepOf(OnboardingStep.Closing));
     }
 
     [Theory]

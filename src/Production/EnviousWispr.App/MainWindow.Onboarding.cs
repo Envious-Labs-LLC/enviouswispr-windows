@@ -602,14 +602,15 @@ public sealed partial class MainWindow
 
     private void RescueOnboardingFocus(Control? focusedBefore)
     {
-        var nowFocused = FocusedOnboardingControl();
-        var lostFocus = focusedBefore is not null && nowFocused is null;
-        if (!lostFocus && !_onboardingFocusOrphaned)
+        if (focusedBefore is not null && !CanTakeFocus(focusedBefore))
         {
-            return;
+            _onboardingFocusOrphaned = true;
         }
 
-        FocusOnboardingScreen();
+        if (_onboardingFocusOrphaned)
+        {
+            FocusOnboardingScreen();
+        }
     }
 
     private static bool IsInside(DependencyObject element, DependencyObject ancestor)

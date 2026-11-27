@@ -115,7 +115,7 @@ public static class OnboardingCopy
             Kind: OnboardingClosingBeatKind.Copied,
             DurationSeconds: 6.5,
             Title: "No text box selected?",
-            Subtitle: "EnviousWispr copies your words. Press Ctrl+V to paste, and anything copied before comes back.",
+            Subtitle: "EnviousWispr copies your words so you can press Ctrl+V anywhere.",
             SpokenSummaryTemplate: "No text box selected? EnviousWispr copies your words so you can press Ctrl+V anywhere."),
         new(
             Index: 4,

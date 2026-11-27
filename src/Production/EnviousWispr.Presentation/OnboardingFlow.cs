@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
@@ -110,7 +111,7 @@ public sealed class OnboardingFlow
     public const int LegacyShellStepCount = 5;
 
     /// <summary>Total numbered milestones along the full #4528 setup wizard (excluding terminal Done).</summary>
-    public const int PrimaryStepCount = 13;
+    public const int PrimaryStepCount = 11;
 
     public static readonly TimeSpan WarmingDisplayFloor = TimeSpan.FromMilliseconds(600);
 
@@ -146,7 +147,7 @@ public sealed class OnboardingFlow
 
     public MicrophoneConsent MicrophoneConsent { get; private set; } = MicrophoneConsent.Unknown;
 
-    public bool MicrophoneAllowed => MicrophoneConsent == MicrophoneConsent.Allowed;
+    public bool MicrophoneAllowed => MicrophoneConsent != MicrophoneConsent.Blocked;
 
     public string? RecordingKey { get; private set; }
 
@@ -155,8 +156,9 @@ public sealed class OnboardingFlow
     public DictationRecordingMode RecordingMode { get; private set; } = DictationRecordingMode.PushToTalk;
 
     public bool RecordingKeyHasGestures =>
-        !string.IsNullOrWhiteSpace(RecordingKey) &&
-        !RecordingKey.Contains('+', StringComparison.Ordinal);
+        RecordingKey is { } key &&
+        HotkeyGestureParser.Parse(key) is { Succeeded: true, Gesture: { } gesture } &&
+        HotkeyGestureParser.UnlocksGestures(gesture);
 
     public bool KeyRehearsalCompleted { get; private set; }
 
@@ -275,8 +277,7 @@ public sealed class OnboardingFlow
         OnboardingStep.Key => 8,
         OnboardingStep.GettingReady => 9,
         OnboardingStep.Practice => 10,
-        OnboardingStep.Closing => 11,
-        OnboardingStep.Done => 12,
+        OnboardingStep.Closing or OnboardingStep.Done => 11,
         _ => 1,
     };
 
@@ -863,7 +864,10 @@ public sealed class OnboardingFlow
 
         if (consent == MicrophoneConsent.Blocked)
         {
-            PracticeState = OnboardingPracticeState.CannotHear;
+            if (!TakeInFlight)
+            {
+                PracticeState = OnboardingPracticeState.CannotHear;
+            }
         }
         else if (PracticeState == OnboardingPracticeState.CannotHear)
         {

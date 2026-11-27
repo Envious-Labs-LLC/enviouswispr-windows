@@ -195,6 +195,45 @@ public sealed class OnboardingDownloadCoordinatorTests
             [.. trace]);
     }
 
+    [Fact]
+    public async Task ActivationFailureTransitionsSlotToRetryableFailedStateAndRecoversOnRetry()
+    {
+        var plan = new OnboardingDownloadPlan(
+            SpeechModelId: ParakeetModelIds.Final,
+            SpeechTotalBytes: 100,
+            PolishModelId: null,
+            PolishTotalBytes: 0,
+            ParallelDownloads: false);
+
+        var throwOnce = true;
+        using var coordinator = new OnboardingDownloadCoordinator(
+            plan,
+            provisionAsync: (_, _, _) => Task.FromResult(new ModelDeliveryResult(true)),
+            onSpeechInstalledAsync: _ =>
+            {
+                if (throwOnce)
+                {
+                    throwOnce = false;
+                    throw new InvalidOperationException("Simulated worker start failure");
+                }
+
+                return Task.CompletedTask;
+            },
+            diskSpaceProbe: new FixedDiskProbe(10L * 1024 * 1024 * 1024));
+
+        var failed = await coordinator.RunAsync();
+        Assert.False(failed.IsSpeechReady);
+        Assert.False(failed.IsRunning);
+        Assert.Equal(OnboardingDownloadStage.Failed, failed.Speech.Stage);
+        Assert.True(failed.Speech.CanRetry);
+        Assert.False(failed.Speech.CanCancel);
+        Assert.NotNull(failed.FailureMessage);
+
+        var recovered = await coordinator.RetryFailedAsync();
+        Assert.True(recovered.IsSpeechReady);
+        Assert.Equal(OnboardingDownloadStage.Installed, recovered.Speech.Stage);
+    }
+
     private sealed class FixedDiskProbe(long availableBytes) : IDiskSpaceProbe
     {
         public long GetAvailableBytes(string path) => availableBytes;

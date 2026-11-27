@@ -1685,8 +1685,11 @@ public partial class App
         var normalizedPolishId = string.IsNullOrWhiteSpace(polishModelId)
             ? null
             : EgOneModelCatalog.NormalizeOrDefault(polishModelId);
-        var polishInstalled = normalizedPolishId is null
-            || (await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true)).IsInstalled;
+        var polishState = normalizedPolishId is null
+            ? null
+            : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
+        var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true && _polishProvider is not null);
+        var speechInstalled = speechState.IsInstalled && _transcriptionEngine is not null;
 
         if (Leaving)
         {
@@ -1708,7 +1711,7 @@ public partial class App
             PolishModelId: normalizedPolishId,
             PolishTotalBytes: polishTotalBytes,
             ParallelDownloads: parallelDownloads,
-            SpeechAlreadyInstalled: speechState.IsInstalled,
+            SpeechAlreadyInstalled: speechInstalled,
             PolishAlreadyInstalled: polishInstalled);
 
         using var cancellation = new CancellationTokenSource();
