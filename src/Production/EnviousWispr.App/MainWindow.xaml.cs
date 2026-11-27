@@ -1208,7 +1208,12 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void FitWindowToOnboardingOnce(object? sender, object e)
     {
-        if (OnboardingContent.DesiredSize.Height <= 0 || OnboardingFooter.DesiredSize.Height <= 0 || OnboardingView.ActualHeight <= 0)
+        if (OnboardingView is null
+            || OnboardingContent is null
+            || OnboardingFooter is null
+            || OnboardingContent.DesiredSize.Height <= 0
+            || OnboardingFooter.DesiredSize.Height <= 0
+            || OnboardingView.ActualHeight <= 0)
         {
             return;
         }
