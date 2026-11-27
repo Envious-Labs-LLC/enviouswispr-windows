@@ -165,22 +165,38 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         // background warmups/judges). Heart is sacred — if an unrelated limb fails to yield inside
         // the deadline, raw transcription still proceeds rather than failing the user's take.
         IAsyncDisposable? resourceLease = null;
-        if (_resourceAdmission is not null)
-        {
-            var acquired = await _resourceAdmission.AcquireAsync(
-                _resourceKind,
-                RuntimeWorkloadKind.FinalAsr,
-                _resourceWaitTimeout,
-                effectiveCancellationToken).ConfigureAwait(false);
-            if (acquired.Succeeded)
-            {
-                resourceLease = acquired.Lease;
-            }
-        }
-
+        IAsyncDisposable? cpuFallbackLease = null;
         RuntimeWorkerResponse? response;
         try
         {
+            if (_resourceAdmission is not null)
+            {
+                var acquired = await _resourceAdmission.AcquireAsync(
+                    _resourceKind,
+                    RuntimeWorkloadKind.FinalAsr,
+                    _resourceWaitTimeout,
+                    effectiveCancellationToken).ConfigureAwait(false);
+                if (acquired.Succeeded)
+                {
+                    resourceLease = acquired.Lease;
+                }
+
+                if (_resourceKind == RuntimeResourceKind.Accelerator)
+                {
+                    // GPU workers build an internal CPU fallback when accelerator load or inference fails,
+                    // so reserve Cpu as well in fixed Accelerator -> Cpu order to block CPU-bound limbs.
+                    var cpuAcquired = await _resourceAdmission.AcquireAsync(
+                        RuntimeResourceKind.Cpu,
+                        RuntimeWorkloadKind.FinalAsr,
+                        _resourceWaitTimeout,
+                        effectiveCancellationToken).ConfigureAwait(false);
+                    if (cpuAcquired.Succeeded)
+                    {
+                        cpuFallbackLease = cpuAcquired.Lease;
+                    }
+                }
+            }
+
             response = await _supervisor.TranscribeAsync(
                 request,
                 _transcriptionTimeout,
@@ -203,6 +219,11 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         }
         finally
         {
+            if (cpuFallbackLease is not null)
+            {
+                await cpuFallbackLease.DisposeAsync().ConfigureAwait(false);
+            }
+
             if (resourceLease is not null)
             {
                 await resourceLease.DisposeAsync().ConfigureAwait(false);

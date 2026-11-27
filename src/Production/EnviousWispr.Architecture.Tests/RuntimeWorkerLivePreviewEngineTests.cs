@@ -297,6 +297,50 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
         await wedged.Lease!.DisposeAsync();
     }
 
+    [Fact]
+    public async Task AcceleratorFinalAsrEngineAlsoReservesCpuForInternalFallbackAndPreemptsBackground()
+    {
+        using var arbiter = new RuntimeResourceArbiter();
+        var backgroundToken = arbiter.CurrentBackgroundToken;
+        var workerPath = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        await using var supervisor = new RuntimeWorkerSupervisor(
+            workerPath,
+            ["--test-transcribe-stub", "--transcribe-delay-ms", "250"],
+            maximumRestarts: 0);
+        await using var engine = new RuntimeWorkerTranscriptionEngine(
+            supervisor,
+            "test-transcribe-stub:gpu",
+            resourceAdmission: arbiter,
+            resourceKind: RuntimeResourceKind.Accelerator,
+            resourceWaitTimeout: TimeSpan.FromMilliseconds(25));
+
+        var audio = new CapturedAudio(DictationSessionId.Create(), SampleAudio, 16_000, 1);
+        var transcribeTask = engine.TranscribeAsync(audio);
+
+        var observedBothLeases = false;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!transcribeTask.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            var owners = arbiter.ActiveOwners;
+            if (owners.TryGetValue(RuntimeResourceKind.Accelerator, out var accelKind) &&
+                owners.TryGetValue(RuntimeResourceKind.Cpu, out var cpuKind) &&
+                accelKind == RuntimeWorkloadKind.FinalAsr &&
+                cpuKind == RuntimeWorkloadKind.FinalAsr)
+            {
+                observedBothLeases = true;
+                break;
+            }
+
+            await Task.Delay(15);
+        }
+
+        var transcript = await transcribeTask;
+        Assert.Equal("test-transcribe-stub", transcript.EngineId);
+        Assert.True(observedBothLeases);
+        Assert.True(backgroundToken.IsCancellationRequested);
+        Assert.Empty(arbiter.ActiveOwners);
+    }
+
     private sealed class FakePreviewRuntime(
         bool startSucceeds = true,
         bool cancelStart = false,
