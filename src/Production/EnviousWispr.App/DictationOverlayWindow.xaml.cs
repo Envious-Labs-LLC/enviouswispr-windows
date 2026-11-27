@@ -224,7 +224,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
                 _expiryDriver.ArmLearnedCountdown(
                     TimeSpan.FromSeconds(seconds),
                     autoExpire: learned.Phase != LearnedCorrectionPillPhase.UndoPending,
-                    startPaused: _pointerIsOver,
+                    startPaused: _pointerIsOver && learned.Phase == LearnedCorrectionPillPhase.Learned,
                     holdOpen: false);
             }
 
@@ -331,7 +331,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             _expiryDriver.ArmLearnedCountdown(
                 TimeSpan.FromSeconds(OverlayPillCatalog.LearnedUndoneDwellSeconds),
                 autoExpire: true,
-                startPaused: _pointerIsOver,
+                startPaused: false,
                 holdOpen: false);
         }
         else if (model.Phase == LearnedCorrectionPillPhase.UndoError)
@@ -339,7 +339,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             _expiryDriver.ArmLearnedCountdown(
                 TimeSpan.FromSeconds(OverlayPillCatalog.LearnedErrorDwellSeconds),
                 autoExpire: true,
-                startPaused: _pointerIsOver,
+                startPaused: false,
                 holdOpen: false);
         }
         else if (model.Phase == LearnedCorrectionPillPhase.UndoPending)
@@ -555,7 +555,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             _expiryDriver.ArmLearnedCountdown(
                 TimeSpan.FromSeconds(seconds),
                 autoExpire: model.Phase != LearnedCorrectionPillPhase.UndoPending,
-                startPaused: _pointerIsOver,
+                startPaused: _pointerIsOver && model.Phase == LearnedCorrectionPillPhase.Learned,
                 holdOpen: holdOpen);
             if (holdOpen && model.Phase is LearnedCorrectionPillPhase.Learned or LearnedCorrectionPillPhase.UndoPending)
             {
@@ -600,7 +600,8 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
 
         _expiryDriver.ArmFixedDwell(
             TimeSpan.FromSeconds(OverlayPillCatalog.LearnedErrorDwellSeconds),
-            startPaused: _pointerIsOver || (_isPreviewSession && _previewHoldOpen));
+            startPaused: _pointerIsOver,
+            holdOpen: _isPreviewSession && _previewHoldOpen);
     }
 
     private void DeactivateSurfaces()
@@ -1174,7 +1175,8 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
 
         _expiryDriver.ArmFixedDwell(
             TimeSpan.FromSeconds(seconds),
-            startPaused: _pointerIsOver || (_isPreviewSession && _previewHoldOpen));
+            startPaused: _pointerIsOver,
+            holdOpen: _isPreviewSession && _previewHoldOpen);
     }
 
     private void StartEscapeCountdown(double seconds)

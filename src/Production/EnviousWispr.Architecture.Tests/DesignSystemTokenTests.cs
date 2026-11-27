@@ -2133,10 +2133,12 @@ public sealed partial class DesignSystemTokenTests
         var unknown = new List<string>();
         var checkedCount = 0;
 
-        foreach (var view in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        var viewPaths = new[] { Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml") }
+            .Concat(AppXamlSources.OverlayAndViewPaths(root));
+        foreach (var path in viewPaths)
         {
-            var document = XDocument.Load(Path.Combine(
-                root, "src", "Production", "EnviousWispr.App", view));
+            var view = Path.GetFileName(path);
+            var document = XDocument.Load(path);
 
             foreach (var element in document.Descendants())
             {
@@ -2240,10 +2242,13 @@ public sealed partial class DesignSystemTokenTests
         var offenders = new List<string>();
         var checkedControls = 0;
 
-        foreach (var view in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        var repoRoot = FindRepositoryRoot();
+        var viewPaths = new[] { Path.Combine(repoRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml") }
+            .Concat(AppXamlSources.OverlayAndViewPaths(repoRoot));
+        foreach (var path in viewPaths)
         {
-            var document = XDocument.Load(Path.Combine(
-                FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", view));
+            var view = Path.GetFileName(path);
+            var document = XDocument.Load(path);
 
             foreach (var element in document.Descendants())
             {

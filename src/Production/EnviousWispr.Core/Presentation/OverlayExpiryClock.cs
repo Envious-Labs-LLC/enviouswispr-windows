@@ -53,10 +53,10 @@ public sealed class OverlayExpiryClock
 
     public TimeSpan Duration => _duration;
 
-    public long ArmFixedDwell(TimeSpan duration, bool startPaused = false)
+    public long ArmFixedDwell(TimeSpan duration, bool startPaused = false, bool holdOpen = false)
     {
         _currentArmId++;
-        _isHoldOpen = false;
+        _isHoldOpen = holdOpen;
         _isHoverPaused = startPaused;
         _accumulatedElapsed = TimeSpan.Zero;
         if (duration <= TimeSpan.Zero)
@@ -71,7 +71,7 @@ public sealed class OverlayExpiryClock
         _mode = OverlayExpiryMode.FixedDwell;
         _duration = duration;
         _autoExpire = true;
-        _segmentStartedAt = startPaused ? null : _monotonicClock();
+        _segmentStartedAt = startPaused || holdOpen ? null : _monotonicClock();
         return _currentArmId;
     }
 

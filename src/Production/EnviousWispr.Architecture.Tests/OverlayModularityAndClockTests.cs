@@ -83,6 +83,17 @@ public sealed class OverlayModularityAndClockTests
         Assert.True(secondResult.Expired);
         Assert.False(clock.IsActive);
         Assert.Null(clock.RecommendedNextInterval(animationsEnabled: true));
+
+        // Hold-open preview dwells freeze without setting hover pause so SetHoldOpen(false) resumes expiry.
+        var heldArm = clock.ArmFixedDwell(TimeSpan.FromSeconds(3), startPaused: false, holdOpen: true);
+        Assert.Null(clock.RecommendedNextInterval(animationsEnabled: true));
+        now += TimeSpan.FromSeconds(10);
+        Assert.False(clock.Evaluate(heldArm).Expired);
+
+        clock.SetHoldOpen(false);
+        Assert.NotNull(clock.RecommendedNextInterval(animationsEnabled: true));
+        now += TimeSpan.FromSeconds(3);
+        Assert.True(clock.Evaluate(heldArm).Expired);
     }
 
     [Fact]

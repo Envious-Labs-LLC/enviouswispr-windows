@@ -30,9 +30,9 @@ internal sealed class OverlayExpiryDriver : IDisposable
 
     public event Action? Expired;
 
-    public void ArmFixedDwell(TimeSpan duration, bool startPaused = false)
+    public void ArmFixedDwell(TimeSpan duration, bool startPaused = false, bool holdOpen = false)
     {
-        _clock.ArmFixedDwell(duration, startPaused);
+        _clock.ArmFixedDwell(duration, startPaused, holdOpen);
         Reschedule();
     }
 
