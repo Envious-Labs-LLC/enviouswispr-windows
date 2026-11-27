@@ -600,6 +600,38 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 return valuePattern.Current.Value;
             });
             var verified = string.Equals(readBack, replacement, StringComparison.Ordinal);
+            if (verified)
+            {
+                try
+                {
+                    _ = Automation(static () =>
+                    {
+                        var focused = AutomationElement.FocusedElement;
+                        if (focused is not null &&
+                            focused.TryGetCurrentPattern(TextPattern.Pattern, out var textPatternObj) &&
+                            textPatternObj is TextPattern textPattern &&
+                            textPattern.SupportedTextSelection is not SupportedTextSelection.None)
+                        {
+                            // Win32 EDIT ValuePattern.SetValue sends WM_SETTEXT, which resets the caret
+                            // to index 0; move selection back to the end so consecutive dictations append.
+                            var document = textPattern.DocumentRange;
+                            var endRange = document.Clone();
+                            endRange.MoveEndpointByRange(
+                                TextPatternRangeEndpoint.Start,
+                                document,
+                                TextPatternRangeEndpoint.End);
+                            endRange.Select();
+                        }
+
+                        return true;
+                    });
+                }
+                catch (Exception exception) when (IsExpectedAutomationFailure(exception))
+                {
+                    // SetValue already verified; best-effort caret positioning at end.
+                }
+            }
+
             return new TextCommitResult(
                 TextDeliveryRoute.UiAutomationValue,
                 Delivered: verified,
