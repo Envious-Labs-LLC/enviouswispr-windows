@@ -140,19 +140,28 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
 
             var text = new StringBuilder();
             var timings = new List<TranscriptTokenTiming>();
+            var pendingTrailingWhitespace = false;
             string? detectedLanguage = null;
             using var processorPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.WhisperProcessor);
             await foreach (var segment in _processor.ProcessAsync(audio.Samples, cancellationToken)
                 .ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var cleaned = CleanSegment(segment.Text, segment.NoSpeechProbability);
+                var rawSegment = segment.Text ?? string.Empty;
+                var hadLeadingWhitespace = rawSegment.Length > 0 && char.IsWhiteSpace(rawSegment[0]);
+                var cleaned = CleanSegment(rawSegment, segment.NoSpeechProbability);
                 if (cleaned.Length == 0)
                 {
+                    if (rawSegment.Length > 0 && char.IsWhiteSpace(rawSegment[^1]))
+                    {
+                        pendingTrailingWhitespace = true;
+                    }
+
                     continue;
                 }
 
-                AppendCleanedSegment(text, cleaned);
+                AppendCleanedSegment(text, cleaned, hadLeadingWhitespace || pendingTrailingWhitespace);
+                pendingTrailingWhitespace = rawSegment.Length > 0 && char.IsWhiteSpace(rawSegment[^1]);
                 detectedLanguage ??= string.IsNullOrWhiteSpace(segment.Language)
                     ? null
                     : segment.Language;
@@ -191,15 +200,24 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
     {
         ArgumentNullException.ThrowIfNull(segments);
         var text = new StringBuilder();
+        var pendingTrailingWhitespace = false;
         foreach (var segment in segments)
         {
-            var cleaned = CleanSegment(segment.Text, segment.NoSpeechProbability);
+            var rawSegment = segment.Text ?? string.Empty;
+            var hadLeadingWhitespace = rawSegment.Length > 0 && char.IsWhiteSpace(rawSegment[0]);
+            var cleaned = CleanSegment(rawSegment, segment.NoSpeechProbability);
             if (cleaned.Length == 0)
             {
+                if (rawSegment.Length > 0 && char.IsWhiteSpace(rawSegment[^1]))
+                {
+                    pendingTrailingWhitespace = true;
+                }
+
                 continue;
             }
 
-            AppendCleanedSegment(text, cleaned);
+            AppendCleanedSegment(text, cleaned, hadLeadingWhitespace || pendingTrailingWhitespace);
+            pendingTrailingWhitespace = rawSegment.Length > 0 && char.IsWhiteSpace(rawSegment[^1]);
         }
 
         return WhisperNonSpeechFilter.Clean(text.ToString());
@@ -222,7 +240,10 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
         return cleaned;
     }
 
-    internal static void AppendCleanedSegment(StringBuilder text, string cleanedSegment)
+    internal static void AppendCleanedSegment(
+        StringBuilder text,
+        string cleanedSegment,
+        bool preserveRawBoundarySpace = false)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (string.IsNullOrEmpty(cleanedSegment))
@@ -235,14 +256,31 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
             !char.IsWhiteSpace(cleanedSegment[0]) &&
             !IsAttachedTrailingPunctuation(cleanedSegment[0]))
         {
-            text.Append(' ');
+            var previousUsesUnsegmented = IsUnsegmentedOrCjkCharacter(text[^1]);
+            var nextUsesUnsegmented = IsUnsegmentedOrCjkCharacter(cleanedSegment[0]);
+            if (preserveRawBoundarySpace || (!previousUsesUnsegmented && !nextUsesUnsegmented))
+            {
+                text.Append(' ');
+            }
         }
 
         text.Append(cleanedSegment);
     }
 
     private static bool IsAttachedTrailingPunctuation(char ch) =>
-        ch is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '\u2019' or '\u201D';
+        ch is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '\u2019' or '\u201D' or
+            '\u3001' or '\u3002' or '\uFF01' or '\uFF1F' or '\uFF0C' or '\uFF1B' or '\uFF1A' or
+            '\uFF09' or '\u300D' or '\u300F' or '\u3011' or '\u300B';
+
+    private static bool IsUnsegmentedOrCjkCharacter(char ch) =>
+        ch is (>= '\u3000' and <= '\u30FF') or
+            (>= '\u3400' and <= '\u9FFF') or
+            (>= '\uAC00' and <= '\uD7AF') or
+            (>= '\u0E00' and <= '\u0E7F') or
+            (>= '\u0E80' and <= '\u0EFF') or
+            (>= '\u1000' and <= '\u109F') or
+            (>= '\u1780' and <= '\u17FF') or
+            (>= '\uFF00' and <= '\uFFEF');
 
     private static void AddTimings(
         List<TranscriptTokenTiming> timings,

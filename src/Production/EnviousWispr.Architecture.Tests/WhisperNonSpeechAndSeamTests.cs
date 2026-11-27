@@ -112,6 +112,15 @@ public sealed class WhisperNonSpeechAndSeamTests
         ]);
 
         Assert.Equal("Quiet sentence. Second sentence., attached clause.", assembled);
+
+        var cjk = WhisperTranscriptionEngine.CleanAndJoinSegments(
+        [
+            new WhisperTranscriptionEngine.WhisperSegmentPiece("\u4F60\u597D", 0.01f),
+            new WhisperTranscriptionEngine.WhisperSegmentPiece("\u4E16\u754C", 0.01f),
+            new WhisperTranscriptionEngine.WhisperSegmentPiece("\u3002", 0.01f),
+            new WhisperTranscriptionEngine.WhisperSegmentPiece("[BLANK_AUDIO]", 0.94f),
+        ]);
+        Assert.Equal("\u4F60\u597D\u4E16\u754C\u3002", cjk);
     }
 
     [Fact]
@@ -219,6 +228,9 @@ public sealed class WhisperNonSpeechAndSeamTests
     [InlineData("EnviousWispr.App")]
     [InlineData("fooBar.Baz")]
     [InlineData("my_obj.Bar")]
+    [InlineData("user.Name")]
+    [InlineData("context.Left")]
+    [InlineData("order.Total")]
     [InlineData("obj.Run()")]
     [InlineData("obj.Items[0]")]
     [InlineData("wait...What")]

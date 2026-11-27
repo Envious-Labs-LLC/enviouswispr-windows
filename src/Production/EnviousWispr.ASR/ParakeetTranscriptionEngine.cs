@@ -68,6 +68,33 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         "vs", "eg", "ie", "etc", "inc", "ltd", "fig", "vol", "no", "est", "approx",
     };
 
+    private static readonly HashSet<string> SentenceStarterRightWords = new(StringComparer.Ordinal)
+    {
+        "I", "I'm", "I\u2019m", "I've", "I\u2019ve", "I'll", "I\u2019ll", "I'd", "I\u2019d",
+        "You", "You're", "You\u2019re", "You've", "You\u2019ve", "You'll", "You\u2019ll", "You'd", "You\u2019d",
+        "He", "He's", "He\u2019s", "He'll", "He\u2019ll", "He'd", "He\u2019d",
+        "She", "She's", "She\u2019s", "She'll", "She\u2019ll", "She'd", "She\u2019d",
+        "It", "It's", "It\u2019s", "It'll", "It\u2019ll", "It'd", "It\u2019d",
+        "We", "We're", "We\u2019re", "We've", "We\u2019ve", "We'll", "We\u2019ll", "We'd", "We\u2019d",
+        "They", "They're", "They\u2019re", "They've", "They\u2019ve", "They'll", "They\u2019ll", "They'd", "They\u2019d",
+        "Is", "Isn't", "Isn\u2019t", "Are", "Aren't", "Aren\u2019t", "Was", "Wasn't", "Wasn\u2019t",
+        "Were", "Weren't", "Weren\u2019t", "Am",
+        "Do", "Don't", "Don\u2019t", "Does", "Doesn't", "Doesn\u2019t", "Did", "Didn't", "Didn\u2019t",
+        "Can", "Can't", "Can\u2019t", "Cannot", "Could", "Couldn't", "Couldn\u2019t", "Could've", "Could\u2019ve",
+        "Will", "Won't", "Won\u2019t", "Would", "Wouldn't", "Wouldn\u2019t", "Would've", "Would\u2019ve",
+        "Should", "Shouldn't", "Shouldn\u2019t", "Should've", "Should\u2019ve", "Shall",
+        "May", "Might", "Must", "Mustn't", "Mustn\u2019t",
+        "Have", "Haven't", "Haven\u2019t", "Has", "Hasn't", "Hasn\u2019t", "Had", "Hadn't", "Hadn\u2019t",
+        "The", "This", "That", "That's", "That\u2019s", "These", "Those",
+        "There", "There's", "There\u2019s", "Here", "Here's", "Here\u2019s",
+        "What", "What's", "What\u2019s", "When", "Where", "Where's", "Where\u2019s",
+        "Why", "How", "How's", "How\u2019s", "Who", "Who's", "Who\u2019s", "Which",
+        "If", "But", "And", "Or", "So", "Because", "Although", "Unless", "Until", "While",
+        "However", "Actually", "Anyway", "Also", "Then", "Now", "Please", "Thanks", "Sorry",
+        "Yes", "Yeah", "No", "Well", "Sure", "Okay", "Let's", "Let\u2019s",
+        "My", "Your", "Our", "Their", "His", "Her", "Its",
+    };
+
     private readonly IParakeetBackend _backend;
     private readonly ParakeetVocabulary _vocabulary;
     private readonly SemaphoreSlim _transcriptionGate = new(1, 1);
@@ -673,21 +700,22 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         }
 
         // Validate right word: initial uppercase letter followed by lowercase word (or contraction like I'm),
-        // not PascalCase/ALLCAPS/chain/method invocation (e.g. WriteLine, IO, U.S.A, Run()).
-        var rightEnd = dotIndex + 2;
-        while (rightEnd < tokenEnd && char.IsLetter(text[rightEnd]))
+        // not PascalCase/ALLCAPS/chain/method invocation (e.g. WriteLine, IO, U.S.A, Run()), and only split
+        // high-confidence English sentence starters so dictated member accesses like "user.Name" remain intact.
+        var wordEnd = dotIndex + 2;
+        while (wordEnd < tokenEnd && char.IsLetter(text[wordEnd]))
         {
-            if (char.IsUpper(text[rightEnd]))
+            if (char.IsUpper(text[wordEnd]))
             {
                 return false;
             }
 
-            rightEnd++;
+            wordEnd++;
         }
 
-        if (rightEnd < tokenEnd)
+        if (wordEnd < tokenEnd)
         {
-            var next = text[rightEnd];
+            var next = text[wordEnd];
             if (next is '.' or '(' or '[' or '<' or '_' || char.IsDigit(next))
             {
                 return false;
@@ -695,7 +723,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
 
             if (next is '\'' or '\u2019')
             {
-                var afterApostrophe = rightEnd + 1;
+                var afterApostrophe = wordEnd + 1;
                 if (afterApostrophe >= tokenEnd || !char.IsLetter(text[afterApostrophe]))
                 {
                     return false;
@@ -716,10 +744,13 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                 {
                     return false;
                 }
+
+                wordEnd = afterApostrophe;
             }
         }
 
-        return true;
+        var rightWord = text[(dotIndex + 1)..wordEnd];
+        return SentenceStarterRightWords.Contains(rightWord);
     }
 
     private TranscriptTokenTiming[] CreateTimings(
