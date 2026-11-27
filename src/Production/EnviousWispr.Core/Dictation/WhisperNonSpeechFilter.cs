@@ -53,17 +53,12 @@ public static partial class WhisperNonSpeechFilter
             cursor = match.Index + match.Length;
 
             // Consume isolated separator punctuation directly attached to a removed marker
-            // (for example, "[BLANK_AUDIO], Hello" or "[MUSIC] - Hello").
-            while (cursor < text.Length && (text[cursor] == ',' || text[cursor] == ';' || text[cursor] == ':'))
+            // (for example, "[BLANK_AUDIO], Hello"). Never eat meaningful tokens like ".NET" or "- item".
+            while (cursor < text.Length &&
+                   (text[cursor] == ',' || text[cursor] == ';' || text[cursor] == ':') &&
+                   IsFollowedByWhitespaceOrEnd(text, cursor + 1))
             {
-                if (removedAtLeadingEdge || IsFollowedByWhitespaceOrEnd(text, cursor + 1))
-                {
-                    cursor++;
-                }
-                else
-                {
-                    break;
-                }
+                cursor++;
             }
         }
 
@@ -123,10 +118,21 @@ public static partial class WhisperNonSpeechFilter
     private static string TrimLeadingStrayPunctuation(string text)
     {
         var start = 0;
-        while (start < text.Length &&
-               (text[start] is ',' or ';' or ':' or '-' or '.' || char.IsWhiteSpace(text[start])))
+        while (start < text.Length)
         {
-            start++;
+            if (char.IsWhiteSpace(text[start]))
+            {
+                start++;
+                continue;
+            }
+
+            if (text[start] is ',' or ';' or ':' && IsFollowedByWhitespaceOrEnd(text, start + 1))
+            {
+                start++;
+                continue;
+            }
+
+            break;
         }
 
         return start >= text.Length ? string.Empty : text[start..];

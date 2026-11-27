@@ -65,6 +65,10 @@ public sealed class WhisperNonSpeechAndSeamTests
     [InlineData("I heard music and laughter in silence.", "I heard music and laughter in silence.")]
     [InlineData("Wait for blank audio calibration.", "Wait for blank audio calibration.")]
     [InlineData(", thanks.", ", thanks.")]
+    [InlineData("[BLANK_AUDIO] .NET", ".NET")]
+    [InlineData("[BLANK_AUDIO] - first item", "- first item")]
+    [InlineData("(silence) ...wait", "...wait")]
+    [InlineData("[BLANK_AUDIO],5", ",5")]
     public void WhisperNonSpeechFilterPreservesDictatedBracketsAndSpokenWords(string raw, string expected) =>
         Assert.Equal(expected, WhisperNonSpeechFilter.Clean(raw));
 
@@ -229,10 +233,8 @@ public sealed class WhisperNonSpeechAndSeamTests
         Assert.Equal(raw, ParakeetTranscriptionEngine.NormalizeDecodedTokenText(" " + raw));
 
     [Fact]
-    public async Task RecentDeliverySeamTrackerFixesMissingSpaceWhenContextAbsentWithoutDoublingSpaces()
+    public async Task DeliveryRequiresCaretEvidenceAndRepairsChromiumSeamWithoutDoublingSpaces()
     {
-        var clock = new ManualClockProvider(new DateTimeOffset(2026, 11, 26, 12, 0, 0, TimeSpan.Zero));
-        var tracker = new RecentDeliverySeamTracker();
         var target = new TargetWindowId(100, 200, "focus-ce");
         var noContext = new TargetContextResult(
             TargetContextStatus.Available,
@@ -247,47 +249,56 @@ public sealed class WhisperNonSpeechAndSeamTests
                 RightReachedDocumentEnd: false,
                 HasTextContext: false,
                 SupportsDirectValueWrite: false,
-                DirectValueWriteAtEnd: false));
+                DirectValueWriteAtEnd: false,
+                BaselineValue: "We had a great experience."));
         var adapter = new SequenceAdapter(noContext);
-        var delivery = new ContextAwareTextDelivery(adapter, tracker, clock);
+        var delivery = new ContextAwareTextDelivery(adapter);
 
-        // First paste lands WITH trailing space -> second no-context paste must NOT double the space
-        // (protects Notepad/Word/standard fields that preserve the trailing space).
-        await delivery.DeliverAsync(MakeRequest("We had a great experience.", target));
+        // When HasTextContext is false (even with BaselineValue present), never guess caret offset or prepend a leading space.
+        var firstNoContext = await delivery.DeliverAsync(MakeRequest("We had a great experience.", target));
+        var secondNoContext = await delivery.DeliverAsync(MakeRequest("As you know.", target));
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, firstNoContext.RepairDisposition);
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, secondNoContext.RepairDisposition);
         Assert.Equal("We had a great experience. ", adapter.CommittedTexts[0]);
-
-        await delivery.DeliverAsync(MakeRequest("As you know.", target));
         Assert.Equal("As you know. ", adapter.CommittedTexts[1]);
 
-        // If the prior delivery had no trailing space (or BaselineValue proves target dropped it),
-        // the next consecutive delivery within 30s inserts one leading space cleanly.
-        tracker.Clear();
-        tracker.RecordSuccess(target, "focus-ce", "We had a great experience.", clock.GetUtcNow());
-        clock.Advance(TimeSpan.FromSeconds(5));
-        await delivery.DeliverAsync(MakeRequest("As you know.", target));
+        // When Chromium UIA TextPattern provides real caret context after stripping trailing space, ContextApplied inserts one leading space.
+        adapter.NextContext = new TargetContextResult(
+            TargetContextStatus.Available,
+            new CaretContext(
+                target,
+                "focus-ce",
+                TextTargetKind.Browser,
+                Left: "We had a great experience.",
+                Selection: string.Empty,
+                Right: string.Empty,
+                LeftReachedDocumentStart: true,
+                RightReachedDocumentEnd: true,
+                HasTextContext: true,
+                SupportsDirectValueWrite: false,
+                DirectValueWriteAtEnd: false));
+        var repaired = await delivery.DeliverAsync(MakeRequest("As you know.", target));
+        Assert.Equal(CursorRepairDisposition.ContextApplied, repaired.RepairDisposition);
         Assert.Equal(" As you know. ", adapter.CommittedTexts[2]);
 
-        // BaselineValue showing the target stripped the space ALSO repairs safely even when prior ended in space.
-        tracker.RecordSuccess(target, "focus-ce", "We had a great experience. ", clock.GetUtcNow());
+        // When Chromium preserves trailing NBSP (&nbsp;), ContextApplied must NOT double the space.
         adapter.NextContext = new TargetContextResult(
             TargetContextStatus.Available,
-            noContext.Context! with { BaselineValue = "We had a great experience." });
-        await delivery.DeliverAsync(MakeRequest("Right now.", target));
-        Assert.Equal(" Right now. ", adapter.CommittedTexts[3]);
-
-        // BaselineValue keeping trailing space suppresses extra space (no double space).
-        adapter.NextContext = new TargetContextResult(
-            TargetContextStatus.Available,
-            noContext.Context! with { BaselineValue = "Right now. " });
-        await delivery.DeliverAsync(MakeRequest("Next.", target));
-        Assert.Equal("Next. ", adapter.CommittedTexts[4]);
-
-        // Expired seam (> 30s) or snippet expansion never prepends.
-        clock.Advance(TimeSpan.FromSeconds(31));
-        adapter.NextContext = noContext;
-        tracker.RecordSuccess(target, "focus-ce", "Expired.", clock.GetUtcNow() - TimeSpan.FromSeconds(31));
-        await delivery.DeliverAsync(MakeRequest("Fresh start.", target));
-        Assert.Equal("Fresh start. ", adapter.CommittedTexts[5]);
+            new CaretContext(
+                target,
+                "focus-ce",
+                TextTargetKind.Browser,
+                Left: "We had a great experience.\u00A0",
+                Selection: string.Empty,
+                Right: string.Empty,
+                LeftReachedDocumentStart: true,
+                RightReachedDocumentEnd: true,
+                HasTextContext: true,
+                SupportsDirectValueWrite: false,
+                DirectValueWriteAtEnd: false));
+        var nbsp = await delivery.DeliverAsync(MakeRequest("Right now.", target));
+        Assert.Equal(CursorRepairDisposition.ContextApplied, nbsp.RepairDisposition);
+        Assert.Equal("Right now. ", adapter.CommittedTexts[3]);
     }
 
     [ClipboardFact]
@@ -332,13 +343,6 @@ public sealed class WhisperNonSpeechAndSeamTests
         "en",
         TextDeliveryOptions.Default,
         SnippetExpanded: false);
-
-    private sealed class ManualClockProvider(DateTimeOffset start) : TimeProvider
-    {
-        private DateTimeOffset _now = start;
-        public void Advance(TimeSpan delta) => _now += delta;
-        public override DateTimeOffset GetUtcNow() => _now;
-    }
 
     private sealed class SequenceAdapter(TargetContextResult initialContext) : ITextTargetAdapter
     {

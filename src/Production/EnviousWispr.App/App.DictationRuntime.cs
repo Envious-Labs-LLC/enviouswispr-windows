@@ -242,8 +242,7 @@ public partial class App
         var audioCapture = _audioCapture;
         audioCapture.LevelChanged += OnAudioLevelChanged;
         _textTargetAdapter = new WindowsTextTargetAdapter();
-        var seamTracker = new RecentDeliverySeamTracker();
-        _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter, seamTracker);
+        _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
         _lastDictation = new LastDictationReuse(new LastDictationEnvironment(
             async cancellation => (await _historyStore.LoadAsync(
                 _settings.Preferences.History.RetentionDays,
@@ -254,7 +253,7 @@ public partial class App
             target => target.ProcessId == (uint)Environment.ProcessId,
             // ITS OWN DELIVERY over the shared adapter: the dictation's keeps one recovery slot, and an
             // old dictation pasted through it would replace a take's recovery text.
-            new ContextAwareTextDelivery(_textTargetAdapter, seamTracker),
+            new ContextAwareTextDelivery(_textTargetAdapter),
             () => TextDeliveryOptions.Default,
             (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
                 window,
@@ -270,7 +269,7 @@ public partial class App
                 cancellation).ConfigureAwait(false)).Entries,
             () => DateTimeOffset.UtcNow,
             () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
-            new ContextAwareTextDelivery(_textTargetAdapter, seamTracker),
+            new ContextAwareTextDelivery(_textTargetAdapter),
             () => TextDeliveryOptions.Default,
             (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
                 window,
