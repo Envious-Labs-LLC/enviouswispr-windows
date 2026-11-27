@@ -147,6 +147,7 @@ public sealed class SessionRuntime
         SessionQueue queue,
         SessionPersistence persistence,
         TranscriptFinalizer finalizer,
+        PolishExecutor polishExecutor,
         LivePreviewController preview,
         StreamingTranscriptionController streaming,
         RecordingWatchdog watchdog,
@@ -156,6 +157,7 @@ public sealed class SessionRuntime
         _queue = queue;
         Persistence = persistence;
         Finalizer = finalizer;
+        PolishExecutor = polishExecutor;
         Preview = preview;
         Streaming = streaming;
         Watchdog = watchdog;
@@ -166,6 +168,8 @@ public sealed class SessionRuntime
     public SessionPersistence Persistence { get; }
 
     public TranscriptFinalizer Finalizer { get; }
+
+    public PolishExecutor PolishExecutor { get; }
 
     public LivePreviewController Preview { get; }
 
@@ -207,13 +211,14 @@ public static class RuntimeComposition
             new SessionPersistenceEffects(parts.Shell.View),
             parts.AudioArchive);
         var finalizationEffects = new TranscriptFinalizationEffects(parts.Logger, persistence);
+        var polishExecutor = new PolishExecutor(
+            parts.PolishAdmission,
+            finalizationEffects,
+            // Read at the call, as before: a word taught mid-dictation reaches this polish.
+            parts.Shell.CustomWords);
         var finalizer = new TranscriptFinalizer(
             parts.TextPipeline,
-            new PolishExecutor(
-                parts.PolishAdmission,
-                finalizationEffects,
-                // Read at the call, as before: a word taught mid-dictation reaches this polish.
-                parts.Shell.CustomWords),
+            polishExecutor,
             finalizationEffects,
             // THE CULTURE AND ZONE ARE READ WHEN A SNIPPET FIRES, not now: a fill-in renders in the
             // Windows region the person has at the moment they speak, frozen for that one take.
@@ -232,6 +237,7 @@ public static class RuntimeComposition
             queue,
             persistence,
             finalizer,
+            polishExecutor,
             preview,
             streaming,
             new RecordingWatchdog(timers, parts.Clock),

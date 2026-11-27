@@ -251,6 +251,96 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
         Assert.Equal(0, runtime.TranscriptionCount);
     }
 
+    [Fact]
+    public void NormalizePreviewOptionsClearsResourceAdmissionToPreventSelfDeadlock()
+    {
+        using var arbiter = new RuntimeResourceArbiter();
+        var options = new RuntimeWorkerTranscriptionOptions(
+            "EnviousWispr.RuntimeWorker.exe",
+            @"C:\models\whisper-preview",
+            RuntimeProviderKind.Cpu,
+            ParakeetModelPack.Quantized,
+            IntraOpThreads: 4,
+            Engine: EnviousWispr.Core.Settings.FinalAsrEngine.Whisper,
+            WhisperPack: WhisperModelPack.PreviewSmall,
+            ResourceAdmission: arbiter);
+
+        var normalized = RuntimeWorkerLivePreviewEngine.NormalizePreviewOptions(options);
+
+        Assert.Null(normalized.ResourceAdmission);
+    }
+
+    [Fact]
+    public async Task FinalAsrEngineAcquiresResourceAdmissionAndProceedsWhenBusy()
+    {
+        using var arbiter = new RuntimeResourceArbiter();
+        var workerPath = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        await using var supervisor = new RuntimeWorkerSupervisor(workerPath, ["--test-transcribe-stub"], maximumRestarts: 0);
+        await using var engine = new RuntimeWorkerTranscriptionEngine(
+            supervisor,
+            "test-transcribe-stub",
+            resourceAdmission: arbiter,
+            resourceKind: RuntimeResourceKind.Cpu,
+            resourceWaitTimeout: TimeSpan.FromMilliseconds(25));
+
+        var audio = new CapturedAudio(DictationSessionId.Create(), SampleAudio, 16_000, 1);
+        var transcript = await engine.TranscribeAsync(audio);
+        Assert.Equal("test-transcribe-stub", transcript.EngineId);
+        Assert.Empty(arbiter.ActiveOwners);
+
+        // Heart is sacred: even if a wedged limb refuses to yield within ResourceWaitTimeout,
+        // Final ASR still completes rather than failing raw transcription.
+        var wedged = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.LocalPolish, TimeSpan.Zero);
+        Assert.True(wedged.Succeeded);
+        var busyTranscript = await engine.TranscribeAsync(audio);
+        Assert.Equal("test-transcribe-stub", busyTranscript.EngineId);
+        await wedged.Lease!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AcceleratorFinalAsrEngineAlsoReservesCpuForInternalFallbackAndPreemptsBackground()
+    {
+        using var arbiter = new RuntimeResourceArbiter();
+        var backgroundToken = arbiter.CurrentBackgroundToken;
+        var workerPath = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        await using var supervisor = new RuntimeWorkerSupervisor(
+            workerPath,
+            ["--test-transcribe-stub", "--transcribe-delay-ms", "250"],
+            maximumRestarts: 0);
+        await using var engine = new RuntimeWorkerTranscriptionEngine(
+            supervisor,
+            "test-transcribe-stub:gpu",
+            resourceAdmission: arbiter,
+            resourceKind: RuntimeResourceKind.Accelerator,
+            resourceWaitTimeout: TimeSpan.FromMilliseconds(25));
+
+        var audio = new CapturedAudio(DictationSessionId.Create(), SampleAudio, 16_000, 1);
+        var transcribeTask = engine.TranscribeAsync(audio);
+
+        var observedBothLeases = false;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!transcribeTask.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            var owners = arbiter.ActiveOwners;
+            if (owners.TryGetValue(RuntimeResourceKind.Accelerator, out var accelKind) &&
+                owners.TryGetValue(RuntimeResourceKind.Cpu, out var cpuKind) &&
+                accelKind == RuntimeWorkloadKind.FinalAsr &&
+                cpuKind == RuntimeWorkloadKind.FinalAsr)
+            {
+                observedBothLeases = true;
+                break;
+            }
+
+            await Task.Delay(15);
+        }
+
+        var transcript = await transcribeTask;
+        Assert.Equal("test-transcribe-stub", transcript.EngineId);
+        Assert.True(observedBothLeases);
+        Assert.True(backgroundToken.IsCancellationRequested);
+        Assert.Empty(arbiter.ActiveOwners);
+    }
+
     private sealed class FakePreviewRuntime(
         bool startSucceeds = true,
         bool cancelStart = false,

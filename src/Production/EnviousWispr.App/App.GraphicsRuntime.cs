@@ -50,7 +50,7 @@ public partial class App
     /// </remarks>
     private async Task<string?> ResolveCudaRuntimeDirectoryAsync()
     {
-        var active = await CreateModelStore()
+        var active = await OfflineModelStore
             .OpenActiveOfflineAsync(CudaRuntimeDirectory.PackId)
             .ConfigureAwait(true);
         var packDirectory = active.Succeeded ? active.Installed?.DirectoryPath : null;

@@ -50,6 +50,7 @@ public partial class App
     private bool _livePreviewReconfigurePending;
     private bool _transcriptionReconfigurePending;
     private bool _polishReconfigurePending;
+    private ModelStore? _offlineModelStore;
 
     private sealed record SpeechEngineTransientDelivery(
         SpeechModelDelivery Stage,
@@ -62,6 +63,9 @@ public partial class App
         _sessionCoordinator?.HeldBy is not null;
 
     private string ModelStoreRoot => Path.Combine(_dataDirectory, "models");
+
+    private ModelStore OfflineModelStore =>
+        _offlineModelStore ??= CreateModelStore(NullModelDeliveryObserver.Instance);
 
     private ModelStore CreateModelStore() =>
         CreateModelStore(new ModelDeliveryProgressObserver(ReportModelDeliveryProgress));
@@ -84,7 +88,7 @@ public partial class App
         string modelId,
         string environmentVariable = "ENVIOUSWISPR_MODEL_DIRECTORY")
     {
-        var active = await CreateModelStore().OpenActiveOfflineAsync(modelId).ConfigureAwait(true);
+        var active = await OfflineModelStore.OpenActiveOfflineAsync(modelId).ConfigureAwait(true);
         var development = DevelopmentModelDirectory(modelId);
         return InstalledModelLocator.Resolve(
             Environment.GetEnvironmentVariable(environmentVariable),
@@ -168,7 +172,7 @@ public partial class App
         var whisperPreviewInstalled = whisperPreviewDirectory is not null &&
             new LocalWhisperModelProbe().Probe(whisperPreviewDirectory).PreviewSmallComplete;
         var storeInstalled = whisperPreviewInstalled &&
-            (await CreateModelStore().ListInstalledAsync(WhisperTranscriptionEngine.PreviewModelId).ConfigureAwait(true)).Count > 0;
+            (await OfflineModelStore.ListInstalledAsync(WhisperTranscriptionEngine.PreviewModelId).ConfigureAwait(true)).Count > 0;
         var legacyWhisperRoot = Path.Combine(ModelStoreRoot, WhisperTranscriptionEngine.PreviewModelId);
         var canRemoveWhisper = storeInstalled || (whisperPreviewInstalled && Directory.Exists(legacyWhisperRoot));
         _window?.SetLivePreviewModelInventory(parakeetInstalled, whisperPreviewInstalled, canRemoveWhisper);
@@ -203,7 +207,7 @@ public partial class App
         var directory = await ResolveModelDirectoryAsync(modelId).ConfigureAwait(true);
         var installed = directory is not null && ModelIsComplete(modelId, directory);
         var storeInstalled = installed &&
-            (await CreateModelStore().ListInstalledAsync(modelId).ConfigureAwait(true)).Count > 0;
+            (await OfflineModelStore.ListInstalledAsync(modelId).ConfigureAwait(true)).Count > 0;
         var legacyRoot = Path.Combine(ModelStoreRoot, modelId);
         var canRemove = storeInstalled || (installed && Directory.Exists(legacyRoot));
         var canDownload = BundledModelManifests.TryRead(modelId) is not null;
@@ -287,7 +291,7 @@ public partial class App
     private async Task<EgOneModelState> ProbeEgOneModelAsync(string modelId)
     {
         var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
-        var active = await Task.Run(() => CreateModelStore().OpenActiveOfflineAsync(normalizedId)).ConfigureAwait(true);
+        var active = await Task.Run(() => OfflineModelStore.OpenActiveOfflineAsync(normalizedId)).ConfigureAwait(true);
         var storeInstalled = active.Succeeded && active.Installed is not null;
         var storeFile = storeInstalled
             ? EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed!.DirectoryPath, normalizedId)
@@ -544,8 +548,7 @@ public partial class App
 
     private async Task DeliverModelsAsync()
     {
-
-        if (_sessionController?.CurrentSession is not null)
+        if (IsSpeechEngineBusy)
         {
             _window?.SetModelDelivery(new(
                 "Finish the current dictation, then download.",
@@ -634,7 +637,7 @@ public partial class App
         }
 
         _window?.SetModelDelivery(new("Download verified. Starting local transcription…", Stage: SpeechModelDelivery.Activating));
-        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+        await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
         if (Leaving)
         {
             return;
@@ -642,6 +645,27 @@ public partial class App
 
         PresentGraphicsRuntime();
         await PresentModelDeliveryAsync().ConfigureAwait(true);
+    }
+
+    private async Task<bool> TryReconfigureTranscriptionUnderHoldAsync()
+    {
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            if (attempt.Refusal != SessionHoldRefusal.Closed)
+            {
+                _transcriptionReconfigurePending = true;
+            }
+
+            return false;
+        }
+
+        using (hold)
+        {
+            await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+            return true;
+        }
     }
 
     private void OnModelDownloadCancelRequested() => _modelDownload?.Cancel();
@@ -847,7 +871,7 @@ public partial class App
                 }
 
                 removalOutcome = await ModelPackageCleaner.RemoveAsync(
-                    CreateModelStore(),
+                    OfflineModelStore,
                     modelId,
                     Path.Combine(ModelStoreRoot, modelId),
                     TeardownTranscriptionAsync).ConfigureAwait(true);
@@ -1057,7 +1081,7 @@ public partial class App
 
                 // Stop llama-server.exe via AbortPolishRuntime before removing ModelStore versions + legacy directory.
                 removalOutcome = await ModelPackageCleaner.RemoveAsync(
-                    CreateModelStore(),
+                    OfflineModelStore,
                     normalizedId,
                     Path.Combine(ModelStoreRoot, normalizedId),
                     TeardownPolishAsync).ConfigureAwait(true);
@@ -1101,7 +1125,7 @@ public partial class App
 
     private async Task DeliverPreviewModelAsync()
     {
-        if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true)
+        if (IsSpeechEngineBusy)
         {
             _window?.SetLivePreviewWhisperDelivery(new(
                 "Finish the current dictation, then download.",
@@ -1170,7 +1194,7 @@ public partial class App
         }
 
         _window?.SetLivePreviewWhisperDelivery(new("Download verified. Starting Live Preview…", Stage: SpeechModelDelivery.Activating));
-        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+        await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
         if (Leaving)
         {
             return;
@@ -1206,7 +1230,7 @@ public partial class App
         using (hold)
         {
             await ModelPackageCleaner.RemoveAsync(
-                CreateModelStore(),
+                OfflineModelStore,
                 WhisperTranscriptionEngine.PreviewModelId,
                 Path.Combine(ModelStoreRoot, WhisperTranscriptionEngine.PreviewModelId),
                 async () =>
@@ -1429,9 +1453,11 @@ public partial class App
             }
         }
 
-        if (_polishProvider is { } provider)
+        var provider = _polishProvider;
+        _polishProvider = null;
+        await CancelAndDrainRepolishAsync().ConfigureAwait(true);
+        if (provider is not null)
         {
-            _polishProvider = null;
             await provider.DisposeAsync().ConfigureAwait(true);
         }
     }

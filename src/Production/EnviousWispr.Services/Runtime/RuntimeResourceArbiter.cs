@@ -9,7 +9,24 @@ public sealed class RuntimeResourceArbiter : IDisposable, IRuntimeResourceAdmiss
     private readonly SemaphoreSlim _accelerator = new(1, 1);
     private readonly object _gate = new();
     private readonly Dictionary<RuntimeResourceKind, RuntimeWorkloadKind> _owners = [];
+    private CancellationTokenSource _backgroundPreemption = new();
     private bool _disposed;
+
+    /// <summary>
+    /// Token cancelled whenever foreground dictation (<see cref="RuntimeWorkloadKind.FinalAsr"/>)
+    /// requests a runtime resource, allowing background warmups and judges to yield immediately.
+    /// </summary>
+    public CancellationToken CurrentBackgroundToken
+    {
+        get
+        {
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return _backgroundPreemption.Token;
+            }
+        }
+    }
 
     public IReadOnlyDictionary<RuntimeResourceKind, RuntimeWorkloadKind> ActiveOwners
     {
@@ -22,6 +39,31 @@ public sealed class RuntimeResourceArbiter : IDisposable, IRuntimeResourceAdmiss
         }
     }
 
+    /// <summary>Cancels any active background limb work so foreground dictation can proceed uncontested.</summary>
+    public void PreemptBackgroundWork()
+    {
+        CancellationTokenSource? previous;
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            previous = _backgroundPreemption;
+            _backgroundPreemption = new CancellationTokenSource();
+        }
+
+        try
+        {
+            previous.Cancel();
+        }
+        finally
+        {
+            previous.Dispose();
+        }
+    }
+
     public async Task<RuntimeResourceAcquireResult> AcquireAsync(
         RuntimeResourceKind resource,
         RuntimeWorkloadKind workload,
@@ -30,6 +72,11 @@ public sealed class RuntimeResourceArbiter : IDisposable, IRuntimeResourceAdmiss
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
+        if (workload == RuntimeWorkloadKind.FinalAsr)
+        {
+            PreemptBackgroundWork();
+        }
+
         var semaphore = SemaphoreFor(resource);
         if (!await semaphore.WaitAsync(timeout, cancellationToken).ConfigureAwait(false))
         {
@@ -70,12 +117,27 @@ public sealed class RuntimeResourceArbiter : IDisposable, IRuntimeResourceAdmiss
 
     public void Dispose()
     {
-        if (_disposed)
+        CancellationTokenSource background;
+        lock (_gate)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            background = _backgroundPreemption;
         }
 
-        _disposed = true;
+        try
+        {
+            background.Cancel();
+        }
+        finally
+        {
+            background.Dispose();
+        }
+
         _cpu.Dispose();
         _accelerator.Dispose();
         GC.SuppressFinalize(this);

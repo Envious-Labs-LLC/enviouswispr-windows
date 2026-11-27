@@ -78,6 +78,7 @@ public enum RuntimeWorkloadKind
     LivePreview,
     FinalAsr,
     LocalPolish,
+    LocalPolishBackground,
 }
 
 public sealed record RuntimeResourceAcquireResult(

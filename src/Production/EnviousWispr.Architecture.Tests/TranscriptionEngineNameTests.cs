@@ -946,8 +946,11 @@ public sealed partial class DesignSystemTokenTests
         var tail = core.Body!.Statements.SkipWhile(statement => statement is not TryStatementSyntax).Skip(1).ToArray();
         var afterTry = string.Join("\n", tail.Select(statement => statement.ToString().Split('\n')[0].Trim()));
         Assert.Equal(
-            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\", Stage: SpeechModelDelivery.Activating));\nawait ReconfigureTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nPresentGraphicsRuntime();\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
+            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\", Stage: SpeechModelDelivery.Activating));\nawait TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);\nif (Leaving)\nPresentGraphicsRuntime();\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
             afterTry);
+        var heldReconfigure = DeclarationTextOf(delivery, "TryReconfigureTranscriptionUnderHoldAsync");
+        Assert.Contains("SessionHolder.SpeechEngineSwitch", heldReconfigure, StringComparison.Ordinal);
+        Assert.Contains("ReconfigureTranscriptionAsync()", heldReconfigure, StringComparison.Ordinal);
 
         // THE FIRST-RUN RETRY IS THE SAME TRACKED TASK: one slot, refused while one runs, refused while a dictation holds
         // the session, and the same Leaving check after every await that is not a delivery or a reconfiguration

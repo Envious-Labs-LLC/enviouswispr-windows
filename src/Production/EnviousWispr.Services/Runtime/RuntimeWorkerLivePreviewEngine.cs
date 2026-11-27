@@ -274,6 +274,9 @@ public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
             {
                 WorkerPriority = ProcessPriorityClass.BelowNormal,
                 MaximumWorkerRestarts = 0,
+                // LivePreviewEngine already holds _resourceLease for the session; clearing
+                // ResourceAdmission prevents the inner engine from re-acquiring and self-deadlocking.
+                ResourceAdmission = null,
             };
         }
 
@@ -292,6 +295,7 @@ public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
                 WorkerPriority = ProcessPriorityClass.BelowNormal,
                 MaximumWorkerRestarts = 0,
                 AllowFullPrecisionFallback = false,
+                ResourceAdmission = null,
             };
         }
 

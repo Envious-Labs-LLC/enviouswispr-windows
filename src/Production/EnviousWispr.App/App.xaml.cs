@@ -79,6 +79,7 @@ public partial class App : Application, IAsyncDisposable
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
     private bool _exitRequested;
+    private OllamaModelHost? _ollamaModelHost;
     private WindowPresentationSession? _presentation;
     private Guid? _runId;
 
@@ -319,6 +320,24 @@ public partial class App : Application, IAsyncDisposable
         // their production factories. The window takes the session and the facts of this launch; the
         // shell's lifetime closes the session - drain, then disposal - among its shell services.
         _polishModelSource = new PolishModelSource(_credentialStore);
+        var historyRepolishService = new HistoryRepolishService(
+            _historyStore,
+            _runtime.PolishExecutor,
+            _deterministicTextPipeline,
+            CurrentPolishSetup,
+            () => _deterministicTextOptions,
+            () => _customWords,
+            targetAdapter: null,
+            logger: _logger,
+            clock: TimeProvider.System,
+            enabledVocabularyPackIds: () => _enabledVocabularyPackIds,
+            targetAdapterProvider: () => _textTargetAdapter,
+            beginExecution: BeginHistoryRepolishExecution);
+        _ollamaModelHost = new OllamaModelHost(
+            _logger,
+            () => _ollamaActiveModel,
+            resourceAdmission: _resourceArbiter,
+            isDictationBusy: () => IsSpeechEngineBusy);
         _presentation = WindowComposition.Compose(
             _settingsStore,
             settings,
@@ -328,7 +347,8 @@ public partial class App : Application, IAsyncDisposable
             _polishModelSource,
             _profileService,
             _diagnosticExportService,
-            new OllamaModelHost(_logger, () => _ollamaActiveModel));
+            _ollamaModelHost,
+            historyRepolishService);
         _window = new MainWindow(
             settings,
             _presentation,

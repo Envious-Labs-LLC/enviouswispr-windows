@@ -322,6 +322,33 @@ public sealed class LearnedWordCheckTests : IDisposable
         Assert.True(imported.Profile.Preferences.Dictation.FixLearnedWordsEnabled);
     }
 
+    [Fact]
+    public async Task EgOneLearnedWordCheckerReturnsNullWhenResourceAdmissionIsBusy()
+    {
+        var runtime = new FakeRuntime();
+        using var handler = new StubHandler((_, _) => throw new InvalidOperationException("should not send when busy"));
+        await using var provider = new EgOnePolishProvider(runtime, DefaultOptions, handler);
+        using var arbiter = new EnviousWispr.Services.Runtime.RuntimeResourceArbiter();
+        var busyLease = await arbiter.AcquireAsync(
+            EnviousWispr.Core.Runtime.RuntimeResourceKind.Cpu,
+            EnviousWispr.Core.Runtime.RuntimeWorkloadKind.FinalAsr,
+            TimeSpan.Zero);
+        Assert.True(busyLease.Succeeded);
+
+        var checker = new EgOneLearnedWordChecker(
+            () => provider,
+            resourceAdmission: arbiter);
+        var questions = new[]
+        {
+            new LearnedWordCheckQuestion(1, "Ask saurab and eat sandwich.", 4, 6, 0, 28, "Saurabh"),
+        };
+
+        var result = await checker.DecideAsync(questions, "en");
+
+        Assert.Null(result);
+        await busyLease.Lease!.DisposeAsync();
+    }
+
     private static HttpResponseMessage JsonReply(string contentJson)
     {
         var envelope = JsonSerializer.Serialize(new

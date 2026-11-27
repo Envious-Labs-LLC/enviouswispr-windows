@@ -63,6 +63,9 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     /// <summary>Who last took the current generation's teardown - "stop" or "abort"; a test's way of seeing which owner did the work.</summary>
     internal string? LastTeardownOwner => Volatile.Read(ref _generation)?.Owner;
 
+    /// <summary>Whether the current generation holds an active Windows Job Object handle.</summary>
+    internal bool HasProcessJob => Volatile.Read(ref _generation)?.ProcessJob is not null;
+
     public async Task<RuntimeWorkerResult> StartAsync(
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
@@ -425,6 +428,11 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 return Failure();
             }
 
+            // Assign to a kill-on-close Windows Job Object so an abrupt parent crash never orphans
+            // the runtime worker process. The handle stays open for the lifetime of the generation
+            // and is disposed ONLY in End(...) after exit has been observed.
+            generation.ProcessJob = WindowsProcessJob.TryCreateFor(process);
+
             // PUBLISHED UNDER THE SAME LOCK, WITH THE SAME READ. An abort that closed admission
             // before this found a generation with no process and is waiting for its end; this start
             // sees the flag and takes its own worker down, which ends that generation. One that
@@ -473,6 +481,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             if (generation.Process is null)
             {
                 // The process never started: nothing to observe, the generation ends with the start.
+                generation.ProcessJob?.Dispose();
+                generation.ProcessJob = null;
                 process.Dispose();
                 generation.Ended.TrySetResult(true);
             }
@@ -737,6 +747,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         }
 
         process.Dispose();
+        generation.ProcessJob?.Dispose();
+        generation.ProcessJob = null;
         Interlocked.Increment(ref _handlesClosed);
         generation.Ended.TrySetResult(true);
     }
@@ -885,6 +897,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         }
 
         public Task<string>? StderrDrain { get; set; }
+
+        public WindowsProcessJob? ProcessJob { get; set; }
 
         /// <summary>Who took the teardown - for the tests, which need to know which owner did the work.</summary>
         public string? Owner { get; set; }

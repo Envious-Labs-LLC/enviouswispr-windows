@@ -7,6 +7,25 @@ using EnviousWispr.Core.Settings;
 namespace EnviousWispr.Pipeline;
 
 /// <summary>
+/// Per-call execution scope and cancellation lease for <see cref="HistoryRepolishService"/> so
+/// foreground dictation or provider teardown can preempt in-flight re-polish cleanly.
+/// </summary>
+public sealed class RepolishExecutionLease(Action onDispose, CancellationToken token) : IDisposable
+{
+    private int _disposed;
+
+    public CancellationToken Token { get; } = token;
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            onDispose();
+        }
+    }
+}
+
+/// <summary>
 /// Re-polishes an existing dictation history entry using the current polish provider,
 /// preserving pre-AI original text and avoiding compound LLM edits.
 /// </summary>
@@ -20,6 +39,8 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
     private readonly Func<IReadOnlyList<CustomWordEntry>> _customWords;
     private readonly Func<IReadOnlyList<string>> _enabledVocabularyPackIds;
     private readonly ITextTargetAdapter? _targetAdapter;
+    private readonly Func<ITextTargetAdapter?>? _targetAdapterProvider;
+    private readonly Func<CancellationToken, RepolishExecutionLease?>? _beginExecution;
     private readonly IAppLogger? _logger;
     private readonly TimeProvider _clock;
 
@@ -33,7 +54,9 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         ITextTargetAdapter? targetAdapter = null,
         IAppLogger? logger = null,
         TimeProvider? clock = null,
-        Func<IReadOnlyList<string>>? enabledVocabularyPackIds = null)
+        Func<IReadOnlyList<string>>? enabledVocabularyPackIds = null,
+        Func<ITextTargetAdapter?>? targetAdapterProvider = null,
+        Func<CancellationToken, RepolishExecutionLease?>? beginExecution = null)
     {
         ArgumentNullException.ThrowIfNull(historyStore);
         ArgumentNullException.ThrowIfNull(polishExecutor);
@@ -47,6 +70,8 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         _customWords = customWords ?? (() => Array.Empty<CustomWordEntry>());
         _enabledVocabularyPackIds = enabledVocabularyPackIds ?? (() => Array.Empty<string>());
         _targetAdapter = targetAdapter;
+        _targetAdapterProvider = targetAdapterProvider;
+        _beginExecution = beginExecution;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
     }
@@ -56,6 +81,14 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         bool copyToClipboard = false,
         CancellationToken cancellationToken = default)
     {
+        using var executionLease = _beginExecution?.Invoke(cancellationToken);
+        if (_beginExecution is not null && executionLease is null)
+        {
+            RecordRefusal();
+            return HistoryRepolishResult.Refused();
+        }
+
+        var effectiveToken = executionLease?.Token ?? cancellationToken;
         var setup = _polishSetup();
         if (setup is null || setup.Provider is null ||
             string.Equals(setup.Provider.ProviderId, "none", StringComparison.OrdinalIgnoreCase))
@@ -71,7 +104,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
             return HistoryRepolishResult.NotFound();
         }
 
-        return await RepolishCoreAsync(entry, setup, copyToClipboard, cancellationToken).ConfigureAwait(false);
+        return await RepolishCoreAsync(entry, setup, copyToClipboard, cancellationToken, effectiveToken).ConfigureAwait(false);
     }
 
     public async Task<HistoryRepolishResult> RepolishAsync(
@@ -80,6 +113,14 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        using var executionLease = _beginExecution?.Invoke(cancellationToken);
+        if (_beginExecution is not null && executionLease is null)
+        {
+            RecordRefusal();
+            return HistoryRepolishResult.Refused();
+        }
+
+        var effectiveToken = executionLease?.Token ?? cancellationToken;
         var setup = _polishSetup();
         if (setup is null || setup.Provider is null ||
             string.Equals(setup.Provider.ProviderId, "none", StringComparison.OrdinalIgnoreCase))
@@ -88,14 +129,15 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
             return HistoryRepolishResult.NoProvider();
         }
 
-        return await RepolishCoreAsync(entry, setup, copyToClipboard, cancellationToken).ConfigureAwait(false);
+        return await RepolishCoreAsync(entry, setup, copyToClipboard, cancellationToken, effectiveToken).ConfigureAwait(false);
     }
 
     private async Task<HistoryRepolishResult> RepolishCoreAsync(
         DictationHistoryEntry entry,
         PolishSetup setup,
         bool copyToClipboard,
-        CancellationToken cancellationToken)
+        CancellationToken callerCancellationToken,
+        CancellationToken effectiveCancellationToken)
     {
         var now = _clock.GetUtcNow();
         if (entry.ExpiresAt is { } expiresAt && expiresAt <= now)
@@ -120,9 +162,23 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         var sessionId = DictationSessionId.Create();
         var input = new ProcessedText(sessionId, startingText);
 
-        var polishResult = await _polishExecutor
-            .TryPolishAsync(setup, input, entry.LanguageCode, cancellationToken)
-            .ConfigureAwait(false);
+        PolishResult? polishResult;
+        try
+        {
+            polishResult = await _polishExecutor
+                .TryPolishAsync(setup, input, entry.LanguageCode, effectiveCancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!callerCancellationToken.IsCancellationRequested)
+        {
+            RecordRefusal();
+            return HistoryRepolishResult.Refused();
+        }
+        catch (ObjectDisposedException)
+        {
+            RecordRefusal();
+            return HistoryRepolishResult.Refused();
+        }
 
         if (polishResult is null || polishResult.UsedFallback ||
             polishResult.Status != PolishAttemptStatus.Polished ||
@@ -158,7 +214,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         };
 
         var applied = await _pipeline
-            .ApplyPolishedTextAsync(request, deterministicResult, polishReview.Text, cancellationToken)
+            .ApplyPolishedTextAsync(request, deterministicResult, polishReview.Text, callerCancellationToken)
             .ConfigureAwait(false);
 
         var newText = applied.Output.Text;
@@ -170,7 +226,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
             wasPolished: true,
             providerId: setup.Provider.ProviderId,
             modelId: setup.ModelId,
-            cancellationToken).ConfigureAwait(false);
+            callerCancellationToken).ConfigureAwait(false);
 
         if (updateResult.Status == HistoryRepolishUpdateStatus.Stale)
         {
@@ -190,13 +246,14 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         }
 
         var copied = false;
-        if (copyToClipboard && _targetAdapter is not null)
+        var targetAdapter = _targetAdapterProvider?.Invoke() ?? _targetAdapter;
+        if (copyToClipboard && targetAdapter is not null)
         {
             try
             {
-                var commit = await _targetAdapter.CopyOnlyAsync(
+                var commit = await targetAdapter.CopyOnlyAsync(
                     new ProcessedText(sessionId, newText),
-                    cancellationToken).ConfigureAwait(false);
+                    callerCancellationToken).ConfigureAwait(false);
                 copied = commit.Delivered || commit.ClipboardFallback;
             }
             catch (Exception)

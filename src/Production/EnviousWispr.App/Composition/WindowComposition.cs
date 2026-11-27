@@ -40,7 +40,8 @@ public static class WindowComposition
         IPolishModelSource polishModels,
         IPortableProfileService profiles,
         IDiagnosticExportService diagnostics,
-        IOllamaModelHost? ollamaModels = null) =>
+        IOllamaModelHost? ollamaModels = null,
+        IHistoryRepolishService? repolishService = null) =>
         new(new WindowPresentationParts(
             settingsStore,
             settings,
@@ -52,5 +53,6 @@ public static class WindowComposition
             diagnostics,
             OpenMicrophoneTestCapture,
             OpenDeviceCatalog,
-            ollamaModels));
+            ollamaModels,
+            repolishService));
 }
