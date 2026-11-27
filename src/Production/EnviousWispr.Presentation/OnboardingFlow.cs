@@ -415,13 +415,13 @@ public sealed class OnboardingFlow
             return;
         }
 
-        Choices = Choices with
-        {
-            SpeechEngine = recommendation.Speech.PrimaryEngine,
-            SpeechModelId = recommendation.Speech.PrimaryModelId,
-            PolishChoice = OnboardingPolishChoiceKind.EgOne,
-            EgOneModelId = recommendation.Polish.PrimaryModelId,
-        };
+        ApplySelectedChoices(
+            speechEngine: recommendation.Speech.PrimaryEngine,
+            speechModelId: recommendation.Speech.PrimaryModelId,
+            polishChoice: OnboardingPolishChoiceKind.EgOne,
+            egOneModelId: recommendation.Polish.PrimaryModelId,
+            cloudModelId: Choices.CloudModelId,
+            updatePolish: true);
         Touch();
     }
 
@@ -531,11 +531,9 @@ public sealed class OnboardingFlow
             normalizedModel = modelId.Trim();
         }
 
-        Choices = Choices with
-        {
-            SpeechEngine = engine,
-            SpeechModelId = normalizedModel,
-        };
+        ApplySelectedChoices(
+            speechEngine: engine,
+            speechModelId: normalizedModel);
         Touch();
     }
 
@@ -598,12 +596,12 @@ public sealed class OnboardingFlow
         var normalizedEgOne = choiceKind == OnboardingPolishChoiceKind.EgOne
             ? EgOneModelCatalog.NormalizeOrDefault(egOneModelId ?? Choices.EgOneModelId)
             : null;
-        Choices = Choices with
-        {
-            PolishChoice = choiceKind,
-            EgOneModelId = normalizedEgOne,
-            CloudModelId = string.IsNullOrWhiteSpace(cloudModelId) ? null : cloudModelId.Trim(),
-        };
+        var normalizedCloud = string.IsNullOrWhiteSpace(cloudModelId) ? null : cloudModelId.Trim();
+        ApplySelectedChoices(
+            polishChoice: choiceKind,
+            egOneModelId: normalizedEgOne,
+            cloudModelId: normalizedCloud,
+            updatePolish: true);
         Touch();
     }
 
@@ -992,6 +990,52 @@ public sealed class OnboardingFlow
         _practiceBoxAtStart = string.Empty;
         _takeDelivery = OnboardingTakeDelivery.None;
         _takeFailed = false;
+    }
+
+    private void ApplySelectedChoices(
+        FinalAsrEngine? speechEngine = null,
+        string? speechModelId = null,
+        OnboardingPolishChoiceKind? polishChoice = null,
+        string? egOneModelId = null,
+        string? cloudModelId = null,
+        bool updatePolish = false)
+    {
+        var targetSpeechEngine = speechEngine ?? Choices.SpeechEngine;
+        var targetSpeechModelId = speechModelId ?? Choices.SpeechModelId;
+        var speechChanged =
+            targetSpeechEngine != Choices.SpeechEngine ||
+            !string.Equals(targetSpeechModelId, Choices.SpeechModelId, StringComparison.Ordinal);
+
+        var targetPolishChoice = updatePolish ? polishChoice!.Value : Choices.PolishChoice;
+        var targetEgOneModelId = updatePolish ? egOneModelId : Choices.EgOneModelId;
+        var targetCloudModelId = updatePolish ? cloudModelId : Choices.CloudModelId;
+        var polishChanged = updatePolish && (
+            targetPolishChoice != Choices.PolishChoice ||
+            !string.Equals(targetEgOneModelId, Choices.EgOneModelId, StringComparison.Ordinal));
+
+        Choices = Choices with
+        {
+            SpeechEngine = targetSpeechEngine,
+            SpeechModelId = targetSpeechModelId,
+            PolishChoice = targetPolishChoice,
+            EgOneModelId = targetEgOneModelId,
+            CloudModelId = targetCloudModelId,
+        };
+
+        if (speechChanged)
+        {
+            Engine = SpeechEngineReadiness.Preparing;
+            Model = SpeechModelDelivery.Unknown;
+            _startedDownloadThisVisit = false;
+            CancelRequested = false;
+        }
+
+        if (polishChanged)
+        {
+            PolishModel = SpeechModelDelivery.Unknown;
+            _startedDownloadThisVisit = false;
+            CancelRequested = false;
+        }
     }
 
     private void Touch() => UpdatedAtUtc = DateTimeOffset.UtcNow;

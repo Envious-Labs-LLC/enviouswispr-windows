@@ -281,6 +281,59 @@ public sealed class OnboardingDownloadCoordinatorTests
         Assert.True(observed.IsPolishReady);
     }
 
+    [Fact]
+    public async Task DiskPreflightAllowsActivationWhenModelFilesAreAlreadyOnDisk()
+    {
+        var activationOnlyPlan = new OnboardingDownloadPlan(
+            SpeechModelId: WhisperModelIds.Final,
+            SpeechTotalBytes: 600_000_000L,
+            PolishModelId: EgOneModelCatalog.MicroId,
+            PolishTotalBytes: 542_000_000L,
+            ParallelDownloads: false,
+            SpeechAlreadyInstalled: false,
+            PolishAlreadyInstalled: false,
+            SpeechDiskBytes: 0L,
+            PolishDiskBytes: 0L);
+
+        const long tightAvailableBytes = 64L * 1024 * 1024;
+        var activationOnlyPreflight = OnboardingDownloadCoordinator.PreflightDiskSpace(
+            activationOnlyPlan,
+            tightAvailableBytes);
+        Assert.True(activationOnlyPreflight.Succeeded);
+        Assert.Equal(0L, activationOnlyPreflight.RequiredBytes);
+
+        var partialPlan = activationOnlyPlan with { PolishDiskBytes = 200_000_000L };
+        Assert.False(OnboardingDownloadCoordinator.PreflightDiskSpace(
+            partialPlan,
+            200_000_000L + OnboardingDownloadCoordinator.DiskHeadroomBytes - 1).Succeeded);
+        Assert.True(OnboardingDownloadCoordinator.PreflightDiskSpace(
+            partialPlan,
+            200_000_000L + OnboardingDownloadCoordinator.DiskHeadroomBytes).Succeeded);
+
+        var speechActivated = false;
+        var polishActivated = false;
+        using var coordinator = new OnboardingDownloadCoordinator(
+            activationOnlyPlan,
+            provisionAsync: (_, _, _) => Task.FromResult(new ModelDeliveryResult(true)),
+            onSpeechInstalledAsync: _ =>
+            {
+                speechActivated = true;
+                return Task.CompletedTask;
+            },
+            onPolishInstalledAsync: _ =>
+            {
+                polishActivated = true;
+                return Task.CompletedTask;
+            },
+            diskSpaceProbe: new FixedDiskProbe(tightAvailableBytes));
+
+        var snapshot = await coordinator.RunAsync();
+        Assert.True(speechActivated);
+        Assert.True(polishActivated);
+        Assert.True(snapshot.IsSpeechReady);
+        Assert.True(snapshot.IsPolishReady);
+    }
+
     private sealed class FixedDiskProbe(long availableBytes) : IDiskSpaceProbe
     {
         public long GetAvailableBytes(string path) => availableBytes;

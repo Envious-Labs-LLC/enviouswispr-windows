@@ -591,4 +591,51 @@ public sealed class OnboardingFlowTests
             directory.Delete();
         }
     }
+
+    [Fact]
+    public void SwitchingSpeechOrPolishSelectionInvalidatesStaleReadiness()
+    {
+        var flow = new OnboardingFlow();
+        flow.ReportMicrophone(MicrophoneConsent.Allowed);
+        flow.ReportRecordingKey("F8", DictationRecordingMode.Toggle);
+        flow.Begin();
+        flow.AdvanceFromWelcome();
+        flow.ContinueFromLanguage();
+
+        flow.ReportEngine(SpeechEngineReadiness.Ready);
+        flow.ReportModel(SpeechModelDelivery.Installed);
+        flow.ReportPolishModel(SpeechModelDelivery.Installed);
+
+        // Re-selecting the same speech model keeps readiness intact.
+        flow.SelectSpeech(FinalAsrEngine.Parakeet, ParakeetModelIds.Final);
+        Assert.Equal(SpeechEngineReadiness.Ready, flow.Engine);
+        Assert.Equal(SpeechModelDelivery.Installed, flow.Model);
+
+        // Switching to a different speech model invalidates prior readiness and download guard.
+        flow.DownloadStarted();
+        flow.RequestCancel();
+        flow.SelectSpeech(FinalAsrEngine.Whisper, WhisperModelIds.Final);
+        Assert.Equal(SpeechEngineReadiness.Preparing, flow.Engine);
+        Assert.Equal(SpeechModelDelivery.Unknown, flow.Model);
+        Assert.False(flow.IsSpeechReady);
+        Assert.False(flow.CancelRequested);
+        Assert.Equal(SpeechModelDelivery.Installed, flow.PolishModel);
+
+        flow.ReportEngine(SpeechEngineReadiness.NotInstalled);
+        flow.ReportModel(SpeechModelDelivery.Missing);
+        flow.ContinueFromSpeechPick();
+        flow.ContinueFromPolishIntro();
+
+        // Re-selecting the same EG-1 model keeps polish readiness intact; changing size resets it.
+        flow.SelectPolish(OnboardingPolishChoiceKind.EgOne, EgOneModelCatalog.MiniId);
+        Assert.Equal(SpeechModelDelivery.Installed, flow.PolishModel);
+        flow.SelectPolish(OnboardingPolishChoiceKind.EgOne, EgOneModelCatalog.FullId);
+        Assert.Equal(SpeechModelDelivery.Unknown, flow.PolishModel);
+        Assert.False(flow.IsPolishReadyForGate);
+
+        // Navigating forward routes back into Downloads because both selected models need setup/downloads.
+        flow.ContinueFromPolishPick();
+        Assert.Equal(OnboardingStep.Downloads, flow.Step);
+        Assert.True(flow.ShouldStartDownload);
+    }
 }

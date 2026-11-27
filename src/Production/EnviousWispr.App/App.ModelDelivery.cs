@@ -7,6 +7,7 @@ using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.LLM;
 using EnviousWispr.ModelDelivery;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
@@ -1689,7 +1690,9 @@ public partial class App
             ? null
             : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
         var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true &&
-            _polishProvider is not null &&
+            _polishProvider is EgOnePolishProvider activeEgOne &&
+            string.Equals(activeEgOne.ModelId, normalizedPolishId, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(_configuredEgOneModelPath) &&
             _settings.Preferences.Polish.Provider == PolishProvider.EgOne &&
             string.Equals(ConfiguredEgOneModelId(_settings.Preferences.Polish), normalizedPolishId, StringComparison.Ordinal));
         var speechInstalled = speechState.IsInstalled &&
@@ -1727,8 +1730,8 @@ public partial class App
             ParallelDownloads: parallelDownloads,
             SpeechAlreadyInstalled: speechInstalled,
             PolishAlreadyInstalled: polishInstalled,
-            SpeechDiskBytes: speechDiskBytes,
-            PolishDiskBytes: polishDiskBytes);
+            SpeechDiskBytes: speechState.IsInstalled ? 0L : speechDiskBytes,
+            PolishDiskBytes: normalizedPolishId is null || polishState?.IsInstalled == true ? 0L : polishDiskBytes);
 
         using var cancellation = new CancellationTokenSource();
         _onboardingDownloadCancellation = cancellation;
@@ -1744,21 +1747,21 @@ public partial class App
             },
             onSpeechInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
             {
+                if (!await ApplyOnboardingSpeechChoiceAsync(speechEngine).ConfigureAwait(true) || Leaving)
+                {
+                    return;
+                }
+
+                var reconfigured = await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
                 if (Leaving)
                 {
                     return;
                 }
 
-                await ApplyOnboardingSpeechChoiceAsync(speechEngine).ConfigureAwait(true);
-                if (Leaving)
+                if (reconfigured && _transcriptionEngine is null)
                 {
-                    return;
-                }
-
-                await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
-                if (Leaving)
-                {
-                    return;
+                    throw new InvalidOperationException(
+                        $"Could not start the {speechEngine} speech engine after download.");
                 }
 
                 PresentGraphicsRuntime();
@@ -1771,16 +1774,24 @@ public partial class App
                     return;
                 }
 
-                await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true);
+                if (!await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true) || Leaving)
+                {
+                    return;
+                }
+
+                var reconfigured = await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
                 if (Leaving)
                 {
                     return;
                 }
 
-                await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
-                if (Leaving)
+                if (reconfigured &&
+                    (_polishProvider is not EgOnePolishProvider egOne ||
+                     !string.Equals(egOne.ModelId, normalizedPolishId, StringComparison.Ordinal) ||
+                     string.IsNullOrWhiteSpace(_configuredEgOneModelPath)))
                 {
-                    return;
+                    throw new InvalidOperationException(
+                        $"Could not configure local AI polish ({normalizedPolishId}) after download.");
                 }
 
                 await RefreshEgOneInventoryAsync().ConfigureAwait(true);
@@ -1885,62 +1896,113 @@ public partial class App
         return (totalBytes, diskBytes);
     }
 
-    private async Task ApplyOnboardingSpeechChoiceAsync(FinalAsrEngine engine)
+    private async Task<bool> ApplyOnboardingSpeechChoiceAsync(FinalAsrEngine engine)
     {
-        if (_settings.Preferences.Dictation.FinalEngine == engine)
+        var current = _presentation?.Settings.Current ?? _settings;
+        _settings = current;
+        if (current.Preferences.Dictation.FinalEngine == engine)
         {
-            return;
+            return !Leaving;
         }
 
-        var updated = _settings with
+        return await TrySaveOnboardingSettingsAsync(latest => latest with
         {
-            Preferences = _settings.Preferences with
+            Preferences = latest.Preferences with
             {
-                Dictation = _settings.Preferences.Dictation with { FinalEngine = engine },
+                Dictation = latest.Preferences.Dictation with { FinalEngine = engine },
             },
-        };
-        _settings = updated;
-        _trayIcon?.SetEngineAndPolishSummary(updated.Preferences.Dictation.FinalEngine, updated.Preferences.Polish.Provider);
-        try
-        {
-            await _settingsStore.SaveAsync(updated).ConfigureAwait(true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.SettingsRecovered, AppFailureCategory.StorageUnavailable));
-        }
+        }).ConfigureAwait(true);
     }
 
-    private async Task ApplyOnboardingPolishChoiceAsync(string egOneModelId)
+    private async Task<bool> ApplyOnboardingPolishChoiceAsync(string egOneModelId)
     {
-        var currentPolish = _settings.Preferences.Polish;
+        var current = _presentation?.Settings.Current ?? _settings;
+        _settings = current;
+        var currentPolish = current.Preferences.Polish;
         if (currentPolish.Provider == PolishProvider.EgOne &&
             string.Equals(ConfiguredEgOneModelId(currentPolish), egOneModelId, StringComparison.Ordinal))
         {
-            return;
+            return !Leaving;
         }
 
-        var updated = _settings with
+        return await TrySaveOnboardingSettingsAsync(latest => latest with
         {
-            Preferences = _settings.Preferences with
+            Preferences = latest.Preferences with
             {
-                Polish = currentPolish with
+                Polish = latest.Preferences.Polish with
                 {
                     Provider = PolishProvider.EgOne,
                     EgOneModelId = egOneModelId,
                 },
             },
-        };
+        }).ConfigureAwait(true);
+    }
+
+    private async Task<bool> TrySaveOnboardingSettingsAsync(Func<AppSettings, AppSettings> transform)
+    {
+        if (Leaving)
+        {
+            return false;
+        }
+
+        if (_presentation is { } presentation)
+        {
+            if (!presentation.TryEnter(out var lease))
+            {
+                return false;
+            }
+
+            SettingsSaveResult result;
+            using (lease)
+            {
+                result = await presentation.Settings
+                    .SaveAsync(transform)
+                    .ConfigureAwait(true);
+            }
+
+            if (!result.Saved)
+            {
+                if (result.Refusal != SettingsSaveRefusal.Closing)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.SettingsRecovered,
+                        AppFailureCategory.StorageUnavailable));
+                    throw new InvalidOperationException(
+                        $"Could not persist onboarding settings ({result.Refusal}).");
+                }
+
+                return false;
+            }
+
+            var saved = presentation.Settings.Current;
+            _settings = saved;
+            _trayIcon?.SetEngineAndPolishSummary(
+                saved.Preferences.Dictation.FinalEngine,
+                saved.Preferences.Polish.Provider);
+            _window?.SyncExternalSettingsUpdate();
+            return !Leaving;
+        }
+
+        var updated = transform(_settings);
         _settings = updated;
-        _trayIcon?.SetEngineAndPolishSummary(updated.Preferences.Dictation.FinalEngine, updated.Preferences.Polish.Provider);
+        _trayIcon?.SetEngineAndPolishSummary(
+            updated.Preferences.Dictation.FinalEngine,
+            updated.Preferences.Polish.Provider);
         try
         {
             await _settingsStore.SaveAsync(updated).ConfigureAwait(true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.SettingsRecovered, AppFailureCategory.StorageUnavailable));
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.SettingsRecovered,
+                AppFailureCategory.StorageUnavailable));
+            throw new InvalidOperationException("Could not save onboarding settings.", ex);
         }
+
+        return !Leaving;
     }
 
     private async Task<bool> TryReconfigurePolishUnderHoldAsync()
