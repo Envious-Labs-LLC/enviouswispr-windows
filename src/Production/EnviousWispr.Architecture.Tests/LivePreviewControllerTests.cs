@@ -324,6 +324,7 @@ public sealed class LivePreviewControllerTests
         Assert.Equal(TimeSpan.FromMilliseconds(250), world.Clock.NextDue);
 
         world.Audio.Samples = 8_000;
+        world.Engine.NextText = "words";
         world.Clock.Advance(TimeSpan.FromMilliseconds(250));
         await world.Effects.WhenShown(1).WaitAsync(Patience);
 
@@ -337,6 +338,7 @@ public sealed class LivePreviewControllerTests
     public async Task TheCadenceIsAFloorOnTheGapBetweenPassesAndTheSequenceCounts()
     {
         var world = World.Build();
+        world.Engine.AppendSequenceToText = true;
         world.Engine.NextText = "words";
 
         await world.Controller.StartAsync(world.Session);
@@ -359,6 +361,7 @@ public sealed class LivePreviewControllerTests
     public async Task APassSlowerThanTheIntervalIsFollowedAtOnce()
     {
         var world = World.Build();
+        world.Engine.AppendSequenceToText = true;
         world.Engine.NextText = "words";
         world.Engine.HoldPasses = true;
 
@@ -614,6 +617,7 @@ public sealed class LivePreviewControllerTests
         public string EngineId => "fake";
         public RuntimeWorkerResult StartResult { get; set; } = new(true, RuntimeWorkerState.Ready);
         public string NextText { get; set; } = "";
+        public bool AppendSequenceToText { get; set; }
         public AppError? NextError { get; set; }
         public Exception? ThrowOnPass { get; set; }
         public Guid? TagUpdatesWith { get; set; }
@@ -689,9 +693,10 @@ public sealed class LivePreviewControllerTests
                 throw ThrowOnPass;
             }
 
+            var text = AppendSequenceToText ? $"{NextText} {sequence}" : NextText;
             var update = NextError is { } error
                 ? new LivePreviewUpdate(snapshot.SessionId.Value, sequence, false, "", Error: error)
-                : new LivePreviewUpdate(TagUpdatesWith ?? snapshot.SessionId.Value, sequence, true, NextText);
+                : new LivePreviewUpdate(TagUpdatesWith ?? snapshot.SessionId.Value, sequence, true, text);
             PassFinished.TrySetResult();
             return update;
         }

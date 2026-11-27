@@ -2,6 +2,8 @@ using EnviousWispr.Core.Preview;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.PostProcessing;
 
+using EnviousWispr.Core.Dictation;
+
 namespace EnviousWispr.Pipeline;
 
 /// <summary>
@@ -27,7 +29,13 @@ public static class LivePreviewTextFormatter
         IReadOnlyList<string>? enabledVocabularyPackIds = null,
         bool excludeLearnedAliases = false)
     {
-        var bounded = LivePreviewTextBound.Apply(rawText);
+        var cleaned = WhisperNonSpeechFilter.Clean(rawText);
+        if (cleaned.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var bounded = LivePreviewTextBound.Apply(cleaned);
         if (bounded.Length == 0)
         {
             return string.Empty;

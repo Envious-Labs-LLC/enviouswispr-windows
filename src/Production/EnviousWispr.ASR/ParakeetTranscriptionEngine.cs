@@ -12,7 +12,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace EnviousWispr.ASR;
 
-public sealed class ParakeetTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IDisposable
+public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IDisposable
 {
     public const string ModelId = ParakeetModelIds.Final;
     public const int RequiredSampleRate = 16_000;
@@ -53,9 +53,47 @@ public sealed class ParakeetTranscriptionEngine : ILanguageSelectableTranscripti
     private static readonly string[] PreprocessorOutputs = ["features", "features_lens"];
     private static readonly string[] EncoderOutputs = ["outputs", "encoded_lengths"];
     private static readonly string[] DecoderOutputs = ["outputs", "output_states_1", "output_states_2"];
-    private static readonly Regex SpacePattern = new(
-        @"\A\s|\s\B|(\s)\b",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    [GeneratedRegex(
+        @"[ \t]+([.,!?;:\)\]\}\u2019\u201D]|'(?:s|t|re|ve|ll|d|m)\b)",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 500)]
+    private static partial Regex SpaceBeforeClosingPunctuationPattern();
+
+    [GeneratedRegex(@"[ \t]+", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 500)]
+    private static partial Regex HorizontalWhitespacePattern();
+
+    private static readonly HashSet<string> LowercaseProtectedAbbreviations = new(StringComparer.Ordinal)
+    {
+        "mr", "mrs", "ms", "dr", "prof", "jr", "sr", "st", "ave", "blvd", "dept", "apt",
+        "vs", "eg", "ie", "etc", "inc", "ltd", "fig", "vol", "no", "est", "approx",
+    };
+
+    private static readonly HashSet<string> SentenceStarterRightWords = new(StringComparer.Ordinal)
+    {
+        "I", "I'm", "I\u2019m", "I've", "I\u2019ve", "I'll", "I\u2019ll", "I'd", "I\u2019d",
+        "You", "You're", "You\u2019re", "You've", "You\u2019ve", "You'll", "You\u2019ll", "You'd", "You\u2019d",
+        "He", "He's", "He\u2019s", "He'll", "He\u2019ll", "He'd", "He\u2019d",
+        "She", "She's", "She\u2019s", "She'll", "She\u2019ll", "She'd", "She\u2019d",
+        "It", "It's", "It\u2019s", "It'll", "It\u2019ll", "It'd", "It\u2019d",
+        "We", "We're", "We\u2019re", "We've", "We\u2019ve", "We'll", "We\u2019ll", "We'd", "We\u2019d",
+        "They", "They're", "They\u2019re", "They've", "They\u2019ve", "They'll", "They\u2019ll", "They'd", "They\u2019d",
+        "Is", "Isn't", "Isn\u2019t", "Are", "Aren't", "Aren\u2019t", "Was", "Wasn't", "Wasn\u2019t",
+        "Were", "Weren't", "Weren\u2019t", "Am",
+        "Do", "Don't", "Don\u2019t", "Does", "Doesn't", "Doesn\u2019t", "Did", "Didn't", "Didn\u2019t",
+        "Can", "Can't", "Can\u2019t", "Cannot", "Could", "Couldn't", "Couldn\u2019t", "Could've", "Could\u2019ve",
+        "Will", "Won't", "Won\u2019t", "Would", "Wouldn't", "Wouldn\u2019t", "Would've", "Would\u2019ve",
+        "Should", "Shouldn't", "Shouldn\u2019t", "Should've", "Should\u2019ve", "Shall",
+        "May", "Might", "Must", "Mustn't", "Mustn\u2019t",
+        "Have", "Haven't", "Haven\u2019t", "Has", "Hasn't", "Hasn\u2019t", "Had", "Hadn't", "Hadn\u2019t",
+        "The", "This", "That", "That's", "That\u2019s", "These", "Those",
+        "There", "There's", "There\u2019s", "Here", "Here's", "Here\u2019s",
+        "What", "What's", "What\u2019s", "When", "Where", "Where's", "Where\u2019s",
+        "Why", "How", "How's", "How\u2019s", "Who", "Who's", "Who\u2019s", "Which",
+        "If", "But", "And", "Or", "So", "Because", "Although", "Unless", "Until", "While",
+        "However", "Actually", "Anyway", "Also", "Then", "Now", "Please", "Thanks", "Sorry",
+        "Yes", "Yeah", "No", "Well", "Sure", "Okay", "Let's", "Let\u2019s",
+        "My", "Your", "Our", "Their", "His", "Her", "Its",
+    };
 
     private readonly IParakeetBackend _backend;
     private readonly ParakeetVocabulary _vocabulary;
@@ -539,7 +577,180 @@ public sealed class ParakeetTranscriptionEngine : ILanguageSelectableTranscripti
             text.Append(_vocabulary.Tokens[token.Id]);
         }
 
-        return SpacePattern.Replace(text.ToString(), match => match.Groups[1].Success ? " " : string.Empty);
+        return NormalizeDecodedTokenText(text.ToString());
+    }
+
+    internal static string NormalizeDecodedTokenText(string rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            return string.Empty;
+        }
+
+        var strippedBeforeClosing = SpaceBeforeClosingPunctuationPattern().Replace(rawText, "$1");
+        var collapsed = HorizontalWhitespacePattern().Replace(strippedBeforeClosing, " ").Trim();
+        return RepairPostPeriodBoundarySpacing(collapsed);
+    }
+
+    internal static string RepairPostPeriodBoundarySpacing(string text)
+    {
+        if (string.IsNullOrEmpty(text) || text.IndexOf('.') < 0)
+        {
+            return text;
+        }
+
+        StringBuilder? repaired = null;
+        var lastCopied = 0;
+
+        for (var i = 1; i < text.Length - 1; i++)
+        {
+            if (text[i] != '.' || !ShouldInsertSpaceAfterPeriod(text, i))
+            {
+                continue;
+            }
+
+            repaired ??= new StringBuilder(text.Length + 8);
+            repaired.Append(text, lastCopied, i + 1 - lastCopied);
+            repaired.Append(' ');
+            lastCopied = i + 1;
+        }
+
+        if (repaired is null)
+        {
+            return text;
+        }
+
+        repaired.Append(text, lastCopied, text.Length - lastCopied);
+        return repaired.ToString();
+    }
+
+    private static bool ShouldInsertSpaceAfterPeriod(string text, int dotIndex)
+    {
+        if (text[dotIndex - 1] == '.' || text[dotIndex + 1] == '.' || !char.IsUpper(text[dotIndex + 1]))
+        {
+            return false;
+        }
+
+        var tokenStart = dotIndex;
+        while (tokenStart > 0 && !char.IsWhiteSpace(text[tokenStart - 1]))
+        {
+            tokenStart--;
+        }
+
+        var tokenEnd = dotIndex + 1;
+        while (tokenEnd < text.Length && !char.IsWhiteSpace(text[tokenEnd]))
+        {
+            tokenEnd++;
+        }
+
+        var token = text.AsSpan(tokenStart, tokenEnd - tokenStart);
+        if (token.Contains('@') ||
+            token.Contains('/') ||
+            token.Contains('\\') ||
+            token.Contains('_') ||
+            token.IndexOf("://", StringComparison.Ordinal) >= 0)
+        {
+            return false;
+        }
+
+        // Validate left word directly before the period: allow leading opening quotes/parens only,
+        // no preceding dots/digits/uppercase (protects PascalCase, camelCase, versions, dotted initials).
+        var leftStart = dotIndex;
+        var leftLetters = 0;
+        while (leftStart > tokenStart)
+        {
+            var prev = text[leftStart - 1];
+            if (char.IsLetter(prev))
+            {
+                if (!char.IsLower(prev))
+                {
+                    return false;
+                }
+
+                leftLetters++;
+                leftStart--;
+            }
+            else if (prev is '\'' or '\u2019' && leftStart - 1 > tokenStart && char.IsLetter(text[leftStart - 2]))
+            {
+                leftStart--;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if (leftLetters < 2)
+        {
+            return false;
+        }
+
+        for (var k = tokenStart; k < leftStart; k++)
+        {
+            if (text[k] is not ('(' or '[' or '{' or '"' or '\'' or '\u201C' or '\u2018'))
+            {
+                return false;
+            }
+        }
+
+        var leftWord = text[leftStart..dotIndex];
+        if (LowercaseProtectedAbbreviations.Contains(leftWord))
+        {
+            return false;
+        }
+
+        // Validate right word: initial uppercase letter followed by lowercase word (or contraction like I'm),
+        // not PascalCase/ALLCAPS/chain/method invocation (e.g. WriteLine, IO, U.S.A, Run()), and only split
+        // high-confidence English sentence starters so dictated member accesses like "user.Name" remain intact.
+        var wordEnd = dotIndex + 2;
+        while (wordEnd < tokenEnd && char.IsLetter(text[wordEnd]))
+        {
+            if (char.IsUpper(text[wordEnd]))
+            {
+                return false;
+            }
+
+            wordEnd++;
+        }
+
+        if (wordEnd < tokenEnd)
+        {
+            var next = text[wordEnd];
+            if (next is '.' or '(' or '[' or '<' or '_' || char.IsDigit(next))
+            {
+                return false;
+            }
+
+            if (next is '\'' or '\u2019')
+            {
+                var afterApostrophe = wordEnd + 1;
+                if (afterApostrophe >= tokenEnd || !char.IsLetter(text[afterApostrophe]))
+                {
+                    return false;
+                }
+
+                while (afterApostrophe < tokenEnd && char.IsLetter(text[afterApostrophe]))
+                {
+                    if (char.IsUpper(text[afterApostrophe]))
+                    {
+                        return false;
+                    }
+
+                    afterApostrophe++;
+                }
+
+                if (afterApostrophe < tokenEnd && text[afterApostrophe] is '.' or '(' or '[' or '<' or '_' ||
+                    (afterApostrophe < tokenEnd && char.IsDigit(text[afterApostrophe])))
+                {
+                    return false;
+                }
+
+                wordEnd = afterApostrophe;
+            }
+        }
+
+        var rightWord = text[(dotIndex + 1)..wordEnd];
+        return SentenceStarterRightWords.Contains(rightWord);
     }
 
     private TranscriptTokenTiming[] CreateTimings(
