@@ -1732,20 +1732,13 @@ public partial class App
 
         using var cancellation = new CancellationTokenSource();
         _onboardingDownloadCancellation = cancellation;
-        var appVersion = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
 
         using var coordinator = new OnboardingDownloadCoordinator(
             plan,
             provisionAsync: (modelId, observer, ct) =>
             {
-                var store = new ModelStore(
-                    ModelStoreRoot,
-                    ModelDeliveryHttpClient,
-                    verifier,
-                    appVersion,
-                    observer: observer);
                 var provisioner = new ModelProvisioner(
-                    store,
+                    CreateModelStore(observer),
                     id => BundledModelManifests.Load(id, verifier));
                 return provisioner.ProvisionAsync(modelId, ct);
             },
@@ -1762,7 +1755,7 @@ public partial class App
                     return;
                 }
 
-                await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+                await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
                 if (Leaving)
                 {
                     return;
@@ -1784,7 +1777,7 @@ public partial class App
                     return;
                 }
 
-                await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+                await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
                 if (Leaving)
                 {
                     return;
@@ -1947,6 +1940,27 @@ public partial class App
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.SettingsRecovered, AppFailureCategory.StorageUnavailable));
+        }
+    }
+
+    private async Task<bool> TryReconfigurePolishUnderHoldAsync()
+    {
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            if (attempt.Refusal != SessionHoldRefusal.Closed)
+            {
+                _polishReconfigurePending = true;
+            }
+
+            return false;
+        }
+
+        using (hold)
+        {
+            await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+            return true;
         }
     }
 }
