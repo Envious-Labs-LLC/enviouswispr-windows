@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Runtime;
@@ -44,6 +45,9 @@ public partial class App
     private readonly Dictionary<string, SpeechEngineTransientDelivery> _egOneDeliveries = new(StringComparer.Ordinal);
     private CancellationTokenSource? _modelDownload;
     private Task? _modelDelivery;
+    private CancellationTokenSource? _onboardingDownloadCancellation;
+    private Task? _onboardingDelivery;
+    private (string SpeechModelId, string? PolishModelId, bool ParallelDownloads)? _lastOnboardingDownloadRequest;
     private IReadOnlyList<string> _missingModelIds = [];
     private string? _activeDownloadModelId;
     private bool _activeDeliveryMirrorsSelectedEngine;
@@ -1638,6 +1642,207 @@ public partial class App
 
             _lastReport = now;
             report(deliveryEvent);
+        }
+    }
+
+    private void OnOnboardingDualDownloadRequested(string speechModelId, string? polishModelId, bool parallelDownloads)
+    {
+        if (_onboardingDelivery is { IsCompleted: false } || Leaving)
+        {
+            return;
+        }
+
+        _lastOnboardingDownloadRequest = (speechModelId, polishModelId, parallelDownloads);
+        _onboardingDelivery = DeliverOnboardingDualModelsAsync(speechModelId, polishModelId, parallelDownloads);
+    }
+
+    private void OnOnboardingDualDownloadCancelRequested() => _onboardingDownloadCancellation?.Cancel();
+
+    private void OnOnboardingDualDownloadRetryRequested()
+    {
+        if (_onboardingDelivery is { IsCompleted: false } || Leaving || _lastOnboardingDownloadRequest is not { } req)
+        {
+            return;
+        }
+
+        _onboardingDelivery = DeliverOnboardingDualModelsAsync(req.SpeechModelId, req.PolishModelId, req.ParallelDownloads);
+    }
+
+    private async Task DeliverOnboardingDualModelsAsync(
+        string speechModelId,
+        string? polishModelId,
+        bool parallelDownloads)
+    {
+        if (IsSpeechEngineBusy || Leaving)
+        {
+            return;
+        }
+
+        var speechEngine = string.Equals(speechModelId, WhisperTranscriptionEngine.ModelId, StringComparison.Ordinal)
+            ? FinalAsrEngine.Whisper
+            : FinalAsrEngine.Parakeet;
+        var speechState = await ProbeSpeechEngineModelAsync(speechEngine).ConfigureAwait(true);
+        var normalizedPolishId = string.IsNullOrWhiteSpace(polishModelId)
+            ? null
+            : EgOneModelCatalog.NormalizeOrDefault(polishModelId);
+        var polishInstalled = normalizedPolishId is null
+            || (await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true)).IsInstalled;
+
+        if (Leaving)
+        {
+            return;
+        }
+
+        var rules = WindowsSetupRules.Current;
+        var speechTotalBytes = rules.SpeechCatalog.TryGetValue(speechModelId, out var speechRule)
+            ? speechRule.SizeBytes
+            : 0L;
+        var polishTotalBytes = normalizedPolishId is not null &&
+            rules.PolishCatalog.TryGetValue(normalizedPolishId, out var polishRule)
+                ? polishRule.SizeBytes
+                : 0L;
+
+        var plan = new OnboardingDownloadPlan(
+            SpeechModelId: speechModelId,
+            SpeechTotalBytes: speechTotalBytes,
+            PolishModelId: normalizedPolishId,
+            PolishTotalBytes: polishTotalBytes,
+            ParallelDownloads: parallelDownloads,
+            SpeechAlreadyInstalled: speechState.IsInstalled,
+            PolishAlreadyInstalled: polishInstalled);
+
+        using var cancellation = new CancellationTokenSource();
+        _onboardingDownloadCancellation = cancellation;
+        var appVersion = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+
+        using var coordinator = new OnboardingDownloadCoordinator(
+            plan,
+            provisionAsync: (modelId, observer, ct) =>
+            {
+                var store = new ModelStore(
+                    ModelStoreRoot,
+                    ModelDeliveryHttpClient,
+                    verifier,
+                    appVersion,
+                    observer: observer);
+                var provisioner = new ModelProvisioner(
+                    store,
+                    id => BundledModelManifests.Load(id, verifier));
+                return provisioner.ProvisionAsync(modelId, ct);
+            },
+            onSpeechInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
+            {
+                if (Leaving)
+                {
+                    return;
+                }
+
+                await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+                if (Leaving)
+                {
+                    return;
+                }
+
+                PresentGraphicsRuntime();
+                await PresentModelDeliveryAsync().ConfigureAwait(true);
+            }, ct),
+            onPolishInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
+            {
+                if (Leaving)
+                {
+                    return;
+                }
+
+                await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+                if (Leaving)
+                {
+                    return;
+                }
+
+                await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            }, ct),
+            onSnapshotChanged: snapshot => PostToLiveWindow(window => ApplyOnboardingDownloadSnapshot(window, snapshot)),
+            diskProbePath: ModelStoreRoot,
+            failureFormatter: FailureSentence);
+
+        try
+        {
+            await coordinator.RunAsync(cancellation.Token).ConfigureAwait(true);
+        }
+        finally
+        {
+            _onboardingDownloadCancellation = null;
+        }
+    }
+
+    private Task DispatchOnUiThreadAsync(Func<Task> action, CancellationToken cancellationToken)
+    {
+        if (Leaving || cancellationToken.IsCancellationRequested || _window is not { } window)
+        {
+            return Task.CompletedTask;
+        }
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!window.DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                if (!Leaving && !cancellationToken.IsCancellationRequested)
+                {
+                    await action().ConfigureAwait(true);
+                }
+
+                tcs.TrySetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                tcs.TrySetCanceled(cancellationToken);
+            }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+            {
+                tcs.TrySetException(ex);
+            }
+        }))
+        {
+            tcs.TrySetResult();
+        }
+
+        return tcs.Task;
+    }
+
+    private void ApplyOnboardingDownloadSnapshot(MainWindow window, OnboardingDownloadSnapshot snapshot)
+    {
+        window.ObserveOnboardingDownloadSnapshot(snapshot);
+
+        var speechStage = MainWindow.ToSpeechModelDelivery(snapshot.Speech.Stage);
+        var speechPresentation = new ModelDeliveryPresentation(
+            snapshot.Speech.StatusDetail ?? string.Empty,
+            Percent: snapshot.Speech.Stage == OnboardingDownloadStage.Downloading ? snapshot.Speech.Percent : null,
+            CanDownload: snapshot.Speech.CanRetry,
+            CanCancel: snapshot.Speech.CanCancel,
+            Stage: speechStage);
+        var speechEngine = string.Equals(snapshot.Speech.ModelId, WhisperTranscriptionEngine.ModelId, StringComparison.Ordinal)
+            ? FinalAsrEngine.Whisper
+            : FinalAsrEngine.Parakeet;
+        window.SetSpeechEngineDelivery(speechEngine, speechPresentation);
+        window.SetModelDelivery(speechPresentation);
+
+        if (snapshot.Polish is { } polish)
+        {
+            var polishStage = MainWindow.ToSpeechModelDelivery(polish.Stage);
+            var polishPresentation = new ModelDeliveryPresentation(
+                polish.StatusDetail ?? string.Empty,
+                Percent: polish.Stage == OnboardingDownloadStage.Downloading ? polish.Percent : null,
+                CanDownload: polish.CanRetry,
+                CanCancel: polish.CanCancel,
+                Stage: polishStage);
+            window.SetEgOneDelivery(EgOneModelCatalog.NormalizeOrDefault(polish.ModelId), polishPresentation);
+        }
+
+        if (!IsSpeechEngineBusy && snapshot.BackgroundPillSummary is { } pillSummary)
+        {
+            window.SetSessionStatus(DictationStatus.Quiet(pillSummary));
         }
     }
 }

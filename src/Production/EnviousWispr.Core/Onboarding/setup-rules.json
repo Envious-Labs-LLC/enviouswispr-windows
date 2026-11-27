@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "revision": 1,
+  "parallelDownloadsMinRamGb": 16.0,
+  "speechCatalog": {
+    "parakeet-tdt-0.6b-v3": {
+      "displayName": "Parakeet",
+      "engine": "Parakeet",
+      "sizeLabel": "640 MB",
+      "sizeBytes": 670619803,
+      "languagesSummary": "25 languages"
+    },
+    "whisper-large-v3-turbo": {
+      "displayName": "Whisper",
+      "engine": "Whisper",
+      "sizeLabel": "548 MB",
+      "sizeBytes": 574041195,
+      "languagesSummary": "99+ languages"
+    }
+  },
+  "polishCatalog": {
+    "eg-1": {
+      "displayName": "EG-1",
+      "sizeLabel": "3.12 GB",
+      "sizeBytes": 3161421632
+    },
+    "eg-1-mini": {
+      "displayName": "EG-1 Mini",
+      "sizeLabel": "1.45 GB",
+      "sizeBytes": 1454782528
+    },
+    "eg-1-micro": {
+      "displayName": "EG-1 Micro",
+      "sizeLabel": "542 MB",
+      "sizeBytes": 541898336
+    }
+  },
+  "speechRules": [
+    {
+      "id": "speech-parakeet-supported",
+      "effectiveLanguageInParakeet": true,
+      "primaryModelId": "parakeet-tdt-0.6b-v3",
+      "primaryLabel": "Recommended",
+      "secondaryModelId": "whisper-large-v3-turbo",
+      "secondaryLabel": "99+ languages",
+      "parakeetUnavailableReasonTemplate": null
+    },
+    {
+      "id": "speech-whisper-only",
+      "effectiveLanguageInParakeet": false,
+      "primaryModelId": "whisper-large-v3-turbo",
+      "primaryLabel": "Recommended for {language}",
+      "secondaryModelId": null,
+      "secondaryLabel": null,
+      "parakeetUnavailableReasonTemplate": "Doesn't support {language}"
+    }
+  ],
+  "polishRules": [
+    {
+      "id": "tier-6-low-spec",
+      "tier": 6,
+      "matchMode": "any",
+      "conditions": [
+        { "ramLessThanGb": 8.0 },
+        { "physicalCoresAtMost": 2 }
+      ],
+      "primaryModelId": "eg-1-micro",
+      "primaryTag": "Lightest local option",
+      "secondaryModelId": null,
+      "secondaryTag": null,
+      "secondaryAdvisory": "Consider Cloud API polish or skipping local AI polish on this PC.",
+      "secondaryPromoted": false,
+      "parallelDownloads": false,
+      "lowSpecPolishAdvisory": true
+    },
+    {
+      "id": "tier-1-discrete-vram6-ram24",
+      "tier": 1,
+      "matchMode": "all",
+      "conditions": [
+        { "discreteGpuRequired": true, "minDedicatedVramGb": 6.0, "minRamGb": 24.0 }
+      ],
+      "primaryModelId": "eg-1",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-mini",
+      "secondaryTag": "Smaller download",
+      "secondaryAdvisory": null,
+      "secondaryPromoted": false,
+      "parallelDownloads": true,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-2-discrete-vram4-or-heavy-cpu",
+      "tier": 2,
+      "matchMode": "any",
+      "conditions": [
+        { "discreteGpuRequired": true, "minDedicatedVramOrDefaultGb": 4.0, "defaultVramIfUnknownGb": 4.0, "minRamGb": 16.0 },
+        { "minRamGb": 32.0, "minPhysicalCores": 8 }
+      ],
+      "primaryModelId": "eg-1-mini",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-micro",
+      "secondaryTag": "Smaller download",
+      "upgradedSecondaryCondition": { "minRamGb": 24.0, "minDedicatedVramGb": 6.0 },
+      "upgradedSecondaryModelId": "eg-1",
+      "upgradedSecondaryTag": "Even better results",
+      "secondaryAdvisory": null,
+      "secondaryPromoted": false,
+      "parallelDownloads": true,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-3-16gb-quad-plus",
+      "tier": 3,
+      "matchMode": "all",
+      "conditions": [
+        { "minRamGb": 16.0, "minPhysicalCores": 4 }
+      ],
+      "primaryModelId": "eg-1-mini",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-micro",
+      "secondaryTag": "Smaller download",
+      "secondaryAdvisory": null,
+      "secondaryPromoted": false,
+      "parallelDownloads": true,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-3-low-core-fallback",
+      "tier": 3,
+      "matchMode": "all",
+      "conditions": [
+        { "minRamGb": 16.0 }
+      ],
+      "primaryModelId": "eg-1-micro",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-mini",
+      "secondaryTag": "Even better results",
+      "secondaryAdvisory": null,
+      "secondaryPromoted": false,
+      "parallelDownloads": false,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-4-12to16gb-locked-non-english",
+      "tier": 4,
+      "matchMode": "all",
+      "conditions": [
+        { "minRamGb": 12.0, "ramLessThanGb": 16.0, "lockedNonEnglish": true }
+      ],
+      "primaryModelId": "eg-1-mini",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-micro",
+      "secondaryTag": "Smaller download",
+      "secondaryAdvisory": null,
+      "secondaryPromoted": false,
+      "parallelDownloads": false,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-4-12to16gb-english-or-auto",
+      "tier": 4,
+      "matchMode": "all",
+      "conditions": [
+        { "minRamGb": 12.0, "ramLessThanGb": 16.0, "lockedNonEnglish": false }
+      ],
+      "primaryModelId": "eg-1-micro",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-mini",
+      "secondaryTag": "Even better results",
+      "secondaryAdvisory": null,
+      "secondaryPromoted": false,
+      "parallelDownloads": false,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-5-10to12gb-locked-non-english",
+      "tier": 5,
+      "matchMode": "all",
+      "conditions": [
+        { "minRamGb": 10.0, "ramLessThanGb": 12.0, "minPhysicalCores": 4, "lockedNonEnglish": true }
+      ],
+      "primaryModelId": "eg-1-micro",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-mini",
+      "secondaryTag": "Even better results",
+      "secondaryAdvisory": "Strong secondary choice for non-English accuracy; uses extra memory on 10 to 12 GB PCs.",
+      "secondaryPromoted": true,
+      "parallelDownloads": false,
+      "lowSpecPolishAdvisory": false
+    },
+    {
+      "id": "tier-5-8to12gb",
+      "tier": 5,
+      "matchMode": "all",
+      "conditions": [
+        { "minRamGb": 8.0, "ramLessThanGb": 12.0 }
+      ],
+      "primaryModelId": "eg-1-micro",
+      "primaryTag": "Recommended for your PC",
+      "secondaryModelId": "eg-1-mini",
+      "secondaryTag": "Even better results",
+      "secondaryAdvisory": "Uses extra memory on 8 to 12 GB PCs.",
+      "secondaryPromoted": false,
+      "parallelDownloads": false,
+      "lowSpecPolishAdvisory": false
+    }
+  ]
+}

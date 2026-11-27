@@ -1,87 +1,34 @@
 using EnviousWispr.Core.Audio;
-using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Onboarding;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Presentation;
 
-/// <summary>The five first-run screens, in the order macOS shows them.</summary>
-/// <remarks>
-/// THE macOS ORDER AND COUNT, BECAUSE A PERSON WHO KNOWS THE MAC APP MUST RECOGNISE THIS ONE. macOS ships
-/// welcome, setting up (a checklist phase, then a permissions phase), ready, warming up and try it out
-/// (<c>OnboardingV2View.swift</c>, <c>OnboardingV2ViewModel.Screen</c>). Where Windows has no counterpart
-/// for a macOS concern the screen stays and its content changes; the differences are written where they
-/// are decided, in <see cref="OnboardingFlow"/>.
-/// </remarks>
-public enum OnboardingScreen
-{
-    Welcome,
-    SettingUp,
-    Ready,
-    WarmingUp,
-    Practice,
-}
-
-/// <summary>The two halves of the setting-up screen.</summary>
-public enum OnboardingSetupPhase
-{
-    /// <summary>The speech model and the recording key.</summary>
-    Checklist,
-
-    /// <summary>The Windows microphone switch, the one permission Windows has for this app.</summary>
-    Permission,
-}
-
-/// <summary>Whether local transcription can take a dictation right now.</summary>
-/// <remarks>
-/// SAID BY THE CODE THAT STARTS THE ENGINE, NOT READ OUT OF A SENTENCE. The window already shows the engine's
-/// sentence on the Transcription card; a gate that matched those words would change behaviour the first time
-/// somebody reworded one.
-/// </remarks>
+/// <summary>Live state of local transcription for onboarding checklist, gate, and retry logic.</summary>
 public enum SpeechEngineReadiness
 {
-    /// <summary>Not answered yet: the app is still starting the engine.</summary>
     Preparing,
-
-    /// <summary>The engine is running and will take the next dictation.</summary>
     Ready,
-
-    /// <summary>The speech model this configuration needs is not on this PC.</summary>
     NotInstalled,
-
-    /// <summary>The model is here and the engine could not start.</summary>
     Unavailable,
 }
 
-/// <summary>Where the speech model download stands, as the delivery code reports it.</summary>
+/// <summary>Live delivery state for a model needed by onboarding.</summary>
 public enum SpeechModelDelivery
 {
-    /// <summary>Nothing reported yet.</summary>
     Unknown,
-
-    /// <summary>Every model this configuration needs is installed and verified.</summary>
-    Installed,
-
-    /// <summary>A model is missing and can be downloaded.</summary>
     Missing,
-
-    /// <summary>A download is running.</summary>
     Downloading,
-
-    /// <summary>The download finished and the engine is being started with it.</summary>
     Activating,
-
-    /// <summary>The download stopped on a failure the person can retry.</summary>
     Failed,
-
-    /// <summary>The person cancelled the download; it resumes when they start it again.</summary>
-    Cancelled,
-
-    /// <summary>This build cannot download what it needs; retrying will not help.</summary>
     CannotDownload,
+    Cancelled,
+    Installed,
 }
 
-/// <summary>One row of the setting-up checklist.</summary>
 public enum OnboardingChecklistStatus
 {
     Pending,
@@ -90,7 +37,6 @@ public enum OnboardingChecklistStatus
     Error,
 }
 
-/// <summary>What the warm-up screen has learned about the speech engine.</summary>
 public enum OnboardingWarmingOutcome
 {
     Waiting,
@@ -98,71 +44,53 @@ public enum OnboardingWarmingOutcome
     Failed,
 }
 
-/// <summary>What the practice screen is showing.</summary>
-/// <remarks>The macOS <c>PracticeState</c>, member for member (<c>OnboardingV2View.swift</c>).</remarks>
+/// <summary>Result of evaluating the GettingReady gate step before Practice.</summary>
+public enum OnboardingGateDecision
+{
+    /// <summary>Speech model + engine, selected polish model (if any), and microphone are all ready; auto-skip Gate.</summary>
+    ReadyAutoSkip,
+
+    /// <summary>Speech and microphone are ready while local EG-1 is still downloading; user can wait or Skip ahead.</summary>
+    WaitingWithPolishDownloading,
+
+    /// <summary>Speech and microphone are ready while local EG-1 download failed; user can retry or Continue without AI polish.</summary>
+    PolishFailedContinueWithout,
+
+    /// <summary>Speech model/engine or microphone permission is still pending or failed.</summary>
+    PendingOrBlocked,
+}
+
 public enum OnboardingPracticeState
 {
-    /// <summary>Before the first try, or after a success.</summary>
     Waiting,
-
-    /// <summary>A take is in flight: recording, transcribing or delivering.</summary>
     Listening,
-
-    /// <summary>The take put words in the box.</summary>
     Worked,
-
-    /// <summary>The take finished and produced no words. A normal state with a way forward, never an error.</summary>
     SaidNothing,
-
-    /// <summary>The take failed on our side: transcription, capture or delivery.</summary>
-    SomethingBroke,
-
-    /// <summary>The take produced words, and they went somewhere other than the box.</summary>
     MissedTheBox,
-
-    /// <summary>Windows is not letting the app hear anything.</summary>
+    SomethingBroke,
     CannotHear,
 }
 
-/// <summary>The ways out of setup that finish it.</summary>
 public enum OnboardingExit
 {
-    /// <summary>FINISH SETUP on the practice screen, after a take worked.</summary>
-    FinishSetup,
-
-    /// <summary>"Skip this step" on the practice screen.</summary>
     SkipPractice,
-
-    /// <summary>"In a hurry? Skip ahead" or "Skip and finish setup" on the warm-up screen.</summary>
     SkipWarming,
-
-    /// <summary>"Finish setup without it" on the checklist, offered only when this build cannot get the model at all.</summary>
     SkipUnavailableModel,
+    SkipAheadWithoutPolish,
+    ContinueWithoutPolish,
+    FinishSetup,
 }
 
-/// <summary>How a take's words were reported delivered, for telling a missed box from silence.</summary>
 public enum OnboardingTakeDelivery
 {
-    /// <summary>No delivery was reported: the take produced no words, or it was cancelled.</summary>
     None,
-
-    /// <summary>The words were delivered into a window.</summary>
     Delivered,
-
-    /// <summary>The words were refused a window and left on the clipboard.</summary>
     Clipboard,
-
-    /// <summary>The delivery itself failed.</summary>
     Failed,
 }
 
-/// <summary>Reads a take's delivery as the practice box needs it.</summary>
 public static class OnboardingTakeDeliveries
 {
-    /// <summary>
-    /// From where the words went. Never from the pill: a landed paste raises none, and reading the
-    /// pill would count every good take as a failure.
-    /// </summary>
     public static OnboardingTakeDelivery For(DeliveryLanding landing) => landing switch
     {
         DeliveryLanding.Landed => OnboardingTakeDelivery.Delivered,
@@ -172,141 +100,131 @@ public static class OnboardingTakeDeliveries
 }
 
 /// <summary>
-/// The first-run flow's decisions, without the window: which screen, what may move it on, and what the
-/// practice box is saying.
+/// Full Windows first-run onboarding state machine aligned with macOS #4528:
+/// 14 steps with Back stack, durable checkpoint export/restore, hardware/language recommendation choices,
+/// GettingReady gate recovery, key rehearsal, Practice loop, and 7-beat Closing walkthrough.
 /// </summary>
-/// <remarks>
-/// PORTED FROM <c>OnboardingV2ViewModel</c>, DECISION BY DECISION, AND THE WINDOWS DIFFERENCES ARE DECIDED HERE:
-///
-/// - THE SPEECH MODEL IS A GATE, AS ON macOS: the checklist moves on only when the engine answers Ready, and a
-///   failed or cancelled download stops on the checklist with a way to start it again. The download starts by
-///   itself when the checklist first appears, as macOS's does.
-/// - macOS's "Configuring on-device AI" beat is not here. It is a visual beat that writes nothing, because Apple
-///   Intelligence is already the default; Windows starts with AI polish off, so there is nothing to configure
-///   and a beat claiming otherwise would be untrue. The keybind row stays, and reports the key the app is
-///   actually listening for rather than a timed tick.
-/// - ONE PERMISSION, NOT TWO. macOS gates on Microphone and Accessibility. Windows lets every desktop app paste
-///   without a grant, so there is no Accessibility counterpart; the microphone counterpart is the Windows
-///   privacy switch, which an app cannot ask for, so the row opens the page where it is turned on. A missing
-///   DEVICE is reported and not gated, exactly as macOS gates the permission and not the hardware.
-/// - The keybind on the Ready screen is shown, not edited: Windows applies a changed shortcut at the next launch
-///   (<c>GeneralSaveOutcome.SavedMessage</c>), so a key changed here would make the practice screen teach a key
-///   the app is not yet listening for.
-/// - Progress is not persisted between launches. <c>HasCompletedOnboarding</c> is the one stored fact, so a
-///   person who leaves part way starts at the welcome again; every later screen re-reads live readiness, and
-///   the model download itself resumes where it stopped.
-/// </remarks>
 public sealed class OnboardingFlow
 {
-    /// <summary>How many screens the flow has, for the "step N of M" line.</summary>
-    public const int ScreenCount = 5;
+    /// <summary>Number of steps in the legacy 5-panel shell projection until Wave C replaces MainWindow.xaml.</summary>
+    public const int LegacyShellStepCount = 5;
 
-    /// <summary>How long the warm-up screen stays up once readiness has landed, so an already-warm engine reads as a beat rather than a flash.</summary>
-    /// <remarks>macOS's <c>warmingDisplayFloor</c>. A display floor applied after the real signal, never a substitute for one.</remarks>
+    /// <summary>Total numbered milestones along the full #4528 setup wizard (excluding terminal Done).</summary>
+    public const int PrimaryStepCount = 13;
+
     public static readonly TimeSpan WarmingDisplayFloor = TimeSpan.FromMilliseconds(600);
 
-    private bool _downloadStartedThisVisit;
-    private string _practiceTextAtTakeStart = string.Empty;
-    private OnboardingTakeDelivery _takeDelivery;
+    private readonly List<OnboardingStep> _backStack = [];
+    private string _practiceBoxAtStart = string.Empty;
     private bool _takeFailed;
+    private OnboardingTakeDelivery _takeDelivery;
+    private bool _startedDownloadThisVisit;
+    private bool _legacyChecklistMode;
 
-    public OnboardingScreen Screen { get; private set; } = OnboardingScreen.Welcome;
+    public OnboardingStep Step { get; private set; } = OnboardingStep.Welcome;
 
-    public OnboardingSetupPhase SetupPhase { get; private set; } = OnboardingSetupPhase.Checklist;
+    public IReadOnlyList<OnboardingStep> BackStack => _backStack;
+
+    public bool CanGoBack =>
+        _backStack.Count > 0 && Step is not (OnboardingStep.Welcome or OnboardingStep.Done);
+
+    public OnboardingChoices Choices { get; private set; } = new();
+
+    public WindowsSetupRecommendation? Recommendation { get; private set; }
+
+    public DateTimeOffset StartedAtUtc { get; private set; } = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UpdatedAtUtc { get; private set; } = DateTimeOffset.UtcNow;
 
     public SpeechEngineReadiness Engine { get; private set; } = SpeechEngineReadiness.Preparing;
 
     public SpeechModelDelivery Model { get; private set; } = SpeechModelDelivery.Unknown;
 
+    public SpeechModelDelivery PolishModel { get; private set; } = SpeechModelDelivery.Unknown;
+
+    public bool CancelRequested { get; private set; }
+
     public MicrophoneConsent MicrophoneConsent { get; private set; } = MicrophoneConsent.Unknown;
 
-    /// <summary>The recording key the app is listening for, or null while it is not listening.</summary>
+    public bool MicrophoneAllowed => MicrophoneConsent == MicrophoneConsent.Allowed;
+
     public string? RecordingKey { get; private set; }
+
+    public string? RecordingKeyProblem { get; private set; }
 
     public DictationRecordingMode RecordingMode { get; private set; } = DictationRecordingMode.PushToTalk;
 
-    /// <summary>Why the recording key is not listening, when it is not.</summary>
-    public string? RecordingKeyProblem { get; private set; }
+    public bool RecordingKeyHasGestures =>
+        !string.IsNullOrWhiteSpace(RecordingKey) &&
+        !RecordingKey.Contains('+', StringComparison.Ordinal);
 
-    /// <summary>True between the person pressing Cancel on the download and the download reporting it stopped.</summary>
-    public bool CancelRequested { get; private set; }
+    public bool KeyRehearsalCompleted { get; private set; }
 
     public OnboardingPracticeState PracticeState { get; private set; } = OnboardingPracticeState.Waiting;
 
-    /// <summary>Where a missed take's words went, for the practice copy.</summary>
-    public OnboardingTakeDelivery MissedTo { get; private set; }
-
-    /// <summary>True once the practice box has ever held words in this visit. Sticky, as on macOS.</summary>
-    /// <remarks>
-    /// A person who dictates and then selects all and deletes has still seen the product work, and taking
-    /// FINISH SETUP away from them for tidying up would punish them for it.
-    /// </remarks>
     public bool PracticeSucceeded { get; private set; }
 
-    /// <summary>The one-based position of the current screen.</summary>
-    public int StepNumber => (int)Screen + 1;
+    public OnboardingPracticeOutcome PracticeOutcome { get; private set; } = OnboardingPracticeOutcome.None;
 
-    /// <summary>True while a practice take is recording, transcribing or delivering.</summary>
+    public OnboardingTakeDelivery MissedTo { get; private set; }
+
+    public int ClosingBeatIndex { get; private set; }
+
+    public static int ClosingBeatCount => OnboardingCopy.ClosingBeats.Count;
+
+    public OnboardingClosingBeat CurrentClosingBeat =>
+        OnboardingCopy.ClosingBeats[Math.Clamp(ClosingBeatIndex, 0, OnboardingCopy.ClosingBeats.Count - 1)];
+
     public bool TakeInFlight => PracticeState == OnboardingPracticeState.Listening;
 
-    /// <summary>The speech model's checklist row.</summary>
-    public OnboardingChecklistStatus ModelItem => Engine == SpeechEngineReadiness.Ready
+    public bool RequiresLocalEgOne =>
+        Choices.PolishChoice == OnboardingPolishChoiceKind.EgOne;
+
+    public bool IsSpeechReady => Engine == SpeechEngineReadiness.Ready;
+
+    public bool IsPolishReadyForGate =>
+        !RequiresLocalEgOne || PolishModel == SpeechModelDelivery.Installed;
+
+    public OnboardingChecklistStatus ModelItem => IsSpeechReady
         ? OnboardingChecklistStatus.Completed
         : Model switch
         {
+            SpeechModelDelivery.Installed => Engine == SpeechEngineReadiness.Unavailable
+                ? OnboardingChecklistStatus.Error
+                : OnboardingChecklistStatus.InProgress,
             SpeechModelDelivery.Failed or SpeechModelDelivery.CannotDownload => OnboardingChecklistStatus.Error,
             SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating => OnboardingChecklistStatus.InProgress,
             SpeechModelDelivery.Cancelled or SpeechModelDelivery.Missing => OnboardingChecklistStatus.Pending,
-            // THE MODEL IS HERE AND THE ENGINE HAS NOT SAID YES. Still starting is progress; refusing to start
-            // is an error with a retry, because nothing else on this screen would ever change it.
             _ => Engine == SpeechEngineReadiness.Unavailable
                 ? OnboardingChecklistStatus.Error
                 : OnboardingChecklistStatus.InProgress,
         };
 
-    /// <summary>The recording key's checklist row. Reported, never a gate.</summary>
     public OnboardingChecklistStatus KeyItem => RecordingKey is not null
         ? OnboardingChecklistStatus.Completed
         : RecordingKeyProblem is not null
             ? OnboardingChecklistStatus.Error
             : OnboardingChecklistStatus.InProgress;
 
-    /// <summary>True when the download was cancelled and waits for the person to start it again.</summary>
     public bool SetupPaused => Model == SpeechModelDelivery.Cancelled && Engine != SpeechEngineReadiness.Ready;
 
-    /// <summary>True when the checklist has something the person can retry.</summary>
-    public bool CanRetrySetup => ModelItem == OnboardingChecklistStatus.Error && Model != SpeechModelDelivery.CannotDownload;
+    public bool CanRetrySetup =>
+        ModelItem == OnboardingChecklistStatus.Error && Model != SpeechModelDelivery.CannotDownload;
 
-    /// <summary>
-    /// The one way past the model gate, and a Windows addition: offered only when this build says it cannot download
-    /// the model it needs, so no retry can ever open the gate.
-    /// </summary>
-    /// <remarks>
-    /// NOT A macOS BACKDOOR. macOS's checklist always has Retry, and every Windows state but this one has Retry or
-    /// "Try setup again" too. Here there is nothing to retry, and the flow hides the whole app - its settings, its
-    /// history, the Transcription page the error points at - so without this a person who reinstalled wrongly, or who
-    /// chose "Run setup again", would be shut out of everything behind a screen that can never move on.
-    /// </remarks>
     public bool CanFinishWithoutModel =>
-        Screen == OnboardingScreen.SettingUp &&
-        SetupPhase == OnboardingSetupPhase.Checklist &&
+        Step is OnboardingStep.Downloads or OnboardingStep.GettingReady &&
         Model == SpeechModelDelivery.CannotDownload &&
         Engine != SpeechEngineReadiness.Ready;
 
-    /// <summary>True while the download can be cancelled from the checklist.</summary>
     public bool CanCancelSetup => Model == SpeechModelDelivery.Downloading && !CancelRequested;
 
-    /// <summary>The checklist's gate: the speech engine will take a dictation.</summary>
     public bool ChecklistComplete => Engine == SpeechEngineReadiness.Ready;
 
-    /// <summary>The permission's gate: Windows is not blocking the microphone.</summary>
-    /// <remarks>
-    /// UNKNOWN PASSES. A switch that could not be read says nothing either way, and refusing on it would trap a
-    /// person behind a setting that may well be on - the same reason the microphone card says nothing about it.
-    /// </remarks>
-    public bool MicrophoneAllowed => MicrophoneConsent != MicrophoneConsent.Blocked;
+    public bool ShouldAdvanceFromChecklist =>
+        _legacyChecklistMode &&
+        Step == OnboardingStep.Downloads &&
+        ChecklistComplete;
 
-    /// <summary>What the warm-up screen has learned, derived from the engine rather than waited for.</summary>
     public OnboardingWarmingOutcome WarmingOutcome => Engine switch
     {
         SpeechEngineReadiness.Ready => OnboardingWarmingOutcome.Ready,
@@ -314,152 +232,613 @@ public sealed class OnboardingFlow
         _ => OnboardingWarmingOutcome.Failed,
     };
 
-    /// <summary>FINISH SETUP: only after a take worked, and never while one is in flight.</summary>
-    public bool CanFinishPractice => PracticeSucceeded && !TakeInFlight;
-
-    /// <summary>Skip this step: always, except while a take is in flight and the box is its target.</summary>
     public bool CanSkipPractice => !TakeInFlight;
 
-    /// <summary>Whether the bound key has the hands-free gestures, for the Ready screen's second line.</summary>
-    public bool RecordingKeyHasGestures =>
-        RecordingKey is { } key &&
-        HotkeyGestureParser.Parse(key) is { Succeeded: true, Gesture: { } gesture } &&
-        HotkeyGestureParser.UnlocksGestures(gesture);
+    public bool CanFinishPractice => PracticeSucceeded && !TakeInFlight;
 
-    /// <summary>Whether this way out may finish setup now.</summary>
-    /// <remarks>
-    /// THREE WAYS OUT, AS ON macOS, AND ALL THREE FINISH. The warm-up's skip is there from its first frame, never
-    /// behind a delay: a gate nobody can leave is worse than the cold press it prevents. The practice's skip and
-    /// FINISH SETUP are both held while a take is in flight, because leaving would take away the box the take is
-    /// about to type into.
-    /// </remarks>
+    public bool ShouldStartDownload
+    {
+        get
+        {
+            if (Step != OnboardingStep.Downloads || _startedDownloadThisVisit)
+            {
+                return false;
+            }
+
+            if (Engine != SpeechEngineReadiness.NotInstalled || Model != SpeechModelDelivery.Missing)
+            {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    public int LegacyStepNumber => Step switch
+    {
+        OnboardingStep.Welcome => 1,
+        OnboardingStep.Downloads or OnboardingStep.Permissions => 2,
+        OnboardingStep.Key => 3,
+        OnboardingStep.GettingReady => 4,
+        _ => 5,
+    };
+
+    public static int PrimaryStepNumberFor(OnboardingStep step) => step switch
+    {
+        OnboardingStep.Welcome => 1,
+        OnboardingStep.Language => 2,
+        OnboardingStep.SpeechPick or OnboardingStep.SpeechCompare => 3,
+        OnboardingStep.PolishIntro => 4,
+        OnboardingStep.PolishPick or OnboardingStep.PolishSeeAll => 5,
+        OnboardingStep.Downloads => 6,
+        OnboardingStep.Permissions => 7,
+        OnboardingStep.Key => 8,
+        OnboardingStep.GettingReady => 9,
+        OnboardingStep.Practice => 10,
+        OnboardingStep.Closing => 11,
+        OnboardingStep.Done => 12,
+        _ => 1,
+    };
+
+    public OnboardingGateDecision EvaluateGate()
+    {
+        if (!IsSpeechReady || !MicrophoneAllowed)
+        {
+            return OnboardingGateDecision.PendingOrBlocked;
+        }
+
+        if (!RequiresLocalEgOne || PolishModel == SpeechModelDelivery.Installed)
+        {
+            return OnboardingGateDecision.ReadyAutoSkip;
+        }
+
+        if (PolishModel is SpeechModelDelivery.Failed or SpeechModelDelivery.CannotDownload)
+        {
+            return OnboardingGateDecision.PolishFailedContinueWithout;
+        }
+
+        return OnboardingGateDecision.WaitingWithPolishDownloading;
+    }
+
+    public bool CanSkipAheadDuringGate =>
+        Step == OnboardingStep.GettingReady &&
+        EvaluateGate() == OnboardingGateDecision.WaitingWithPolishDownloading;
+
+    public bool CanContinueWithoutAiPolishOnGate =>
+        Step == OnboardingStep.GettingReady &&
+        EvaluateGate() == OnboardingGateDecision.PolishFailedContinueWithout;
+
     public bool MayFinish(OnboardingExit exit) => exit switch
     {
-        OnboardingExit.SkipWarming => Screen == OnboardingScreen.WarmingUp,
+        OnboardingExit.SkipWarming => Step == OnboardingStep.GettingReady,
         OnboardingExit.SkipUnavailableModel => CanFinishWithoutModel,
-        OnboardingExit.SkipPractice => Screen == OnboardingScreen.Practice && CanSkipPractice,
-        OnboardingExit.FinishSetup => Screen == OnboardingScreen.Practice && CanFinishPractice,
+        OnboardingExit.SkipAheadWithoutPolish => CanSkipAheadDuringGate,
+        OnboardingExit.ContinueWithoutPolish => CanContinueWithoutAiPolishOnGate,
+        OnboardingExit.SkipPractice => Step == OnboardingStep.Practice && CanSkipPractice,
+        OnboardingExit.FinishSetup => Step is OnboardingStep.Practice or OnboardingStep.Closing && CanFinishPractice,
         _ => false,
     };
 
-    /// <summary>The settings a finished setup stores: the one fact that is persisted, and nothing else.</summary>
     public static AppSettings Completed(AppSettings current)
     {
         ArgumentNullException.ThrowIfNull(current);
         return current with { HasCompletedOnboarding = true };
     }
 
-    /// <summary>The settings "Run setup again" stores, as macOS stores its restart: setup not done, everything else kept.</summary>
     public static AppSettings Restarted(AppSettings current)
     {
         ArgumentNullException.ThrowIfNull(current);
         return current with { HasCompletedOnboarding = false };
     }
 
-    /// <summary>Starts a visit at the welcome screen, forgetting everything a previous visit learned about the person.</summary>
-    /// <remarks>What the app has learned about the machine - engine, model, microphone, key - is kept: it is still true.</remarks>
-    public void Begin()
+    public void Begin(DateTimeOffset? nowUtc = null)
     {
-        Screen = OnboardingScreen.Welcome;
-        SetupPhase = OnboardingSetupPhase.Checklist;
-        _downloadStartedThisVisit = false;
+        var now = nowUtc ?? DateTimeOffset.UtcNow;
+        Step = OnboardingStep.Welcome;
+        _backStack.Clear();
+        Choices = new OnboardingChoices(RecordingMode: RecordingMode, HotkeyGestureText: RecordingKey);
+        Recommendation = null;
+        StartedAtUtc = now;
+        UpdatedAtUtc = now;
+        _startedDownloadThisVisit = false;
+        _legacyChecklistMode = false;
         CancelRequested = false;
+        KeyRehearsalCompleted = false;
+        ClosingBeatIndex = 0;
         ResetPractice();
     }
 
-    /// <summary>Get Started on the welcome screen.</summary>
-    public void GetStarted()
+    public OnboardingRestoreDecision Restore(
+        OnboardingCheckpoint? checkpoint,
+        bool hasCompletedOnboarding,
+        OnboardingStep? resumeStepOverride = null)
     {
-        if (Screen != OnboardingScreen.Welcome)
+        var decision = OnboardingRestore.Resolve(checkpoint, hasCompletedOnboarding, resumeStepOverride);
+        if (!decision.ShouldResume)
+        {
+            Begin();
+            return decision;
+        }
+
+        Step = decision.Step;
+        _backStack.Clear();
+        _backStack.AddRange(decision.BackStack);
+        Choices = decision.Choices;
+        RecordingMode = decision.Choices.RecordingMode;
+        if (!string.IsNullOrWhiteSpace(decision.Choices.HotkeyGestureText))
+        {
+            RecordingKey = decision.Choices.HotkeyGestureText;
+        }
+
+        PracticeSucceeded = decision.PracticeSucceeded;
+        PracticeOutcome = decision.PracticeOutcome;
+        PracticeState = decision.Step == OnboardingStep.Practice && MicrophoneConsent == MicrophoneConsent.Blocked
+            ? OnboardingPracticeState.CannotHear
+            : OnboardingPracticeState.Waiting;
+        MissedTo = OnboardingTakeDelivery.None;
+        _takeDelivery = OnboardingTakeDelivery.None;
+        _takeFailed = false;
+        _legacyChecklistMode = false;
+        ClosingBeatIndex = 0;
+        StartedAtUtc = checkpoint!.StartedAtUtc;
+        UpdatedAtUtc = DateTimeOffset.UtcNow;
+        return decision;
+    }
+
+    public OnboardingCheckpoint ToCheckpoint(DateTimeOffset? nowUtc = null)
+    {
+        var now = nowUtc ?? DateTimeOffset.UtcNow;
+        UpdatedAtUtc = now;
+        var safeChoices = Choices with
+        {
+            RecordingMode = RecordingMode,
+            HotkeyGestureText = RecordingKey ?? Choices.HotkeyGestureText,
+        };
+        return new OnboardingCheckpoint(
+            SchemaVersion: OnboardingCheckpoint.CurrentSchemaVersion,
+            Step: Step,
+            BackStack: [.. _backStack],
+            Choices: safeChoices,
+            PracticeSucceeded: PracticeSucceeded,
+            PracticeOutcome: PracticeOutcome,
+            UpdatedAtUtc: now,
+            StartedAtUtc: StartedAtUtc);
+    }
+
+    public void ApplyRecommendation(WindowsSetupRecommendation recommendation, bool applyPrimaryChoices = true)
+    {
+        ArgumentNullException.ThrowIfNull(recommendation);
+        Recommendation = recommendation;
+        if (!applyPrimaryChoices)
         {
             return;
         }
 
-        Screen = OnboardingScreen.SettingUp;
-        SetupPhase = OnboardingSetupPhase.Checklist;
-    }
-
-    /// <summary>
-    /// True once, when the checklist is showing and the model is missing: macOS starts the download the moment
-    /// the checklist appears, and so does this. The caller starts it and reports <see cref="DownloadStarted"/>.
-    /// </summary>
-    /// <remarks>
-    /// ONCE PER VISIT. A failure or a cancel after that waits for the person's own Retry or "Try setup again";
-    /// starting again by itself would turn a person's Cancel into a pause of a few milliseconds.
-    /// </remarks>
-    public bool ShouldStartDownload =>
-        Screen == OnboardingScreen.SettingUp &&
-        SetupPhase == OnboardingSetupPhase.Checklist &&
-        !_downloadStartedThisVisit &&
-        Model == SpeechModelDelivery.Missing;
-
-    public void DownloadStarted() => _downloadStartedThisVisit = true;
-
-    /// <summary>The person pressed Cancel on the download; "Cancelling…" shows until the download says it stopped.</summary>
-    public void RequestCancel()
-    {
-        if (CanCancelSetup)
+        Choices = Choices with
         {
-            CancelRequested = true;
-        }
+            SpeechEngine = recommendation.Speech.PrimaryEngine,
+            SpeechModelId = recommendation.Speech.PrimaryModelId,
+            PolishChoice = OnboardingPolishChoiceKind.EgOne,
+            EgOneModelId = recommendation.Polish.PrimaryModelId,
+        };
+        Touch();
     }
 
-    /// <summary>True when the checklist is complete and showing, so the flow should move to the permission.</summary>
-    public bool ShouldAdvanceFromChecklist =>
-        Screen == OnboardingScreen.SettingUp &&
-        SetupPhase == OnboardingSetupPhase.Checklist &&
-        ChecklistComplete;
-
-    /// <summary>Moves from the checklist to the permission, only through the checklist's gate.</summary>
-    public bool AdvanceToPermission()
+    public bool GoBack()
     {
-        if (!ShouldAdvanceFromChecklist)
+        if (!CanGoBack)
         {
             return false;
         }
 
-        SetupPhase = OnboardingSetupPhase.Permission;
+        if (Step == OnboardingStep.SpeechCompare)
+        {
+            Step = OnboardingStep.SpeechPick;
+            if (_backStack.Count > 0 && _backStack[^1] == OnboardingStep.SpeechPick)
+            {
+                _backStack.RemoveAt(_backStack.Count - 1);
+            }
+
+            Touch();
+            return true;
+        }
+
+        if (Step == OnboardingStep.PolishSeeAll)
+        {
+            Step = OnboardingStep.PolishPick;
+            if (_backStack.Count > 0 && _backStack[^1] == OnboardingStep.PolishPick)
+            {
+                _backStack.RemoveAt(_backStack.Count - 1);
+            }
+
+            Touch();
+            return true;
+        }
+
+        var target = _backStack[^1];
+        _backStack.RemoveAt(_backStack.Count - 1);
+        if (target == OnboardingStep.GettingReady &&
+            EvaluateGate() == OnboardingGateDecision.ReadyAutoSkip &&
+            _backStack.Count > 0)
+        {
+            target = _backStack[^1];
+            _backStack.RemoveAt(_backStack.Count - 1);
+        }
+
+        Step = target;
+        Touch();
         return true;
     }
 
-    /// <summary>Continue on the permission, with the switch read again at the moment of the press.</summary>
-    /// <remarks>
-    /// macOS rechecks Accessibility synchronously at Continue because a poll can be two seconds stale; the
-    /// Windows switch can be turned off the same way between polls, so the press reads it again.
-    /// </remarks>
-    public bool ContinueFromPermission(MicrophoneConsent liveConsent)
+    public void AdvanceFromWelcome()
+    {
+        if (Step != OnboardingStep.Welcome)
+        {
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.Language);
+    }
+
+    /// <summary>Minimal bridge for the untouched 5-panel MainWindow.xaml until Wave C adds full XAML steps.</summary>
+    public void StartLegacyShellFromWelcome()
+    {
+        if (Step != OnboardingStep.Welcome)
+        {
+            return;
+        }
+
+        _legacyChecklistMode = true;
+        NavigateForwardTo(OnboardingStep.Downloads);
+    }
+
+    public void SelectLanguage(string? languageCode, WindowsSetupRecommendation? recommendation = null)
+    {
+        var normalized = string.IsNullOrWhiteSpace(languageCode) ||
+            string.Equals(languageCode.Trim(), LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase)
+                ? LanguageCatalog.AutomaticCode
+                : LanguageCatalog.TryGetEntry(languageCode, out var entry)
+                    ? entry.Code
+                    : LanguageCatalog.AutomaticCode;
+
+        Choices = Choices with { LanguageCode = normalized };
+        if (recommendation is not null)
+        {
+            ApplyRecommendation(recommendation, applyPrimaryChoices: true);
+        }
+
+        Touch();
+    }
+
+    public void ContinueFromLanguage()
+    {
+        if (Step != OnboardingStep.Language)
+        {
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.SpeechPick);
+    }
+
+    public void SelectSpeech(FinalAsrEngine engine, string? modelId = null)
+    {
+        var normalizedModel = engine == FinalAsrEngine.Whisper
+            ? WhisperModelIds.Final
+            : ParakeetModelIds.Final;
+        if (!string.IsNullOrWhiteSpace(modelId))
+        {
+            normalizedModel = modelId.Trim();
+        }
+
+        Choices = Choices with
+        {
+            SpeechEngine = engine,
+            SpeechModelId = normalizedModel,
+        };
+        Touch();
+    }
+
+    public void OpenSpeechCompare()
+    {
+        if (Step != OnboardingStep.SpeechPick)
+        {
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.SpeechCompare);
+    }
+
+    public void CloseSpeechCompare()
+    {
+        if (Step == OnboardingStep.SpeechCompare)
+        {
+            _ = GoBack();
+        }
+    }
+
+    public void ContinueFromSpeechPick()
+    {
+        if (Step is not (OnboardingStep.SpeechPick or OnboardingStep.SpeechCompare))
+        {
+            return;
+        }
+
+        if (Step == OnboardingStep.SpeechCompare)
+        {
+            if (_backStack.Count > 0 && _backStack[^1] == OnboardingStep.SpeechPick)
+            {
+                _backStack.RemoveAt(_backStack.Count - 1);
+            }
+
+            _backStack.Add(OnboardingStep.SpeechPick);
+            Step = OnboardingStep.PolishIntro;
+            Touch();
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.PolishIntro);
+    }
+
+    public void ContinueFromPolishIntro()
+    {
+        if (Step != OnboardingStep.PolishIntro)
+        {
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.PolishPick);
+    }
+
+    public void SelectPolish(
+        OnboardingPolishChoiceKind choiceKind,
+        string? egOneModelId = null,
+        string? cloudModelId = null)
+    {
+        var normalizedEgOne = choiceKind == OnboardingPolishChoiceKind.EgOne
+            ? EgOneModelCatalog.NormalizeOrDefault(egOneModelId ?? Choices.EgOneModelId)
+            : null;
+        Choices = Choices with
+        {
+            PolishChoice = choiceKind,
+            EgOneModelId = normalizedEgOne,
+            CloudModelId = string.IsNullOrWhiteSpace(cloudModelId) ? null : cloudModelId.Trim(),
+        };
+        Touch();
+    }
+
+    public void OpenPolishSeeAll()
+    {
+        if (Step != OnboardingStep.PolishPick)
+        {
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.PolishSeeAll);
+    }
+
+    public void ClosePolishSeeAll()
+    {
+        if (Step == OnboardingStep.PolishSeeAll)
+        {
+            _ = GoBack();
+        }
+    }
+
+    public void ContinueFromPolishPick(bool? downloadsNeededOverride = null)
+    {
+        if (Step is not (OnboardingStep.PolishPick or OnboardingStep.PolishSeeAll))
+        {
+            return;
+        }
+
+        if (Step == OnboardingStep.PolishSeeAll)
+        {
+            if (_backStack.Count > 0 && _backStack[^1] == OnboardingStep.PolishPick)
+            {
+                _backStack.RemoveAt(_backStack.Count - 1);
+            }
+
+            _backStack.Add(OnboardingStep.PolishPick);
+        }
+        else
+        {
+            _backStack.Add(OnboardingStep.PolishPick);
+        }
+
+        var needsDownloads = downloadsNeededOverride ??
+            (Model != SpeechModelDelivery.Installed || (RequiresLocalEgOne && PolishModel != SpeechModelDelivery.Installed));
+
+        Step = needsDownloads ? OnboardingStep.Downloads : OnboardingStep.Permissions;
+        Touch();
+    }
+
+    public void ContinueFromDownloads()
+    {
+        if (Step != OnboardingStep.Downloads)
+        {
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.Permissions);
+    }
+
+    public bool AdvanceLegacyChecklistToPermissions()
+    {
+        if (Step != OnboardingStep.Downloads || !ChecklistComplete)
+        {
+            return false;
+        }
+
+        NavigateForwardTo(OnboardingStep.Permissions);
+        return true;
+    }
+
+    public bool ContinueFromPermissions(MicrophoneConsent liveConsent)
     {
         MicrophoneConsent = liveConsent;
-        if (Screen != OnboardingScreen.SettingUp || SetupPhase != OnboardingSetupPhase.Permission || !MicrophoneAllowed)
+        if (Step != OnboardingStep.Permissions || !MicrophoneAllowed)
         {
             return false;
         }
 
-        Screen = OnboardingScreen.Ready;
+        NavigateForwardTo(OnboardingStep.Key);
         return true;
     }
 
-    /// <summary>GET STARTED! on the Ready screen: the warm-up screen, which opens only on a ready engine.</summary>
-    public void BeginWarming()
+    public void MarkKeyRehearsalCompleted()
     {
-        if (Screen == OnboardingScreen.Ready)
+        KeyRehearsalCompleted = true;
+        Touch();
+    }
+
+    public void ContinueFromKey()
+    {
+        if (Step != OnboardingStep.Key)
         {
-            Screen = OnboardingScreen.WarmingUp;
+            return;
+        }
+
+        var gate = EvaluateGate();
+        if (gate == OnboardingGateDecision.ReadyAutoSkip)
+        {
+            NavigateForwardTo(OnboardingStep.Practice);
+            ResetPractice();
+            return;
+        }
+
+        NavigateForwardTo(OnboardingStep.GettingReady);
+    }
+
+    public void BeginLegacyWarming()
+    {
+        if (Step == OnboardingStep.Key)
+        {
+            NavigateForwardTo(OnboardingStep.GettingReady);
         }
     }
 
-    /// <summary>The warm-up has shown readiness for its floor: on to the practice box.</summary>
-    public bool BeginPractice()
+    public bool TryAdvanceFromGate()
     {
-        if (Screen != OnboardingScreen.WarmingUp || WarmingOutcome != OnboardingWarmingOutcome.Ready)
+        if (Step != OnboardingStep.GettingReady || EvaluateGate() != OnboardingGateDecision.ReadyAutoSkip)
         {
             return false;
         }
 
-        Screen = OnboardingScreen.Practice;
+        NavigateForwardTo(OnboardingStep.Practice);
         ResetPractice();
         return true;
     }
+
+    public bool BeginPractice()
+    {
+        if (Step != OnboardingStep.GettingReady || WarmingOutcome != OnboardingWarmingOutcome.Ready)
+        {
+            return false;
+        }
+
+        NavigateForwardTo(OnboardingStep.Practice);
+        ResetPractice();
+        return true;
+    }
+
+    public bool SkipAheadWithoutPolish()
+    {
+        if (!CanSkipAheadDuringGate)
+        {
+            return false;
+        }
+
+        NavigateForwardTo(OnboardingStep.Practice);
+        ResetPractice();
+        return true;
+    }
+
+    public bool ContinueWithoutAiPolish()
+    {
+        if (Step != OnboardingStep.GettingReady ||
+            EvaluateGate() != OnboardingGateDecision.PolishFailedContinueWithout)
+        {
+            return false;
+        }
+
+        Choices = Choices with
+        {
+            PolishChoice = OnboardingPolishChoiceKind.None,
+            EgOneModelId = null,
+        };
+        NavigateForwardTo(OnboardingStep.Practice);
+        ResetPractice();
+        return true;
+    }
+
+    public bool SkipPractice()
+    {
+        if (Step != OnboardingStep.Practice || !CanSkipPractice)
+        {
+            return false;
+        }
+
+        if (!PracticeSucceeded)
+        {
+            PracticeOutcome = OnboardingPracticeOutcome.Skipped;
+        }
+
+        ClosingBeatIndex = 0;
+        NavigateForwardTo(OnboardingStep.Closing);
+        return true;
+    }
+
+    public bool ContinueFromPractice()
+    {
+        if (Step != OnboardingStep.Practice || !CanFinishPractice)
+        {
+            return false;
+        }
+
+        ClosingBeatIndex = 0;
+        NavigateForwardTo(OnboardingStep.Closing);
+        return true;
+    }
+
+    public bool AdvanceClosingBeat()
+    {
+        if (Step != OnboardingStep.Closing)
+        {
+            return false;
+        }
+
+        if (ClosingBeatIndex + 1 < OnboardingCopy.ClosingBeats.Count)
+        {
+            ClosingBeatIndex++;
+            Touch();
+            return false;
+        }
+
+        CompleteClosing();
+        return true;
+    }
+
+    public void CompleteClosing()
+    {
+        if (Step != OnboardingStep.Closing)
+        {
+            return;
+        }
+
+        Step = OnboardingStep.Done;
+        _backStack.Clear();
+        Touch();
+    }
+
+    public void DownloadStarted() => _startedDownloadThisVisit = true;
+
+    public void RetrySetup()
+    {
+        CancelRequested = false;
+        _startedDownloadThisVisit = false;
+    }
+
+    public void RequestCancel() => CancelRequested = true;
 
     public void ReportEngine(SpeechEngineReadiness readiness) => Engine = readiness;
 
@@ -472,21 +851,19 @@ public sealed class OnboardingFlow
         }
     }
 
-    /// <summary>What the Windows switch says now. On the practice screen it also decides whether anything can be heard.</summary>
+    public void ReportPolishModel(SpeechModelDelivery delivery) => PolishModel = delivery;
+
     public void ReportMicrophone(MicrophoneConsent consent)
     {
         MicrophoneConsent = consent;
-        if (Screen != OnboardingScreen.Practice)
+        if (Step != OnboardingStep.Practice)
         {
             return;
         }
 
         if (consent == MicrophoneConsent.Blocked)
         {
-            if (!TakeInFlight)
-            {
-                PracticeState = OnboardingPracticeState.CannotHear;
-            }
+            PracticeState = OnboardingPracticeState.CannotHear;
         }
         else if (PracticeState == OnboardingPracticeState.CannotHear)
         {
@@ -494,35 +871,37 @@ public sealed class OnboardingFlow
         }
     }
 
-    public void ReportRecordingKey(string key, DictationRecordingMode mode)
+    public void ReportRecordingKey(string gesture, DictationRecordingMode mode)
     {
-        RecordingKey = key;
-        RecordingMode = mode;
+        RecordingKey = string.IsNullOrWhiteSpace(gesture) ? null : gesture;
         RecordingKeyProblem = null;
+        RecordingMode = mode;
+        Choices = Choices with
+        {
+            RecordingMode = mode,
+            HotkeyGestureText = RecordingKey,
+        };
     }
 
     public void ReportRecordingKeyUnavailable(string problem)
     {
         RecordingKey = null;
-        RecordingKeyProblem = problem;
+        RecordingKeyProblem = string.IsNullOrWhiteSpace(problem) ? null : problem;
     }
 
-    /// <summary>A dictation began while the practice screen is up.</summary>
-    /// <param name="boxText">The box's words at the start, so the take is judged against its own start.</param>
     public void TakeStarted(string boxText)
     {
-        if (Screen != OnboardingScreen.Practice || PracticeState == OnboardingPracticeState.CannotHear)
+        if (Step != OnboardingStep.Practice || PracticeState == OnboardingPracticeState.CannotHear)
         {
             return;
         }
 
-        _practiceTextAtTakeStart = boxText;
-        _takeDelivery = OnboardingTakeDelivery.None;
+        _practiceBoxAtStart = boxText ?? string.Empty;
         _takeFailed = false;
+        _takeDelivery = OnboardingTakeDelivery.None;
         PracticeState = OnboardingPracticeState.Listening;
     }
 
-    /// <summary>The take's delivery was reported. The last report of a take wins.</summary>
     public void TakeDelivered(OnboardingTakeDelivery delivery)
     {
         if (PracticeState == OnboardingPracticeState.Listening)
@@ -531,7 +910,6 @@ public sealed class OnboardingFlow
         }
     }
 
-    /// <summary>Something on our side failed during the take.</summary>
     public void TakeFailed()
     {
         if (PracticeState == OnboardingPracticeState.Listening)
@@ -540,7 +918,6 @@ public sealed class OnboardingFlow
         }
     }
 
-    /// <summary>The dictation is over. Whether it produced anything is decided by the box, never by a clock.</summary>
     public void TakeEnded(string boxText)
     {
         if (PracticeState != OnboardingPracticeState.Listening)
@@ -548,28 +925,22 @@ public sealed class OnboardingFlow
             return;
         }
 
-        var grew = !string.Equals(boxText, _practiceTextAtTakeStart, StringComparison.Ordinal) &&
-            !string.IsNullOrWhiteSpace(boxText);
-        if (grew)
+        var current = boxText ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(current) &&
+            !string.Equals(current, _practiceBoxAtStart, StringComparison.Ordinal))
         {
             PracticeSucceeded = true;
+            PracticeOutcome = OnboardingPracticeOutcome.Worked;
             PracticeState = OnboardingPracticeState.Worked;
             return;
         }
 
-        // A FAILURE OUTRANKS EVERY OTHER READING: no text is a symptom of it, and describing the symptom would
-        // send the person to try harder at a thing that is broken.
         if (_takeFailed || _takeDelivery == OnboardingTakeDelivery.Failed)
         {
             PracticeState = OnboardingPracticeState.SomethingBroke;
             return;
         }
 
-        // WORDS EXISTED AND DID NOT REACH THE BOX. A delivery report is the only evidence words existed: without
-        // one the take was silent, and telling a silent take "we heard you" is the defect macOS's own screen
-        // was reviewed for. macOS also requires the box to have been unfocused; here the report alone decides,
-        // because words delivered anywhere but the box are a miss whatever held focus, and "we did not hear
-        // anything" would be false about words that were plainly heard.
         if (_takeDelivery is OnboardingTakeDelivery.Delivered or OnboardingTakeDelivery.Clipboard)
         {
             MissedTo = _takeDelivery;
@@ -580,36 +951,44 @@ public sealed class OnboardingFlow
         PracticeState = OnboardingPracticeState.SaidNothing;
     }
 
-    /// <summary>The box's words changed, by dictation or by hand.</summary>
-    /// <remarks>
-    /// A PASTE CAN LAND AFTER THE TAKE IS REPORTED OVER. The synthesised paste goes through the input queue and
-    /// the take's end through the window's own queue, and nothing orders the two; so words arriving just after
-    /// a take was read as silent or missed are the take working, and the screen says so.
-    /// </remarks>
     public void PracticeTextChanged(string boxText)
     {
-        if (Screen != OnboardingScreen.Practice || string.IsNullOrWhiteSpace(boxText))
+        if (Step != OnboardingStep.Practice || string.IsNullOrWhiteSpace(boxText))
         {
             return;
         }
 
-        PracticeSucceeded = true;
         if ((PracticeState is OnboardingPracticeState.SaidNothing or OnboardingPracticeState.MissedTheBox) &&
-            !string.Equals(boxText, _practiceTextAtTakeStart, StringComparison.Ordinal))
+            !string.Equals(boxText, _practiceBoxAtStart, StringComparison.Ordinal))
         {
+            PracticeSucceeded = true;
+            PracticeOutcome = OnboardingPracticeOutcome.Worked;
             PracticeState = OnboardingPracticeState.Worked;
+        }
+    }
+
+    private void NavigateForwardTo(OnboardingStep target)
+    {
+        if (Step != target)
+        {
+            _backStack.Add(Step);
+            Step = target;
+            Touch();
         }
     }
 
     private void ResetPractice()
     {
-        PracticeState = MicrophoneConsent == MicrophoneConsent.Blocked && Screen == OnboardingScreen.Practice
+        PracticeState = MicrophoneConsent == MicrophoneConsent.Blocked && Step == OnboardingStep.Practice
             ? OnboardingPracticeState.CannotHear
             : OnboardingPracticeState.Waiting;
         PracticeSucceeded = false;
+        PracticeOutcome = OnboardingPracticeOutcome.None;
         MissedTo = OnboardingTakeDelivery.None;
-        _practiceTextAtTakeStart = string.Empty;
+        _practiceBoxAtStart = string.Empty;
         _takeDelivery = OnboardingTakeDelivery.None;
         _takeFailed = false;
     }
+
+    private void Touch() => UpdatedAtUtc = DateTimeOffset.UtcNow;
 }

@@ -25,6 +25,14 @@ public enum GraphicsVendor
     Intel,
 }
 
+public enum GpuAccelerationKind
+{
+    None,
+    IntegratedVulkan,
+    DiscreteVulkan,
+    NvidiaCuda,
+}
+
 public enum HardwareProbeStatus
 {
     Complete,
