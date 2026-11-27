@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Settings;
@@ -64,6 +66,10 @@ public static partial class CustomWordCorrector
         ],
         StringComparer.OrdinalIgnoreCase);
 
+    private const int IndexCacheCapacity = 8;
+    private static readonly object IndexCacheLock = new();
+    private static readonly List<CachedIndexEntry> IndexCache = new(IndexCacheCapacity);
+
     public static WordCorrectionResult Correct(
         string text,
         IReadOnlyList<CustomWordEntry> customWords) =>
@@ -89,42 +95,8 @@ public static partial class CustomWordCorrector
             return new WordCorrectionResult(text, 0);
         }
 
-        // WHO OWNS A SURFACE IS A RULE macOS ALREADY HAS, and this used to answer it differently.
-        // Two rows claiming the same spoken form were BOTH dropped here, on the reasoning that
-        // picking one silently is picking by position. macOS resolves it instead: among ordinary
-        // rows the LAST one written wins, and a row's own replacement yields to any row that claims
-        // it as a spoken form. Dropping both is safer and is not what the reference platform does,
-        // so a person moving between the two would see different text from the same list.
-        var usable = customWords.Where(IsUsable).ToArray();
-        var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
-        RegisterEntries(usable, owners, overwriteExistingAliases: true, excludeLearnedAliases: excludeLearnedAliases);
-
-        if (packWords is { Count: > 0 })
-        {
-            var usablePacks = packWords.Where(IsUsable).ToArray();
-            if (usablePacks.Length > 0)
-            {
-                var reservedLearned = excludeLearnedAliases && reserveExcludedLearnedAliases
-                    ? CollectReservedLearnedSurfaces(usable)
-                    : null;
-                // Isolated toggleable pack layer: pack entries never overwrite user-defined entries
-                // or active auto-learned aliases still awaiting contextual verification.
-                RegisterEntries(usablePacks, owners, overwriteExistingAliases: false, excludeLearnedAliases: false, skipSurfaces: reservedLearned);
-            }
-        }
-
-        // A ONE-WORD REPLACEMENT IS MATCHABLE TOO, so saying the written form aloud still finds the
-        // row - but it never takes a surface some row claims as its spoken form.
-        //
-        // A MULTI-WORD ONE IS NOT, AND macOS IS EXPLICIT ABOUT IT: its canonical self-entry is
-        // space-free only. Adding phrases here let a written form nobody was matching against
-        // reserve words and block a rule that was: with "zed" writing "red blue", the phrase
-        // "red blue" claimed the front of "red blue sun" and stopped "blue sun" correcting anything.
-        var candidates = owners.Values
-            .OrderByDescending(candidate => WordCount(candidate.Surface))
-            .ThenByDescending(candidate => candidate.Surface.Length)
-            .ToArray();
-        if (candidates.Length == 0)
+        var index = GetOrBuildIndex(customWords, packWords, excludeLearnedAliases, reserveExcludedLearnedAliases);
+        if (index.IsEmpty)
         {
             return new WordCorrectionResult(text, 0);
         }
@@ -142,24 +114,29 @@ public static partial class CustomWordCorrector
         // is a precedence rule there, not a coincidence, so two overlapping phrases that start in
         // different places are not a tie and are not treated as one.
         var claimed = new List<Span>();
-        var proposals = PhraseProposals(text, candidates, claimed);
+        Match[]? tokens = null;
+        List<Proposal> proposals;
+        if (index.HasPhrases)
+        {
+            tokens = WordTokenRegex().Matches(text).ToArray();
+            proposals = PhraseProposals(tokens, index, claimed);
+        }
+        else
+        {
+            proposals = new List<Proposal>();
+        }
 
         // SINGLE WORDS AFTERWARDS, both exact and near, over whatever the phrases left. A rule that
         // accounts for more of the sentence explains it better, so it settles its words first.
-        var singleWords = candidates
-            .Where(candidate => WordCount(candidate.Surface) == 1)
-            .ToArray();
-        if (singleWords.Length > 0)
+        if (index.HasSingleWords)
         {
-            proposals.AddRange(ExactProposals(text, singleWords, claimed));
+            ExactProposals(text, index, claimed, proposals);
         }
 
-        var fuzzyCandidates = candidates
-            .Where(candidate => WordCount(candidate.Surface) == 1 && candidate.Surface.Length >= 5)
-            .ToArray();
-        if (fuzzyCandidates.Length > 0)
+        if (index.HasFuzzyCandidates)
         {
-            proposals.AddRange(FuzzyProposals(text, fuzzyCandidates, claimed));
+            tokens ??= WordTokenRegex().Matches(text).ToArray();
+            FuzzyProposals(tokens, index, claimed, proposals);
         }
 
         if (proposals.Count == 0)
@@ -177,99 +154,166 @@ public static partial class CustomWordCorrector
         return new WordCorrectionResult(rewritten.ToString(), proposals.Count);
     }
 
-    /// <summary>Finds the single words written exactly as the list spells them.</summary>
-    /// <remarks>
-    /// NO ARBITRATION LEFT TO DO. Every surface has exactly one owner now, decided the way macOS
-    /// decides it, so two rules can no longer compete for the same spelling - and two DIFFERENT
-    /// single words cannot overlap in a sentence, because each match is bounded by the word either
-    /// side of it. What remains is to take each match that the phrases did not already spoken for.
-    ///
-    /// A MATCH THAT WOULD CHANGE NOTHING IS STILL SKIPPED, so a word already written the way the
-    /// list spells it is not counted as a correction.
-    /// </remarks>
-    private static List<Proposal> ExactProposals(
-        string text,
-        IReadOnlyList<Candidate> candidates,
-        List<Span> claimed)
+    private static CompiledWordIndex GetOrBuildIndex(
+        IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<CustomWordEntry>? packWords,
+        bool excludeLearnedAliases,
+        bool reserveExcludedLearnedAliases)
     {
-        var accepted = new List<Proposal>();
-        foreach (var candidate in candidates
-            .OrderByDescending(candidate => candidate.Surface.Length)
-            .ThenBy(candidate => candidate.Surface, StringComparer.Ordinal))
+        if (customWords is CustomWordEntry[] customArray && (packWords is null || packWords is CustomWordEntry[]))
         {
-            foreach (Match match in Regex.Matches(
-                text,
-                SurfacePattern(candidate.Surface),
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-                TimeSpan.FromMilliseconds(250)))
+            var packArray = packWords as CustomWordEntry[];
+            lock (IndexCacheLock)
             {
-                if (match.Value.Equals(candidate.Replacement, StringComparison.Ordinal) ||
-                    IsClaimed(claimed, match.Index, match.Length))
+                for (var i = IndexCache.Count - 1; i >= 0; i--)
                 {
+                    var cached = IndexCache[i];
+                    if (cached.Matches(customArray, packArray, excludeLearnedAliases, reserveExcludedLearnedAliases))
+                    {
+                        if (i != IndexCache.Count - 1)
+                        {
+                            IndexCache.RemoveAt(i);
+                            IndexCache.Add(cached);
+                        }
+
+                        return cached.Index;
+                    }
+                }
+            }
+
+            var built = CompiledWordIndex.Build(
+                customArray,
+                packArray,
+                excludeLearnedAliases,
+                reserveExcludedLearnedAliases);
+            lock (IndexCacheLock)
+            {
+                for (var i = 0; i < IndexCache.Count; i++)
+                {
+                    if (IndexCache[i].Matches(customArray, packArray, excludeLearnedAliases, reserveExcludedLearnedAliases))
+                    {
+                        return IndexCache[i].Index;
+                    }
+                }
+
+                if (IndexCache.Count >= IndexCacheCapacity)
+                {
+                    IndexCache.RemoveAt(0);
+                }
+
+                IndexCache.Add(new CachedIndexEntry(
+                    customArray,
+                    (CustomWordEntry[])customArray.Clone(),
+                    packArray,
+                    packArray is { Length: > 0 } ? (CustomWordEntry[])packArray.Clone() : null,
+                    excludeLearnedAliases,
+                    reserveExcludedLearnedAliases,
+                    built));
+            }
+
+            return built;
+        }
+
+        return CompiledWordIndex.Build(customWords, packWords, excludeLearnedAliases, reserveExcludedLearnedAliases);
+    }
+
+    /// <summary>Finds the single words written exactly as the list spells them.</summary>
+    private static void ExactProposals(
+        string text,
+        CompiledWordIndex index,
+        List<Span> claimed,
+        List<Proposal> accepted)
+    {
+        var hits = new List<ExactHit>();
+
+        // 1. Single O(text.Length) pass over maximal letter/number runs against exact alnum map.
+        if (index.ExactAlnumSingleWords.Count > 0)
+        {
+            var pos = 0;
+            while (pos < text.Length)
+            {
+                if (!IsWordChar(text[pos]))
+                {
+                    pos++;
                     continue;
                 }
 
-                claimed.Add(new Span(match.Index, match.Length));
-                accepted.Add(new Proposal(match.Index, match.Length, candidate.Replacement));
+                var start = pos;
+                pos++;
+                while (pos < text.Length && IsWordChar(text[pos]))
+                {
+                    pos++;
+                }
+
+                var length = pos - start;
+                var slice = text.Substring(start, length);
+                if (index.ExactAlnumSingleWords.TryGetValue(slice, out var candidate))
+                {
+                    hits.Add(new ExactHit(start, length, candidate));
+                }
             }
         }
 
-        return accepted;
+        // 2. Single O(text.Length) pass over Aho-Corasick trie for surfaces containing punctuation/hyphens.
+        index.ExactComplexMatcher?.FindMatches(text, hits);
+
+        if (hits.Count == 0)
+        {
+            return;
+        }
+
+        if (hits.Count > 1)
+        {
+            hits.Sort(static (a, b) =>
+            {
+                var lenCmp = b.Candidate.Surface.Length.CompareTo(a.Candidate.Surface.Length);
+                if (lenCmp != 0)
+                {
+                    return lenCmp;
+                }
+
+                var surfaceCmp = string.CompareOrdinal(a.Candidate.Surface, b.Candidate.Surface);
+                return surfaceCmp != 0 ? surfaceCmp : a.Start.CompareTo(b.Start);
+            });
+        }
+
+        foreach (var hit in hits)
+        {
+            var value = text.AsSpan(hit.Start, hit.Length);
+            if (MemoryExtensions.Equals(value, hit.Candidate.Replacement.AsSpan(), StringComparison.Ordinal) ||
+                IsClaimed(claimed, hit.Start, hit.Length))
+            {
+                continue;
+            }
+
+            claimed.Add(new Span(hit.Start, hit.Length));
+            accepted.Add(new Proposal(hit.Start, hit.Length, hit.Candidate.Replacement));
+        }
     }
 
     /// <summary>Finds runs of words close enough to a custom phrase to be that phrase.</summary>
-    /// <remarks>
-    /// WITHOUT THIS THE PICKER LIED ON EVERY PHRASE. Somebody could set Loose on "South Bay" and
-    /// nothing would happen to "South Bae", because close-enough matching only ever looked at single
-    /// words of five letters or more - so a control was offered on entries it could not reach.
-    ///
-    /// LONGEST RUN FIRST, AND ONLY AGAINST PHRASES OF THE SAME LENGTH. A three-word phrase is
-    /// compared with three-word rules and not with two-word ones, so a rule cannot win by being
-    /// shorter than what was said. Once a run is taken the search moves past it, because two
-    /// overlapping corrections of the same sentence cannot both be what somebody meant.
-    ///
-    /// A RUN THAT IS ALREADY WRITTEN CORRECTLY IS TAKEN OFF THE TABLE RATHER THAN LEFT OPEN. Saying
-    /// the phrase exactly right is a fact about what was said; it is not a competition that a
-    /// near-miss rule can then win by overlapping part of it.
-    ///
-    /// NOT PORTED: the domain-suffix handling macOS carries for phrases ending in ".com". That is
-    /// its own behaviour with its own tests on that side, and guessing at it here would be worse
-    /// than its absence.
-    /// </remarks>
     private static List<Proposal> PhraseProposals(
-        string text,
-        IReadOnlyList<Candidate> phraseCandidates,
+        Match[] tokens,
+        CompiledWordIndex index,
         List<Span> claimed)
     {
-        var byLength = phraseCandidates
-            .Where(candidate => WordCount(candidate.Surface) > 1)
-            .GroupBy(candidate => WordCount(candidate.Surface))
-            .ToDictionary(group => group.Key, group => group.ToArray());
-        if (byLength.Count == 0)
-        {
-            return [];
-        }
-
-        var longest = byLength.Keys.Max();
-        var tokens = WordTokenRegex().Matches(text).ToArray();
+        var longest = index.LongestPhraseWordCount;
         var proposals = new List<Proposal>();
-        for (var index = 0; index < tokens.Length; index++)
+        for (var wordIndex = 0; wordIndex < tokens.Length; wordIndex++)
         {
             // EXACT FIRST ACROSS EVERY RUN LENGTH, AND ONLY THEN NEAR MATCHES. A phrase written the
             // way the list spells it settles this position outright; asking "is this near anything"
             // before "is this exactly something" would let a near miss of a longer phrase beat an
             // exact shorter one starting in the same place.
             var settled = false;
-            for (var run = Math.Min(longest, tokens.Length - index); run >= 2 && !settled; run--)
+            for (var run = Math.Min(longest, tokens.Length - wordIndex); run >= 2 && !settled; run--)
             {
-                if (!Reachable(byLength, claimed, tokens, index, run, out var rivals, out var here))
+                if (!Reachable(index, claimed, tokens, wordIndex, run, out var rivals, out var exactMap, out var here))
                 {
                     continue;
                 }
 
-                var written = rivals.FirstOrDefault(candidate =>
-                    here.Phrase.Equals(candidate.Surface, StringComparison.OrdinalIgnoreCase));
-                if (written is null)
+                if (exactMap is null || !exactMap.TryGetValue(here.Phrase, out var written))
                 {
                     continue;
                 }
@@ -280,7 +324,7 @@ public static partial class CustomWordCorrector
                 }
 
                 claimed.Add(new Span(here.Start, here.Length));
-                index += run - 1;
+                wordIndex += run - 1;
                 settled = true;
             }
 
@@ -289,9 +333,9 @@ public static partial class CustomWordCorrector
                 continue;
             }
 
-            for (var run = Math.Min(longest, tokens.Length - index); run >= 2; run--)
+            for (var run = Math.Min(longest, tokens.Length - wordIndex); run >= 2; run--)
             {
-                if (!Reachable(byLength, claimed, tokens, index, run, out var rivals, out var found))
+                if (!Reachable(index, claimed, tokens, wordIndex, run, out var rivals, out _, out var found))
                 {
                     continue;
                 }
@@ -302,52 +346,84 @@ public static partial class CustomWordCorrector
                 // competition between rules and against EVERY rule rather than against whichever
                 // scored highest - a run that already reads as one rule's answer is correct however
                 // well some other rule happens to score against it.
-                if (rivals.Any(candidate =>
-                    phrase.Equals(candidate.Replacement, StringComparison.Ordinal)))
+                var alreadyRight = false;
+                foreach (var candidate in rivals)
+                {
+                    if (phrase.Equals(candidate.Replacement, StringComparison.Ordinal))
+                    {
+                        alreadyRight = true;
+                        break;
+                    }
+                }
+
+                if (alreadyRight)
                 {
                     claimed.Add(new Span(start, length));
-                    index += run - 1;
+                    wordIndex += run - 1;
                     break;
                 }
 
-                // EACH PHRASE IS JUDGED AGAINST ITS OWN BAR BEFORE ANY OF THEM ARE RANKED, which is
-                // the same defect this had for single words: ranking first let a STRICT phrase that
-                // was never going to be corrected stand in front of a LOOSE one that would have
-                // been. "alpha betx" is 0.90 from a strict "alpha beta", which fails its 0.92, and
-                // 0.80 from a loose "alpha zeta", which clears its 0.72 - and the sentence was left
-                // alone because the strict phrase scored higher.
-                var everyday = words.Any(PhraseStopWords.Contains);
-                var eligible = rivals
-                    .Select(candidate => new
+                var everyday = false;
+                for (var w = 0; w < words.Length; w++)
+                {
+                    if (PhraseStopWords.Contains(words[w]))
                     {
-                        Candidate = candidate,
-                        Score = TextSimilarity.LevenshteinSimilarity(
-                            phrase.ToLowerInvariant(),
-                            candidate.Surface.ToLowerInvariant()),
-                    })
-                    .Where(item => item.Score >= PhraseThreshold(item.Candidate.Strictness, everyday))
-                    .OrderByDescending(item => item.Score)
-                    .ToArray();
-                if (eligible.Length == 0)
+                        everyday = true;
+                        break;
+                    }
+                }
+
+                var phraseLower = phrase.ToLowerInvariant();
+                var phraseRunes = TextSimilarity.ToRuneArray(phraseLower);
+                var phraseMask = ComputeRuneMask(phraseRunes);
+
+                CompiledCandidate? best = null;
+                var bestScore = double.NegativeInfinity;
+                CompiledCandidate? secondBestDifferent = null;
+                var secondScore = double.NegativeInfinity;
+
+                foreach (var candidate in rivals)
+                {
+                    var threshold = PhraseThreshold(candidate.Strictness, everyday);
+                    var maxLength = Math.Max(phraseRunes.Length, candidate.SurfaceRunes.Length);
+                    var maxAllowedDistance = MaxDistanceForThreshold(threshold, maxLength);
+                    if (Math.Abs(phraseRunes.Length - candidate.SurfaceRunes.Length) > maxAllowedDistance ||
+                        MaskLowerBoundDistance(phraseMask, candidate.CharMask) > maxAllowedDistance)
+                    {
+                        continue;
+                    }
+
+                    var score = TextSimilarity.LevenshteinSimilarity(
+                        phraseRunes.AsSpan(),
+                        candidate.SurfaceRunes.AsSpan(),
+                        maxAllowedDistance);
+                    if (score < threshold)
+                    {
+                        continue;
+                    }
+
+                    UpdateTopTwo(
+                        candidate,
+                        score,
+                        ref best,
+                        ref bestScore,
+                        ref secondBestDifferent,
+                        ref secondScore);
+                }
+
+                if (best is null)
                 {
                     continue;
                 }
 
-                var best = eligible[0];
-                var rival = eligible
-                    .Skip(1)
-                    .FirstOrDefault(item => !string.Equals(
-                        item.Candidate.Replacement,
-                        best.Candidate.Replacement,
-                        StringComparison.OrdinalIgnoreCase));
-                if (rival is not null && best.Score - rival.Score < AmbiguityMargin)
+                if (secondBestDifferent is not null && bestScore - secondScore < AmbiguityMargin)
                 {
                     continue;
                 }
 
                 claimed.Add(new Span(start, length));
-                proposals.Add(new Proposal(start, length, best.Candidate.Replacement));
-                index += run - 1;
+                proposals.Add(new Proposal(start, length, best.Replacement));
+                wordIndex += run - 1;
                 break;
             }
         }
@@ -355,29 +431,25 @@ public static partial class CustomWordCorrector
         return proposals;
     }
 
-    /// <summary>One run of words in the sentence, and the rules that could speak for it.</summary>
-    /// <remarks>
-    /// SHARED BY BOTH HALVES OF THE PHRASE PASS so that "which words is this" is answered once. The
-    /// exact half and the near half must be looking at exactly the same run, or the second would be
-    /// deciding about a different piece of the sentence than the first refused.
-    /// </remarks>
     private static bool Reachable(
-        Dictionary<int, Candidate[]> byLength,
+        CompiledWordIndex index,
         List<Span> claimed,
         Match[] tokens,
-        int index,
+        int wordIndex,
         int run,
-        out Candidate[] rivals,
+        out CompiledCandidate[] rivals,
+        out Dictionary<string, Candidate>? exactMap,
         out Run found)
     {
         rivals = [];
+        exactMap = null;
         found = default;
-        if (!byLength.TryGetValue(run, out var candidates))
+        if (!index.PhrasesByLength.TryGetValue(run, out var bucket))
         {
             return false;
         }
 
-        var slice = tokens.AsSpan(index, run);
+        var slice = tokens.AsSpan(wordIndex, run);
         var start = slice[0].Index;
         var length = slice[run - 1].Index + slice[run - 1].Length - start;
         if (IsClaimed(claimed, start, length))
@@ -388,15 +460,17 @@ public static partial class CustomWordCorrector
         var words = new string[run];
         for (var word = 0; word < run; word++)
         {
-            words[word] = slice[word].Value;
+            var tokenValue = slice[word].Value;
+            if (ReservedTriggerWords.Contains(tokenValue))
+            {
+                return false;
+            }
+
+            words[word] = tokenValue;
         }
 
-        if (words.Any(ReservedTriggerWords.Contains))
-        {
-            return false;
-        }
-
-        rivals = candidates;
+        rivals = bucket.Candidates;
+        exactMap = bucket.ExactBySurface;
         found = new Run(start, length, string.Join(' ', words), words);
         return true;
     }
@@ -404,81 +478,181 @@ public static partial class CustomWordCorrector
     private readonly record struct Run(int Start, int Length, string Phrase, string[] Words);
 
     /// <summary>Finds single words close enough to a custom word to be that word.</summary>
-    /// <remarks>
-    /// READ FROM THE ORIGINAL SENTENCE, NOT FROM THE CORRECTED ONE. Running this over the rewritten
-    /// text meant it examined words nobody had said - a replacement written in by the exact pass
-    /// could itself be corrected again, and one span of what the person actually said was then
-    /// counted as two corrections.
-    /// </remarks>
-    private static List<Proposal> FuzzyProposals(
-        string text,
-        IReadOnlyList<Candidate> fuzzyCandidates,
-        List<Span> claimed)
+    private static void FuzzyProposals(
+        Match[] tokens,
+        CompiledWordIndex index,
+        List<Span> claimed,
+        List<Proposal> proposals)
     {
-        var proposals = new List<Proposal>();
-        foreach (Match match in WordTokenRegex().Matches(text))
+        var poolPenalty = LargeVocabularyPenalty(index.FuzzyPoolSize);
+        var lowestPossibleThreshold = LooseSimilarityThreshold - 0.04 + poolPenalty;
+
+        foreach (var match in tokens)
         {
             var token = match.Value;
-            if (ReservedTriggerWords.Contains(token) ||
+            if (token.Length < 5 ||
+                ReservedTriggerWords.Contains(token) ||
                 FuzzyStopWords.Contains(token) ||
-                token.Length < 5 ||
                 IsClaimed(claimed, match.Index, match.Length))
             {
                 continue;
             }
 
-            // EACH CANDIDATE IS JUDGED AGAINST ITS OWN BAR BEFORE ANY OF THEM ARE RANKED. Taking the
-            // highest score first and then asking whether it cleared its bar let a STRICT word that
-            // was never going to be corrected stand in front of a LOOSE word that would have been -
-            // one word's setting silently deciding another word's outcome.
-            //
-            // THE USER'S CHOICE MOVES THE BAR; THE OTHER TWO TERMS STILL APPLY TO IT. Length and
-            // vocabulary size are properties of the word and the list, not of how forgiving somebody
-            // wanted to be, so asking for a strict match on a long word should not also throw away
-            // the allowance long words have always had.
-            var eligible = fuzzyCandidates
-                .Where(candidate => !string.Equals(
-                    candidate.Replacement,
-                    token,
-                    StringComparison.Ordinal))
-                .Select(candidate => new
-                {
-                    Candidate = candidate,
-                    Score = TextSimilarity.LevenshteinSimilarity(
-                        token.ToLowerInvariant(),
-                        candidate.Surface.ToLowerInvariant()),
-                    Threshold = BaseThreshold(candidate.Strictness)
-                        - LengthAwareAdjustment(candidate.Surface.Length)
-                        + LargeVocabularyPenalty(fuzzyCandidates.Count),
-                })
-                .Where(item => item.Score >= item.Threshold)
-                .OrderByDescending(item => item.Score)
-                .ToArray();
-            if (eligible.Length == 0)
+            var tokenLower = token.ToLowerInvariant();
+            var tokenRunes = TextSimilarity.ToRuneArray(tokenLower);
+            var tokenLen = tokenRunes.Length;
+            if (tokenLen < 5)
             {
                 continue;
             }
 
-            // TWO SURFACES THAT WRITE THE SAME WORD ARE NOT RIVALS. The ambiguity check exists to
-            // catch a token that could become two DIFFERENT words, so a spelling and its own alias
-            // scoring closely must not read as a disagreement.
-            var best = eligible[0];
-            var rival = eligible
-                .Skip(1)
-                .FirstOrDefault(item => !string.Equals(
-                    item.Candidate.Replacement,
-                    best.Candidate.Replacement,
-                    StringComparison.OrdinalIgnoreCase));
-            if (rival is not null && best.Score - rival.Score < AmbiguityMargin)
+            var tokenMask = ComputeRuneMask(tokenRunes);
+            var maxDeltaForToken = Math.Max(0, (int)Math.Floor((1.0 - lowestPossibleThreshold) * Math.Max(tokenLen, index.MaxFuzzyRuneLength) + 1e-9));
+            var minCandidateLen = Math.Max(index.MinFuzzyRuneLength, tokenLen - maxDeltaForToken);
+            var maxCandidateLen = Math.Min(index.MaxFuzzyRuneLength, tokenLen + maxDeltaForToken);
+
+            CompiledCandidate? best = null;
+            var bestScore = double.NegativeInfinity;
+            CompiledCandidate? secondBestDifferent = null;
+            var secondScore = double.NegativeInfinity;
+
+            for (var candidateLen = minCandidateLen; candidateLen <= maxCandidateLen; candidateLen++)
+            {
+                if (!index.FuzzyByRuneLength.TryGetValue(candidateLen, out var bucket))
+                {
+                    continue;
+                }
+
+                var maxLen = Math.Max(tokenLen, candidateLen);
+                foreach (var candidate in bucket)
+                {
+                    if (string.Equals(candidate.Replacement, token, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var threshold = candidate.BaseThreshold - candidate.LengthAdjustment + poolPenalty;
+                    var maxAllowedDistance = MaxDistanceForThreshold(threshold, maxLen);
+                    if (Math.Abs(tokenLen - candidateLen) > maxAllowedDistance ||
+                        MaskLowerBoundDistance(tokenMask, candidate.CharMask) > maxAllowedDistance)
+                    {
+                        continue;
+                    }
+
+                    var score = TextSimilarity.LevenshteinSimilarity(
+                        tokenRunes.AsSpan(),
+                        candidate.SurfaceRunes.AsSpan(),
+                        maxAllowedDistance);
+                    if (score < threshold)
+                    {
+                        continue;
+                    }
+
+                    UpdateTopTwo(
+                        candidate,
+                        score,
+                        ref best,
+                        ref bestScore,
+                        ref secondBestDifferent,
+                        ref secondScore);
+                }
+            }
+
+            if (best is null)
+            {
+                continue;
+            }
+
+            // TWO SURFACES THAT WRITE THE SAME WORD ARE NOT RIVALS.
+            if (secondBestDifferent is not null && bestScore - secondScore < AmbiguityMargin)
             {
                 continue;
             }
 
             claimed.Add(new Span(match.Index, match.Length));
-            proposals.Add(new Proposal(match.Index, match.Length, best.Candidate.Replacement));
+            proposals.Add(new Proposal(match.Index, match.Length, best.Replacement));
+        }
+    }
+
+    private static void UpdateTopTwo(
+        CompiledCandidate candidate,
+        double score,
+        ref CompiledCandidate? best,
+        ref double bestScore,
+        ref CompiledCandidate? secondBestDifferent,
+        ref double secondScore)
+    {
+        if (score > bestScore)
+        {
+            if (best is not null &&
+                !string.Equals(best.Replacement, candidate.Replacement, StringComparison.OrdinalIgnoreCase))
+            {
+                secondBestDifferent = best;
+                secondScore = bestScore;
+            }
+
+            best = candidate;
+            bestScore = score;
+        }
+        else if (best is not null &&
+                 !string.Equals(candidate.Replacement, best.Replacement, StringComparison.OrdinalIgnoreCase) &&
+                 score > secondScore)
+        {
+            secondBestDifferent = candidate;
+            secondScore = score;
+        }
+    }
+
+    private static int MaxDistanceForThreshold(double threshold, int maxLength)
+    {
+        if (threshold >= 1.0)
+        {
+            return 0;
         }
 
-        return proposals;
+        if (threshold <= 0.0)
+        {
+            return maxLength;
+        }
+
+        return Math.Max(0, (int)Math.Floor(((1.0 - threshold) * maxLength) + 1e-9));
+    }
+
+    private static ulong ComputeRuneMask(ReadOnlySpan<Rune> runes)
+    {
+        ulong mask = 0;
+        foreach (var rune in runes)
+        {
+            var val = rune.Value;
+            int bit;
+            if (val is >= 'a' and <= 'z')
+            {
+                bit = val - 'a';
+            }
+            else if (val is >= '0' and <= '9')
+            {
+                bit = 26 + (val - '0');
+            }
+            else
+            {
+                bit = 36 + ((int)((uint)val * 2654435761u) % 28);
+                if (bit < 36)
+                {
+                    bit = 36;
+                }
+            }
+
+            mask |= 1UL << bit;
+        }
+
+        return mask;
+    }
+
+    private static int MaskLowerBoundDistance(ulong leftMask, ulong rightMask)
+    {
+        var onlyLeft = BitOperations.PopCount(leftMask & ~rightMask);
+        var onlyRight = BitOperations.PopCount(rightMask & ~leftMask);
+        return Math.Max(onlyLeft, onlyRight);
     }
 
     /// <summary>The bar a heard phrase must clear for a custom phrase at the given strictness.</summary>
@@ -504,12 +678,12 @@ public static partial class CustomWordCorrector
     public static double LengthAwareAdjustment(int candidateLength) =>
         Math.Min(0.04, Math.Max(0, candidateLength - 8) * 0.005);
 
-    private static HashSet<string>? CollectReservedLearnedSurfaces(CustomWordEntry[] entries)
+    private static HashSet<string>? CollectReservedLearnedSurfaces(IReadOnlyList<CustomWordEntry> entries)
     {
         HashSet<string>? reserved = null;
         foreach (var entry in entries)
         {
-            if (!entry.IsAutoLearned)
+            if (entry is null || !IsUsable(entry) || !entry.IsAutoLearned)
             {
                 continue;
             }
@@ -529,7 +703,7 @@ public static partial class CustomWordCorrector
     }
 
     private static void RegisterEntries(
-        CustomWordEntry[] entries,
+        IReadOnlyList<CustomWordEntry> entries,
         Dictionary<string, Candidate> owners,
         bool overwriteExistingAliases,
         bool excludeLearnedAliases = false,
@@ -537,7 +711,7 @@ public static partial class CustomWordCorrector
     {
         foreach (var entry in entries)
         {
-            if (excludeLearnedAliases && entry.IsPureAutoLearned)
+            if (entry is null || !IsUsable(entry) || (excludeLearnedAliases && entry.IsPureAutoLearned))
             {
                 continue;
             }
@@ -569,7 +743,7 @@ public static partial class CustomWordCorrector
 
         foreach (var entry in entries)
         {
-            if (excludeLearnedAliases && entry.IsPureAutoLearned)
+            if (entry is null || !IsUsable(entry) || (excludeLearnedAliases && entry.IsPureAutoLearned))
             {
                 continue;
             }
@@ -594,6 +768,27 @@ public static partial class CustomWordCorrector
         !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
         !string.IsNullOrWhiteSpace(entry.Replacement);
 
+    private static bool IsWordChar(char c) =>
+        char.IsLetter(c) || char.IsNumber(c);
+
+    private static bool IsAllWordChars(string surface)
+    {
+        if (surface.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var c in surface)
+        {
+            if (!IsWordChar(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool ContainsReservedTrigger(string surface) =>
         surface.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Any(ReservedTriggerWords.Contains);
@@ -609,6 +804,409 @@ public static partial class CustomWordCorrector
 
     private static bool IsClaimed(List<Span> claimed, int start, int length) =>
         claimed.Any(span => start < span.Start + span.Length && span.Start < start + length);
+
+    private sealed class CompiledWordIndex
+    {
+        public Dictionary<string, Candidate> ExactAlnumSingleWords { get; }
+
+        public AhoCorasickMatcher? ExactComplexMatcher { get; }
+
+        public Dictionary<int, PhraseBucket> PhrasesByLength { get; }
+
+        public int LongestPhraseWordCount { get; }
+
+        public Dictionary<int, CompiledCandidate[]> FuzzyByRuneLength { get; }
+
+        public int FuzzyPoolSize { get; }
+
+        public int MinFuzzyRuneLength { get; }
+
+        public int MaxFuzzyRuneLength { get; }
+
+        public bool HasPhrases => PhrasesByLength.Count > 0;
+
+        public bool HasSingleWords => ExactAlnumSingleWords.Count > 0 || ExactComplexMatcher is not null;
+
+        public bool HasFuzzyCandidates => FuzzyPoolSize > 0;
+
+        public bool IsEmpty => !HasPhrases && !HasSingleWords;
+
+        private CompiledWordIndex(
+            Dictionary<string, Candidate> exactAlnumSingleWords,
+            AhoCorasickMatcher? exactComplexMatcher,
+            Dictionary<int, PhraseBucket> phrasesByLength,
+            int longestPhraseWordCount,
+            Dictionary<int, CompiledCandidate[]> fuzzyByRuneLength,
+            int fuzzyPoolSize,
+            int minFuzzyRuneLength,
+            int maxFuzzyRuneLength)
+        {
+            ExactAlnumSingleWords = exactAlnumSingleWords;
+            ExactComplexMatcher = exactComplexMatcher;
+            PhrasesByLength = phrasesByLength;
+            LongestPhraseWordCount = longestPhraseWordCount;
+            FuzzyByRuneLength = fuzzyByRuneLength;
+            FuzzyPoolSize = fuzzyPoolSize;
+            MinFuzzyRuneLength = minFuzzyRuneLength;
+            MaxFuzzyRuneLength = maxFuzzyRuneLength;
+        }
+
+        public static CompiledWordIndex Build(
+            IReadOnlyList<CustomWordEntry> customWords,
+            IReadOnlyList<CustomWordEntry>? packWords,
+            bool excludeLearnedAliases,
+            bool reserveExcludedLearnedAliases)
+        {
+            var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
+            RegisterEntries(customWords, owners, overwriteExistingAliases: true, excludeLearnedAliases: excludeLearnedAliases);
+
+            if (packWords is { Count: > 0 })
+            {
+                var reservedLearned = excludeLearnedAliases && reserveExcludedLearnedAliases
+                    ? CollectReservedLearnedSurfaces(customWords)
+                    : null;
+                // Isolated toggleable pack layer: pack entries never overwrite user-defined entries
+                // or active auto-learned aliases still awaiting contextual verification.
+                RegisterEntries(packWords, owners, overwriteExistingAliases: false, excludeLearnedAliases: false, skipSurfaces: reservedLearned);
+            }
+
+            if (owners.Count == 0)
+            {
+                return new CompiledWordIndex(
+                    new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase),
+                    exactComplexMatcher: null,
+                    new Dictionary<int, PhraseBucket>(),
+                    0,
+                    new Dictionary<int, CompiledCandidate[]>(),
+                    0,
+                    int.MaxValue,
+                    0);
+            }
+
+            var orderedCandidates = owners.Values
+                .OrderByDescending(candidate => WordCount(candidate.Surface))
+                .ThenByDescending(candidate => candidate.Surface.Length)
+                .ToArray();
+
+            var exactAlnum = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
+            var exactComplex = new List<Candidate>();
+            var phrasesGrouped = new Dictionary<int, List<CompiledCandidate>>();
+            var exactPhrasesGrouped = new Dictionary<int, Dictionary<string, Candidate>>();
+            var fuzzyGrouped = new Dictionary<int, List<CompiledCandidate>>();
+            var longestPhrase = 0;
+            var fuzzyPoolSize = 0;
+            var minFuzzyLen = int.MaxValue;
+            var maxFuzzyLen = 0;
+
+            foreach (var candidate in orderedCandidates)
+            {
+                var wordCount = WordCount(candidate.Surface);
+                if (wordCount == 1)
+                {
+                    if (IsAllWordChars(candidate.Surface))
+                    {
+                        exactAlnum[candidate.Surface] = candidate;
+                    }
+                    else
+                    {
+                        exactComplex.Add(candidate);
+                    }
+
+                    if (candidate.Surface.Length >= 5)
+                    {
+                        var surfaceLower = candidate.Surface.ToLowerInvariant();
+                        var runes = TextSimilarity.ToRuneArray(surfaceLower);
+                        var compiled = new CompiledCandidate(
+                            candidate.Surface,
+                            candidate.Replacement,
+                            candidate.Strictness,
+                            runes,
+                            ComputeRuneMask(runes),
+                            BaseThreshold(candidate.Strictness),
+                            LengthAwareAdjustment(candidate.Surface.Length));
+                        if (!fuzzyGrouped.TryGetValue(runes.Length, out var bucket))
+                        {
+                            bucket = new List<CompiledCandidate>();
+                            fuzzyGrouped[runes.Length] = bucket;
+                        }
+
+                        bucket.Add(compiled);
+                        fuzzyPoolSize++;
+                        if (runes.Length < minFuzzyLen)
+                        {
+                            minFuzzyLen = runes.Length;
+                        }
+
+                        if (runes.Length > maxFuzzyLen)
+                        {
+                            maxFuzzyLen = runes.Length;
+                        }
+                    }
+                }
+                else if (wordCount > 1)
+                {
+                    if (wordCount > longestPhrase)
+                    {
+                        longestPhrase = wordCount;
+                    }
+
+                    var surfaceLower = candidate.Surface.ToLowerInvariant();
+                    var runes = TextSimilarity.ToRuneArray(surfaceLower);
+                    var compiled = new CompiledCandidate(
+                        candidate.Surface,
+                        candidate.Replacement,
+                        candidate.Strictness,
+                        runes,
+                        ComputeRuneMask(runes),
+                        BaseThreshold(candidate.Strictness),
+                        LengthAwareAdjustment(candidate.Surface.Length));
+
+                    if (!phrasesGrouped.TryGetValue(wordCount, out var phraseList))
+                    {
+                        phraseList = new List<CompiledCandidate>();
+                        phrasesGrouped[wordCount] = phraseList;
+                    }
+
+                    phraseList.Add(compiled);
+
+                    if (!exactPhrasesGrouped.TryGetValue(wordCount, out var exactMap))
+                    {
+                        exactMap = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
+                        exactPhrasesGrouped[wordCount] = exactMap;
+                    }
+
+                    exactMap[candidate.Surface] = candidate;
+                }
+            }
+
+            var phraseBuckets = new Dictionary<int, PhraseBucket>(phrasesGrouped.Count);
+            foreach (var (wordCount, list) in phrasesGrouped)
+            {
+                phraseBuckets[wordCount] = new PhraseBucket(list.ToArray(), exactPhrasesGrouped[wordCount]);
+            }
+
+            var fuzzyBuckets = new Dictionary<int, CompiledCandidate[]>(fuzzyGrouped.Count);
+            foreach (var (len, list) in fuzzyGrouped)
+            {
+                fuzzyBuckets[len] = list.ToArray();
+            }
+
+            return new CompiledWordIndex(
+                exactAlnum,
+                exactComplex.Count > 0 ? AhoCorasickMatcher.Build(exactComplex) : null,
+                phraseBuckets,
+                longestPhrase,
+                fuzzyBuckets,
+                fuzzyPoolSize,
+                minFuzzyLen,
+                maxFuzzyLen);
+        }
+    }
+
+    private sealed class AhoCorasickMatcher
+    {
+        private sealed class Node
+        {
+            public Dictionary<char, int>? Children;
+            public int Failure;
+            public List<Candidate>? Outputs;
+        }
+
+        private readonly Node[] _nodes;
+
+        private AhoCorasickMatcher(Node[] nodes)
+        {
+            _nodes = nodes;
+        }
+
+        public static AhoCorasickMatcher Build(List<Candidate> patterns)
+        {
+            var nodes = new List<Node> { new() };
+            foreach (var pattern in patterns)
+            {
+                var state = 0;
+                foreach (var c in pattern.Surface)
+                {
+                    var lower = char.ToLowerInvariant(c);
+                    var children = nodes[state].Children ??= new Dictionary<char, int>();
+                    if (!children.TryGetValue(lower, out var next))
+                    {
+                        next = nodes.Count;
+                        nodes.Add(new Node());
+                        children[lower] = next;
+                    }
+
+                    state = next;
+                }
+
+                (nodes[state].Outputs ??= new List<Candidate>(1)).Add(pattern);
+            }
+
+            var queue = new Queue<int>();
+            if (nodes[0].Children is { } rootChildren)
+            {
+                foreach (var next in rootChildren.Values)
+                {
+                    nodes[next].Failure = 0;
+                    queue.Enqueue(next);
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                var children = nodes[current].Children;
+                if (children is null)
+                {
+                    continue;
+                }
+
+                foreach (var (ch, child) in children)
+                {
+                    queue.Enqueue(child);
+                    var failure = nodes[current].Failure;
+                    while (failure != 0 && (nodes[failure].Children is null || !nodes[failure].Children!.ContainsKey(ch)))
+                    {
+                        failure = nodes[failure].Failure;
+                    }
+
+                    if (nodes[failure].Children is not null && nodes[failure].Children!.TryGetValue(ch, out var fallback))
+                    {
+                        failure = fallback;
+                    }
+
+                    nodes[child].Failure = failure;
+                    if (nodes[failure].Outputs is { Count: > 0 } inherited)
+                    {
+                        (nodes[child].Outputs ??= new List<Candidate>(inherited.Count)).AddRange(inherited);
+                    }
+                }
+            }
+
+            return new AhoCorasickMatcher(nodes.ToArray());
+        }
+
+        public void FindMatches(string text, List<ExactHit> hits)
+        {
+            Dictionary<Candidate, int>? lastEndByCandidate = null;
+            var state = 0;
+            for (var i = 0; i < text.Length; i++)
+            {
+                var ch = char.ToLowerInvariant(text[i]);
+                while (state != 0 && (_nodes[state].Children is null || !_nodes[state].Children!.ContainsKey(ch)))
+                {
+                    state = _nodes[state].Failure;
+                }
+
+                if (_nodes[state].Children is not null && _nodes[state].Children!.TryGetValue(ch, out var next))
+                {
+                    state = next;
+                }
+
+                var outputs = _nodes[state].Outputs;
+                if (outputs is null)
+                {
+                    continue;
+                }
+
+                var end = i + 1;
+                if (end < text.Length && IsWordChar(text[end]))
+                {
+                    continue;
+                }
+
+                foreach (var candidate in outputs)
+                {
+                    var len = candidate.Surface.Length;
+                    var start = end - len;
+                    if (start < 0 || (start > 0 && IsWordChar(text[start - 1])))
+                    {
+                        continue;
+                    }
+
+                    lastEndByCandidate ??= new Dictionary<Candidate, int>(ReferenceEqualityComparer.Instance);
+                    if (lastEndByCandidate.TryGetValue(candidate, out var lastEnd) && start < lastEnd)
+                    {
+                        continue;
+                    }
+
+                    lastEndByCandidate[candidate] = end;
+                    hits.Add(new ExactHit(start, len, candidate));
+                }
+            }
+        }
+    }
+
+    private sealed record PhraseBucket(
+        CompiledCandidate[] Candidates,
+        Dictionary<string, Candidate> ExactBySurface);
+
+    private sealed record CompiledCandidate(
+        string Surface,
+        string Replacement,
+        MatchStrictness Strictness,
+        Rune[] SurfaceRunes,
+        ulong CharMask,
+        double BaseThreshold,
+        double LengthAdjustment);
+
+    private readonly record struct ExactHit(int Start, int Length, Candidate Candidate);
+
+    private sealed record CachedIndexEntry(
+        CustomWordEntry[] CustomWordsRef,
+        CustomWordEntry[] CustomWordsSnapshot,
+        CustomWordEntry[]? PackWordsRef,
+        CustomWordEntry[]? PackWordsSnapshot,
+        bool ExcludeLearnedAliases,
+        bool ReserveExcludedLearnedAliases,
+        CompiledWordIndex Index)
+    {
+        public bool Matches(
+            CustomWordEntry[] customWords,
+            CustomWordEntry[]? packWords,
+            bool excludeLearnedAliases,
+            bool reserveExcludedLearnedAliases)
+        {
+            if (ExcludeLearnedAliases != excludeLearnedAliases ||
+                ReserveExcludedLearnedAliases != reserveExcludedLearnedAliases ||
+                !ReferenceEquals(CustomWordsRef, customWords) ||
+                CustomWordsSnapshot.Length != customWords.Length)
+            {
+                return false;
+            }
+
+            if ((PackWordsSnapshot?.Length ?? 0) != (packWords?.Length ?? 0))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < customWords.Length; i++)
+            {
+                if (!ReferenceEquals(CustomWordsSnapshot[i], customWords[i]))
+                {
+                    return false;
+                }
+            }
+
+            if (packWords is { Length: > 0 } && !ReferenceEquals(PackWordsRef, packWords))
+            {
+                if (PackWordsSnapshot is null || PackWordsSnapshot.Length != packWords.Length)
+                {
+                    return false;
+                }
+
+                for (var i = 0; i < packWords.Length; i++)
+                {
+                    if (!ReferenceEquals(PackWordsSnapshot[i], packWords[i]))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+    }
 
     private sealed record Candidate(string Surface, string Replacement, MatchStrictness Strictness);
 

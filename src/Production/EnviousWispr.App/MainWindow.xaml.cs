@@ -264,6 +264,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
         InitializeHistoryUi();
+        InitializeUserDataUi();
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.LearnedUndoRequested += pillId => LearnedPillUndoRequested?.Invoke(pillId);
         _overlayWindow.LearnedEnded += pillId => LearnedPillEnded?.Invoke(pillId);
@@ -830,6 +831,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // DETACHED, NOT JUST STOPPED. A timer left attached can still tick during shutdown and raise
         // an announcement for a window that is going away.
         ShutdownHistoryUi();
+        ShutdownUserDataUi();
         _audioPlayback.StateChanged -= OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed -= OnAudioPlaybackFailed;
         _audioPlayback.Dispose();
@@ -1357,8 +1359,14 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 ApplyResponsiveTabStripLayout(DictionaryTabStrip);
             }
+
+            FlushPendingDictionaryRefresh();
         }
         SnippetsPage.Visibility = resolvedTag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
+        if (resolvedTag == "snippets")
+        {
+            FlushPendingSnippetRefresh();
+        }
         SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
 
         if (settingsPage)

@@ -169,12 +169,13 @@ public sealed class OvernightUatPolishTests
                 .Single();
             Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)col.Attribute("MaxWidth"));
 
-            var stack = grid.Elements().Single(e => e.Name.LocalName == "StackPanel");
+            var container = grid.Elements().Single(e =>
+                e.Name.LocalName is "StackPanel" or "Grid");
             var pagePadding = (string?)page.Attribute("Padding");
-            var stackMargin = (string?)stack.Attribute("Margin");
+            var containerMargin = (string?)container.Attribute("Margin");
             Assert.True(
                 string.Equals(pagePadding, "0,0,16,0", StringComparison.Ordinal) ||
-                string.Equals(stackMargin, "0,0,16,0", StringComparison.Ordinal),
+                string.Equals(containerMargin, "0,0,16,0", StringComparison.Ordinal),
                 $"{pageName} must reserve 16 DIP on the right edge so overlay vertical scrollbars do not overlap text.");
         }
     }

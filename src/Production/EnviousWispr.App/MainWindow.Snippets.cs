@@ -86,17 +86,138 @@ public sealed partial class MainWindow
         return true;
     }
 
+    private readonly EnviousWispr.App.Collections.BulkObservableCollection<SnippetRow> _snippetRows = new();
+    private CancellationTokenSource? _snippetRefreshCts;
+    private int _snippetRefreshGeneration;
+    private bool _snippetsViewDirty;
+    private (IReadOnlyList<SnippetEntry> Source, SnippetRow[] Rows)? _snippetRowCache;
+
     private const string PasteHint =
         "One per line: the trigger, then =, then the text. A tab, an arrow, or a comma work too. For text on several lines, paste exported JSON or CSV, or type \\n where a line should break.";
 
-    /// <summary>Shows the snippets the search box asks for, and which of the list, the empty card or the no-match card is on screen.</summary>
-    private void RefreshSnippetList(IReadOnlyList<SnippetEntry> snippets)
+    private void FlushPendingSnippetRefresh()
     {
-        var query = SnippetSearchBox.Text;
+        if (_snippetsViewDirty)
+        {
+            ScheduleSnippetRefresh(debounce: false);
+        }
+    }
+
+    private void ScheduleSnippetRefresh(bool debounce)
+    {
+        _snippetRefreshCts?.Cancel();
+        _snippetRefreshCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _snippetRefreshCts = cts;
+        var generation = ++_snippetRefreshGeneration;
+        var snippets = _settings?.UserData.Snippets ?? (IReadOnlyList<SnippetEntry>)Array.Empty<SnippetEntry>();
+        var query = SnippetSearchBox?.Text ?? string.Empty;
+
+        if (!debounce && snippets.Count < 128)
+        {
+            var rows = BuildFilteredSnippetRows(snippets, query);
+            ApplyFilteredSnippetRows(rows, snippets.Count, query);
+            return;
+        }
+
+        _ = RefreshSnippetsAsync(snippets, query, debounce, generation, cts.Token);
+    }
+
+    private async Task RefreshSnippetsAsync(
+        IReadOnlyList<SnippetEntry> snippets,
+        string query,
+        bool debounce,
+        int generation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (debounce)
+            {
+                await Task.Delay(150, cancellationToken).ConfigureAwait(true);
+            }
+
+            if (cancellationToken.IsCancellationRequested || generation != _snippetRefreshGeneration || _session.Closing)
+            {
+                return;
+            }
+
+            var rows = await Task.Run(
+                () => BuildFilteredSnippetRows(snippets, query),
+                cancellationToken).ConfigureAwait(true);
+
+            if (cancellationToken.IsCancellationRequested || generation != _snippetRefreshGeneration || _session.Closing)
+            {
+                return;
+            }
+
+            ApplyFilteredSnippetRows(rows, snippets.Count, query);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private SnippetRow[] BuildFilteredSnippetRows(
+        IReadOnlyList<SnippetEntry> snippets,
+        string query)
+    {
+        var cached = _snippetRowCache;
+        SnippetRow[] allRows;
+        if (cached is { Source: var cachedSource } && ReferenceEquals(cachedSource, snippets))
+        {
+            allRows = cached.Value.Rows;
+        }
+        else
+        {
+            allRows = new SnippetRow[snippets.Count];
+            for (var i = 0; i < snippets.Count; i++)
+            {
+                allRows[i] = new SnippetRow(snippets[i]);
+            }
+
+            _snippetRowCache = (snippets, allRows);
+        }
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return allRows;
+        }
+
         var shown = SnippetSearch.Filter(snippets, query);
+        if (shown.Count == 0)
+        {
+            return [];
+        }
+
+        if (shown.Count == allRows.Length)
+        {
+            return allRows;
+        }
+
+        var byEntry = new Dictionary<SnippetEntry, SnippetRow>(allRows.Length, ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < allRows.Length; i++)
+        {
+            byEntry[allRows[i].Entry] = allRows[i];
+        }
+
+        var result = new SnippetRow[shown.Count];
+        for (var i = 0; i < shown.Count; i++)
+        {
+            result[i] = byEntry.TryGetValue(shown[i], out var row)
+                ? row
+                : new SnippetRow(shown[i]);
+        }
+
+        return result;
+    }
+
+    private void ApplyFilteredSnippetRows(SnippetRow[] rows, int totalCount, string query)
+    {
+        _snippetsViewDirty = false;
         var searching = !string.IsNullOrWhiteSpace(query);
-        SnippetList.ItemsSource = shown.Select(entry => new SnippetRow(entry)).ToArray();
-        SnippetCountText.Text = snippets.Count == 0 ? string.Empty : SnippetImportCopy.CountLabel(shown.Count, snippets.Count, searching);
+        _snippetRows.Reconcile(rows, static (left, right) => ReferenceEquals(left, right) || Equals(left.Entry, right.Entry));
+        SnippetCountText.Text = totalCount == 0 ? string.Empty : SnippetImportCopy.CountLabel(rows.Length, totalCount, searching);
 
         if (SnippetSearchClearButton is not null)
         {
@@ -104,7 +225,7 @@ public sealed partial class MainWindow
         }
 
         // THE SEARCH BOX STAYS WHILE IT HOLDS A QUERY, even if the list emptied under it, so the query can be cleared.
-        var showSearch = snippets.Count > 0 || searching;
+        var showSearch = totalCount > 0 || searching;
         if (SnippetSearchContainer is not null)
         {
             SnippetSearchContainer.Visibility = showSearch ? Visibility.Visible : Visibility.Collapsed;
@@ -119,15 +240,16 @@ public sealed partial class MainWindow
             UpdateSnippetsToolbarLayout(SnippetsToolbarGrid.ActualWidth);
         }
 
-        SnippetEmptyState.Visibility = snippets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        var noMatch = snippets.Count > 0 && shown.Count == 0;
+        SnippetEmptyState.Visibility = totalCount == 0 ? Visibility.Visible : Visibility.Collapsed;
+        var noMatch = totalCount > 0 && rows.Length == 0;
         SnippetNoMatchState.Visibility = noMatch ? Visibility.Visible : Visibility.Collapsed;
         SnippetNoMatchText.Text = noMatch ? $"No snippets match \u201C{query.Trim()}\u201D" : string.Empty;
-        SnippetList.Visibility = shown.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SnippetList.Visibility = rows.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSelectionDependentButtons();
     }
 
     private void SnippetSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
-        RefreshSnippetList(_settings.UserData.Snippets);
+        ScheduleSnippetRefresh(debounce: true);
 
     private void ClearSnippetSearchButton_Click(object sender, RoutedEventArgs e)
     {
@@ -428,14 +550,16 @@ public sealed partial class MainWindow
         string? staleNotice = null;
         while (true)
         {
-            var rows = SnippetImportReview.BuildRows(batch.Candidates, baseline).ToArray();
+            var rows = await Task.Run(() => SnippetImportReview.BuildRows(batch.Candidates, baseline).ToArray()).ConfigureAwait(true);
             var approved = await ShowSnippetReviewAsync(rows, batch.Notices, staleNotice).ConfigureAwait(true);
             if (approved is null)
             {
                 return;
             }
 
-            var result = await CommitVocabularyAsync(_session.SnippetImport.CommitAsync(baseline, approved)).ConfigureAwait(true);
+            var result = await CommitVocabularyAsync(
+                _session.SnippetImport.CommitAsync(baseline, approved),
+                UserDataRefreshScope.Snippets).ConfigureAwait(true);
             if (!result.Saved)
             {
                 SnippetImportReported?.Invoke(DiagnosticSnippetImport.ForReview(
@@ -443,7 +567,6 @@ public sealed partial class MainWindow
                 return;
             }
 
-            RefreshReusableUserDataViews();
             var outcome = result.Value;
             SnippetImportReported?.Invoke(DiagnosticSnippetImport.ForReview(
                 source,
@@ -600,7 +723,9 @@ public sealed partial class MainWindow
 
     private async void LoadExampleSnippetsButton_Click(object sender, RoutedEventArgs e)
     {
-        var saved = await CommitVocabularyAsync(_session.Vocabulary.RestoreStarterSnippetsAsync()).ConfigureAwait(true);
+        var saved = await CommitVocabularyAsync(
+            _session.Vocabulary.RestoreStarterSnippetsAsync(),
+            UserDataRefreshScope.Snippets).ConfigureAwait(true);
         if (!saved.Saved)
         {
             return;
@@ -647,7 +772,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        var saved = await CommitVocabularyAsync(_session.Vocabulary.SetSnippetKeywordAsync(typed)).ConfigureAwait(true);
+        var saved = await CommitVocabularyAsync(
+            _session.Vocabulary.SetSnippetKeywordAsync(typed),
+            UserDataRefreshScope.Snippets).ConfigureAwait(true);
         if (saved.Saved && saved.Value.Refusal is { } refusal)
         {
             ShowMessage("Keyword not saved", SnippetRefusalMessage(refusal, clash: null), InfoBarSeverity.Warning);

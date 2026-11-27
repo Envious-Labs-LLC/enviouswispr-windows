@@ -90,12 +90,9 @@ public sealed class SnippetExpander
         }
 
         var keyword = SnippetText.Normalize(vocabulary.Keyword);
-        var triggers = vocabulary.Snippets
-            .Select(snippet => (Snippet: snippet, Tokens: SnippetText.TriggerTokens(snippet.Name)))
-            .Where(candidate => candidate.Tokens.Count > 0)
-            .ToArray();
         var pieces = Split(text);
         var wordIndices = Enumerable.Range(0, pieces.Count).Where(index => !pieces[index].IsWhitespace).ToArray();
+        Dictionary<string, List<(SnippetEntry Snippet, IReadOnlyList<string> Tokens)>>? triggersByFirstToken = null;
 
         // SEEDED WITH ANY WHITESPACE BEFORE THE FIRST WORD. The walk below appends the gap that FOLLOWS
         // each word, so a leading run belongs to no word; on macOS it was silently dropped on every
@@ -122,10 +119,14 @@ public sealed class SnippetExpander
             // THE KEYWORD IS A CONSUMED TOKEN TOO, and it was the one the first macOS guard could not
             // see: "backslash. My email address is below" has its boundary on the keyword, which
             // normalisation strips. Every consumed token but the last is checked for a sentence end.
-            var hit = string.Equals(SnippetText.Normalize(token), keyword, StringComparison.Ordinal) &&
-                !SnippetText.EndsSentence(token)
-                    ? LongestMatch(triggers, pieces, wordIndices, cursor + 1)
-                    : null;
+            Match? hit = null;
+            if (cursor + 1 < wordIndices.Length &&
+                string.Equals(SnippetText.Normalize(token), keyword, StringComparison.Ordinal) &&
+                !SnippetText.EndsSentence(token))
+            {
+                triggersByFirstToken ??= BuildTriggerIndex(vocabulary.Snippets);
+                hit = LongestMatch(triggersByFirstToken, pieces, wordIndices, cursor + 1);
+            }
             if (hit is not { } match)
             {
                 output.Append(token);
@@ -258,12 +259,48 @@ public sealed class SnippetExpander
     /// Only an INTERIOR sentence end blocks; punctuation on the LAST token belongs to the trigger's
     /// surrounding sentence and is decided by <see cref="TrailingToRestore"/>.
     /// </remarks>
+    private static Dictionary<string, List<(SnippetEntry Snippet, IReadOnlyList<string> Tokens)>> BuildTriggerIndex(
+        IReadOnlyList<SnippetEntry> snippets)
+    {
+        var index = new Dictionary<string, List<(SnippetEntry, IReadOnlyList<string>)>>(StringComparer.Ordinal);
+        foreach (var snippet in snippets)
+        {
+            var tokens = SnippetText.TriggerTokens(snippet.Name);
+            if (tokens.Count == 0)
+            {
+                continue;
+            }
+
+            if (!index.TryGetValue(tokens[0], out var bucket))
+            {
+                bucket = new List<(SnippetEntry, IReadOnlyList<string>)>(1);
+                index[tokens[0]] = bucket;
+            }
+
+            bucket.Add((snippet, tokens));
+        }
+
+        return index;
+    }
+
     private static Match? LongestMatch(
-        (SnippetEntry Snippet, IReadOnlyList<string> Tokens)[] triggers,
+        Dictionary<string, List<(SnippetEntry Snippet, IReadOnlyList<string> Tokens)>> triggersByFirstToken,
         List<Piece> pieces,
         int[] wordIndices,
         int startingAt)
     {
+        if (startingAt >= wordIndices.Length)
+        {
+            return null;
+        }
+
+        var firstPiece = pieces[wordIndices[startingAt]].Text;
+        var normalizedFirst = SnippetText.Normalize(firstPiece);
+        if (!triggersByFirstToken.TryGetValue(normalizedFirst, out var triggers))
+        {
+            return null;
+        }
+
         Match? best = null;
         foreach (var (snippet, tokens) in triggers)
         {
@@ -276,7 +313,7 @@ public sealed class SnippetExpander
             for (var offset = 0; offset < tokens.Count; offset++)
             {
                 var piece = pieces[wordIndices[startingAt + offset]].Text;
-                if (!string.Equals(SnippetText.Normalize(piece), tokens[offset], StringComparison.Ordinal) ||
+                if ((offset > 0 && !string.Equals(SnippetText.Normalize(piece), tokens[offset], StringComparison.Ordinal)) ||
                     (offset < tokens.Count - 1 && SnippetText.EndsSentence(piece)))
                 {
                     matched = false;

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -7,30 +8,89 @@ internal static class TextSimilarity
 {
     public static double LevenshteinSimilarity(string left, string right)
     {
-        var a = left.EnumerateRunes().ToArray();
-        var b = right.EnumerateRunes().ToArray();
+        var a = ToRuneArray(left);
+        var b = ToRuneArray(right);
+        return LevenshteinSimilarity(a.AsSpan(), b.AsSpan());
+    }
+
+    internal static double LevenshteinSimilarity(
+        ReadOnlySpan<Rune> a,
+        ReadOnlySpan<Rune> b,
+        int maxAllowedDistance = int.MaxValue)
+    {
         if (a.Length == 0)
         {
             return b.Length == 0 ? 1 : 0;
         }
 
-        var previous = Enumerable.Range(0, b.Length + 1).ToArray();
-        var current = new int[b.Length + 1];
-        for (var i = 1; i <= a.Length; i++)
+        var maxLength = Math.Max(a.Length, b.Length);
+        if (Math.Abs(a.Length - b.Length) > maxAllowedDistance)
         {
-            current[0] = i;
-            for (var j = 1; j <= b.Length; j++)
-            {
-                current[j] = a[i - 1] == b[j - 1]
-                    ? previous[j - 1]
-                    : 1 + Math.Min(previous[j - 1], Math.Min(previous[j], current[j - 1]));
-            }
-
-            (previous, current) = (current, previous);
+            return 0.0;
         }
 
-        return 1 - ((double)previous[b.Length] / Math.Max(a.Length, b.Length));
+        if (b.Length == 0)
+        {
+            return 0.0;
+        }
+
+        var rowLength = b.Length + 1;
+        int[]? rented = rowLength > 128 ? ArrayPool<int>.Shared.Rent(rowLength * 2) : null;
+        try
+        {
+            Span<int> buffer = rented is null
+                ? stackalloc int[256]
+                : rented.AsSpan(0, rowLength * 2);
+            var previous = buffer[..rowLength];
+            var current = buffer.Slice(rowLength, rowLength);
+
+            for (var j = 0; j < rowLength; j++)
+            {
+                previous[j] = j;
+            }
+
+            for (var i = 1; i <= a.Length; i++)
+            {
+                current[0] = i;
+                var rowMin = i;
+                for (var j = 1; j <= b.Length; j++)
+                {
+                    var cost = a[i - 1] == b[j - 1]
+                        ? previous[j - 1]
+                        : 1 + Math.Min(previous[j - 1], Math.Min(previous[j], current[j - 1]));
+                    current[j] = cost;
+                    if (cost < rowMin)
+                    {
+                        rowMin = cost;
+                    }
+                }
+
+                if (rowMin > maxAllowedDistance)
+                {
+                    return 0.0;
+                }
+
+                var temp = previous;
+                previous = current;
+                current = temp;
+            }
+
+            var distance = previous[b.Length];
+            return distance > maxAllowedDistance
+                ? 0.0
+                : 1 - ((double)distance / maxLength);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<int>.Shared.Return(rented);
+            }
+        }
     }
+
+    internal static Rune[] ToRuneArray(string value) =>
+        value.EnumerateRunes().ToArray();
 
     public static string Soundex(string value)
     {

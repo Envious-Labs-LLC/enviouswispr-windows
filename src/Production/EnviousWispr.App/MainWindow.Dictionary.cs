@@ -459,7 +459,7 @@ public sealed partial class MainWindow
             }
 
             PublishSettings();
-            ApplySettingsToControls();
+            ApplyUserDataRefresh(UserDataRefreshScope.VocabularyPacks);
         };
 
         var actions = new StackPanel
@@ -664,9 +664,11 @@ public sealed partial class MainWindow
         try
         {
             // A NEW FILE PUT AT THE CHOSEN NAME, never a write through it (ExportFileWriter).
+            var customWords = _settings.UserData.CustomWords;
+            var serialized = await Task.Run(() => CustomWordImport.Write(customWords)).ConfigureAwait(true);
             await EnviousWispr.Services.UserData.ExportFileWriter.WriteReplacingAsync(
                 file.Path,
-                CustomWordImport.Write(_settings.UserData.CustomWords)).ConfigureAwait(true);
+                serialized).ConfigureAwait(true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -746,8 +748,10 @@ public sealed partial class MainWindow
     /// plan describes a list that may have changed - and saving its result then overwrites whatever
     /// changed it. The value comes back so the message describes what was actually stored.
     /// </remarks>
-    /// <summary>Takes a vocabulary change's answer onto the page: the refusal said, or the settings published and the controls refreshed.</summary>
-    private async Task<SettingsSaveResult<T>> CommitVocabularyAsync<T>(Task<SettingsSaveResult<T>> change)
+    /// <summary>Takes a vocabulary change's answer onto the page: the refusal said, or the settings published and the affected views refreshed.</summary>
+    private async Task<SettingsSaveResult<T>> CommitVocabularyAsync<T>(
+        Task<SettingsSaveResult<T>> change,
+        UserDataRefreshScope scope = UserDataRefreshScope.Dictionary)
     {
         var result = await change.ConfigureAwait(true);
         if (!result.Saved)
@@ -757,7 +761,7 @@ public sealed partial class MainWindow
         }
 
         PublishSettings();
-        ApplySettingsToControls();
+        ApplyUserDataRefresh(scope);
         return result;
     }
 
@@ -765,7 +769,8 @@ public sealed partial class MainWindow
     private async Task<bool> CommitVocabularyAsync(
         Task<SettingsSaveResult> change,
         string title,
-        string message = "The change was saved locally.")
+        string message = "The change was saved locally.",
+        UserDataRefreshScope scope = UserDataRefreshScope.Dictionary)
     {
         var result = await change.ConfigureAwait(true);
         if (!result.Saved)
@@ -775,9 +780,8 @@ public sealed partial class MainWindow
         }
 
         PublishSettings();
-        ApplySettingsToControls();
+        ApplyUserDataRefresh(scope);
         ShowMessage(title, message, InfoBarSeverity.Success);
-        RefreshReusableUserDataViews();
         return true;
     }
 
@@ -809,8 +813,47 @@ public sealed partial class MainWindow
         }
     }
 
+    private readonly EnviousWispr.App.Collections.BulkObservableCollection<DictionaryWordRow> _dictionaryRows = new();
+    private double[]? _wordFilterChipWidths;
+    private int _lastWordFilterChipSplitIndex = -1;
+    private CancellationTokenSource? _dictionaryRefreshCts;
+    private int _dictionaryRefreshGeneration;
+    private bool _dictionaryViewDirty;
+    private (IReadOnlyList<CustomWordEntry> Source, DictionaryWordRow[] Rows)? _dictionaryRowCache;
+
     private string _wordFilterCategory = "all";
     private bool _isDictionaryMassEdit;
+
+    private void InitializeUserDataUi()
+    {
+        if (DictionaryList is not null)
+        {
+            DictionaryList.ItemsSource = _dictionaryRows;
+        }
+
+        if (SnippetList is not null)
+        {
+            SnippetList.ItemsSource = _snippetRows;
+        }
+    }
+
+    private void ShutdownUserDataUi()
+    {
+        _dictionaryRefreshCts?.Cancel();
+        _dictionaryRefreshCts?.Dispose();
+        _dictionaryRefreshCts = null;
+        _snippetRefreshCts?.Cancel();
+        _snippetRefreshCts?.Dispose();
+        _snippetRefreshCts = null;
+    }
+
+    private void FlushPendingDictionaryRefresh()
+    {
+        if (_dictionaryViewDirty)
+        {
+            ScheduleDictionaryRefresh(debounce: false);
+        }
+    }
 
     private void WordFilterChip_Click(object sender, RoutedEventArgs e)
     {
@@ -826,7 +869,7 @@ public sealed partial class MainWindow
             WordFilterAcronymChip.Style = tag == "acronym" ? active : normal;
             WordFilterDomainChip.Style = tag == "domain" ? active : normal;
             WordFilterAutoLearnedChip.Style = tag == "auto-learned" ? active : normal;
-            RefreshDictionaryView();
+            ScheduleDictionaryRefresh(debounce: false);
         }
     }
 
@@ -852,30 +895,58 @@ public sealed partial class MainWindow
             return;
         }
 
-        var available = e.NewSize.Width;
-        var spacing = LayoutDouble("BrandSpacingXs");
-        foreach (var chip in allChips)
+        if (_wordFilterChipWidths is null || _wordFilterChipWidths.Length != allChips.Length)
         {
-            WordFilterChipsPrimaryRow.Children.Remove(chip);
-            WordFilterChipsOverflowRow.Children.Remove(chip);
-            chip.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            _wordFilterChipWidths = new double[allChips.Length];
+            for (var i = 0; i < allChips.Length; i++)
+            {
+                if (allChips[i].DesiredSize.Width <= 0)
+                {
+                    allChips[i].Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                }
+
+                _wordFilterChipWidths[i] = Math.Max(64, allChips[i].DesiredSize.Width);
+            }
         }
 
+        var available = e.NewSize.Width;
+        var spacing = LayoutDouble("BrandSpacingXs");
         var usedWidth = 0.0;
-        var overflowed = false;
-        foreach (var chip in allChips)
+        var splitIndex = allChips.Length;
+        for (var i = 0; i < allChips.Length; i++)
         {
-            var chipWidth = Math.Max(64, chip.DesiredSize.Width);
-            var nextWidth = usedWidth == 0 ? chipWidth : usedWidth + spacing + chipWidth;
-            if (!overflowed && nextWidth <= available)
+            var chipWidth = _wordFilterChipWidths[i];
+            var nextWidth = i == 0 ? chipWidth : usedWidth + spacing + chipWidth;
+            if (nextWidth <= available)
             {
-                WordFilterChipsPrimaryRow.Children.Add(chip);
                 usedWidth = nextWidth;
             }
             else
             {
-                overflowed = true;
-                WordFilterChipsOverflowRow.Children.Add(chip);
+                splitIndex = i;
+                break;
+            }
+        }
+
+        if (splitIndex == _lastWordFilterChipSplitIndex &&
+            WordFilterChipsPrimaryRow.Children.Count == splitIndex &&
+            WordFilterChipsOverflowRow.Children.Count == allChips.Length - splitIndex)
+        {
+            return;
+        }
+
+        _lastWordFilterChipSplitIndex = splitIndex;
+        WordFilterChipsPrimaryRow.Children.Clear();
+        WordFilterChipsOverflowRow.Children.Clear();
+        for (var i = 0; i < allChips.Length; i++)
+        {
+            if (i < splitIndex)
+            {
+                WordFilterChipsPrimaryRow.Children.Add(allChips[i]);
+            }
+            else
+            {
+                WordFilterChipsOverflowRow.Children.Add(allChips[i]);
             }
         }
 
@@ -926,30 +997,140 @@ public sealed partial class MainWindow
                 : Visibility.Visible;
         }
 
-        RefreshDictionaryView();
+        ScheduleDictionaryRefresh(debounce: true);
     }
 
-    private void RefreshDictionaryView()
+    private void ScheduleDictionaryRefresh(bool debounce)
     {
+        _dictionaryRefreshCts?.Cancel();
+        _dictionaryRefreshCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _dictionaryRefreshCts = cts;
+        var generation = ++_dictionaryRefreshGeneration;
         var allWords = _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
+        var category = _wordFilterCategory;
         var query = DictionarySearchBox?.Text?.Trim() ?? string.Empty;
-        var list = VocabularyPresenter.FilterWords(allWords, _wordFilterCategory, query)
-            .Select(entry => new DictionaryWordRow(entry))
-            .ToArray();
 
+        if (!debounce && allWords.Count < 128)
+        {
+            var rows = BuildFilteredDictionaryRows(allWords, category, query);
+            ApplyFilteredDictionaryRows(rows, allWords.Count);
+            return;
+        }
+
+        _ = RefreshDictionaryAsync(allWords, category, query, debounce, generation, cts.Token);
+    }
+
+    private async Task RefreshDictionaryAsync(
+        IReadOnlyList<CustomWordEntry> allWords,
+        string category,
+        string query,
+        bool debounce,
+        int generation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (debounce)
+            {
+                await Task.Delay(150, cancellationToken).ConfigureAwait(true);
+            }
+
+            if (cancellationToken.IsCancellationRequested || generation != _dictionaryRefreshGeneration || _session.Closing)
+            {
+                return;
+            }
+
+            var rows = await Task.Run(
+                () => BuildFilteredDictionaryRows(allWords, category, query),
+                cancellationToken).ConfigureAwait(true);
+
+            if (cancellationToken.IsCancellationRequested || generation != _dictionaryRefreshGeneration || _session.Closing)
+            {
+                return;
+            }
+
+            ApplyFilteredDictionaryRows(rows, allWords.Count);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private DictionaryWordRow[] BuildFilteredDictionaryRows(
+        IReadOnlyList<CustomWordEntry> allWords,
+        string category,
+        string query)
+    {
+        var cached = _dictionaryRowCache;
+        DictionaryWordRow[] allRows;
+        if (cached is { Source: var cachedSource } && ReferenceEquals(cachedSource, allWords))
+        {
+            allRows = cached.Value.Rows;
+        }
+        else
+        {
+            allRows = new DictionaryWordRow[allWords.Count];
+            for (var i = 0; i < allWords.Count; i++)
+            {
+                allRows[i] = new DictionaryWordRow(allWords[i]);
+            }
+
+            _dictionaryRowCache = (allWords, allRows);
+        }
+
+        var noCategoryFilter = string.IsNullOrWhiteSpace(category) ||
+            string.Equals(category, "all", StringComparison.OrdinalIgnoreCase);
+        if (noCategoryFilter && string.IsNullOrEmpty(query))
+        {
+            return allRows;
+        }
+
+        var matching = VocabularyPresenter.FilterWords(allWords, category, query);
+        if (matching.Count == 0)
+        {
+            return [];
+        }
+
+        if (matching.Count == allRows.Length)
+        {
+            return allRows;
+        }
+
+        var byEntry = new Dictionary<CustomWordEntry, DictionaryWordRow>(allRows.Length, ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < allRows.Length; i++)
+        {
+            byEntry[allRows[i].Entry] = allRows[i];
+        }
+
+        var result = new DictionaryWordRow[matching.Count];
+        for (var i = 0; i < matching.Count; i++)
+        {
+            result[i] = byEntry.TryGetValue(matching[i], out var row)
+                ? row
+                : new DictionaryWordRow(matching[i]);
+        }
+
+        return result;
+    }
+
+    private void ApplyFilteredDictionaryRows(DictionaryWordRow[] rows, int totalCount)
+    {
+        _dictionaryViewDirty = false;
         if (DictionaryList is not null)
         {
-            DictionaryList.ItemsSource = list;
-            UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, list.Length);
+            _dictionaryRows.Reconcile(rows, static (left, right) => ReferenceEquals(left, right) || Equals(left.Entry, right.Entry));
+            UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, rows.Length);
         }
+
         if (WordCountText is not null)
         {
-            var total = allWords.Count;
-            var wordUnit = total == 1 ? "WORD" : "WORDS";
-            WordCountText.Text = list.Length == total
-                ? $"{total} {wordUnit}"
-                : $"Showing {list.Length} of {total} {wordUnit}";
+            var wordUnit = totalCount == 1 ? "WORD" : "WORDS";
+            WordCountText.Text = rows.Length == totalCount
+                ? $"{totalCount} {wordUnit}"
+                : $"Showing {rows.Length} of {totalCount} {wordUnit}";
         }
+
         UpdateSelectionDependentButtons();
     }
 

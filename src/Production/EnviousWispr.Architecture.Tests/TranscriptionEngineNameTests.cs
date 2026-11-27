@@ -484,7 +484,8 @@ public sealed partial class DesignSystemTokenTests
             var col = Assert.Single(columnDefinitions);
             Assert.Equal("*", (string?)col.Attribute("Width"));
             Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)col.Attribute("MaxWidth"));
-            var container = grid.Elements().Single(e => e.Name.LocalName == "StackPanel");
+            var container = grid.Elements().Single(e =>
+                e.Name.LocalName is "StackPanel" or "Grid");
             Assert.Null(container.Attribute("MaxWidth"));
         }
 
