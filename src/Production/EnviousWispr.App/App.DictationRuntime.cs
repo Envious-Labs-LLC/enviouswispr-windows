@@ -140,13 +140,14 @@ public partial class App
         var canonicalGesture = parsedGesture.ToString();
         var current = _presentation?.Settings.Current ?? _settings;
         var conflicts = HotkeyConflictDetector.Find(
-            [
+            new (string Role, string Text)[]
+            {
                 ("Recording", canonicalGesture),
                 ("Cancel", current.Preferences.Dictation.CancelGesture),
                 ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
                 ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
                 ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
-            ]);
+            });
         if (conflicts.Count > 0)
         {
             return (false, HotkeyConflictDetector.Describe(conflicts));

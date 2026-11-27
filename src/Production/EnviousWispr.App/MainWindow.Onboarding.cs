@@ -1003,7 +1003,7 @@ public sealed partial class MainWindow
         _onboarding.SelectPolish(kind, cloudModelId: currentModel);
         SyncLiveInventoryToOnboarding();
         QueueOnboardingCheckpointSave();
-        PopulateOnboardingCloudModels(provider, [defaultModel], currentModel);
+        PopulateOnboardingCloudModels(provider, new[] { defaultModel }, currentModel);
         RefreshOnboardingCloudKeyStatusText(provider);
         OnboardingCloudCheckKeyButton.IsEnabled = !string.IsNullOrWhiteSpace(OnboardingCloudApiKeyBox.Password) ||
             _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
@@ -2420,7 +2420,7 @@ public sealed partial class MainWindow
             {
                 var defaultModel = _session.Provider.RecommendedModel(_onboardingCloudProvider)
                     ?? GetDefaultCloudModelFallback(_onboardingCloudProvider);
-                PopulateOnboardingCloudModels(_onboardingCloudProvider, [defaultModel], _onboarding.Choices.CloudModelId ?? defaultModel);
+                PopulateOnboardingCloudModels(_onboardingCloudProvider, new[] { defaultModel }, _onboarding.Choices.CloudModelId ?? defaultModel);
                 RefreshOnboardingCloudKeyStatusText(_onboardingCloudProvider);
             }
         }
