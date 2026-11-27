@@ -86,7 +86,7 @@ public sealed partial class MainWindow
     /// this cannot be the one route into the setting that skips the checks. It also leaves the person
     /// looking at what they are about to agree to.
     /// </remarks>
-    private void HandsFreeGestureButton_Click(object sender, RoutedEventArgs e)
+    internal void HandsFreeGestureButton_Click(object sender, RoutedEventArgs e)
     {
         CancelKeybindCapture();
         HotkeyTextBox.Focus(FocusState.Programmatic);
@@ -94,12 +94,12 @@ public sealed partial class MainWindow
         _ = TriggerAutoSaveAsync();
     }
 
-    private void PushToTalkSegmentButton_Click(object sender, RoutedEventArgs e)
+    internal void PushToTalkSegmentButton_Click(object sender, RoutedEventArgs e)
     {
         SetRecordingMode(0, triggerSave: true);
     }
 
-    private void ToggleSegmentButton_Click(object sender, RoutedEventArgs e)
+    internal void ToggleSegmentButton_Click(object sender, RoutedEventArgs e)
     {
         SetRecordingMode(1, triggerSave: true);
     }
@@ -127,7 +127,7 @@ public sealed partial class MainWindow
         ApplySegmentButtonState(ToggleSegmentButton, !pttSelected);
     }
 
-    private void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)
+    internal void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string tag } ||
             TryResolveCaptureSlot(tag, out var slot, out var box, out var button) is false)
@@ -144,7 +144,7 @@ public sealed partial class MainWindow
         StartKeybindCapture(slot, box, button);
     }
 
-    private void HotkeyBoxTapped(object sender, TappedRoutedEventArgs e)
+    internal void HotkeyBoxTapped(object sender, TappedRoutedEventArgs e)
     {
         if (sender is not TextBox box ||
             TryResolveCaptureSlot(box, out var slot, out var button) is false)
@@ -383,7 +383,7 @@ public sealed partial class MainWindow
     /// Disabled rather than hidden. A control that vanishes leaves the user wondering whether they
     /// imagined it; a disabled one with the switch beside it says what turns it back on.
     /// </remarks>
-    private void AutoStopToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void AutoStopToggle_Toggled(object sender, RoutedEventArgs e)
     {
         UpdateAutoStopAvailability();
         _ = TriggerAutoSaveAsync();
@@ -424,7 +424,7 @@ public sealed partial class MainWindow
         ];
     }
 
-    private void HotkeyBoxTextChanged(object sender, TextChangedEventArgs e) => RefreshKeybindConflicts();
+    internal void HotkeyBoxTextChanged(object sender, TextChangedEventArgs e) => RefreshKeybindConflicts();
 
     /// <summary>Names a clash while it is being made, not when Save refuses it.</summary>
     /// <remarks>
@@ -436,7 +436,13 @@ public sealed partial class MainWindow
     /// </remarks>
     private void RefreshKeybindConflicts()
     {
-        if (_isUpdatingCaptureDisplay)
+        if (_isUpdatingCaptureDisplay
+            || !IsSettingsPageLoaded
+            || HotkeyTextBox is null
+            || CancelHotkeyTextBox is null
+            || QuickAddHotkeyTextBox is null
+            || PasteLastHotkeyTextBox is null
+            || CopyLastHotkeyTextBox is null)
         {
             return;
         }
@@ -485,7 +491,7 @@ public sealed partial class MainWindow
                 : Visibility.Visible;
     }
 
-    private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    internal void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (sender is not TextBox box)
         {
@@ -584,7 +590,7 @@ public sealed partial class MainWindow
     /// wired to nothing - which had already happened once on this project and was caught by reading
     /// rather than by shipping.
     /// </remarks>
-    private void HotkeyBoxKeyUp(object sender, KeyRoutedEventArgs e)
+    internal void HotkeyBoxKeyUp(object sender, KeyRoutedEventArgs e)
     {
         if (sender is not TextBox box)
         {

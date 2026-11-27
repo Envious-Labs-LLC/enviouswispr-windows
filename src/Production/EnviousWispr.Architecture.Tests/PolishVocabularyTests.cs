@@ -261,8 +261,7 @@ public sealed class CloudPolishCarriesNoDictionaryTests
     {
         // If somebody rewrites the Permissions copy to allow this, that is a product decision and
         // this test should be the thing that makes them come and change it deliberately.
-        var markup = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(RepositoryRoot());
 
         Assert.Contains(
             "dictionaries, snippets, and history stay on this PC",

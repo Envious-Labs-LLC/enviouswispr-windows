@@ -464,8 +464,7 @@ public sealed partial class DesignSystemTokenTests
     public void EveryMacSettingsSectionHasAWindowsHome()
     {
         var swift = File.ReadAllText(GetMacSectionSnapshotPath());
-        var markup = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(FindRepositoryRoot());
 
         if (swift.Contains("enum SettingsPage"))
         {
@@ -927,9 +926,8 @@ public sealed partial class DesignSystemTokenTests
             "These pill actions are not answered by name anywhere in the handler, so pressing their "
                 + "button lands on the default page: " + string.Join(", ", unmapped));
 
-        var declaredTags = XDocument
-            .Load(Path.Combine(
-                repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"))
+        var declaredTags = AppXamlSources
+            .LoadMainWindowAndPagesDocument(repositoryRoot)
             .Descendants()
             .Select(element => (string?)element.Attribute("Tag"))
             .Where(tag => tag is not null)
@@ -1472,13 +1470,24 @@ public sealed partial class DesignSystemTokenTests
             // invisible here: its direct writes were never seen, and its announcement was reported
             // missing. Every file of the class is read as one. Ref: #211.
             var stem = Path.GetFileNameWithoutExtension(markup);
+            var isExtractedPageView = string.Equals(
+                Path.GetFileName(Path.GetDirectoryName(markup)),
+                "Pages",
+                StringComparison.OrdinalIgnoreCase);
+            var companionSources = new[] { codeBehind }
+                .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(markup)!, stem + ".*.cs")
+                    .Where(file => !string.Equals(file, codeBehind, StringComparison.OrdinalIgnoreCase))
+                    .Order(StringComparer.Ordinal));
+            if (isExtractedPageView)
+            {
+                companionSources = companionSources.Concat(
+                    Directory.EnumerateFiles(app, "MainWindow*.cs")
+                        .Order(StringComparer.Ordinal));
+            }
+
             var text = string.Join(
                 "\n",
-                new[] { codeBehind }
-                    .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(markup)!, stem + ".*.cs")
-                        .Where(file => !string.Equals(file, codeBehind, StringComparison.OrdinalIgnoreCase))
-                        .Order(StringComparer.Ordinal))
-                    .Select(File.ReadAllText));
+                companionSources.Select(File.ReadAllText));
             foreach (var region in regions)
             {
                 // A DIRECT WRITE IS ONLY A DEFECT WHEN NOTHING ANNOUNCES THAT REGION BY NAME. Two
@@ -2465,7 +2474,8 @@ public sealed partial class DesignSystemTokenTests
         // Every page must be in the row BELOW it. A page left in row 0 is overlapped again, and
         // the symptom - a heading rendered on the notification's background - is easy to miss.
         var pages = grid.Elements()
-            .Where(child => child.Name.LocalName == "ScrollViewer")
+            .Where(child => child.Name.LocalName == "ScrollViewer"
+                || string.Equals((string?)child.Attribute(XName.Get("Name", XamlNamespace)), "HistoryPage", StringComparison.Ordinal))
             .ToArray();
         Assert.True(pages.Length > 0, "No pages were found in the content Grid.");
         foreach (var page in pages)
@@ -2474,6 +2484,13 @@ public sealed partial class DesignSystemTokenTests
             Assert.True(
                 (string?)page.Attribute("Grid.Row") == "1",
                 $"Page '{name}' is not in the content row, so the notification bar overlaps it.");
+        }
+
+        var pagesCode = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.Pages.cs"));
+        foreach (var deferredField in new[] { "_whatsNewPageView", "_dictionaryPageView", "_snippetsPageView", "_settingsPageView" })
+        {
+            Assert.Contains($"Grid.SetRow({deferredField}, 1);", pagesCode, StringComparison.Ordinal);
         }
 
         Assert.Null((string?)bar.Attribute("Canvas.ZIndex"));
@@ -2555,12 +2572,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     private static XDocument LoadMainWindow() =>
-        XDocument.Load(Path.Combine(
-            FindRepositoryRoot(),
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml"));
+        AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
 
     private static XElement FindNamedElement(XDocument document, string name) =>
         document.Descendants().Single(element =>
@@ -2873,8 +2885,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryRowCommittedToggleKeepsItsLabelOutsideTheSwitch()
     {
-        var markup = XDocument.Load(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
 
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
         var toggles = markup.Descendants()
@@ -3099,8 +3110,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EachChoiceInTheStrictnessPickerCarriesTheMeaningItShows()
     {
-        var markup = XDocument.Load(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
 
         var box = markup.Descendants()
@@ -3217,23 +3227,29 @@ public sealed partial class DesignSystemTokenTests
             .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot())
             .ToArray();
 
-        var constructor = roots.SelectMany(root => root.DescendantNodes().OfType<ConstructorDeclarationSyntax>())
-            .FirstOrDefault(one => one.Body is not null &&
-                Calls(one.Body, "InitializeComponent") is not null);
-        Assert.True(constructor is not null, "The window has no constructor that builds its own controls.");
+        var loader = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
+            .FirstOrDefault(method => method.Identifier.Text == "EnsureDictionaryPageLoaded" && method.Body is not null);
+        Assert.True(loader is not null, "The window has no EnsureDictionaryPageLoaded method.");
 
-        // THE VERY NEXT STATEMENT, not merely somewhere later. Anything allowed to run in between
-        // can set the picker to something else and the reset then does nothing visible, which is a
-        // single ordinary line that leaves every other rule here satisfied.
-        var statements = constructor!.Body!.Statements;
-        var built = statements
-            .Select((statement, index) => (statement, index))
-            .First(one => Calls(one.statement, "InitializeComponent") is not null)
-            .index;
+        // ResetMatchStrictness must run during DictionaryPage realization immediately before wiring auto-save or syncing controls.
+        var statements = loader!.Body!.Statements;
+        int FindStatementIndex(string methodName) =>
+            statements
+                .Select((statement, index) => (statement, index))
+                .FirstOrDefault(one => Calls(one.statement, methodName) is not null)
+                .index;
+        bool HasCall(string methodName) =>
+            statements.Any(statement => Calls(statement, methodName) is not null);
+
         Assert.True(
-            built + 1 < statements.Count && Calls(statements[built + 1], reset) is not null,
-            $"The window does not call {reset} immediately after building its controls, so what the "
-                + "picker starts on is whatever ran in between.");
+            HasCall(reset) && HasCall("WireDictionaryPageAutoSave") && HasCall("ApplySettingsToDictionaryPageControls"),
+            $"EnsureDictionaryPageLoaded must call {reset}, WireDictionaryPageAutoSave, and ApplySettingsToDictionaryPageControls.");
+        var resetIndex = FindStatementIndex(reset);
+        var wireIndex = FindStatementIndex("WireDictionaryPageAutoSave");
+        var applyIndex = FindStatementIndex("ApplySettingsToDictionaryPageControls");
+        Assert.True(
+            resetIndex == wireIndex - 1 && wireIndex < applyIndex,
+            $"The window must call {reset} immediately before WireDictionaryPageAutoSave and ApplySettingsToDictionaryPageControls.");
 
         var resetBody = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .FirstOrDefault(method => method.Identifier.Text == reset);
@@ -3348,8 +3364,7 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EverySectionHeaderTakesItsGlyphFromOneAlreadyOnScreen()
     {
-        var markup = XDocument.Load(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
 
         var eyebrows = markup.Descendants()
@@ -3395,7 +3410,7 @@ public sealed partial class DesignSystemTokenTests
             var bound = (string?)marks[0].Attribute("Glyph");
             var source = bound is null
                 ? null
-                : Regex.Match(bound, @"^\{x:Bind\s+(\w+)\.Glyph,\s*Mode=OneTime\s*\}$") is { Success: true } hit
+                : Regex.Match(bound, @"^\{x:Bind\s+(?:Host\.)?(\w+)\.Glyph,\s*Mode=OneTime\s*\}$") is { Success: true } hit
                     ? hit.Groups[1].Value
                     : null;
             if (source is null)
@@ -3791,15 +3806,24 @@ public sealed partial class DesignSystemTokenTests
             Assert.Equal("{StaticResource BrandNumberBoxStyle}", (string?)box.Attribute("Style"));
         }
 
-        // WindowRoot TextControl* brushes must live inside ThemeDictionaries so switching or mismatched OS themes update dynamically.
-        var windowRoot = FindNamedElement(window, "WindowRoot");
-        var themeDictionaries = windowRoot
+        // ControlBrushes.xaml holds TextControl* brushes inside ThemeDictionaries and is merged into App.xaml so theme switches update both MainWindow and lazily instantiated PageViews.
+        var appXamlDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "App.xaml"));
+        var mergedBrushSource = appXamlDoc
+            .Descendants()
+            .FirstOrDefault(e => e.Name.LocalName == "ResourceDictionary"
+                && string.Equals((string?)e.Attribute("Source"), "Theme/ControlBrushes.xaml", StringComparison.Ordinal));
+        Assert.NotNull(mergedBrushSource);
+
+        var controlBrushesDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "ControlBrushes.xaml"));
+        var themeDictionaries = controlBrushesDoc
             .Descendants()
             .Where(e => e.Name.LocalName == "ResourceDictionary" && e.Attribute(xaml + "Key") is not null)
             .ToDictionary(e => (string)e.Attribute(xaml + "Key")!, StringComparer.Ordinal);
         foreach (var theme in new[] { "Light", "Dark", "HighContrast" })
         {
-            Assert.True(themeDictionaries.ContainsKey(theme), $"WindowRoot missing ThemeDictionary '{theme}'.");
+            Assert.True(themeDictionaries.ContainsKey(theme), $"ControlBrushes.xaml missing ThemeDictionary '{theme}'.");
             var keys = themeDictionaries[theme].Elements()
                 .Select(e => (string?)e.Attribute(xaml + "Key"))
                 .ToHashSet(StringComparer.Ordinal);

@@ -167,99 +167,14 @@ public sealed partial class MainWindow : Window, IDisposable
         _dataDirectory = launch.DataDirectory;
 
         InitializeComponent();
-
-        // THE PICKER STARTS ON THE ORDINARY RULE BY NAME, NOT BY POSITION. Starting it on whichever
-        // item happens to be listed first is the same coupling this feature just removed, wearing
-        // the word "default" as a coincidence rather than as a choice.
-        ResetMatchStrictness();
-        UppercaseSectionEyebrows();
+        InitializePageRegistry();
         PlaceSidebarResizeHandle();
 
-        PolishProviderComboBox.ItemsSource = PolishProviderChoices;
-
-        // Days are whole days. Without a formatter a NumberBox keeps and DISPLAYS a fraction:
-        // measured on the running app, "12.7" was accepted and shown as 12.7, then stored as 12 by
-        // the save path's cast. No crash and no bad state - the defect is that the control shows a
-        // precision it does not honour, and the user is never told their 12.7 became 12.
-        //
-        // THE ROUNDER IS THE PART THAT DOES THE WORK. FractionDigits is a MINIMUM number of
-        // fraction digits, not a maximum: it stops zero-padding and it does not round anything.
-        // A formatter carrying only FractionDigits = 0 was measured on the running app and 12.7
-        // survived both the display and the value unchanged - it compiled, it was attached, and
-        // it did nothing. Vendor documentation for NumberBox pairs a NumberRounder with the
-        // formatter for exactly this reason.
-        DiagnosticRetentionDaysBox.NumberFormatter = new DecimalFormatter
-        {
-            FractionDigits = 0,
-            IsDecimalPointAlwaysDisplayed = false,
-            IsGrouped = false,
-            NumberRounder = new IncrementNumberRounder
-            {
-                Increment = 1,
-                RoundingAlgorithm = RoundingAlgorithm.RoundHalfUp,
-            },
-        };
-
-        // A keybind field waiting for a keystroke must not let the system-wide hook act on it.
-        // Focus is what the hook needs to know, so focus is what is reported - see
-        // KeybindCaptureActiveChanged.
-        // A CHORD HALF-CAPTURED IN ONE FIELD NEVER FINISHES IN ANOTHER: focus moving either way forgets it, so a set
-        // begun here cannot be completed there, nor a release seen elsewhere leave it held. Ref: #66 review.
-        foreach (var box in new[] { HotkeyTextBox, CancelHotkeyTextBox, QuickAddHotkeyTextBox, PasteLastHotkeyTextBox, CopyLastHotkeyTextBox })
-        {
-            box.GotFocus += (_, _) => { ForgetKeybindChord(); KeybindCaptureActiveChanged?.Invoke(true); };
-            box.LostFocus += (_, _) =>
-            {
-                ForgetKeybindChord();
-                if (_keybindCaptureSession is not null && ReferenceEquals(box, _capturingBox))
-                {
-                    DispatcherQueue.TryEnqueue(() =>
-                    {
-                        if (_keybindCaptureSession is null || _capturingBox is null)
-                        {
-                            return;
-                        }
-
-                        var focused = Content?.XamlRoot is { } root
-                            ? FocusManager.GetFocusedElement(root)
-                            : null;
-                        if (!ReferenceEquals(focused, _capturingBox) && !ReferenceEquals(focused, _capturingButton))
-                        {
-                            CancelKeybindCapture();
-                        }
-                    });
-                    return;
-                }
-
-                KeybindCaptureActiveChanged?.Invoke(false);
-                _ = TriggerAutoSaveAsync();
-            };
-        }
-
-        // Subscribed HERE rather than with a KeyDown="" attribute in the markup, and the
-        // difference is the whole fix. A XAML attribute subscribes with handledEventsToo:false,
-        // so the handler stops being called the moment focus is on one of the cards: a focused
-        // RadioButton marks the arrow handled before it reaches the list.
-        //
-        // The handler's last act is to focus the newly selected card, so it defeated itself -
-        // exactly one arrow worked per group, then they went dead. Measured: with focus on the
-        // list, Down moved selection and focus correctly; with focus on a card, Down did nothing.
-        // Same key, same page, same handler, only the focused element differed.
-        foreach (var list in ChoiceLists())
-        {
-            list.AddHandler(
-                UIElement.KeyDownEvent,
-                new KeyEventHandler(ChoiceListKeyDown),
-                handledEventsToo: true);
-        }
         _recordingSoundPlayer = new RecordingSoundCuePlayer(
             onPlaybackFailed: OnRecordingSoundCueFailed);
         _recordingSoundCoordinator = new RecordingSoundCueCoordinator(PlayRecordingSoundCue);
         PreloadRecordingSoundsInBackground(_selectedRecordingSoundPairing);
-        InitializeChimeCards();
-        SetTranscribeFileStep(1);
         _overlayWindow = new DictationOverlayWindow();
-        InitializePillPreview();
         _audioPlayback = new WindowsAudioPlaybackService(DispatcherQueue);
         _audioPlayback.StateChanged += OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed += OnAudioPlaybackFailed;
@@ -286,21 +201,12 @@ public sealed partial class MainWindow : Window, IDisposable
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
-        // The caption glyphs follow the theme from here, and from nowhere else. Subscribing to the
-        // resolved theme rather than calling this from each place a theme can change is what makes
-        // it correct for the case nobody remembers: the user leaves the app on "Use Windows
-        // setting" and Windows itself switches at sunset.
+        // Caption glyphs follow the resolved theme automatically, while loaded pages refresh via the registry.
         ApplyCaptionButtonColors();
         WindowRoot.ActualThemeChanged += (_, _) =>
         {
             ApplyCaptionButtonColors();
-            UpdateChimeCardsVisuals();
-            UpdateRecordingModeButtons();
-            UpdateThemeSegmentButtons();
-            RenderSpeechEngineCards();
-            RefreshLivePreviewSectionPresentation();
-            UpdateOverlayPositionSegmentButtons();
-            UpdateHistoryFilterSegmentButtons();
+            _pageRegistry.NotifyThemeChanged();
         };
         TryUseMicaBackdrop();
         ConfigureMinimumWindowWidth();
@@ -313,31 +219,22 @@ public sealed partial class MainWindow : Window, IDisposable
         Activated += OnWindowActivated;
         Closed += (_, _) => CancelKeybindCapture();
 
-        // BUILT FROM WHAT WAS WRITTEN DOWN, so somebody who has already been asked three times about
-        // Spanish is not asked three more times because they restarted the app.
+        // Preserve persisted language offer history across restarts.
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
+        _installedVersionDisplay = installedVersion ?? string.Empty;
+        TitleBarVersionText.Text = FormatTitleBarVersion(installedVersion, assemblyVersion);
+        _buildInfoText = $"{releaseIdentity.DisplayName} {assemblyVersion} · {releaseIdentity.ChannelName}";
+        _releaseNotesIdentity = _buildInfoText;
+
         _languageSuggestions = new LanguageLockSuggester(settings.LanguageOfferHistory);
         ApplyTheme(settings.Preferences.Theme);
         ApplySettingsToControls();
-        WireSettingsAutoSave();
         ShowOnboarding(!settings.HasCompletedOnboarding);
         ProductNavigation.SelectedItem = HistoryNavItem;
-        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
-        TitleBarVersionText.Text = FormatTitleBarVersion(installedVersion, assemblyVersion);
-        BuildInfoText.Text = $"{releaseIdentity.DisplayName} {assemblyVersion} · {releaseIdentity.ChannelName}";
-        WhatsNewBuildInfoText.Text = BuildInfoText.Text;
 
-        // THE MARK IS ON UNTIL THIS BUILD'S NOTES HAVE BEEN OPENED. Comparing the stored string with
-        // the current one is the whole rule: a fresh install has stored nothing, so the notes are
-        // new to them, which is true; an update changes the string, so the mark comes back.
-        _releaseNotesIdentity = BuildInfoText.Text;
+        // Keep release notes unread mark active until What's New is opened on this build.
         ShowReleaseNotesMark(
             ReleaseNotesMark.IsUnread(settings.LastSeenReleaseNotes, _releaseNotesIdentity));
-        SetLiveText(
-            UpdateStatusText,
-            _storeInstalled
-                ? $"Version {installedVersion} is installed from the Microsoft Store."
-                : NotFromStoreSentence);
-        CheckForUpdatesButton.IsEnabled = _storeInstalled;
         if (settingsLoadStatus is SettingsLoadStatus.Invalid or SettingsLoadStatus.Migrated)
         {
             ShowMessage(
@@ -472,7 +369,8 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         else
         {
-            FinishOnboardingButton.Focus(FocusState.Programmatic);
+            EnsureOnboardingViewLoaded();
+            FinishOnboardingButton?.Focus(FocusState.Programmatic);
         }
     }
 
@@ -829,8 +727,8 @@ public sealed partial class MainWindow : Window, IDisposable
     public void ShutdownProductWindows()
     {
         _shuttingDownProductWindows = true;
-        // DETACHED, NOT JUST STOPPED. A timer left attached can still tick during shutdown and raise
-        // an announcement for a window that is going away.
+        // Tear down loaded pages and detach any queued timers or CTS instances before shutdown.
+        _pageRegistry.ShutdownLoadedPages();
         ShutdownHistoryUi();
         ShutdownUserDataUi();
         _audioPlayback.StateChanged -= OnAudioPlaybackStateChanged;
@@ -853,6 +751,7 @@ public sealed partial class MainWindow : Window, IDisposable
             _deviceCatalog = null;
         }
 
+        _overlayWindow.PreviewActionPressed -= OnOverlayPreviewActionPressed;
         _overlayWindow.Shutdown();
     }
 
@@ -860,9 +759,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void SetOnboardingReliabilityNotice(string title, string message)
     {
-        OnboardingReliabilityInfoBar.Title = title;
-        OnboardingReliabilityInfoBar.Message = message;
-        OnboardingReliabilityInfoBar.IsOpen = true;
+        _pendingOnboardingReliabilityNotice = (title, message);
+        if (OnboardingReliabilityInfoBar is not null)
+        {
+            OnboardingReliabilityInfoBar.Title = title;
+            OnboardingReliabilityInfoBar.Message = message;
+            OnboardingReliabilityInfoBar.IsOpen = true;
+        }
     }
 
     public void SetReliabilityNotice(string title, string message, bool isError = false) =>
@@ -1076,7 +979,7 @@ public sealed partial class MainWindow : Window, IDisposable
         return null;
     }
 
-    private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+    internal void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
 
     private static void UpdateListAndEmptyStateVisibility(
@@ -1254,17 +1157,28 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ShowOnboarding(bool show)
     {
-        OnboardingView.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        ProductNavigation.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
         if (show)
         {
-            // EVERY SHOWING IS A NEW VISIT FROM THE WELCOME: a first run, or "Run setup again" on Diagnostics.
-            BeginOnboardingVisit();
-            FinishOnboardingButton.Focus(FocusState.Programmatic);
-            OnboardingView.LayoutUpdated += FitWindowToOnboardingOnce;
+            EnsureOnboardingViewLoaded();
+            ProductNavigation.Visibility = Visibility.Collapsed;
+            if (OnboardingView is not null)
+            {
+                OnboardingView.Visibility = Visibility.Visible;
+                OnboardingView.LayoutUpdated += FitWindowToOnboardingOnce;
+                // EVERY SHOWING IS A NEW VISIT FROM THE WELCOME: a first run, or "Run setup again" on Diagnostics.
+                BeginOnboardingVisit();
+                FinishOnboardingButton?.Focus(FocusState.Programmatic);
+            }
         }
         else
         {
+            if (OnboardingView is not null)
+            {
+                OnboardingView.LayoutUpdated -= FitWindowToOnboardingOnce;
+                OnboardingView.Visibility = Visibility.Collapsed;
+            }
+
+            ProductNavigation.Visibility = Visibility.Visible;
             StopOnboardingTimers();
         }
 
@@ -1296,7 +1210,12 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void FitWindowToOnboardingOnce(object? sender, object e)
     {
-        if (OnboardingContent.DesiredSize.Height <= 0 || OnboardingFooter.DesiredSize.Height <= 0 || OnboardingView.ActualHeight <= 0)
+        if (OnboardingView is null
+            || OnboardingContent is null
+            || OnboardingFooter is null
+            || OnboardingContent.DesiredSize.Height <= 0
+            || OnboardingFooter.DesiredSize.Height <= 0
+            || OnboardingView.ActualHeight <= 0)
         {
             return;
         }
@@ -1338,19 +1257,18 @@ public sealed partial class MainWindow : Window, IDisposable
             ? new Thickness(16, 8, 16, 12)
             : new Thickness(0, 12, 0, 0);
 
-        var settingsPage = resolvedTag.StartsWith("settings-", StringComparison.Ordinal);
-        HistoryPage.Visibility = isHistoryPage ? Visibility.Visible : Visibility.Collapsed;
-        if (resolvedTag == "history")
+        var pageKey = PageKeyForTag(resolvedTag);
+        var activePage = _pageRegistry.ActivateContentPage(pageKey);
+
+        if (pageKey == Pages.WindowPageKey.History)
         {
             AnnounceHistoryOnPageShown();
         }
-        WhatsNewPage.Visibility = resolvedTag == "whats-new" ? Visibility.Visible : Visibility.Collapsed;
-        if (resolvedTag == "whats-new")
+        else if (pageKey == Pages.WindowPageKey.WhatsNew)
         {
             _ = MarkReleaseNotesSeenAsync();
         }
-        DictionaryPage.Visibility = resolvedTag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
-        if (resolvedTag == "dictionary")
+        else if (pageKey == Pages.WindowPageKey.Dictionary)
         {
             if (!string.IsNullOrWhiteSpace(targetTab))
             {
@@ -1364,30 +1282,23 @@ public sealed partial class MainWindow : Window, IDisposable
 
             FlushPendingDictionaryRefresh();
         }
-        SnippetsPage.Visibility = resolvedTag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
-        if (resolvedTag == "snippets")
+        else if (pageKey == Pages.WindowPageKey.Snippets)
         {
             FlushPendingSnippetRefresh();
         }
-        SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
-
-        if (settingsPage)
+        else if (pageKey == Pages.WindowPageKey.Settings)
         {
             ConfigureSettingsPage(resolvedTag, targetTab);
         }
 
-        if (SettingsPage.Visibility != Visibility.Visible || KeybindsSection.Visibility != Visibility.Visible)
+        if (!IsSettingsPageLoaded || SettingsPage?.Visibility != Visibility.Visible || KeybindsSection?.Visibility != Visibility.Visible)
         {
             CancelKeybindCapture();
         }
 
-        foreach (var page in Pages())
+        if (activePage is not null)
         {
-            if (page.Visibility == Visibility.Visible)
-            {
-                PlayPageEntrance(page);
-                break;
-            }
+            PlayPageEntrance(activePage);
         }
 
         UpdateOllamaLivePollTimer();
@@ -1397,16 +1308,6 @@ public sealed partial class MainWindow : Window, IDisposable
             _ = PollOllamaModelsSilentlyAsync();
         }
     }
-
-    /// <summary>Every page the sidebar can reach, in the order they are declared.</summary>
-    private FrameworkElement[] Pages() =>
-    [
-        HistoryPage,
-        WhatsNewPage,
-        DictionaryPage,
-        SnippetsPage,
-        SettingsPage,
-    ];
 
     /// <summary>The glyph a page header shows, read from that page's own sidebar row.</summary>
     private string NavigationGlyphFor(string tag)
@@ -1518,7 +1419,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ScrollPageToTop(SettingsPage);
     }
 
-    private void DictationTab_Click(object sender, RoutedEventArgs e)
+    internal void DictationTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {
@@ -1571,7 +1472,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ScrollPageToTop(SettingsPage);
     }
 
-    private void AppTab_Click(object sender, RoutedEventArgs e)
+    internal void AppTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {

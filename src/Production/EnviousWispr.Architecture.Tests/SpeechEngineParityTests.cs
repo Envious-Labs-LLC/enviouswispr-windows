@@ -338,12 +338,12 @@ public sealed class SpeechEngineParityTests
     public void SideBySideEngineCardsAndLiveSwitchContractsMatchDesignAndLifecycleRules()
     {
         var root = FindRepositoryRoot();
-        var xamlPath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml");
+        var xamlText = AppXamlSources.ReadMainWindowAndPagesText(root);
         var mainWindowCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.SpeechEngine.cs"));
         var appCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
         var deliveryCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
 
-        var document = XDocument.Load(xamlPath);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         var grid = FindNamed(document, "EngineCardsGrid");
         var cols = grid.Element(XName.Get("Grid.ColumnDefinitions", XamlNamespace))!.Elements().ToArray();
         Assert.Equal(2, cols.Length);
@@ -374,8 +374,8 @@ public sealed class SpeechEngineParityTests
         Assert.Equal("Visible", (string?)whisperLanguageRow.Attribute("Visibility"));
 
         // Automatic must never be displayed as a transcription engine name in MainWindow markup.
-        Assert.DoesNotContain("Text=\"Automatic\"", File.ReadAllText(xamlPath), StringComparison.Ordinal);
-        Assert.DoesNotContain("Content=\"Automatic\"", File.ReadAllText(xamlPath), StringComparison.Ordinal);
+        Assert.DoesNotContain("Text=\"Automatic\"", xamlText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"Automatic\"", xamlText, StringComparison.Ordinal);
         Assert.Contains("HandleSpeechEngineRemoveClickAsync", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("previousFinalEngine != settings.Preferences.Dictation.FinalEngine", appCode, StringComparison.Ordinal);
         Assert.Contains("_transcriptionReconfigurePending = true;", appCode, StringComparison.Ordinal);

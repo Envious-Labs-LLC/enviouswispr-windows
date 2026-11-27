@@ -417,7 +417,7 @@ public sealed class WindowPresentationSessionTests
         Assert.Equal(4, Occurrences(window, "if (result.Closing || _session.Closing)"));
         Assert.Contains("if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))", window, StringComparison.Ordinal);
         var audioCode = File.ReadAllText(Path.Combine(appDir, "MainWindow.AudioAndChimes.cs"));
-        var testHandler = audioCode[audioCode.IndexOf("private async void MicrophoneTestButton_Click(", StringComparison.Ordinal)..];
+        var testHandler = audioCode[audioCode.IndexOf("async void MicrophoneTestButton_Click(", StringComparison.Ordinal)..];
         var ran = testHandler.IndexOf("await _session.MicrophoneTest.RunAsync(", StringComparison.Ordinal);
         var guarded = testHandler.IndexOf("if (_session.Closing)", StringComparison.Ordinal);
         var drawn = testHandler.IndexOf("switch (result.Outcome)", StringComparison.Ordinal);

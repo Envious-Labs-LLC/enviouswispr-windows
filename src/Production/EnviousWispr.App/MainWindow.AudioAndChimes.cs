@@ -99,6 +99,11 @@ public sealed partial class MainWindow
 
     private void InitializeChimeCards()
     {
+        if (ChimesGrid is null)
+        {
+            return;
+        }
+
         ChimesGrid.Children.Clear();
         _chimeCards.Clear();
         _chimeSelectButtons.Clear();
@@ -457,7 +462,7 @@ public sealed partial class MainWindow
     /// sound" sends somebody to look in the wrong place for all three. The verdict is the
     /// controller's; the sentences for the ways a test does not reach one are here.
     /// </remarks>
-    private async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
+    internal async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
     {
         if (_session.MicrophoneTest.IsRunning)
         {
@@ -552,6 +557,11 @@ public sealed partial class MainWindow
 
     private void DrawMicrophoneTestLevel(float level)
     {
+        if (MicrophoneTestBars is null)
+        {
+            return;
+        }
+
         var lit = (int)Math.Round(level * MicrophoneTestBars.Children.Count);
         for (var index = 0; index < MicrophoneTestBars.Children.Count; index++)
         {
@@ -574,7 +584,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e)
+    internal async void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -647,8 +657,12 @@ public sealed partial class MainWindow
             try
             {
                 _microphones = choices.ToArray();
-                MicrophoneComboBox.ItemsSource = _microphones;
-                MicrophoneComboBox.SelectedItem = selected ?? _microphones[0];
+                _selectedMicrophoneChoice = selected ?? _microphones[0];
+                if (MicrophoneComboBox is not null)
+                {
+                    MicrophoneComboBox.ItemsSource = _microphones;
+                    MicrophoneComboBox.SelectedItem = _selectedMicrophoneChoice;
+                }
             }
             finally
             {
@@ -668,8 +682,12 @@ public sealed partial class MainWindow
             try
             {
                 _microphones = (MicrophoneChoice[])[new MicrophoneChoice(null, "Auto")];
-                MicrophoneComboBox.ItemsSource = _microphones;
-                MicrophoneComboBox.SelectedIndex = 0;
+                _selectedMicrophoneChoice = _microphones[0];
+                if (MicrophoneComboBox is not null)
+                {
+                    MicrophoneComboBox.ItemsSource = _microphones;
+                    MicrophoneComboBox.SelectedIndex = 0;
+                }
             }
             finally
             {
@@ -685,19 +703,27 @@ public sealed partial class MainWindow
         }
     }
 
-    /// <summary>Puts one microphone verdict on both places that report it.</summary>
-    /// <remarks>
-    /// THE BUTTON APPEARS ONLY WHERE IT WOULD HELP. Offering "open microphone privacy settings"
-    /// beside a working microphone is noise, and offering it beside a missing one sends somebody to
-    /// a page that will tell them everything is fine.
-    /// </remarks>
     private void ApplyMicrophoneReadiness(MicrophoneReadiness readiness, MicrophoneConsent consent)
     {
+        _latestMicrophoneReadiness = readiness;
+        _latestMicrophoneConsent = consent;
+        ApplyMicrophoneReadinessToControls(readiness, consent);
+        ObserveMicrophoneForOnboarding(readiness, consent);
+    }
+
+    private void ApplyMicrophoneReadinessToControls(MicrophoneReadiness readiness, MicrophoneConsent consent)
+    {
+        if (PermissionsMicrophoneText is null
+            || PermissionsMicrophoneAllowedBadge is null
+            || PermissionsMicrophoneAttentionBadge is null)
+        {
+            return;
+        }
+
         SetLiveText(PermissionsMicrophoneText, readiness.Sentence);
         var allowed = consent == MicrophoneConsent.Allowed;
         PermissionsMicrophoneAllowedBadge.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
         PermissionsMicrophoneAttentionBadge.Visibility = allowed ? Visibility.Collapsed : Visibility.Visible;
-        ObserveMicrophoneForOnboarding(readiness, consent);
     }
 
     private void OnAudioDevicesChanged(object? sender, AudioDeviceChange change)

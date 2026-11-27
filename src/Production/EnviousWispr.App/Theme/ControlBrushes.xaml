@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Theme-scoped WinUI control brushes: placing SolidColorBrush overrides inside ThemeDictionaries ensures
+         WinUI swaps Light/Dark/HighContrast instances on theme switches instead of freezing at OS startup theme. -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+        <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
+        <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
+             dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
+        <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+        <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+
+        <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+
+        <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+
+        <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
+
+        <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
+        <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
+        <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
+        <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
+        <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+
+        <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+        <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
+        <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
+             dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
+        <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+        <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+
+        <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+
+        <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+
+        <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
+
+        <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
+        <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
+        <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
+        <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
+        <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+
+        <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+        <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{ThemeResource BrandToggleOnColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
+        <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
+             dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
+        <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchContentForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ToggleSwitchHeaderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+        <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.45" />
+        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.88" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{ThemeResource BrandOnAccentColor}" />
+        <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" />
+
+        <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="TextControlButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" />
+
+        <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.76" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused" Color="{ThemeResource BrandPageBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="{ThemeResource BrandTextTertiaryColor}" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBackgroundDisabled" Color="{ThemeResource BrandCardBgColor}" Opacity="0.55" />
+        <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedUnfocused" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.82" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.68" />
+        <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+
+        <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="ListViewItemFocusSecondaryBorderBrush" Color="{ThemeResource BrandCardBgColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
+
+        <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
+        <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
+        <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />
+        <SolidColorBrush x:Key="InfoBarSuccessSeverityIconBackground" Color="{ThemeResource BrandSuccessColor}" />
+        <SolidColorBrush x:Key="InfoBarInformationalSeverityIconBackground" Color="{ThemeResource BrandAccentSolidColor}" />
+        <SolidColorBrush x:Key="InfoBarTitleForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
+        <SolidColorBrush x:Key="InfoBarMessageForeground" Color="{ThemeResource BrandTextBodyColor}" />
+        <SolidColorBrush x:Key="InfoBarHyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="InfoBarBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+
+        <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource BrandAccentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.86" />
+        <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{StaticResource BrandTransparentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource BrandAccentLightColor}" Opacity="0.72" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
+        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
+
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

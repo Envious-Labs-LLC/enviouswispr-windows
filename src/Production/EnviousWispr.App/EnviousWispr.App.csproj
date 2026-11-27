@@ -156,9 +156,10 @@
 
   <Target Name="CopyUnpackagedWinUiResourcesForPublish" AfterTargets="Publish" Condition="'$(EnviousWisprPackaged)' != 'true'">
     <ItemGroup>
-      <UnpackagedWinUiResource Include="$(TargetDir)*.xbf" />
-      <UnpackagedWinUiResource Include="$(TargetDir)$(AssemblyName).pri" />
+      <UnpackagedWinUiXbf Include="$(TargetDir)**\*.xbf" />
+      <UnpackagedWinUiPri Include="$(TargetDir)$(AssemblyName).pri" />
     </ItemGroup>
-    <Copy SourceFiles="@(UnpackagedWinUiResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(UnpackagedWinUiXbf)" DestinationFiles="@(UnpackagedWinUiXbf->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(UnpackagedWinUiPri)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>

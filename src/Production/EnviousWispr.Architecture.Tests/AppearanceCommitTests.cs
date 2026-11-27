@@ -24,8 +24,7 @@ public sealed class AppearanceCommitTests
     [Fact]
     public void EveryChoiceControlOnRecordingPillAndAppearanceCommitsWhenPicked()
     {
-        var markup = XDocument.Load(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot());
         var recordingPill = markup.Descendants().FirstOrDefault(element =>
             (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "RecordingPillSection");
         var appearance = markup.Descendants().FirstOrDefault(element =>
@@ -86,8 +85,7 @@ public sealed class AppearanceCommitTests
     [Fact]
     public void EveryRecordingPillCardSharesSingleGroupAndHasAnEnabledDefaultPath()
     {
-        var markup = XDocument.Load(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot());
         var recordingPill = markup.Descendants().First(element =>
             (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "RecordingPillSection");
         var buttons = recordingPill.Descendants()

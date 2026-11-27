@@ -38,7 +38,7 @@ public sealed partial class MainWindow
         + "• API keys stored for AI Polish\n\n"
         + "EnviousWispr then closes, and starts fresh the next time you open it. Export your data first if you want a copy.";
 
-    private async void ExportMyDataButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportMyDataButton_Click(object sender, RoutedEventArgs e)
     {
         if (ExportUserData is not { } export)
         {
@@ -79,7 +79,7 @@ public sealed partial class MainWindow
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
 
-    private async void DeleteAllDataButton_Click(object sender, RoutedEventArgs e)
+    internal async void DeleteAllDataButton_Click(object sender, RoutedEventArgs e)
     {
         if (DeleteAllData is not { } delete)
         {

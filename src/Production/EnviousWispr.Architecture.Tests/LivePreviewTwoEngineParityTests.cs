@@ -458,12 +458,7 @@ public sealed class LivePreviewTwoEngineParityTests
     public void LivePreviewSectionMarkupCarriesAccessibleTwoEngineCardsAndModelDeliveryControls()
     {
         var root = FindRepositoryRoot();
-        var document = XDocument.Load(Path.Combine(
-            root,
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml"));
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
 
         var section = FindNamed(document, "LivePreviewSection");
         var cardsGrid = FindNamed(section, "LivePreviewEngineCardsPanel");

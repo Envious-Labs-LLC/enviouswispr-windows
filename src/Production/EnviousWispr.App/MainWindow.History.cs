@@ -885,7 +885,7 @@ public sealed partial class MainWindow
             if (recoveryDeleted)
             {
                 ClearRecoveredText();
-                OnboardingReliabilityInfoBar.IsOpen = false;
+                ClearOnboardingReliabilityNotice();
                 RecoveryCleared?.Invoke();
                 ResetRecoveryCopyButtonVisuals();
             }
@@ -954,7 +954,7 @@ public sealed partial class MainWindow
         if (recoveryDeleted)
         {
             ClearRecoveredText();
-            OnboardingReliabilityInfoBar.IsOpen = false;
+            ClearOnboardingReliabilityNotice();
             RecoveryCleared?.Invoke();
             ShowMessage(
                 "Recovery copy deleted",

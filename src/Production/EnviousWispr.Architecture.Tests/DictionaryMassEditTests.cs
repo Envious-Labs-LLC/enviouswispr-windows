@@ -34,8 +34,7 @@ public sealed class DictionaryMassEditTests
             quietActiveStyle.Elements(),
             element => element.Name.LocalName == "Setter" && (string?)element.Attribute("Property") == "Template");
 
-        var mainWindowDoc = XDocument.Load(Path.Combine(
-            root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var mainWindowDoc = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         var toggleButton = mainWindowDoc.Descendants().Single(element =>
             string.Equals((string?)element.Attribute(XamlNamespace + "Name"), "MassEditWordsToggle", StringComparison.Ordinal));
         Assert.Equal("{StaticResource BrandQuietButtonStyle}", (string?)toggleButton.Attribute("Style"));

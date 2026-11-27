@@ -112,7 +112,8 @@ public sealed class HotkeyConflictDetectorTests
     [Fact]
     public void EveryKeybindFieldIsWiredToTheWarningAndSaveAsksTheSameDetector()
     {
-        var markup = File.ReadAllText(AppSourcePath("MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(
+            Path.GetFullPath(Path.Combine(Path.GetDirectoryName(AppSourcePath("MainWindow.xaml"))!, "..", "..", "..")));
         var code = string.Join(
             "\n",
             Directory.EnumerateFiles(Path.GetDirectoryName(AppSourcePath("MainWindow.xaml"))!, "MainWindow*.cs")

@@ -175,8 +175,7 @@ public sealed class Wave4WordsSnippetsFileTests
     public void MainWindowMarkupReflectsWave4WordsSnippetsAndThreeStepFileStrip()
     {
         var root = FindRepositoryRoot();
-        var xamlPath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml");
-        var document = XDocument.Load(xamlPath);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
 
         XElement? FindByName(string name) =>

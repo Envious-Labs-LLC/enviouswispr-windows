@@ -25,6 +25,11 @@ public sealed partial class MainWindow
     /// <summary>Shows the block for Ollama and looks at Ollama; for any other provider hides it, stops the timer, and stops a download.</summary>
     private void ShowOllamaModels(PolishProvider provider)
     {
+        if (!IsSettingsPageLoaded || OllamaModelsRow is null || OllamaModelList is null)
+        {
+            return;
+        }
+
         var visible = provider == PolishProvider.Ollama && OllamaModels is not null;
         OllamaModelsRow.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         UpdateOllamaLivePollTimer();
@@ -99,7 +104,9 @@ public sealed partial class MainWindow
 
     private async Task PollOllamaModelsSilentlyAsync()
     {
-        if (_session.Closing ||
+        if (!IsSettingsPageLoaded ||
+            OllamaEndpointTextBox is null ||
+            _session.Closing ||
             OllamaModels is not { } models ||
             PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != PolishProvider.Ollama)
         {
@@ -130,7 +137,7 @@ public sealed partial class MainWindow
 
     private async Task RefreshOllamaModelsAsync()
     {
-        if (OllamaModels is not { } models)
+        if (!IsSettingsPageLoaded || OllamaEndpointTextBox is null || OllamaModels is not { } models)
         {
             return;
         }
@@ -245,7 +252,7 @@ public sealed partial class MainWindow
         return headings;
     }
 
-    private void OllamaModelSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    internal void OllamaModelSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (OllamaModels is not { } models)
         {
@@ -255,7 +262,7 @@ public sealed partial class MainWindow
         RenderOllamaModels(models.SetSearchQuery(OllamaModelSearchBox.Text));
     }
 
-    private async void OllamaCheckAgainButton_Click(object sender, RoutedEventArgs e)
+    internal async void OllamaCheckAgainButton_Click(object sender, RoutedEventArgs e)
     {
         // ONE REFRESH, FOR THE PROVIDER SELECTED NOW: it shows the block and looks at Ollama itself. Refreshing the block and
         // then asking for Ollama's choices after that await brought the Ollama controls back over a provider chosen meanwhile.
@@ -264,7 +271,7 @@ public sealed partial class MainWindow
             chooseDefault: false).ConfigureAwait(true);
     }
 
-    private async void OllamaSetupActionButton_Click(object sender, RoutedEventArgs e)
+    internal async void OllamaSetupActionButton_Click(object sender, RoutedEventArgs e)
     {
         switch (_ollamaSetupAction)
         {
@@ -316,7 +323,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void OllamaModelAction_Click(object sender, RoutedEventArgs e)
+    internal async void OllamaModelAction_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: OllamaRowItem row } || OllamaModels is not { } models)
         {

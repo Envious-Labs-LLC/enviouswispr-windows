@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security;
 using EnviousWispr.App.Composition;
+using EnviousWispr.App.Contracts;
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
@@ -68,6 +69,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly RecordingWatchdog _watchdog;
     private readonly StreamingTranscriptionController _streaming;
     private MainWindow? _window;
+    private IDisposable? _windowHostBinding;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
     private IReadOnlyList<string> _enabledVocabularyPackIds = [];
     private SnippetVocabulary _snippetVocabulary = SnippetVocabulary.Empty;
@@ -365,63 +367,10 @@ public partial class App : Application, IAsyncDisposable
                 _updateService.InstalledVersion,
                 _dataDirectory,
                 observability.SendCrashReports));
-        _window.SettingsChanged += OnSettingsChanged;
-        _window.SessionStatusChanged += OnSessionStatusChanged;
-        _window.RecordingSoundPlaybackFailed += OnRecordingSoundPlaybackFailed;
-        _window.AudioDevicesChanged += OnAudioDevicesChanged;
-        _window.RecoveryCleared += OnRecoveryCleared;
-        _window.RecoveryUndoRequested += OnRecoveryUndoRequested;
-        _window.HistoryPasteRequested += OnHistoryPasteRequested;
-        _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
-        _window.SnippetImportReported += OnSnippetImportReported;
-        _window.WordImportReported += OnWordImportReported;
-        _window.UpdateCheckRequested += OnUpdateCheckRequested;
-        _window.UpdateApplyRequested += OnUpdateApplyRequested;
-        _window.StartupToggleRequested += OnStartupToggleRequested;
-        _window.LoadStartupRegistration = () => _startupRegistration.GetStatusAsync(_startupCancellation.Token);
-        _window.ModelDownloadRequested += OnModelDownloadRequested;
-        _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
-        _window.OnboardingDualDownloadRequested += OnOnboardingDualDownloadRequested;
-        _window.OnboardingDualDownloadCancelRequested += OnOnboardingDualDownloadCancelRequested;
-        _window.OnboardingDualDownloadSkipPolishRequested += OnOnboardingDualDownloadSkipPolishRequested;
-        _window.OnboardingDualDownloadRetryRequested += OnOnboardingDualDownloadRetryRequested;
-        _window.EgOneModelDownloadRequested += OnEgOneModelDownloadRequested;
-        _window.EgOneModelDownloadCancelRequested += OnModelDownloadCancelRequested;
-        _window.EgOneModelRemoveRequested += OnEgOneModelRemoveRequested;
-        _window.SpeechEngineDownloadRequested += OnSpeechEngineDownloadRequested;
-        _window.SpeechEngineRemoveRequested += OnSpeechEngineRemoveRequested;
-        _window.IsSpeechEngineBusy = () => IsSpeechEngineBusy;
-        _window.PreviewModelDownloadRequested += OnPreviewModelDownloadRequested;
-        _window.PreviewModelRemoveRequested += OnPreviewModelRemoveRequested;
-        _window.DictationEnded += OnDictationEnded;
-        _window.TranscriptionRetryRequested += OnTranscriptionRetryRequested;
-        _window.GraphicsRuntimeDownloadRequested += OnGraphicsRuntimeDownloadRequested;
-        _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
-        _window.ManualDictationToggleRequested += OnManualDictationToggleRequested;
-        _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
-        _window.OnboardingKeyRehearsalActiveChanged += OnOnboardingKeyRehearsalActiveChanged;
-        _window.ApplyOnboardingRecordingKey = TryApplyOnboardingRecordingKeyAsync;
-        _window.ApplyOnboardingEnginesChoice = ApplyOnboardingSelectedEnginesAsync;
-        _window.ProbeOnboardingModelsInstalled = ProbeOnboardingModelsInstalledAsync;
-        _window.TranscribeFile = TranscribeFileAsync;
-        _window.ExportUserData = ExportUserDataAsync;
-        _window.DeleteAllData = DeleteAllData;
-        ReportDataDeletionLeftover(_window);
-        _window.SpeedCheckRequested += OnSpeedCheckRequested;
-        _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
-        _window.FeedbackDataDirectory = _dataDirectory;
-        _window.DictationRecordingsDirectory = _dictationAudioArchive.RecordingsDirectory;
-        _window.FeedbackDraftStore = _feedbackCoordinator.DraftStore;
-        _window.BuildFeedbackDiagnosticsSnapshot = () =>
-            _feedbackCoordinator.BuildDiagnosticsSnapshot(_settings, _lastHardwareSnapshot);
-        _window.SubmitFeedback = (submission, cancellationToken) =>
-            _feedbackCoordinator.SubmitAsync(submission, cancellationToken);
-        _window.FlushFeedbackOutbox = cancellationToken =>
-            _feedbackCoordinator.FlushOutboxAsync(cancellationToken);
-        _window.CheckUndeliverableFeedback = cancellationToken =>
-            _feedbackCoordinator.HasUndeliverableReportsAsync(cancellationToken);
         InitializeSelfLearning();
-        AttachSelfLearningToWindow(_window);
+        _windowHostBinding = MainWindowHostBinder.Attach(_window, BuildMainWindowHostContracts());
+        _window.RefreshLearnMemoryUi();
+        ReportDataDeletionLeftover(_window);
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -572,51 +521,73 @@ public partial class App : Application, IAsyncDisposable
                     CanRetry: true));
     }
 
+    private MainWindowHostContracts BuildMainWindowHostContracts() =>
+        new(
+            Dictation: new WindowDictationHost(
+                SessionStatusChanged: OnSessionStatusChanged,
+                RecordingSoundPlaybackFailed: OnRecordingSoundPlaybackFailed,
+                AudioDevicesChanged: OnAudioDevicesChanged,
+                DictationEnded: OnDictationEnded,
+                TranscriptionRetryRequested: OnTranscriptionRetryRequested,
+                ManualDictationToggleRequested: OnManualDictationToggleRequested,
+                KeybindCaptureActiveChanged: OnKeybindCaptureActiveChanged,
+                OnboardingKeyRehearsalActiveChanged: OnOnboardingKeyRehearsalActiveChanged,
+                ApplyOnboardingRecordingKey: TryApplyOnboardingRecordingKeyAsync,
+                TranscribeFile: TranscribeFileAsync),
+            History: new WindowHistoryHost(
+                RecoveryCleared: OnRecoveryCleared,
+                RecoveryUndoRequested: OnRecoveryUndoRequested,
+                HistoryPasteRequested: OnHistoryPasteRequested,
+                DictationRecordingsDirectory: _dictationAudioArchive.RecordingsDirectory),
+            Vocabulary: BuildVocabularyHostContract(),
+            Models: new WindowModelHost(
+                ModelDownloadRequested: OnModelDownloadRequested,
+                ModelDownloadCancelRequested: OnModelDownloadCancelRequested,
+                OnboardingDualDownloadRequested: OnOnboardingDualDownloadRequested,
+                OnboardingDualDownloadCancelRequested: OnOnboardingDualDownloadCancelRequested,
+                OnboardingDualDownloadSkipPolishRequested: OnOnboardingDualDownloadSkipPolishRequested,
+                OnboardingDualDownloadRetryRequested: OnOnboardingDualDownloadRetryRequested,
+                ApplyOnboardingEnginesChoice: ApplyOnboardingSelectedEnginesAsync,
+                ProbeOnboardingModelsInstalled: ProbeOnboardingModelsInstalledAsync,
+                EgOneModelDownloadRequested: OnEgOneModelDownloadRequested,
+                EgOneModelDownloadCancelRequested: OnModelDownloadCancelRequested,
+                EgOneModelRemoveRequested: OnEgOneModelRemoveRequested,
+                SpeechEngineDownloadRequested: OnSpeechEngineDownloadRequested,
+                SpeechEngineRemoveRequested: OnSpeechEngineRemoveRequested,
+                IsSpeechEngineBusy: () => IsSpeechEngineBusy,
+                PreviewModelDownloadRequested: OnPreviewModelDownloadRequested,
+                PreviewModelRemoveRequested: OnPreviewModelRemoveRequested,
+                GraphicsRuntimeDownloadRequested: OnGraphicsRuntimeDownloadRequested,
+                GraphicsRuntimeDownloadCancelRequested: OnGraphicsRuntimeDownloadCancelRequested),
+            System: new WindowSystemHost(
+                SettingsChanged: OnSettingsChanged,
+                DiagnosticsExportCompleted: OnDiagnosticsExportCompleted,
+                UpdateCheckRequested: OnUpdateCheckRequested,
+                UpdateApplyRequested: OnUpdateApplyRequested,
+                StartupToggleRequested: OnStartupToggleRequested,
+                LoadStartupRegistration: () => _startupRegistration.GetStatusAsync(_startupCancellation.Token),
+                ExportUserData: ExportUserDataAsync,
+                DeleteAllData: DeleteAllData,
+                SpeedCheckRequested: OnSpeedCheckRequested,
+                FeedbackDataDirectory: _dataDirectory,
+                FeedbackDraftStore: _feedbackCoordinator!.DraftStore,
+                BuildFeedbackDiagnosticsSnapshot: () =>
+                    _feedbackCoordinator.BuildDiagnosticsSnapshot(_settings, _lastHardwareSnapshot),
+                SubmitFeedback: (submission, cancellationToken) =>
+                    _feedbackCoordinator.SubmitAsync(submission, cancellationToken),
+                FlushFeedbackOutbox: cancellationToken =>
+                    _feedbackCoordinator.FlushOutboxAsync(cancellationToken),
+                CheckUndeliverableFeedback: cancellationToken =>
+                    _feedbackCoordinator.HasUndeliverableReportsAsync(cancellationToken)));
+
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _windowHostBinding?.Dispose();
+        _windowHostBinding = null;
+
         var window = _window;
         if (window is not null)
         {
-            window.SettingsChanged -= OnSettingsChanged;
-            window.SessionStatusChanged -= OnSessionStatusChanged;
-            window.AudioDevicesChanged -= OnAudioDevicesChanged;
-            window.RecoveryCleared -= OnRecoveryCleared;
-            window.RecoveryUndoRequested -= OnRecoveryUndoRequested;
-            window.HistoryPasteRequested -= OnHistoryPasteRequested;
-            window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
-            window.SnippetImportReported -= OnSnippetImportReported;
-            window.WordImportReported -= OnWordImportReported;
-            window.UpdateCheckRequested -= OnUpdateCheckRequested;
-            window.UpdateApplyRequested -= OnUpdateApplyRequested;
-            window.StartupToggleRequested -= OnStartupToggleRequested;
-            window.LoadStartupRegistration = null;
-            window.ModelDownloadRequested -= OnModelDownloadRequested;
-            window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
-            window.OnboardingDualDownloadRequested -= OnOnboardingDualDownloadRequested;
-            window.OnboardingDualDownloadCancelRequested -= OnOnboardingDualDownloadCancelRequested;
-            window.OnboardingDualDownloadSkipPolishRequested -= OnOnboardingDualDownloadSkipPolishRequested;
-            window.OnboardingDualDownloadRetryRequested -= OnOnboardingDualDownloadRetryRequested;
-            window.EgOneModelDownloadRequested -= OnEgOneModelDownloadRequested;
-            window.EgOneModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
-            window.EgOneModelRemoveRequested -= OnEgOneModelRemoveRequested;
-            window.SpeechEngineDownloadRequested -= OnSpeechEngineDownloadRequested;
-            window.SpeechEngineRemoveRequested -= OnSpeechEngineRemoveRequested;
-            window.IsSpeechEngineBusy = null;
-            window.PreviewModelDownloadRequested -= OnPreviewModelDownloadRequested;
-            window.PreviewModelRemoveRequested -= OnPreviewModelRemoveRequested;
-            window.DictationEnded -= OnDictationEnded;
-            window.TranscriptionRetryRequested -= OnTranscriptionRetryRequested;
-            window.GraphicsRuntimeDownloadRequested -= OnGraphicsRuntimeDownloadRequested;
-            window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
-            window.ManualDictationToggleRequested -= OnManualDictationToggleRequested;
-            window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
-            window.OnboardingKeyRehearsalActiveChanged -= OnOnboardingKeyRehearsalActiveChanged;
-            window.ApplyOnboardingRecordingKey = null;
-            window.ApplyOnboardingEnginesChoice = null;
-            window.ProbeOnboardingModelsInstalled = null;
-            window.SpeedCheckRequested -= OnSpeedCheckRequested;
-            window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
-            DetachSelfLearningFromWindow(window);
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }

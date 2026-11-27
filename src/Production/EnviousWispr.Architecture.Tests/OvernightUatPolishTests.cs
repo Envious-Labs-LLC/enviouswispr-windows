@@ -151,7 +151,7 @@ public sealed class OvernightUatPolishTests
     public void FluentPagesReserveRightScrollbarGutterWithoutChangingCappedColumnWidth()
     {
         var root = FindRepositoryRoot();
-        var doc = XDocument.Load(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var doc = AppXamlSources.LoadMainWindowAndPagesDocument(root);
 
         foreach (var pageName in new[]
                  {

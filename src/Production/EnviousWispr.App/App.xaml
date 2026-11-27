@@ -12,6 +12,7 @@
                 <ResourceDictionary Source="Theme/Typography.xaml" />
                 <ResourceDictionary Source="Theme/Layout.xaml" />
                 <ResourceDictionary Source="Theme/Controls.xaml" />
+                <ResourceDictionary Source="Theme/ControlBrushes.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

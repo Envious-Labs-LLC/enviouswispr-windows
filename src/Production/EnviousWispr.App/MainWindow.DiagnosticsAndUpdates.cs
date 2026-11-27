@@ -77,6 +77,13 @@ public sealed partial class MainWindow
 
     public void SetUpdateCheckInProgress()
     {
+        _updateCheckInProgress = true;
+        _updateInstallInProgress = false;
+        if (!IsSettingsPageLoaded || CheckForUpdatesButton is null || ApplyUpdateButton is null || UpdateStatusText is null)
+        {
+            return;
+        }
+
         CheckForUpdatesButton.IsEnabled = false;
         ApplyUpdateButton.IsEnabled = false;
         SetLiveText(UpdateStatusText, "Checking the Microsoft Store for updates…");
@@ -84,6 +91,13 @@ public sealed partial class MainWindow
 
     public void SetUpdateInstallInProgress()
     {
+        _updateInstallInProgress = true;
+        _updateCheckInProgress = false;
+        if (!IsSettingsPageLoaded || CheckForUpdatesButton is null || ApplyUpdateButton is null || UpdateStatusText is null)
+        {
+            return;
+        }
+
         CheckForUpdatesButton.IsEnabled = false;
         ApplyUpdateButton.IsEnabled = false;
         SetLiveText(UpdateStatusText, "Asking the Microsoft Store to install the update…");
@@ -91,11 +105,20 @@ public sealed partial class MainWindow
 
     public void SetUpdateStatus(UpdateOperationResult result)
     {
+        _updateCheckInProgress = false;
+        _updateInstallInProgress = false;
+        _latestUpdateResult = result;
+
         // A BUSY REFUSAL CHANGES NOTHING ABOUT WHAT THE STORE OFFERED. Every other answer is the Store's
         // latest word, and only an available update can be installed.
         if (result.Status is not (UpdateOperationStatus.BusyDictating or UpdateOperationStatus.BusyTranscribingFile))
         {
             _updateOffered = result.CanApply;
+        }
+
+        if (!IsSettingsPageLoaded || CheckForUpdatesButton is null || ApplyUpdateButton is null || UpdateStatusText is null)
+        {
+            return;
         }
 
         // WINDOWS IS ABOUT TO CLOSE THE APP ONCE THE STORE IS INSTALLING, so nothing is offered after it.
@@ -208,7 +231,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void ExportProfileButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportProfileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
         {
@@ -238,7 +261,7 @@ public sealed partial class MainWindow
     /// pipeline here to avoid the round trip would measure a DIFFERENT object from the one every
     /// dictation uses, which is the one thing a speed check must not do.
     /// </remarks>
-    private void RunSpeedCheckButton_Click(object sender, RoutedEventArgs e)
+    internal void RunSpeedCheckButton_Click(object sender, RoutedEventArgs e)
     {
         _speedCheckRunning = true;
         RunSpeedCheckButton.IsEnabled = false;
@@ -261,6 +284,11 @@ public sealed partial class MainWindow
     /// </remarks>
     private void SetSpeedCheckAvailability(bool available)
     {
+        if (RunSpeedCheckButton is null || SpeedCheckUnavailableText is null)
+        {
+            return;
+        }
+
         RunSpeedCheckButton.IsEnabled = available && !_speedCheckRunning;
         SetLiveVisibility(SpeedCheckUnavailableText, available ? Visibility.Collapsed : Visibility.Visible);
     }
@@ -276,6 +304,13 @@ public sealed partial class MainWindow
         // Not an unconditional re-enable. A dictation can begin between the click and the answer,
         // and handing the button back then would undo the greying the moment it was needed.
         _speedCheckRunning = false;
+        _hasSpeedCheckResult = true;
+        _latestSpeedCheckSummary = summary;
+        if (!IsSettingsPageLoaded || SpeedCheckResultText is null)
+        {
+            return;
+        }
+
         SetSpeedCheckAvailability(_currentOverlayState != DictationOverlayState.Recording);
         SetLiveRegion(
             SpeedCheckResultText,
@@ -289,7 +324,7 @@ public sealed partial class MainWindow
             Visibility.Visible);
     }
 
-    private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
         {
@@ -319,16 +354,21 @@ public sealed partial class MainWindow
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
 
-    private void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e) =>
+    internal void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e) =>
         UpdateCheckRequested?.Invoke();
 
-    private void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
+    internal void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
         UpdateApplyRequested?.Invoke();
 
     public void SetStartupRegistrationInProgress()
     {
         _startupOperationGeneration++;
         _startupOperationInProgress = true;
+        if (!IsSettingsPageLoaded || StartAtLoginToggle is null || StartAtLoginStatusText is null)
+        {
+            return;
+        }
+
         StartAtLoginToggle.IsEnabled = false;
         SetLiveText(StartAtLoginStatusText, "Updating Windows startup settings…");
     }
@@ -338,6 +378,15 @@ public sealed partial class MainWindow
         ArgumentNullException.ThrowIfNull(result);
         _startupOperationGeneration++;
         _startupOperationInProgress = false;
+        _latestStartupRegistration = result;
+        if (!IsSettingsPageLoaded
+            || StartAtLoginToggle is null
+            || OpenStartupSettingsButton is null
+            || StartAtLoginStatusText is null)
+        {
+            return;
+        }
+
         _isUpdatingStartupRegistration = true;
         try
         {
@@ -370,7 +419,7 @@ public sealed partial class MainWindow
             });
     }
 
-    private void StartAtLoginToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void StartAtLoginToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _isUpdatingStartupRegistration)
         {
@@ -380,7 +429,7 @@ public sealed partial class MainWindow
         StartupToggleRequested?.Invoke(StartAtLoginToggle.IsOn);
     }
 
-    private async void OpenStartupSettingsButton_Click(object sender, RoutedEventArgs e)
+    internal async void OpenStartupSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -403,7 +452,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
+    internal async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add(".json");
@@ -437,6 +486,11 @@ public sealed partial class MainWindow
 
     private void UpdateDiagnosticsStatusText(bool storedSendCrashReports)
     {
+        if (DiagnosticsStatusText is null)
+        {
+            return;
+        }
+
         SetLiveText(
             DiagnosticsStatusText,
             storedSendCrashReports != _launchedCrashReports
@@ -470,7 +524,7 @@ public sealed partial class MainWindow
         _overlayWindow.PreviewActionPressed += OnOverlayPreviewActionPressed;
     }
 
-    private void PillReviewModeToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void PillReviewModeToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (PillReviewControlsPanel is null)
         {
@@ -490,7 +544,7 @@ public sealed partial class MainWindow
         UpdateSelectedPreviewDescription();
     }
 
-    private void PillPreviewComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void PillPreviewComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (PillReviewModeToggle?.IsOn != true)
         {
@@ -501,10 +555,10 @@ public sealed partial class MainWindow
         UpdateSelectedPreviewDescription();
     }
 
-    private void PillPreviewPlayButton_Click(object sender, RoutedEventArgs e) =>
+    internal void PillPreviewPlayButton_Click(object sender, RoutedEventArgs e) =>
         PlaySelectedPreviewPill();
 
-    private void PillPreviewNextButton_Click(object sender, RoutedEventArgs e)
+    internal void PillPreviewNextButton_Click(object sender, RoutedEventArgs e)
     {
         if (!TryCanUsePillPreview())
         {
@@ -517,7 +571,7 @@ public sealed partial class MainWindow
         PlaySelectedPreviewPill();
     }
 
-    private void PillPreviewDismissButton_Click(object sender, RoutedEventArgs e)
+    internal void PillPreviewDismissButton_Click(object sender, RoutedEventArgs e)
     {
         if (_overlayWindow.IsActiveNonPreview)
         {
@@ -532,7 +586,7 @@ public sealed partial class MainWindow
                 : "No preview pill is currently open.");
     }
 
-    private void PillPreviewHoldOpenToggle_Toggled(object sender, RoutedEventArgs e)
+    internal void PillPreviewHoldOpenToggle_Toggled(object sender, RoutedEventArgs e)
     {
         var holdOpen = PillPreviewHoldOpenToggle.IsOn;
         _overlayWindow.SetPreviewHoldOpen(holdOpen);

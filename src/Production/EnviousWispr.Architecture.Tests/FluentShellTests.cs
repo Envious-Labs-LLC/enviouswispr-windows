@@ -85,7 +85,7 @@ public sealed class FluentShellTests
     public void SidebarVersionBadgeUsesRealAppVersionAndNeverHardcodesV260()
     {
         var root = FindRepositoryRoot();
-        var markup = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(root);
         var codeBehind = string.Join(
             "\n",
             Directory.EnumerateFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "MainWindow*.cs")
@@ -95,7 +95,7 @@ public sealed class FluentShellTests
         Assert.DoesNotContain("v2.6.0", markup, StringComparison.Ordinal);
         Assert.DoesNotContain("v2.6.0", codeBehind, StringComparison.Ordinal);
 
-        var document = XDocument.Parse(markup);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         var titleBar = FindNamed(document, "AppTitleBar");
         var versionBadge = FindNamed(document, "TitleBarVersionBadge");
         Assert.Contains(titleBar, versionBadge.Ancestors());
@@ -230,8 +230,8 @@ public sealed class FluentShellTests
     public void OnboardingAndPermissionsCopyReflectDefaultOnTelemetryAndImmediateKeybinds()
     {
         var root = FindRepositoryRoot();
-        var markup = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var document = XDocument.Parse(markup);
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(root);
+        var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
 
         Assert.DoesNotContain("Anonymous usage data is shared only if you turn it on.", markup, StringComparison.Ordinal);
         Assert.DoesNotContain("Anonymous sharing is off by default", markup, StringComparison.Ordinal);
@@ -265,8 +265,7 @@ public sealed class FluentShellTests
     [Fact]
     public void OnboardingViewDeclaresAllThirteenScreensAndCoreControls()
     {
-        var root = FindRepositoryRoot();
-        var document = XDocument.Load(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var document = LoadMainWindow();
         var onboarding = FindNamed(document, "OnboardingView");
 
         foreach (var name in new[]
@@ -324,7 +323,7 @@ public sealed class FluentShellTests
     public void DeadHomePageAndLegacyStatusHandlersAreRemoved()
     {
         var root = FindRepositoryRoot();
-        var markup = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.ReadMainWindowAndPagesText(root);
         var codeBehind = string.Join(
             "\n",
             Directory.EnumerateFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "MainWindow*.cs")
@@ -408,7 +407,7 @@ public sealed class FluentShellTests
     }
 
     private static XDocument LoadMainWindow() =>
-        XDocument.Load(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        AppXamlSources.LoadMainWindowAndPagesDocument(FindRepositoryRoot());
 
     private static XElement FindNamed(XContainer container, string name) =>
         container.Descendants().Single(element =>

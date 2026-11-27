@@ -248,10 +248,10 @@ public sealed partial class MainWindow
         UpdateSelectionDependentButtons();
     }
 
-    private void SnippetSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
+    internal void SnippetSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
         ScheduleSnippetRefresh(debounce: true);
 
-    private void ClearSnippetSearchButton_Click(object sender, RoutedEventArgs e)
+    internal void ClearSnippetSearchButton_Click(object sender, RoutedEventArgs e)
     {
         SnippetSearchBox.Text = string.Empty;
         SnippetSearchBox.Focus(FocusState.Programmatic);
@@ -260,7 +260,7 @@ public sealed partial class MainWindow
     // ---- Export ------------------------------------------------------------------------------------------
 
     /// <summary>Writes every snippet and the keyword to the Mac's export file, which both apps import.</summary>
-    private async void ExportSnippetsButton_Click(object sender, RoutedEventArgs e)
+    internal async void ExportSnippetsButton_Click(object sender, RoutedEventArgs e)
     {
         var snippets = _settings.UserData.Snippets;
         if (snippets.Count == 0)
@@ -310,7 +310,7 @@ public sealed partial class MainWindow
 
     // ---- The three ways in --------------------------------------------------------------------------------
 
-    private async void PasteSnippetsMenuItem_Click(object sender, RoutedEventArgs e)
+    internal async void PasteSnippetsMenuItem_Click(object sender, RoutedEventArgs e)
     {
         var box = new TextBox
         {
@@ -412,7 +412,7 @@ public sealed partial class MainWindow
         await ReviewSnippetImportAsync(ready).ConfigureAwait(true);
     }
 
-    private async void OpenSnippetsFileMenuItem_Click(object sender, RoutedEventArgs e)
+    internal async void OpenSnippetsFileMenuItem_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
         foreach (var extension in SnippetFileImport.Extensions)
@@ -461,7 +461,7 @@ public sealed partial class MainWindow
         }).ConfigureAwait(true);
     }
 
-    private async void SnippetsFromAnotherAppMenuItem_Click(object sender, RoutedEventArgs e)
+    internal async void SnippetsFromAnotherAppMenuItem_Click(object sender, RoutedEventArgs e)
     {
         // Looked for now, because the person asked to see the list - never at launch, never in the background.
         var installed = await Task.Run(() => SnippetImportApps.All.Where(app => app.IsInstalled).ToArray()).ConfigureAwait(true);
@@ -715,13 +715,13 @@ public sealed partial class MainWindow
         return panel;
     }
 
-    private async void AddSnippetToolbarButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void AddSnippetToolbarButton_Click(object sender, RoutedEventArgs e) =>
         await ShowSnippetEditorDialogAsync(existing: null).ConfigureAwait(true);
 
-    private async void OpenNewSnippetDialogButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void OpenNewSnippetDialogButton_Click(object sender, RoutedEventArgs e) =>
         await ShowSnippetEditorDialogAsync(existing: null).ConfigureAwait(true);
 
-    private async void LoadExampleSnippetsButton_Click(object sender, RoutedEventArgs e)
+    internal async void LoadExampleSnippetsButton_Click(object sender, RoutedEventArgs e)
     {
         var saved = await CommitVocabularyAsync(
             _session.Vocabulary.RestoreStarterSnippetsAsync(),
@@ -740,7 +740,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void SnippetList_ItemClick(object sender, ItemClickEventArgs e)
+    internal async void SnippetList_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is SnippetRow { Entry: var existing })
         {
@@ -748,7 +748,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void SnippetKeywordBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    internal void SnippetKeywordBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Enter)
         {
@@ -757,7 +757,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void SnippetKeywordBox_LostFocus(object sender, RoutedEventArgs e) => CommitSnippetKeyword();
+    internal void SnippetKeywordBox_LostFocus(object sender, RoutedEventArgs e) => CommitSnippetKeyword();
 
     /// <summary>Stores the keyword in the box when it changed, then shows what was stored.</summary>
     /// <remarks>

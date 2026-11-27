@@ -25,53 +25,69 @@ public sealed partial class MainWindow
         // RAW, INCLUDING "NOTHING SELECTED": the indices go across as -1 when no choice is selected
         // and the sound pairing as null when none is, so what a missing choice means is the
         // presenter's decision too, not this handler's.
+        var dictation = _settings.Preferences.Dictation;
+        var prefs = _settings.Preferences;
+        var obs = _settings.Observability ?? ObservabilityPreferences.Default;
         var selectedProviderIndex = RawSelectedIndexOf(PolishProviderChoices);
         var selectedProvider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         var selectedPolishModelForSave = selectedProvider == PolishProvider.EgOne
             ? EnginePolishPresentation.NormalizeEgOneModelId(_selectedEgOneModelId)
             : _selectedPolishModelId;
+        var wordCorrectionEnabled = IsSettingsPageLoaded && WordCorrectionToggle is not null
+            ? WordCorrectionToggle.IsOn
+            : DictionaryEnabledToggle?.IsOn ?? dictation.WordCorrectionEnabled;
         var input = new GeneralSettingsInput(
-            HotkeyTextBox.Text,
-            CancelHotkeyTextBox.Text,
-            QuickAddHotkeyTextBox.Text,
-            SelectedFinalEngineRawIndex(),
-            WordCorrectionToggle.IsOn,
-            FillerRemovalToggle.IsOn,
-            EmojiFormatterToggle.IsOn,
-            SpokenPunctuationToggle.IsOn,
+            HotkeyTextBox?.Text ?? dictation.PushToTalkGesture,
+            CancelHotkeyTextBox?.Text ?? dictation.CancelGesture,
+            QuickAddHotkeyTextBox?.Text ?? dictation.QuickAddGesture,
+            IsSettingsPageLoaded ? SelectedFinalEngineRawIndex() : (int)dictation.FinalEngine,
+            wordCorrectionEnabled,
+            FillerRemovalToggle?.IsOn ?? dictation.FillerRemovalEnabled,
+            EmojiFormatterToggle?.IsOn ?? dictation.EmojiFormatterEnabled,
+            SpokenPunctuationToggle?.IsOn ?? dictation.SpokenPunctuationEnabled,
             _selectedWhisperLanguage,
-            EnglishSpellingComboBox.SelectedIndex,
+            IsSettingsPageLoaded && EnglishSpellingComboBox is not null
+                ? EnglishSpellingComboBox.SelectedIndex
+                : (int)dictation.EnglishSpelling,
             _recordingModeIndex,
-            EscapeRecoveryToggle.IsOn,
-            AutoStopToggle.IsOn,
-            AutoStopSecondsBox.Value,
+            EscapeRecoveryToggle?.IsOn ?? dictation.EscapeRecoveryEnabled,
+            AutoStopToggle?.IsOn ?? dictation.AutoStopEnabled,
+            AutoStopSecondsBox?.Value ?? dictation.AutoStopSilenceSeconds,
             selectedProviderIndex,
             selectedPolishModelForSave,
-            OllamaEndpointTextBox.Text,
-            HistoryEnabledToggle.IsOn,
-            SelectedRetentionDays(),
+            OllamaEndpointTextBox?.Text ?? (prefs.Polish.OllamaEndpoint ?? string.Empty),
+            HistoryEnabledToggle?.IsOn ?? prefs.History.IsEnabled,
+            IsSettingsPageLoaded && RetentionDaysComboBox is not null
+                ? SelectedRetentionDays()
+                : prefs.History.RetentionDays,
             _selectedThemeIndex,
-            LivePreviewToggle.IsOn,
+            LivePreviewToggle?.IsOn ?? prefs.LivePreviewEnabled,
             _selectedOverlayPositionIndex,
-            PillDesignWithoutWordsFromControls() == RecordingPillDesign.LevelRail,
-            PlayRecordingSoundsToggle.IsOn,
+            IsSettingsPageLoaded
+                ? PillDesignWithoutWordsFromControls() == RecordingPillDesign.LevelRail
+                : _lastWithoutWordsPillDesign == RecordingPillDesign.LevelRail,
+            PlayRecordingSoundsToggle?.IsOn ?? prefs.PlayRecordingSounds,
             SelectedRecordingSoundPairing(),
-            CopyInsteadOfPasteToggle.IsOn,
-            LocalDiagnosticsToggle.IsOn,
-            DiagnosticRetentionDaysBox.Value,
-            ShareUsageMetricsToggle.IsOn,
+            CopyInsteadOfPasteToggle?.IsOn ?? prefs.CopyInsteadOfPaste,
+            LocalDiagnosticsToggle?.IsOn ?? obs.LocalDiagnosticsEnabled,
+            DiagnosticRetentionDaysBox?.Value ?? obs.DiagnosticRetentionDays,
+            ShareUsageMetricsToggle?.IsOn ?? obs.ShareAnonymousTelemetry,
             TelemetryAvailable: true,
-            (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id,
-            PasteLastHotkeyTextBox.Text,
-            CopyLastHotkeyTextBox.Text,
-            CasualModeToggle?.IsOn == true,
-            SelectedLivePreviewEngineIndex(),
-            SendCrashReportsToggle.IsOn,
+            IsSettingsPageLoaded && MicrophoneComboBox is not null
+                ? (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id
+                : _settings.PreferredMicrophoneId,
+            PasteLastHotkeyTextBox?.Text ?? dictation.PasteLastGesture,
+            CopyLastHotkeyTextBox?.Text ?? dictation.CopyLastGesture,
+            CasualModeToggle?.IsOn ?? dictation.CasualModeEnabled,
+            IsSettingsPageLoaded ? SelectedLivePreviewEngineIndex() : (int)prefs.LivePreviewEngine,
+            SendCrashReportsToggle?.IsOn ?? obs.SendCrashReports,
             EgOneModelId: _selectedEgOneModelId,
-            PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex ?? 0,
-            ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn ?? true,
-            LearnFromEdits: LearnFromEditsToggle?.IsOn ?? true,
-            FixLearnedWords: FixLearnedWordsToggle?.IsOn ?? true);
+            PolishUnloadPolicyIndex: EgOneUnloadPolicyComboBox?.SelectedIndex
+                ?? SettingsPresenter.PolishUnloadPolicyIndex(prefs.Polish.UnloadPolicy),
+            ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn
+                ?? (prefs.PasteTargetMode == PasteTargetMode.WhereDictationStarted),
+            LearnFromEdits: LearnFromEditsToggle?.IsOn ?? dictation.LearnFromEditsEnabled,
+            FixLearnedWords: FixLearnedWordsToggle?.IsOn ?? dictation.FixLearnedWordsEnabled);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -85,7 +101,7 @@ public sealed partial class MainWindow
                     GeneralShortcutField.PasteLast => PasteLastHotkeyTextBox,
                     GeneralShortcutField.CopyLast => CopyLastHotkeyTextBox,
                     _ => HotkeyTextBox,
-                }).Focus(FocusState.Programmatic);
+                })?.Focus(FocusState.Programmatic);
                 return;
             case GeneralSaveStatus.OverlappingShortcuts:
                 ShowMessage(GeneralSaveOutcome.OverlappingShortcutsTitle, outcome.Overlap ?? string.Empty, InfoBarSeverity.Error);
@@ -105,7 +121,24 @@ public sealed partial class MainWindow
 
     private bool _isSyncingWordCorrectionToggles;
 
-    private void WireSettingsAutoSave()
+    private void WireDictionaryPageAutoSave()
+    {
+        if (LearnFromEditsToggle is not null)
+        {
+            LearnFromEditsToggle.Toggled += (_, _) =>
+            {
+                RefreshLearnMemoryUi();
+                _ = TriggerAutoSaveAsync();
+            };
+        }
+
+        if (FixLearnedWordsToggle is not null)
+        {
+            FixLearnedWordsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        }
+    }
+
+    private void WireSettingsPageAutoSave()
     {
         WordCorrectionToggle.Toggled += (_, _) => HandleWordCorrectionToggleChanged(WordCorrectionToggle);
         FillerRemovalToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -130,18 +163,6 @@ public sealed partial class MainWindow
         if (ReturnToStartWindowToggle is not null)
         {
             ReturnToStartWindowToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
-        }
-        if (LearnFromEditsToggle is not null)
-        {
-            LearnFromEditsToggle.Toggled += (_, _) =>
-            {
-                RefreshLearnMemoryUi();
-                _ = TriggerAutoSaveAsync();
-            };
-        }
-        if (FixLearnedWordsToggle is not null)
-        {
-            FixLearnedWordsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         }
         LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         ShareUsageMetricsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -185,13 +206,13 @@ public sealed partial class MainWindow
     /// choosing a theme repainted the window. Nothing connected them, and a gap between two passing
     /// tests is not a failure inside either.
     /// </remarks>
-    private void SystemThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void SystemThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetThemeSelection(0, triggerSave: true);
 
-    private void LightThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void LightThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetThemeSelection(1, triggerSave: true);
 
-    private void DarkThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void DarkThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetThemeSelection(2, triggerSave: true);
 
     private void SetThemeSelection(int index, bool triggerSave)
@@ -214,10 +235,10 @@ public sealed partial class MainWindow
         ApplySegmentButtonState(DarkThemeSegmentButton, _selectedThemeIndex == 2);
     }
 
-    private void TopPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void TopPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetOverlayPositionSelection(0, triggerSave: true);
 
-    private void BottomPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
+    internal void BottomPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
         SetOverlayPositionSelection(1, triggerSave: true);
 
     private void SetOverlayPositionSelection(int index, bool triggerSave)
@@ -239,7 +260,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Applies and persists a single-selection Recording Pill card choice immediately.</summary>
-    private async void PillStyleCardChecked(object sender, RoutedEventArgs e)
+    internal async void PillStyleCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings)
         {
@@ -333,43 +354,33 @@ public sealed partial class MainWindow
     /// </remarks>
     private void UpdateSelectionDependentButtons()
     {
-        // The lists appear BEFORE some of these buttons in the markup, so a selection event
-        // raised while the page is still being built would reach a field that is not assigned
-        // yet. An empty ListView does not raise one, but "does not" and "cannot" are different
-        // claims and the cost of being wrong here is an app that will not start. Every caller
-        // that populates a list calls this again afterwards, so a skipped early pass corrects
-        // itself rather than leaving a button stale.
-        //
-        // Every button is named, not just the last-declared ones. Guarding three and then
-        // dereferencing six would be correct only because of the order they happen to sit in the
-        // markup, which is a premise nothing states and any reorder silently breaks.
-        if (RemoveWordButton is null
-            || SelectAllWordsButton is null
-            || WordSelectionCountText is null
-            || ExportSnippetsButton is null)
-        {
-            return;
-        }
-
         UpdateHistorySelectionDependentButtons();
 
-        var selectedWords = DictionaryList.SelectionMode == ListViewSelectionMode.None
-            ? 0
-            : DictionaryList.SelectedItems.Count;
-        RemoveWordButton.IsEnabled = selectedWords > 0;
-        SelectAllWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
+        if (IsDictionaryPageLoaded
+            && RemoveWordButton is not null
+            && SelectAllWordsButton is not null
+            && WordSelectionCountText is not null
+            && DictionaryList is not null
+            && ExportWordsButton is not null)
+        {
+            var selectedWords = DictionaryList.SelectionMode == ListViewSelectionMode.None
+                ? 0
+                : DictionaryList.SelectedItems.Count;
+            RemoveWordButton.IsEnabled = selectedWords > 0;
+            SelectAllWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
 
-        // THE COUNT IS SHOWN ONLY WHILE MORE THAN ONE IS CHOSEN. With one row selected the row
-        // itself is the answer and a line reading "1 selected" is noise; with fifteen it is the
-        // only thing that says how much the next press removes.
-        SetLiveRegion(
-            WordSelectionCountText,
-            selectedWords > 1 ? $"{selectedWords} selected" : string.Empty,
-            selectedWords > 1 ? Visibility.Visible : Visibility.Collapsed);
+            SetLiveRegion(
+                WordSelectionCountText,
+                selectedWords > 1 ? $"{selectedWords} selected" : string.Empty,
+                selectedWords > 1 ? Visibility.Visible : Visibility.Collapsed);
 
-        // Export needs words rather than a selection - it writes the whole list.
-        ExportWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
-        ExportSnippetsButton.IsEnabled = (_settings?.UserData.Snippets.Count ?? 0) > 0;
+            ExportWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
+        }
+
+        if (IsSnippetsPageLoaded && ExportSnippetsButton is not null)
+        {
+            ExportSnippetsButton.IsEnabled = (_settings?.UserData.Snippets.Count ?? 0) > 0;
+        }
     }
 
     /// <summary>Says why a settings write did not happen, in the words for that cause.</summary>
@@ -432,11 +443,11 @@ public sealed partial class MainWindow
         if (scope.HasFlag(UserDataRefreshScope.Dictionary))
         {
             _dictionaryViewDirty = true;
-            if (DictionaryPage.Visibility == Visibility.Visible)
+            if (IsDictionaryPageLoaded && DictionaryPage is { Visibility: Visibility.Visible })
             {
                 ScheduleDictionaryRefresh(debounce: false);
             }
-            else
+            else if (IsDictionaryPageLoaded)
             {
                 var wordsCount = _settings?.UserData.CustomWords.Count ?? 0;
                 if (WordCountText is not null)
@@ -449,22 +460,26 @@ public sealed partial class MainWindow
             }
         }
 
-        if (scope.HasFlag(UserDataRefreshScope.VocabularyPacks))
+        if (scope.HasFlag(UserDataRefreshScope.VocabularyPacks) && IsDictionaryPageLoaded)
         {
             RefreshVocabularyPacksPanel();
         }
 
         if (scope.HasFlag(UserDataRefreshScope.Snippets))
         {
-            var snippets = _settings?.UserData.Snippets ?? (IReadOnlyList<SnippetEntry>)Array.Empty<SnippetEntry>();
-            RefreshSnippetKeywordViews(force: false);
+            if (IsSnippetsPageLoaded)
+            {
+                RefreshSnippetKeywordViews(force: false);
+            }
+
             _snippetsViewDirty = true;
-            if (SnippetsPage.Visibility == Visibility.Visible)
+            if (IsSnippetsPageLoaded && SnippetsPage is { Visibility: Visibility.Visible })
             {
                 ScheduleSnippetRefresh(debounce: false);
             }
-            else
+            else if (IsSnippetsPageLoaded)
             {
+                var snippets = _settings?.UserData.Snippets ?? (IReadOnlyList<SnippetEntry>)Array.Empty<SnippetEntry>();
                 if (SnippetCountText is not null)
                 {
                     SnippetCountText.Text = snippets.Count == 0
@@ -528,97 +543,51 @@ public sealed partial class MainWindow
         {
             var preferences = _settings.Preferences;
             _lastActiveEngine = preferences.Dictation.FinalEngine;
-            SetSelectedFinalEngineCards(preferences.Dictation.FinalEngine);
             _selectedWhisperLanguage = LanguageCatalog.NormalizeOrDefault(preferences.Dictation.WhisperLanguage);
-            EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
-            UpdateActiveEngineDisplay(preferences.Dictation.FinalEngine);
-            SyncAppliedWhisperLanguageStatus(
-                preferences.Dictation.WhisperLanguage,
-                preferences.Dictation.EnglishSpelling);
-            HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
-            SetRecordingMode((int)preferences.Dictation.RecordingMode, triggerSave: false);
-            CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;
-            EscapeRecoveryToggle.IsOn = preferences.Dictation.EscapeRecoveryEnabled;
-            QuickAddHotkeyTextBox.Text = preferences.Dictation.QuickAddGesture;
-            UpdateQuickAddShortcutBadge();
-            PasteLastHotkeyTextBox.Text = preferences.Dictation.PasteLastGesture;
-            CopyLastHotkeyTextBox.Text = preferences.Dictation.CopyLastGesture;
-            WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
-            DictionaryEnabledToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
-            if (LearnFromEditsToggle is not null)
-            {
-                LearnFromEditsToggle.IsOn = preferences.Dictation.LearnFromEditsEnabled;
-            }
-            if (FixLearnedWordsToggle is not null)
-            {
-                FixLearnedWordsToggle.IsOn = preferences.Dictation.FixLearnedWordsEnabled;
-            }
-            RefreshLearnMemoryUi();
-            FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
-            EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
-            SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;
-            if (CasualModeToggle != null)
-            {
-                CasualModeToggle.IsOn = preferences.Dictation.CasualModeEnabled;
-            }
-            AutoStopToggle.IsOn = preferences.Dictation.AutoStopEnabled;
-            AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
-            UpdateAutoStopAvailability();
+            _recordingModeIndex = (int)preferences.Dictation.RecordingMode;
+            _selectedThemeIndex = ThemeIndex(preferences.Theme);
+            _selectedOverlayPositionIndex = OverlayPositionIndex(preferences.OverlayPosition);
+            _selectedRecordingSoundPairing = preferences.RecordingSoundPairing;
+            _lastWithoutWordsPillDesign = preferences.PillDesignWithoutWords == RecordingPillDesign.LevelRail
+                ? RecordingPillDesign.LevelRail
+                : RecordingPillDesign.Classic;
+
             if (preferences.Polish.Provider != PolishProvider.None)
             {
                 _lastNonNonePolishProvider = preferences.Polish.Provider;
             }
+
             var persistedEgOneId = preferences.Polish.EgOneModelId;
             if (!EnginePolishPresentation.IsKnownEgOneModelId(persistedEgOneId) &&
                 preferences.Polish.Provider == PolishProvider.EgOne)
             {
                 persistedEgOneId = preferences.Polish.ModelId;
             }
+
             _selectedEgOneModelId = EnginePolishPresentation.NormalizeOptionalEgOneModelId(persistedEgOneId);
             _selectedPolishModelId = _polishModelSetByApp = preferences.Polish.Provider == PolishProvider.EgOne
                 ? EnginePolishPresentation.NormalizeEgOneModelId(_selectedEgOneModelId)
                 : preferences.Polish.ModelId ?? string.Empty;
             _lastActivePolishProvider = preferences.Polish.Provider;
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
-            if (EgOneUnloadPolicyComboBox is not null)
-            {
-                EgOneUnloadPolicyComboBox.SelectedIndex = SettingsPresenter.PolishUnloadPolicyIndex(
-                    preferences.Polish.UnloadPolicy);
-            }
-            UpdateEgOneUnloadImmediatelyNotice();
-            UpdateActivePolishProviderDisplay();
-            OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
-            HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
-            ApplyHistoryRetentionChoice(preferences.History.RetentionDays);
-            SetThemeSelection(ThemeIndex(preferences.Theme), triggerSave: false);
-            LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
-            LivePreviewParakeetEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet;
-            LivePreviewWhisperEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Whisper;
-            RefreshLivePreviewSectionPresentation();
-            SetOverlayPositionSelection(OverlayPositionIndex(preferences.OverlayPosition), triggerSave: false);
-            _lastWithoutWordsPillDesign = preferences.PillDesignWithoutWords == RecordingPillDesign.LevelRail
-                ? RecordingPillDesign.LevelRail
-                : RecordingPillDesign.Classic;
-            PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
-            CopyInsteadOfPasteToggle.IsOn = preferences.CopyInsteadOfPaste;
-            if (ReturnToStartWindowToggle is not null)
-            {
-                ReturnToStartWindowToggle.IsOn = preferences.PasteTargetMode == PasteTargetMode.WhereDictationStarted;
-                ReturnToStartWindowToggle.IsEnabled = !preferences.CopyInsteadOfPaste;
-            }
-            SelectChimePairing(preferences.RecordingSoundPairing, triggerSave: false);
-            UpdatePillDesignControls();
+
+            ApplyTheme(preferences.Theme);
             _overlayWindow.ApplyPreferences(
                 preferences.OverlayPosition,
                 preferences.LivePreviewEnabled,
                 preferences.PillDesignWithoutWords,
                 preferences.PillDesignWithWords);
-            var observability = _settings.Observability ?? ObservabilityPreferences.Default;
-            LocalDiagnosticsToggle.IsOn = observability.LocalDiagnosticsEnabled;
-            DiagnosticRetentionDaysBox.Value = observability.DiagnosticRetentionDays;
-            ShareUsageMetricsToggle.IsOn = observability.ShareAnonymousTelemetry;
-            SendCrashReportsToggle.IsOn = observability.SendCrashReports;
-            UpdateDiagnosticsStatusText(observability.SendCrashReports);
+
+            if (IsDictionaryPageLoaded)
+            {
+                ApplySettingsToDictionaryPageControlsCore();
+            }
+
+            if (IsSettingsPageLoaded)
+            {
+                ApplySettingsToSettingsPageControlsCore();
+            }
+
             RefreshReusableUserDataViews();
             UpdateHistoryPolishState();
         }
@@ -627,11 +596,130 @@ public sealed partial class MainWindow
             _isApplyingSettings = false;
         }
 
-        ApiKeyPasswordBox.Password = string.Empty;
-        RefreshApiKeyStatus();
-        _ = RefreshPolishModelChoicesAsync(
-            _settings.Preferences.Polish.Provider,
-            chooseDefault: false);
+        if (IsSettingsPageLoaded)
+        {
+            if (ApiKeyPasswordBox is not null)
+            {
+                ApiKeyPasswordBox.Password = string.Empty;
+            }
+
+            RefreshApiKeyStatus();
+            _ = RefreshPolishModelChoicesAsync(
+                _settings.Preferences.Polish.Provider,
+                chooseDefault: false);
+        }
+    }
+
+    private void ApplySettingsToDictionaryPageControls()
+    {
+        var previous = _isApplyingSettings;
+        _isApplyingSettings = true;
+        try
+        {
+            ApplySettingsToDictionaryPageControlsCore();
+        }
+        finally
+        {
+            _isApplyingSettings = previous;
+        }
+    }
+
+    private void ApplySettingsToDictionaryPageControlsCore()
+    {
+        var dictation = _settings.Preferences.Dictation;
+        if (DictionaryEnabledToggle is not null)
+        {
+            DictionaryEnabledToggle.IsOn = dictation.WordCorrectionEnabled;
+        }
+
+        if (LearnFromEditsToggle is not null)
+        {
+            LearnFromEditsToggle.IsOn = dictation.LearnFromEditsEnabled;
+        }
+
+        if (FixLearnedWordsToggle is not null)
+        {
+            FixLearnedWordsToggle.IsOn = dictation.FixLearnedWordsEnabled;
+        }
+
+        UpdateQuickAddShortcutBadge();
+        RefreshLearnMemoryUi();
+    }
+
+    private void ApplySettingsToSettingsPageControls()
+    {
+        var previous = _isApplyingSettings;
+        _isApplyingSettings = true;
+        try
+        {
+            ApplySettingsToSettingsPageControlsCore();
+        }
+        finally
+        {
+            _isApplyingSettings = previous;
+        }
+    }
+
+    private void ApplySettingsToSettingsPageControlsCore()
+    {
+        var preferences = _settings.Preferences;
+        SetSelectedFinalEngineCards(preferences.Dictation.FinalEngine);
+        EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
+        UpdateActiveEngineDisplay(preferences.Dictation.FinalEngine);
+        SyncAppliedWhisperLanguageStatus(
+            preferences.Dictation.WhisperLanguage,
+            preferences.Dictation.EnglishSpelling);
+        HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
+        SetRecordingMode((int)preferences.Dictation.RecordingMode, triggerSave: false);
+        CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;
+        EscapeRecoveryToggle.IsOn = preferences.Dictation.EscapeRecoveryEnabled;
+        QuickAddHotkeyTextBox.Text = preferences.Dictation.QuickAddGesture;
+        PasteLastHotkeyTextBox.Text = preferences.Dictation.PasteLastGesture;
+        CopyLastHotkeyTextBox.Text = preferences.Dictation.CopyLastGesture;
+        WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
+        FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
+        EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
+        SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;
+        if (CasualModeToggle != null)
+        {
+            CasualModeToggle.IsOn = preferences.Dictation.CasualModeEnabled;
+        }
+        AutoStopToggle.IsOn = preferences.Dictation.AutoStopEnabled;
+        AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
+        UpdateAutoStopAvailability();
+
+        if (EgOneUnloadPolicyComboBox is not null)
+        {
+            EgOneUnloadPolicyComboBox.SelectedIndex = SettingsPresenter.PolishUnloadPolicyIndex(
+                preferences.Polish.UnloadPolicy);
+        }
+        UpdateEgOneUnloadImmediatelyNotice();
+        UpdateActivePolishProviderDisplay();
+        OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
+        HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
+        ApplyHistoryRetentionChoice(preferences.History.RetentionDays);
+        SetThemeSelection(ThemeIndex(preferences.Theme), triggerSave: false);
+        LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
+        LivePreviewParakeetEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet;
+        LivePreviewWhisperEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Whisper;
+        RefreshLivePreviewSectionPresentation();
+        SetOverlayPositionSelection(OverlayPositionIndex(preferences.OverlayPosition), triggerSave: false);
+        PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
+        CopyInsteadOfPasteToggle.IsOn = preferences.CopyInsteadOfPaste;
+        if (ReturnToStartWindowToggle is not null)
+        {
+            ReturnToStartWindowToggle.IsOn = preferences.PasteTargetMode == PasteTargetMode.WhereDictationStarted;
+            ReturnToStartWindowToggle.IsEnabled = !preferences.CopyInsteadOfPaste;
+        }
+        SelectChimePairing(preferences.RecordingSoundPairing, triggerSave: false);
+        UpdatePillDesignControls();
+
+        var observability = _settings.Observability ?? ObservabilityPreferences.Default;
+        LocalDiagnosticsToggle.IsOn = observability.LocalDiagnosticsEnabled;
+        DiagnosticRetentionDaysBox.Value = observability.DiagnosticRetentionDays;
+        ShareUsageMetricsToggle.IsOn = observability.ShareAnonymousTelemetry;
+        SendCrashReportsToggle.IsOn = observability.SendCrashReports;
+        UpdateDiagnosticsStatusText(observability.SendCrashReports);
     }
 
     /// <summary>Commits a setting when the row beside its switch is tapped.</summary>
@@ -650,7 +738,7 @@ public sealed partial class MainWindow
     /// acted, and flipping again would undo it - so a tap inside the switch's own width is ignored
     /// and the control keeps its own behaviour, including the drag its track supports.
     /// </remarks>
-    private void SettingRow_Tapped(object sender, TappedRoutedEventArgs e)
+    internal void SettingRow_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (sender is not Panel row)
         {
@@ -802,7 +890,7 @@ public sealed partial class MainWindow
 
     private static int OverlayPositionIndex(OverlayPillPosition position) => SettingsPresenter.OverlayPositionIndex(position);
 
-    private void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveThreeCardGridLayout(
             RecordingPillCardsGrid,
             e.NewSize.Width,
@@ -828,6 +916,11 @@ public sealed partial class MainWindow
 
     private void UpdatePillDesignControls()
     {
+        if (CapsulePillButton is null || LevelRailPillButton is null || ReadingWellPillButton is null || LivePreviewToggle is null)
+        {
+            return;
+        }
+
         var previous = _isApplyingSettings;
         _isApplyingSettings = true;
         try

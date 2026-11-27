@@ -140,7 +140,7 @@ public sealed class PillCatalogParityTests
     public void DiagnosticsSectionHostsAllPillPreviewControlsSafely()
     {
         var root = FindRepositoryRoot();
-        var mainWindowXaml = XDocument.Load(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var mainWindowXaml = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         var diagnostics = mainWindowXaml.Descendants()
             .FirstOrDefault(el => (string?)el.Attribute(XamlNamespace + "Name") == "DiagnosticsSection");
         Assert.NotNull(diagnostics);

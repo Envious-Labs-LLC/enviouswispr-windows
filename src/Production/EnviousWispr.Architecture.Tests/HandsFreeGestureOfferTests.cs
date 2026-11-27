@@ -44,8 +44,7 @@ public sealed class HandsFreeGestureOfferTests
     [Fact]
     public void TheKeybindsPageOffersItAndSaysWhatItDoes()
     {
-        var markup = XDocument.Load(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var markup = AppXamlSources.LoadMainWindowAndPagesDocument(RepositoryRoot());
         var names = markup.Descendants()
             .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)))
             .Where(name => name is not null)

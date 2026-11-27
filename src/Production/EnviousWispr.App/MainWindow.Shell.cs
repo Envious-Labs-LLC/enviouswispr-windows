@@ -36,7 +36,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void SettingsTabStrip_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void SettingsTabStrip_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (sender is Grid stripGrid)
         {
@@ -238,7 +238,7 @@ public sealed partial class MainWindow
             e.NewSize.Width,
             stackThreshold: 540);
 
-    private void WordListHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void WordListHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveTwoClusterRowLayout(
             WordListHeaderGrid,
             WordCountText,
@@ -246,7 +246,7 @@ public sealed partial class MainWindow
             e.NewSize.Width,
             stackThreshold: 500);
 
-    private void SnippetsToolbarGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void SnippetsToolbarGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         UpdateSnippetsToolbarLayout(e.NewSize.Width);
 
     private void UpdateSnippetsToolbarLayout(double availableWidth) =>
@@ -374,6 +374,6 @@ public sealed partial class MainWindow
     }
 
     /// <summary>The pill page's "Configure Live Preview" link opens the Live Preview tab beside it.</summary>
-    private void ConfigureLivePreviewLink_Click(object sender, RoutedEventArgs e) =>
+    internal void ConfigureLivePreviewLink_Click(object sender, RoutedEventArgs e) =>
         NavigateToDictationTab("live-preview");
 }

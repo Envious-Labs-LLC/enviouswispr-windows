@@ -223,12 +223,19 @@ public sealed partial class MainWindow
             _audioPlayback.Stop();
         }
 
-        RunSetupAgainButton.IsEnabled = !active;
+        if (RunSetupAgainButton is not null)
+        {
+            RunSetupAgainButton.IsEnabled = !active;
+        }
+
+        var practiceText = OnboardingPracticeBox?.Text ?? string.Empty;
         if (ended)
         {
             DictationEnded?.Invoke();
-            _onboarding.TakeEnded(OnboardingPracticeBox.Text);
-            if (_onboarding.PracticeState == OnboardingPracticeState.MissedTheBox && OnboardingView.Visibility == Visibility.Visible)
+            _onboarding.TakeEnded(practiceText);
+            if (_onboarding.PracticeState == OnboardingPracticeState.MissedTheBox
+                && OnboardingView is { Visibility: Visibility.Visible }
+                && OnboardingPracticeBox is not null)
             {
                 OnboardingPracticeBox.Focus(FocusState.Programmatic);
             }
@@ -236,7 +243,7 @@ public sealed partial class MainWindow
 
         if (active)
         {
-            _onboarding.TakeStarted(OnboardingPracticeBox.Text);
+            _onboarding.TakeStarted(practiceText);
         }
 
         RenderOnboarding();
@@ -244,12 +251,12 @@ public sealed partial class MainWindow
 
     private void ObserveStatusForOnboarding(DictationStatus status)
     {
-        if (OnboardingView.Visibility != Visibility.Visible)
+        if (OnboardingView is not { Visibility: Visibility.Visible })
         {
             return;
         }
 
-        if (_onboarding.Step == OnboardingStep.Practice)
+        if (_onboarding.Step == OnboardingStep.Practice && OnboardingPracticeBox is not null)
         {
             if (status.State == DictationOverlayState.Recording && !_onboarding.TakeInFlight)
             {
@@ -323,7 +330,7 @@ public sealed partial class MainWindow
 
     internal void ObserveOnboardingKeyRehearsalSignal(PushToTalkSignalEvent args)
     {
-        if (OnboardingView.Visibility != Visibility.Visible ||
+        if (OnboardingView is not { Visibility: Visibility.Visible } ||
             _onboarding.Step != OnboardingStep.Key ||
             _onboardingKeyCaptureSession is not null)
         {
@@ -450,8 +457,15 @@ public sealed partial class MainWindow
         _onboarding.ApplyRecommendation(rec, applyPrimaryChoices: true);
         SyncLiveInventoryToOnboarding();
 
-        OnboardingPracticeBox.Text = string.Empty;
-        OnboardingLanguageSearchBox.Text = string.Empty;
+        if (OnboardingPracticeBox is not null)
+        {
+            OnboardingPracticeBox.Text = string.Empty;
+        }
+
+        if (OnboardingLanguageSearchBox is not null)
+        {
+            OnboardingLanguageSearchBox.Text = string.Empty;
+        }
         _lastLanguageQuery = null;
         _lastSelectedLanguageCode = null;
         RenderOnboarding();
@@ -605,7 +619,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingBackButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingBackButton_Click(object sender, RoutedEventArgs e)
     {
         CancelOnboardingKeyCapture();
         if (_onboarding.GoBack())
@@ -615,7 +629,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingDownloadPillButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingDownloadPillButton_Click(object sender, RoutedEventArgs e)
     {
         if (_onboardingDownloadSnapshot is null)
         {
@@ -627,7 +641,7 @@ public sealed partial class MainWindow
         Announce(summary);
     }
 
-    private async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
+    internal async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
     {
         CancelOnboardingKeyCapture();
         switch (_onboarding.Step)
@@ -737,7 +751,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void OnboardingSkipButton_Click(object sender, RoutedEventArgs e)
+    internal async void OnboardingSkipButton_Click(object sender, RoutedEventArgs e)
     {
         CancelOnboardingKeyCapture();
         switch (_onboarding.Step)
@@ -765,7 +779,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingSuggestedLanguageButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingSuggestedLanguageButton_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(_suggestedSystemLanguageCode))
         {
@@ -775,7 +789,7 @@ public sealed partial class MainWindow
         SelectOnboardingLanguage(_suggestedSystemLanguageCode);
     }
 
-    private void OnboardingDetectAutoCard_Checked(object sender, RoutedEventArgs e)
+    internal void OnboardingDetectAutoCard_Checked(object sender, RoutedEventArgs e)
     {
         if (_onboardingIsUpdatingLanguageUi)
         {
@@ -785,10 +799,10 @@ public sealed partial class MainWindow
         SelectOnboardingLanguage(LanguageCatalog.AutomaticCode);
     }
 
-    private void OnboardingLanguageSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
+    internal void OnboardingLanguageSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
         RefreshOnboardingLanguageList();
 
-    private void OnboardingLanguageSearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    internal void OnboardingLanguageSearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key != VirtualKey.Enter)
         {
@@ -802,7 +816,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingLanguageListView_ItemClick(object sender, ItemClickEventArgs e)
+    internal void OnboardingLanguageListView_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is OnboardingLanguageRow row)
         {
@@ -820,14 +834,14 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingOpenSpeechCompareButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingOpenSpeechCompareButton_Click(object sender, RoutedEventArgs e)
     {
         _onboarding.OpenSpeechCompare();
         QueueOnboardingCheckpointSave();
         RenderOnboarding();
     }
 
-    private void OnboardingSpeechCompareCard_Checked(object sender, RoutedEventArgs e)
+    internal void OnboardingSpeechCompareCard_Checked(object sender, RoutedEventArgs e)
     {
         if (_onboardingIsUpdatingCards || sender is not RadioButton { Tag: string tag })
         {
@@ -844,7 +858,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingSpeechCompareGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void OnboardingSpeechCompareGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveTwoColumnGrid(
             OnboardingSpeechCompareGrid,
             e.NewSize.Width,
@@ -852,7 +866,7 @@ public sealed partial class MainWindow
             OnboardingSpeechCompareCol1,
             OnboardingWhisperCompareCard);
 
-    private void OnboardingPolishPickGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void OnboardingPolishPickGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveTwoColumnGrid(
             OnboardingPolishPickGrid,
             e.NewSize.Width,
@@ -860,7 +874,7 @@ public sealed partial class MainWindow
             OnboardingPolishPickCol1,
             OnboardingPolishSecondaryCard);
 
-    private void OnboardingSeeAllEgOneGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    internal void OnboardingSeeAllEgOneGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveThreeCardGridLayout(
             OnboardingSeeAllEgOneGrid,
             e.NewSize.Width,
@@ -893,7 +907,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingPolishPrimaryCard_Checked(object sender, RoutedEventArgs e)
+    internal void OnboardingPolishPrimaryCard_Checked(object sender, RoutedEventArgs e)
     {
         if (_onboardingIsUpdatingCards || sender is not RadioButton { Tag: string modelId })
         {
@@ -906,7 +920,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingOpenPolishSeeAllButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingOpenPolishSeeAllButton_Click(object sender, RoutedEventArgs e)
     {
         _onboardingSeeAllCloudTab = TryGetCloudProvider(_onboarding.Choices.PolishChoice, out _);
         _onboarding.OpenPolishSeeAll();
@@ -914,14 +928,14 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private async void OnboardingSkipPolish_Click(object sender, RoutedEventArgs e)
+    internal async void OnboardingSkipPolish_Click(object sender, RoutedEventArgs e)
     {
         _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
         SyncLiveInventoryToOnboarding();
         await AdvanceFromPolishChoiceAsync().ConfigureAwait(true);
     }
 
-    private void OnboardingPolishLowSpecCloudButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingPolishLowSpecCloudButton_Click(object sender, RoutedEventArgs e)
     {
         _onboardingSeeAllCloudTab = true;
         _onboarding.OpenPolishSeeAll();
@@ -930,7 +944,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingPolishTabLocalButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingPolishTabLocalButton_Click(object sender, RoutedEventArgs e)
     {
         _onboardingCloudCheckGeneration++;
         OnboardingCloudApiKeyBox.Password = string.Empty;
@@ -946,14 +960,14 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingPolishTabCloudButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingPolishTabCloudButton_Click(object sender, RoutedEventArgs e)
     {
         _onboardingSeeAllCloudTab = true;
         SelectOnboardingCloudProvider(_onboardingCloudProvider);
         RenderOnboarding();
     }
 
-    private void OnboardingSeeAllEgOneCard_Checked(object sender, RoutedEventArgs e)
+    internal void OnboardingSeeAllEgOneCard_Checked(object sender, RoutedEventArgs e)
     {
         if (_onboardingIsUpdatingCards || sender is not RadioButton { Tag: string modelId })
         {
@@ -968,7 +982,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingCloudProviderButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingCloudProviderButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string tag })
         {
@@ -1092,14 +1106,14 @@ public sealed partial class MainWindow
         SetLiveText(OnboardingCloudKeyStatusText, message);
     }
 
-    private void OnboardingCloudApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
+    internal void OnboardingCloudApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         var hasText = !string.IsNullOrWhiteSpace(OnboardingCloudApiKeyBox.Password);
         var hasStored = _session.Provider.KeyStatus(_onboardingCloudProvider) == ApiKeyReadStatus.Found;
         OnboardingCloudCheckKeyButton.IsEnabled = hasText || hasStored;
     }
 
-    private async void OnboardingCloudCheckKeyButton_Click(object sender, RoutedEventArgs e)
+    internal async void OnboardingCloudCheckKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = _onboardingCloudProvider;
         var enteredKey = OnboardingCloudApiKeyBox.Password;
@@ -1163,7 +1177,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void OnboardingCloudClearKeyButton_Click(object sender, RoutedEventArgs e)
+    internal async void OnboardingCloudClearKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = _onboardingCloudProvider;
         if (!string.IsNullOrEmpty(OnboardingCloudApiKeyBox.Password))
@@ -1199,7 +1213,7 @@ public sealed partial class MainWindow
         OnboardingCloudCheckKeyButton.IsEnabled = _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
     }
 
-    private void OnboardingCloudModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void OnboardingCloudModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_onboardingIsUpdatingCloudModels || OnboardingCloudModelComboBox.SelectedItem is not string modelId)
         {
@@ -1284,14 +1298,14 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingDownloadCancelButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingDownloadCancelButton_Click(object sender, RoutedEventArgs e)
     {
         _onboarding.RequestCancel();
         CancelOnboardingDualDownload();
         RenderOnboarding();
     }
 
-    private void OnboardingDownloadRetryButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingDownloadRetryButton_Click(object sender, RoutedEventArgs e)
     {
         _onboarding.RetrySetup();
         if (_onboarding.Model == SpeechModelDelivery.Installed &&
@@ -1322,7 +1336,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingSkipPolishAndAdvance_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingSkipPolishAndAdvance_Click(object sender, RoutedEventArgs e)
     {
         SkipOnboardingPolishDownload();
         _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
@@ -1366,7 +1380,7 @@ public sealed partial class MainWindow
         return false;
     }
 
-    private void OnboardingGateSkipPolishButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingGateSkipPolishButton_Click(object sender, RoutedEventArgs e)
     {
         if (!TrySkipPolishFromGettingReady())
         {
@@ -1378,10 +1392,10 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private async void OnboardingRefreshMicButton_Click(object sender, RoutedEventArgs e) =>
+    internal async void OnboardingRefreshMicButton_Click(object sender, RoutedEventArgs e) =>
         await LoadMicrophonesAsync().ConfigureAwait(true);
 
-    private void OnboardingKeycapButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingKeycapButton_Click(object sender, RoutedEventArgs e)
     {
         if (_onboardingKeyCaptureSession is not null)
         {
@@ -1393,7 +1407,7 @@ public sealed partial class MainWindow
         StartOnboardingKeyCapture();
     }
 
-    private async void OnboardingPresetHotkeyButton_Click(object sender, RoutedEventArgs e)
+    internal async void OnboardingPresetHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string preset })
         {
@@ -1490,7 +1504,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingView_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    internal void OnboardingView_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (OnboardingView.Visibility != Visibility.Visible ||
             _onboarding.Step != OnboardingStep.Key ||
@@ -1523,7 +1537,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnboardingView_PreviewKeyUp(object sender, KeyRoutedEventArgs e)
+    internal void OnboardingView_PreviewKeyUp(object sender, KeyRoutedEventArgs e)
     {
         if (OnboardingView.Visibility != Visibility.Visible ||
             _onboarding.Step != OnboardingStep.Key ||
@@ -1606,7 +1620,7 @@ public sealed partial class MainWindow
         _ => Enum.TryParse<VirtualKey>(gestureKey, ignoreCase: true, out var mapped) && mapped == key,
     };
 
-    private void OnboardingPracticeBox_TextChanged(object sender, TextChangedEventArgs e)
+    internal void OnboardingPracticeBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _onboarding.PracticeTextChanged(OnboardingPracticeBox.Text);
         if (_onboarding.PracticeSucceeded)
@@ -1617,13 +1631,13 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingClosingCard_PointerEntered(object sender, PointerRoutedEventArgs e)
+    internal void OnboardingClosingCard_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         _onboardingClosingPaused = true;
         _onboardingBeat.Stop();
     }
 
-    private void OnboardingClosingCard_PointerExited(object sender, PointerRoutedEventArgs e)
+    internal void OnboardingClosingCard_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         _onboardingClosingPaused = false;
         ArmClosingBeatTimer();
@@ -1642,7 +1656,7 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private void OnboardingClosingWatchAgainButton_Click(object sender, RoutedEventArgs e)
+    internal void OnboardingClosingWatchAgainButton_Click(object sender, RoutedEventArgs e)
     {
         _onboardingClosingPaused = false;
         _onboarding.RestartClosing();
@@ -1650,7 +1664,7 @@ public sealed partial class MainWindow
         ArmClosingBeatTimer();
     }
 
-    private async void RunSetupAgainButton_Click(object sender, RoutedEventArgs e)
+    internal async void RunSetupAgainButton_Click(object sender, RoutedEventArgs e)
     {
         if (_dictationActive)
         {
@@ -1764,7 +1778,7 @@ public sealed partial class MainWindow
         finally
         {
             _finishingOnboarding = false;
-            if (OnboardingView.Visibility == Visibility.Visible)
+            if (OnboardingView is { Visibility: Visibility.Visible })
             {
                 DrawOnboardingFooter(_onboarding.Step);
             }
@@ -1813,7 +1827,7 @@ public sealed partial class MainWindow
 
     private void RenderOnboarding()
     {
-        if (OnboardingView.Visibility != Visibility.Visible)
+        if (!IsOnboardingLoaded || OnboardingView is not { Visibility: Visibility.Visible })
         {
             StopOnboardingTimers();
             OnboardingKeyRehearsalActiveChanged?.Invoke(false);
@@ -2769,7 +2783,7 @@ public sealed partial class MainWindow
     private void OnClosingBeatTick(object? sender, object e)
     {
         _onboardingBeat.Stop();
-        if (OnboardingView.Visibility != Visibility.Visible ||
+        if (OnboardingView is not { Visibility: Visibility.Visible } ||
             _onboarding.Step != OnboardingStep.Closing ||
             _onboardingClosingPaused)
         {
@@ -2786,7 +2800,7 @@ public sealed partial class MainWindow
 
     private void ArmMicrophonePoll()
     {
-        var shouldPoll = OnboardingView.Visibility == Visibility.Visible &&
+        var shouldPoll = OnboardingView is { Visibility: Visibility.Visible } &&
             (_onboarding.Step is OnboardingStep.Permissions or OnboardingStep.GettingReady ||
              _onboarding.PracticeState == OnboardingPracticeState.CannotHear);
         if (!shouldPoll)
@@ -2805,7 +2819,7 @@ public sealed partial class MainWindow
 
     private async void OnMicrophonePoll(object? sender, object e)
     {
-        if (OnboardingView.Visibility != Visibility.Visible || _shuttingDownProductWindows)
+        if (OnboardingView is not { Visibility: Visibility.Visible } || _shuttingDownProductWindows)
         {
             _onboardingMicrophonePoll.Stop();
             return;
@@ -2832,8 +2846,14 @@ public sealed partial class MainWindow
         if (_onboardingLipsAnimating)
         {
             _onboardingLipsAnimating = false;
-            OnboardingLipsBreathStoryboard.Stop();
+            OnboardingLipsBreathStoryboard?.Stop();
         }
+        foreach (var dot in _onboardingClosingDotButtons)
+        {
+            dot.Click -= OnboardingClosingDot_Click;
+        }
+        _onboardingClosingDotButtons = [];
+        _onboardingProgressSegments = [];
     }
 
     private static bool ShouldAnimateMotion()
@@ -2850,7 +2870,7 @@ public sealed partial class MainWindow
 
     private Control? FocusedOnboardingControl() =>
         _onboardingFocusOrphaned ||
-        OnboardingView.XamlRoot is not { } root ||
+        OnboardingView?.XamlRoot is not { } root ||
         FocusManager.GetFocusedElement(root) is not Control focused ||
         !IsInside(focused, OnboardingView)
             ? null
@@ -2904,8 +2924,9 @@ public sealed partial class MainWindow
 
     private void Announce(string text)
     {
-        if (OnboardingView.Visibility == Visibility.Visible &&
+        if (OnboardingView is { Visibility: Visibility.Visible } &&
             !string.IsNullOrWhiteSpace(text) &&
+            OnboardingTitle is not null &&
             FrameworkElementAutomationPeer.FromElement(OnboardingTitle) is { } peer)
         {
             peer.RaiseNotificationEvent(
