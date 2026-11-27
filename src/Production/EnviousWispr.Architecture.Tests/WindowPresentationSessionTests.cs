@@ -102,7 +102,7 @@ public sealed class WindowPresentationSessionTests
         foreach (var (fileName, methodName) in new[]
         {
             ("App.GraphicsRuntime.cs", "ReportGraphicsRuntimeProgress"),
-            ("App.ModelDelivery.cs", "ReportModelDeliveryProgress"),
+            ("App.ModelDelivery.Operations.cs", "ReportModelDeliveryProgress"),
         })
         {
             var partialTree = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", fileName))).GetRoot();

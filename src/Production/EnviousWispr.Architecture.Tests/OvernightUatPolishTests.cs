@@ -21,11 +21,14 @@ public sealed class OvernightUatPolishTests
         var root = FindRepositoryRoot();
         var appCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
         var transcriptionCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.Transcription.cs"));
-        var deliveryCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
+        var deliveryMethods = AppXamlSources.AppModelDeliveryPaths(root)
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
+            .ToArray();
         var graphicsCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.GraphicsRuntime.cs"));
 
         var appTree = CSharpSyntaxTree.ParseText(appCode).GetRoot();
-        var deliveryTree = CSharpSyntaxTree.ParseText(deliveryCode).GetRoot();
 
         // 1. OnSettingsChanged routes LivePreviewEnabled/LivePreviewEngine changes only to _livePreviewReconfigurePending.
         var onSettingsChanged = appTree.DescendantNodes()
@@ -45,8 +48,7 @@ public sealed class OvernightUatPolishTests
 
         // 2. PresentModelDeliveryCoreAsync handles _livePreviewReconfigurePending separately from _transcriptionReconfigurePending
         // and drains any pending reconfiguration that became unblocked before the task completes.
-        var presentMethod = deliveryTree.DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var presentMethod = deliveryMethods
             .Single(m => m.Identifier.ValueText == "PresentModelDeliveryCoreAsync");
         var doLoop = presentMethod.DescendantNodes()
             .OfType<DoStatementSyntax>()
@@ -65,8 +67,7 @@ public sealed class OvernightUatPolishTests
         Assert.DoesNotContain("ReconfigureTranscriptionAsync", previewBranchText, StringComparison.Ordinal);
         Assert.DoesNotContain("TeardownTranscriptionAsync", previewBranchText, StringComparison.Ordinal);
 
-        var refreshMethod = deliveryTree.DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var refreshMethod = deliveryMethods
             .Single(m => m.Identifier.ValueText == "RefreshAfterSettingsChangeAsync");
         Assert.Contains("PostToLiveWindow(_ => TrySchedulePendingModelRefresh());", refreshMethod.ToString(), StringComparison.Ordinal);
 
@@ -77,8 +78,7 @@ public sealed class OvernightUatPolishTests
         Assert.Contains("ReconfigureTranscriptionAsync", transcriptionBranch.Statement.ToString(), StringComparison.Ordinal);
 
         // 3. ReconfigureLivePreviewOnlyAsync never touches _transcriptionEngine or full transcription setup.
-        var reconfigurePreview = deliveryTree.DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var reconfigurePreview = deliveryMethods
             .Single(m => m.Identifier.ValueText == "ReconfigureLivePreviewOnlyAsync");
         var previewMethodText = reconfigurePreview.ToString();
         Assert.DoesNotContain("_transcriptionEngine", previewMethodText, StringComparison.Ordinal);

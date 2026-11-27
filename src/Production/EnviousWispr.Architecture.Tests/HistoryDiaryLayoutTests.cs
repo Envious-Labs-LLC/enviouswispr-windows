@@ -40,8 +40,7 @@ public sealed class HistoryDiaryLayoutTests
         Assert.Equal("None", (string?)historyList.Attribute("SelectionMode"));
         Assert.Equal("{StaticResource BrandHistoryListItemStyle}", (string?)historyList.Attribute("ItemContainerStyle"));
 
-        var windowCode = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var windowCode = AppXamlSources.ReadMainWindowShellCodeText(repositoryRoot);
         Assert.Contains(
             "var isHistoryPage = resolvedTag == \"history\";",
             windowCode,

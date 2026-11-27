@@ -341,7 +341,7 @@ public sealed class SpeechEngineParityTests
         var xamlText = AppXamlSources.ReadMainWindowAndPagesText(root);
         var mainWindowCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.SpeechEngine.cs"));
         var appCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
-        var deliveryCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
+        var deliveryCode = AppXamlSources.ReadAppModelDeliveryCodeText(root);
 
         var document = AppXamlSources.LoadMainWindowAndPagesDocument(root);
         var grid = FindNamed(document, "EngineCardsGrid");

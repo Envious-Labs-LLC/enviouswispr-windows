@@ -876,7 +876,7 @@ public sealed partial class DesignSystemTokenTests
         var root = FindRepositoryRoot();
         var appDir = Path.Combine(root, "src", "Production", "EnviousWispr.App");
         var shell = File.ReadAllText(Path.Combine(appDir, "App.xaml.cs"));
-        var delivery = File.ReadAllText(Path.Combine(appDir, "App.ModelDelivery.cs"));
+        var delivery = AppXamlSources.ReadAppModelDeliveryCodeText(root);
         var methods = Directory.EnumerateFiles(appDir, "App*.cs")
             .Order()
             .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
