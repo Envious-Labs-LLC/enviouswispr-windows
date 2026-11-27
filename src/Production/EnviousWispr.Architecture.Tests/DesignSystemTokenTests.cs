@@ -3221,12 +3221,25 @@ public sealed partial class DesignSystemTokenTests
             .FirstOrDefault(method => method.Identifier.Text == "EnsureDictionaryPageLoaded" && method.Body is not null);
         Assert.True(loader is not null, "The window has no EnsureDictionaryPageLoaded method.");
 
-        // ResetMatchStrictness must run during DictionaryPage realization before any control sync or selection logic.
-        var resetCall = Calls(loader!.Body!, reset);
+        // ResetMatchStrictness must run during DictionaryPage realization immediately before wiring auto-save or syncing controls.
+        var statements = loader!.Body!.Statements;
+        int FindStatementIndex(string methodName) =>
+            statements
+                .Select((statement, index) => (statement, index))
+                .FirstOrDefault(one => Calls(one.statement, methodName) is not null)
+                .index;
+        bool HasCall(string methodName) =>
+            statements.Any(statement => Calls(statement, methodName) is not null);
+
         Assert.True(
-            resetCall is not null,
-            $"The window does not call {reset} when loading DictionaryPage, so what the "
-                + "picker starts on could drift.");
+            HasCall(reset) && HasCall("WireDictionaryPageAutoSave") && HasCall("ApplySettingsToDictionaryPageControls"),
+            $"EnsureDictionaryPageLoaded must call {reset}, WireDictionaryPageAutoSave, and ApplySettingsToDictionaryPageControls.");
+        var resetIndex = FindStatementIndex(reset);
+        var wireIndex = FindStatementIndex("WireDictionaryPageAutoSave");
+        var applyIndex = FindStatementIndex("ApplySettingsToDictionaryPageControls");
+        Assert.True(
+            resetIndex == wireIndex - 1 && wireIndex < applyIndex,
+            $"The window must call {reset} immediately before WireDictionaryPageAutoSave and ApplySettingsToDictionaryPageControls.");
 
         var resetBody = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .FirstOrDefault(method => method.Identifier.Text == reset);
