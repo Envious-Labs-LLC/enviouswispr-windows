@@ -1453,9 +1453,11 @@ public partial class App
             }
         }
 
-        if (_polishProvider is { } provider)
+        var provider = _polishProvider;
+        _polishProvider = null;
+        await CancelAndDrainRepolishAsync().ConfigureAwait(true);
+        if (provider is not null)
         {
-            _polishProvider = null;
             await provider.DisposeAsync().ConfigureAwait(true);
         }
     }

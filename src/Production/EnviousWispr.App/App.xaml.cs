@@ -331,7 +331,8 @@ public partial class App : Application, IAsyncDisposable
             logger: _logger,
             clock: TimeProvider.System,
             enabledVocabularyPackIds: () => _enabledVocabularyPackIds,
-            targetAdapterProvider: () => _textTargetAdapter);
+            targetAdapterProvider: () => _textTargetAdapter,
+            beginExecution: BeginHistoryRepolishExecution);
         _ollamaModelHost = new OllamaModelHost(
             _logger,
             () => _ollamaActiveModel,

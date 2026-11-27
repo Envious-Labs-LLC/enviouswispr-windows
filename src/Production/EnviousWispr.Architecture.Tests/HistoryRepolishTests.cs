@@ -249,6 +249,54 @@ public sealed class HistoryRepolishTests
         Assert.Equal("polished lazily", targetAdapter.CopiedText);
     }
 
+    [Fact]
+    public async Task RepolishPreemptedByForegroundDictationReturnsRefusedAndReleasesLease()
+    {
+        var store = new FakeMemoryHistoryStore();
+        var entry = CreateEntry("spoken text");
+        store.Entries.Add(entry);
+        using var arbiter = new EnviousWispr.Services.Runtime.RuntimeResourceArbiter();
+        var polishEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new CancellingWaitPolishProvider(polishEntered);
+        var executor = new PolishExecutor(arbiter, new FakePolishEffects(), () => []);
+        var service = new HistoryRepolishService(
+            store,
+            executor,
+            new DeterministicTextPipeline(),
+            () => new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu, "local-model"),
+            beginExecution: caller => new RepolishExecutionLease(static () => { }, arbiter.CurrentBackgroundToken),
+            clock: new FrozenClock(Now));
+
+        var repolishTask = service.RepolishAsync(entry.Id);
+        await polishEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Incoming Final ASR preempts the background re-polish and takes the lease cleanly.
+        var finalAsr = await arbiter.AcquireAsync(
+            RuntimeResourceKind.Cpu,
+            RuntimeWorkloadKind.FinalAsr,
+            TimeSpan.FromSeconds(2));
+        Assert.True(finalAsr.Succeeded);
+        await finalAsr.Lease!.DisposeAsync();
+
+        var result = await repolishTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(result.Succeeded);
+        Assert.Equal(HistoryRepolishStatus.PolishRefused, result.Status);
+    }
+
+    private sealed class CancellingWaitPolishProvider(TaskCompletionSource entered) : IPolishProvider
+    {
+        public string ProviderId => "local-test";
+
+        public async Task<PolishResult> TryPolishAsync(PolishRequest request, CancellationToken cancellationToken = default)
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException();
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private static DictationHistoryEntry CreateEntry(string text) => new(
         Guid.NewGuid(),
         Now,

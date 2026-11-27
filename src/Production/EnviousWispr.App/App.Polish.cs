@@ -27,6 +27,10 @@ public partial class App
     private CancellationTokenSource? _polishWarmupCancellation;
     private readonly Lock _polishKeepAwakeLock = new();
     private CancellationTokenSource? _polishKeepAwakeCancellation;
+    private readonly Lock _repolishLock = new();
+    private CancellationTokenSource _repolishCancellation = new();
+    private int _repolishInFlight;
+    private TaskCompletionSource? _repolishDrained;
     private Task? _polishWarmup;
     private string? _configuredEgOneModelPath;
     private PolishModelSource? _polishModelSource;
@@ -153,6 +157,97 @@ public partial class App
         }
         catch (ObjectDisposedException)
         {
+        }
+    }
+
+    private RepolishExecutionLease? BeginHistoryRepolishExecution(CancellationToken callerToken)
+    {
+        CancellationTokenSource? linked = null;
+        lock (_repolishLock)
+        {
+            if (Leaving)
+            {
+                return null;
+            }
+
+            _repolishInFlight++;
+            try
+            {
+                linked = CancellationTokenSource.CreateLinkedTokenSource(
+                    callerToken,
+                    _repolishCancellation.Token,
+                    _resourceArbiter.CurrentBackgroundToken);
+            }
+            catch (ObjectDisposedException)
+            {
+                _repolishInFlight--;
+                if (_repolishInFlight == 0)
+                {
+                    _repolishDrained?.TrySetResult();
+                    _repolishDrained = null;
+                }
+
+                return null;
+            }
+        }
+
+        return new RepolishExecutionLease(() =>
+        {
+            linked.Dispose();
+            EndHistoryRepolishExecution();
+        }, linked.Token);
+    }
+
+    private void EndHistoryRepolishExecution()
+    {
+        lock (_repolishLock)
+        {
+            _repolishInFlight--;
+            if (_repolishInFlight == 0)
+            {
+                _repolishDrained?.TrySetResult();
+                _repolishDrained = null;
+            }
+        }
+    }
+
+    private async Task CancelAndDrainRepolishAsync()
+    {
+        CancellationTokenSource previous;
+        Task? drainTask;
+        lock (_repolishLock)
+        {
+            previous = _repolishCancellation;
+            _repolishCancellation = new CancellationTokenSource();
+            if (_repolishInFlight > 0)
+            {
+                _repolishDrained ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                drainTask = _repolishDrained.Task;
+            }
+            else
+            {
+                drainTask = null;
+            }
+        }
+
+        try
+        {
+            previous.Cancel();
+        }
+        finally
+        {
+            previous.Dispose();
+        }
+
+        if (drainTask is not null)
+        {
+            try
+            {
+                await drainTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(true);
+            }
+            catch (TimeoutException)
+            {
+            }
         }
     }
 
