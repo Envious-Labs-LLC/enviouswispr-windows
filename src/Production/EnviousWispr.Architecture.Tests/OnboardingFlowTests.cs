@@ -233,21 +233,25 @@ public sealed class OnboardingFlowTests
         Assert.Equal(OnboardingStep.Practice, waitingFlow.Step);
         Assert.Equal(OnboardingPolishChoiceKind.EgOne, waitingFlow.Choices.PolishChoice);
 
-        // Case 3: Speech ready, EG-1 failed -> "Continue without AI polish" clears polish choice to None and advances.
-        waitingFlow = CreateFlowAtStep(
-            OnboardingStep.Key,
-            engine: SpeechEngineReadiness.Ready,
-            model: SpeechModelDelivery.Installed,
-            polishModel: SpeechModelDelivery.Failed,
-            mic: MicrophoneConsent.Allowed);
-        waitingFlow.ContinueFromKey();
-        Assert.Equal(OnboardingStep.GettingReady, waitingFlow.Step);
-        Assert.Equal(OnboardingGateDecision.PolishFailedContinueWithout, waitingFlow.EvaluateGate());
-        Assert.True(waitingFlow.CanContinueWithoutAiPolishOnGate);
-        Assert.True(waitingFlow.ContinueWithoutAiPolish());
-        Assert.Equal(OnboardingStep.Practice, waitingFlow.Step);
-        Assert.Equal(OnboardingPolishChoiceKind.None, waitingFlow.Choices.PolishChoice);
-        Assert.Null(waitingFlow.Choices.EgOneModelId);
+        // Case 3: Speech ready, EG-1 failed or cancelled -> "Continue without AI polish" clears polish choice to None and advances.
+        foreach (var stoppedStage in new[] { SpeechModelDelivery.Failed, SpeechModelDelivery.Cancelled })
+        {
+            waitingFlow = CreateFlowAtStep(
+                OnboardingStep.Key,
+                engine: SpeechEngineReadiness.Ready,
+                model: SpeechModelDelivery.Installed,
+                polishModel: stoppedStage,
+                mic: MicrophoneConsent.Allowed);
+            waitingFlow.ContinueFromKey();
+            Assert.Equal(OnboardingStep.GettingReady, waitingFlow.Step);
+            Assert.Equal(OnboardingGateDecision.PolishFailedContinueWithout, waitingFlow.EvaluateGate());
+            Assert.False(waitingFlow.CanSkipAheadDuringGate);
+            Assert.True(waitingFlow.CanContinueWithoutAiPolishOnGate);
+            Assert.True(waitingFlow.ContinueWithoutAiPolish());
+            Assert.Equal(OnboardingStep.Practice, waitingFlow.Step);
+            Assert.Equal(OnboardingPolishChoiceKind.None, waitingFlow.Choices.PolishChoice);
+            Assert.Null(waitingFlow.Choices.EgOneModelId);
+        }
     }
 
     [Fact]

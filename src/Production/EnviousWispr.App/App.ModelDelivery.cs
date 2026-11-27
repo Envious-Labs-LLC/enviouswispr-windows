@@ -55,6 +55,8 @@ public partial class App
     private bool _livePreviewReconfigurePending;
     private bool _transcriptionReconfigurePending;
     private bool _polishReconfigurePending;
+    private TaskCompletionSource? _pendingSpeechReconfigureCompletion;
+    private TaskCompletionSource? _pendingPolishReconfigureCompletion;
     private ModelStore? _offlineModelStore;
 
     private sealed record SpeechEngineTransientDelivery(
@@ -430,15 +432,22 @@ public partial class App
 
                     using (hold)
                     {
-                        _transcriptionReconfigurePending = false;
-                        _livePreviewReconfigurePending = false;
-                        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
-                        if (Leaving)
+                        try
                         {
-                            return false;
-                        }
+                            _transcriptionReconfigurePending = false;
+                            _livePreviewReconfigurePending = false;
+                            await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+                            if (Leaving)
+                            {
+                                return false;
+                            }
 
-                        PresentGraphicsRuntime();
+                            PresentGraphicsRuntime();
+                        }
+                        finally
+                        {
+                            _pendingSpeechReconfigureCompletion?.TrySetResult();
+                        }
                     }
 
                     continue;
@@ -477,11 +486,18 @@ public partial class App
 
                     using (hold)
                     {
-                        _polishReconfigurePending = false;
-                        await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
-                        if (Leaving)
+                        try
                         {
-                            return false;
+                            _polishReconfigurePending = false;
+                            await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+                            if (Leaving)
+                            {
+                                return false;
+                            }
+                        }
+                        finally
+                        {
+                            _pendingPolishReconfigureCompletion?.TrySetResult();
                         }
                     }
                 }
@@ -489,6 +505,14 @@ public partial class App
 
             if (coordinatorClosed || Leaving)
             {
+                if (coordinatorClosed)
+                {
+                    _transcriptionReconfigurePending = false;
+                    _polishReconfigurePending = false;
+                }
+
+                _pendingSpeechReconfigureCompletion?.TrySetResult();
+                _pendingPolishReconfigureCompletion?.TrySetResult();
                 return false;
             }
 
@@ -1690,14 +1714,9 @@ public partial class App
             ? null
             : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
         var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true &&
-            _polishProvider is EgOnePolishProvider activeEgOne &&
-            string.Equals(activeEgOne.ModelId, normalizedPolishId, StringComparison.Ordinal) &&
-            !string.IsNullOrWhiteSpace(_configuredEgOneModelPath) &&
-            _settings.Preferences.Polish.Provider == PolishProvider.EgOne &&
-            string.Equals(ConfiguredEgOneModelId(_settings.Preferences.Polish), normalizedPolishId, StringComparison.Ordinal));
+            IsExpectedEgOneConfigured(normalizedPolishId));
         var speechInstalled = speechState.IsInstalled &&
-            _transcriptionEngine is not null &&
-            _settings.Preferences.Dictation.FinalEngine == speechEngine;
+            IsExpectedSpeechConfigured(speechEngine);
 
         if (Leaving)
         {
@@ -1752,16 +1771,15 @@ public partial class App
                     return;
                 }
 
-                var reconfigured = await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
-                if (Leaving)
+                if (!await EnsureOnboardingActivationAsync(
+                    TryReconfigureTranscriptionUnderHoldAsync,
+                    () => _transcriptionReconfigurePending,
+                    completion => _pendingSpeechReconfigureCompletion = completion,
+                    () => IsExpectedSpeechConfigured(speechEngine),
+                    $"Could not start the {speechEngine} speech engine after download.",
+                    ct).ConfigureAwait(true))
                 {
                     return;
-                }
-
-                if (reconfigured && _transcriptionEngine is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Could not start the {speechEngine} speech engine after download.");
                 }
 
                 PresentGraphicsRuntime();
@@ -1779,19 +1797,15 @@ public partial class App
                     return;
                 }
 
-                var reconfigured = await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
-                if (Leaving)
+                if (!await EnsureOnboardingActivationAsync(
+                    TryReconfigurePolishUnderHoldAsync,
+                    () => _polishReconfigurePending,
+                    completion => _pendingPolishReconfigureCompletion = completion,
+                    () => IsExpectedEgOneConfigured(normalizedPolishId),
+                    $"Could not configure local AI polish ({normalizedPolishId}) after download.",
+                    ct).ConfigureAwait(true))
                 {
                     return;
-                }
-
-                if (reconfigured &&
-                    (_polishProvider is not EgOnePolishProvider egOne ||
-                     !string.Equals(egOne.ModelId, normalizedPolishId, StringComparison.Ordinal) ||
-                     string.IsNullOrWhiteSpace(_configuredEgOneModelPath)))
-                {
-                    throw new InvalidOperationException(
-                        $"Could not configure local AI polish ({normalizedPolishId}) after download.");
                 }
 
                 await RefreshEgOneInventoryAsync().ConfigureAwait(true);
@@ -2024,5 +2038,67 @@ public partial class App
             await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
             return true;
         }
+    }
+
+    private bool IsExpectedSpeechConfigured(FinalAsrEngine engine) =>
+        _transcriptionEngine is not null &&
+        _configuredTranscription?.Engine == engine &&
+        _settings.Preferences.Dictation.FinalEngine == engine;
+
+    private bool IsExpectedEgOneConfigured(string modelId) =>
+        _polishProvider is EgOnePolishProvider egOne &&
+        string.Equals(egOne.ModelId, modelId, StringComparison.Ordinal) &&
+        !string.IsNullOrWhiteSpace(_configuredEgOneModelPath) &&
+        _settings.Preferences.Polish.Provider == PolishProvider.EgOne &&
+        string.Equals(ConfiguredEgOneModelId(_settings.Preferences.Polish), modelId, StringComparison.Ordinal);
+
+    private async Task<bool> EnsureOnboardingActivationAsync(
+        Func<Task<bool>> tryReconfigureAsync,
+        Func<bool> isPending,
+        Action<TaskCompletionSource?> setCompletion,
+        Func<bool> isConfigured,
+        string failureMessage,
+        CancellationToken cancellationToken)
+    {
+        var reconfigured = await tryReconfigureAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return false;
+        }
+
+        if (!reconfigured)
+        {
+            if (!isPending())
+            {
+                throw new InvalidOperationException(failureMessage);
+            }
+
+            while (isPending() && !Leaving)
+            {
+                var wait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                setCompletion(wait);
+                try
+                {
+                    TrySchedulePendingModelRefresh();
+                    await wait.Task.WaitAsync(cancellationToken).ConfigureAwait(true);
+                }
+                finally
+                {
+                    setCompletion(null);
+                }
+            }
+
+            if (Leaving)
+            {
+                return false;
+            }
+        }
+
+        if (!isConfigured())
+        {
+            throw new InvalidOperationException(failureMessage);
+        }
+
+        return true;
     }
 }

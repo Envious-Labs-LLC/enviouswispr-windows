@@ -293,7 +293,7 @@ public sealed class OnboardingFlow
             return OnboardingGateDecision.ReadyAutoSkip;
         }
 
-        if (PolishModel is SpeechModelDelivery.Failed or SpeechModelDelivery.CannotDownload)
+        if (PolishModel is SpeechModelDelivery.Failed or SpeechModelDelivery.CannotDownload or SpeechModelDelivery.Cancelled)
         {
             return OnboardingGateDecision.PolishFailedContinueWithout;
         }
