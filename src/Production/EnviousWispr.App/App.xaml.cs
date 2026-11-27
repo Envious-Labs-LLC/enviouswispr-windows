@@ -383,6 +383,7 @@ public partial class App : Application, IAsyncDisposable
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.OnboardingDualDownloadRequested += OnOnboardingDualDownloadRequested;
         _window.OnboardingDualDownloadCancelRequested += OnOnboardingDualDownloadCancelRequested;
+        _window.OnboardingDualDownloadSkipPolishRequested += OnOnboardingDualDownloadSkipPolishRequested;
         _window.OnboardingDualDownloadRetryRequested += OnOnboardingDualDownloadRetryRequested;
         _window.EgOneModelDownloadRequested += OnEgOneModelDownloadRequested;
         _window.EgOneModelDownloadCancelRequested += OnModelDownloadCancelRequested;
@@ -592,6 +593,7 @@ public partial class App : Application, IAsyncDisposable
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
             window.OnboardingDualDownloadRequested -= OnOnboardingDualDownloadRequested;
             window.OnboardingDualDownloadCancelRequested -= OnOnboardingDualDownloadCancelRequested;
+            window.OnboardingDualDownloadSkipPolishRequested -= OnOnboardingDualDownloadSkipPolishRequested;
             window.OnboardingDualDownloadRetryRequested -= OnOnboardingDualDownloadRetryRequested;
             window.EgOneModelDownloadRequested -= OnEgOneModelDownloadRequested;
             window.EgOneModelDownloadCancelRequested -= OnModelDownloadCancelRequested;

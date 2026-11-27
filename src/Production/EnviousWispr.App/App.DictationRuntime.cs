@@ -150,21 +150,6 @@ public partial class App
             return (false, HotkeyConflictDetector.Describe(conflicts));
         }
 
-        if (!await TrySaveOnboardingSettingsAsync(latest => latest with
-            {
-                Preferences = latest.Preferences with
-                {
-                    Dictation = latest.Preferences.Dictation with
-                    {
-                        PushToTalkGesture = canonicalGesture,
-                        RecordingMode = recordingMode,
-                    },
-                },
-            }).ConfigureAwait(true))
-        {
-            return (false, "Could not save the new dictation shortcut right now.");
-        }
-
         var disableGlobalHotkey = string.Equals(
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_GLOBAL_HOTKEY"),
             "1",
@@ -181,33 +166,55 @@ public partial class App
              (SingleInstanceLock.IsHeld(_releaseIdentity.SingleInstanceKey) ||
               SingleInstanceLock.IsHeld(globalHotkeyKey)));
 
+        Task<bool> SaveShortcutAsync() => TrySaveOnboardingSettingsAsync(latest => latest with
+        {
+            Preferences = latest.Preferences with
+            {
+                Dictation = latest.Preferences.Dictation with
+                {
+                    PushToTalkGesture = canonicalGesture,
+                    RecordingMode = recordingMode,
+                },
+            },
+        });
+
         if (suppressGlobalHook)
         {
-            return (true, null);
+            return await SaveShortcutAsync().ConfigureAwait(true)
+                ? (true, null)
+                : (false, "Could not save the new dictation shortcut right now.");
         }
 
         var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
             ?? new SessionHoldAttempt(NoScope.Instance);
         if (attempt.Hold is not { } hold)
         {
-            return (true, null);
+            return (false, attempt.Refusal == SessionHoldRefusal.Closed
+                ? "Closing EnviousWispr."
+                : "Finish the active dictation before changing the shortcut.");
         }
 
         using (hold)
         {
-            var savedDictation = _settings.Preferences.Dictation;
+            var currentDictation = (_presentation?.Settings.Current ?? _settings).Preferences.Dictation;
             if (!WindowsPushToTalkHook.TryCreate(
                     canonicalGesture,
                     recordingMode,
-                    savedDictation.CancelGesture,
-                    savedDictation.QuickAddGesture,
-                    savedDictation.PasteLastGesture,
-                    savedDictation.CopyLastGesture,
+                    currentDictation.CancelGesture,
+                    currentDictation.QuickAddGesture,
+                    currentDictation.PasteLastGesture,
+                    currentDictation.CopyLastGesture,
                     out var nextHook,
                     out var error) ||
                 nextHook is null)
             {
                 return (false, HotkeyFailureStatus(error));
+            }
+
+            if (!await SaveShortcutAsync().ConfigureAwait(true))
+            {
+                await nextHook.DisposeAsync().ConfigureAwait(true);
+                return (false, "Could not save the new dictation shortcut right now.");
             }
 
             if (_pushToTalkHook is { } existingHook)

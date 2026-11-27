@@ -47,6 +47,7 @@ public partial class App
     private CancellationTokenSource? _modelDownload;
     private Task? _modelDelivery;
     private CancellationTokenSource? _onboardingDownloadCancellation;
+    private OnboardingDownloadCoordinator? _activeOnboardingCoordinator;
     private Task? _onboardingDelivery;
     private (string SpeechModelId, string? PolishModelId, bool ParallelDownloads)? _lastOnboardingDownloadRequest;
     private IReadOnlyList<string> _missingModelIds = [];
@@ -1683,6 +1684,16 @@ public partial class App
 
     private void OnOnboardingDualDownloadCancelRequested() => _onboardingDownloadCancellation?.Cancel();
 
+    private void OnOnboardingDualDownloadSkipPolishRequested()
+    {
+        if (_lastOnboardingDownloadRequest is { } req)
+        {
+            _lastOnboardingDownloadRequest = req with { PolishModelId = null };
+        }
+
+        _activeOnboardingCoordinator?.SkipPolish();
+    }
+
     private void OnOnboardingDualDownloadRetryRequested()
     {
         if (_onboardingDelivery is { IsCompleted: false } || Leaving || _lastOnboardingDownloadRequest is not { } req)
@@ -1816,10 +1827,12 @@ public partial class App
 
         try
         {
+            _activeOnboardingCoordinator = coordinator;
             await coordinator.RunAsync(cancellation.Token).ConfigureAwait(true);
         }
         finally
         {
+            _activeOnboardingCoordinator = null;
             _onboardingDownloadCancellation = null;
         }
     }
