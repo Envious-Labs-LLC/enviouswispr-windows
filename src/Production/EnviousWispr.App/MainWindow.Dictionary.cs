@@ -307,40 +307,10 @@ public sealed partial class MainWindow
             .OfType<ComboBoxItem>()
             .First(item => item.Tag is MatchStrictness.Default or (int)MatchStrictness.Default);
 
-    /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>
-    /// <remarks>
-    /// ONE PRESS FOR THE WHOLE LIST, AND THE SAME PRESS TO UNDO IT. Selecting twenty words by hand
-    /// to remove them is the work this button exists to remove; a separate "deselect all" would be a
-    /// second control for the same idea, and macOS uses the one toggle for both.
-    /// </remarks>
-    internal void SelectAllWordsButton_Click(object sender, RoutedEventArgs e)
-    {
-        var shownCount = DictionaryList.Items.Count;
-        if (DictionaryList.SelectionMode != ListViewSelectionMode.Multiple)
-        {
-            if (!_isDictionaryMassEdit)
-            {
-                MassEditWordsToggle_Click(sender, e);
-            }
-            else
-            {
-                DictionaryList.SelectionMode = ListViewSelectionMode.Multiple;
-            }
-        }
+    internal bool IsClosing => _session.Closing;
 
-        if (DictionaryList.SelectionMode != ListViewSelectionMode.Multiple)
-        {
-            return;
-        }
-
-        if (DictionaryList.SelectedItems.Count == shownCount && shownCount > 0)
-        {
-            DictionaryList.SelectedItems.Clear();
-            return;
-        }
-
-        DictionaryList.SelectAll();
-    }
+    internal IReadOnlyList<CustomWordEntry> CurrentCustomWords =>
+        _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
 
     /// <summary>Removes every selected word, asking first when it is more than one.</summary>
     /// <remarks>
@@ -354,12 +324,7 @@ public sealed partial class MainWindow
     /// </remarks>
     internal async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
     {
-        var selected = DictionaryList.SelectionMode == ListViewSelectionMode.None
-            ? Array.Empty<CustomWordEntry>()
-            : DictionaryList.SelectedItems
-                .Select(item => item is DictionaryWordRow row ? row.Entry : item as CustomWordEntry)
-                .OfType<CustomWordEntry>()
-                .ToArray();
+        var selected = _dictionaryPageView?.GetSelectedWords() ?? Array.Empty<CustomWordEntry>();
         if (selected.Length == 0)
         {
             ShowMessage("Select a word first", "Choose the dictionary rows you want to remove.", InfoBarSeverity.Informational);
@@ -912,24 +877,8 @@ public sealed partial class MainWindow
         }
     }
 
-    private readonly EnviousWispr.App.Collections.BulkObservableCollection<DictionaryWordRow> _dictionaryRows = new();
-    private double[]? _wordFilterChipWidths;
-    private int _lastWordFilterChipSplitIndex = -1;
-    private CancellationTokenSource? _dictionaryRefreshCts;
-    private int _dictionaryRefreshGeneration;
-    private bool _dictionaryViewDirty;
-    private (IReadOnlyList<CustomWordEntry> Source, DictionaryWordRow[] Rows)? _dictionaryRowCache;
-
-    private string _wordFilterCategory = "all";
-    private bool _isDictionaryMassEdit;
-
     private void InitializeUserDataUi()
     {
-        if (DictionaryList is not null)
-        {
-            DictionaryList.ItemsSource = _dictionaryRows;
-        }
-
         if (SnippetList is not null)
         {
             SnippetList.ItemsSource = _snippetRows;
@@ -939,120 +888,9 @@ public sealed partial class MainWindow
     private void ShutdownUserDataUi()
     {
         InvalidateAliasSuggestions(clearSurface: false);
-        _dictionaryRefreshCts?.Cancel();
-        _dictionaryRefreshCts?.Dispose();
-        _dictionaryRefreshCts = null;
         _snippetRefreshCts?.Cancel();
         _snippetRefreshCts?.Dispose();
         _snippetRefreshCts = null;
-    }
-
-    private void FlushPendingDictionaryRefresh()
-    {
-        if (_dictionaryViewDirty)
-        {
-            ScheduleDictionaryRefresh(debounce: false);
-        }
-    }
-
-    internal void WordFilterChip_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is string tag)
-        {
-            _wordFilterCategory = tag;
-            var active = (Style)Application.Current.Resources["BrandTabStripActiveButtonStyle"];
-            var normal = (Style)Application.Current.Resources["BrandTabStripButtonStyle"];
-            WordFilterAllChip.Style = tag == "all" ? active : normal;
-            WordFilterGeneralChip.Style = tag == "general" ? active : normal;
-            WordFilterPersonChip.Style = tag == "person" ? active : normal;
-            WordFilterBrandChip.Style = tag == "brand" ? active : normal;
-            WordFilterAcronymChip.Style = tag == "acronym" ? active : normal;
-            WordFilterDomainChip.Style = tag == "domain" ? active : normal;
-            WordFilterAutoLearnedChip.Style = tag == "auto-learned" ? active : normal;
-            ScheduleDictionaryRefresh(debounce: false);
-        }
-    }
-
-    internal void WordFilterChipsContainer_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (WordFilterChipsPrimaryRow is null || WordFilterChipsOverflowRow is null || e.NewSize.Width <= 0)
-        {
-            return;
-        }
-
-        Button[] allChips =
-        [
-            WordFilterAllChip,
-            WordFilterGeneralChip,
-            WordFilterPersonChip,
-            WordFilterBrandChip,
-            WordFilterAcronymChip,
-            WordFilterDomainChip,
-            WordFilterAutoLearnedChip,
-        ];
-        if (allChips.Any(c => c is null))
-        {
-            return;
-        }
-
-        if (_wordFilterChipWidths is null || _wordFilterChipWidths.Length != allChips.Length)
-        {
-            _wordFilterChipWidths = new double[allChips.Length];
-            for (var i = 0; i < allChips.Length; i++)
-            {
-                if (allChips[i].DesiredSize.Width <= 0)
-                {
-                    allChips[i].Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-                }
-
-                _wordFilterChipWidths[i] = Math.Max(64, allChips[i].DesiredSize.Width);
-            }
-        }
-
-        var available = e.NewSize.Width;
-        var spacing = LayoutDouble("BrandSpacingXs");
-        var usedWidth = 0.0;
-        var splitIndex = allChips.Length;
-        for (var i = 0; i < allChips.Length; i++)
-        {
-            var chipWidth = _wordFilterChipWidths[i];
-            var nextWidth = i == 0 ? chipWidth : usedWidth + spacing + chipWidth;
-            if (nextWidth <= available)
-            {
-                usedWidth = nextWidth;
-            }
-            else
-            {
-                splitIndex = i;
-                break;
-            }
-        }
-
-        if (splitIndex == _lastWordFilterChipSplitIndex &&
-            WordFilterChipsPrimaryRow.Children.Count == splitIndex &&
-            WordFilterChipsOverflowRow.Children.Count == allChips.Length - splitIndex)
-        {
-            return;
-        }
-
-        _lastWordFilterChipSplitIndex = splitIndex;
-        WordFilterChipsPrimaryRow.Children.Clear();
-        WordFilterChipsOverflowRow.Children.Clear();
-        for (var i = 0; i < allChips.Length; i++)
-        {
-            if (i < splitIndex)
-            {
-                WordFilterChipsPrimaryRow.Children.Add(allChips[i]);
-            }
-            else
-            {
-                WordFilterChipsOverflowRow.Children.Add(allChips[i]);
-            }
-        }
-
-        WordFilterChipsOverflowRow.Visibility = WordFilterChipsOverflowRow.Children.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
     }
 
     internal void QuickAddStepsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
@@ -1061,178 +899,6 @@ public sealed partial class MainWindow
             e.NewSize.Width,
             stackThreshold: 640,
             [QuickAddStep1Card, QuickAddStep2Card, QuickAddStep3Card]);
-
-    internal void DictionarySearchClearButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (DictionarySearchBox is not null)
-        {
-            DictionarySearchBox.Text = string.Empty;
-            DictionarySearchBox.Focus(FocusState.Programmatic);
-        }
-    }
-
-    internal void MassEditWordsToggle_Click(object sender, RoutedEventArgs e)
-    {
-        _isDictionaryMassEdit = !_isDictionaryMassEdit;
-        if (DictionaryList.SelectionMode != ListViewSelectionMode.None)
-        {
-            DictionaryList.SelectedItems.Clear();
-        }
-
-        DictionaryList.SelectionMode = _isDictionaryMassEdit
-            ? ListViewSelectionMode.Multiple
-            : ListViewSelectionMode.None;
-        DictionaryMassEditBar.Visibility = _isDictionaryMassEdit ? Visibility.Visible : Visibility.Collapsed;
-        MassEditWordsToggle.Style = (Style)Application.Current.Resources[
-            _isDictionaryMassEdit ? "BrandQuietActiveButtonStyle" : "BrandQuietButtonStyle"];
-        UpdateSelectionDependentButtons();
-    }
-
-    internal void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (DictionarySearchClearButton is not null)
-        {
-            DictionarySearchClearButton.Visibility = string.IsNullOrWhiteSpace(DictionarySearchBox?.Text)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-        }
-
-        ScheduleDictionaryRefresh(debounce: true);
-    }
-
-    private void ScheduleDictionaryRefresh(bool debounce)
-    {
-        _dictionaryRefreshCts?.Cancel();
-        _dictionaryRefreshCts?.Dispose();
-        var cts = new CancellationTokenSource();
-        _dictionaryRefreshCts = cts;
-        var generation = ++_dictionaryRefreshGeneration;
-        var allWords = _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
-        var category = _wordFilterCategory;
-        var query = DictionarySearchBox?.Text?.Trim() ?? string.Empty;
-
-        if (!debounce && allWords.Count < 128)
-        {
-            var rows = BuildFilteredDictionaryRows(allWords, category, query);
-            ApplyFilteredDictionaryRows(rows, allWords.Count);
-            return;
-        }
-
-        _ = RefreshDictionaryAsync(allWords, category, query, debounce, generation, cts.Token);
-    }
-
-    private async Task RefreshDictionaryAsync(
-        IReadOnlyList<CustomWordEntry> allWords,
-        string category,
-        string query,
-        bool debounce,
-        int generation,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (debounce)
-            {
-                await Task.Delay(150, cancellationToken).ConfigureAwait(true);
-            }
-
-            if (cancellationToken.IsCancellationRequested || generation != _dictionaryRefreshGeneration || _session.Closing)
-            {
-                return;
-            }
-
-            var rows = await Task.Run(
-                () => BuildFilteredDictionaryRows(allWords, category, query),
-                cancellationToken).ConfigureAwait(true);
-
-            if (cancellationToken.IsCancellationRequested || generation != _dictionaryRefreshGeneration || _session.Closing)
-            {
-                return;
-            }
-
-            ApplyFilteredDictionaryRows(rows, allWords.Count);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
-    private DictionaryWordRow[] BuildFilteredDictionaryRows(
-        IReadOnlyList<CustomWordEntry> allWords,
-        string category,
-        string query)
-    {
-        var cached = _dictionaryRowCache;
-        DictionaryWordRow[] allRows;
-        if (cached is { Source: var cachedSource } && ReferenceEquals(cachedSource, allWords))
-        {
-            allRows = cached.Value.Rows;
-        }
-        else
-        {
-            allRows = new DictionaryWordRow[allWords.Count];
-            for (var i = 0; i < allWords.Count; i++)
-            {
-                allRows[i] = new DictionaryWordRow(allWords[i]);
-            }
-
-            _dictionaryRowCache = (allWords, allRows);
-        }
-
-        var noCategoryFilter = string.IsNullOrWhiteSpace(category) ||
-            string.Equals(category, "all", StringComparison.OrdinalIgnoreCase);
-        if (noCategoryFilter && string.IsNullOrEmpty(query))
-        {
-            return allRows;
-        }
-
-        var matching = VocabularyPresenter.FilterWords(allWords, category, query);
-        if (matching.Count == 0)
-        {
-            return [];
-        }
-
-        if (matching.Count == allRows.Length)
-        {
-            return allRows;
-        }
-
-        var byEntry = new Dictionary<CustomWordEntry, DictionaryWordRow>(allRows.Length, ReferenceEqualityComparer.Instance);
-        for (var i = 0; i < allRows.Length; i++)
-        {
-            byEntry[allRows[i].Entry] = allRows[i];
-        }
-
-        var result = new DictionaryWordRow[matching.Count];
-        for (var i = 0; i < matching.Count; i++)
-        {
-            result[i] = byEntry.TryGetValue(matching[i], out var row)
-                ? row
-                : new DictionaryWordRow(matching[i]);
-        }
-
-        return result;
-    }
-
-    private void ApplyFilteredDictionaryRows(DictionaryWordRow[] rows, int totalCount)
-    {
-        _dictionaryViewDirty = false;
-        if (DictionaryList is not null)
-        {
-            _dictionaryRows.Reconcile(rows, static (left, right) => ReferenceEquals(left, right) || Equals(left.Entry, right.Entry));
-            UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, rows.Length);
-        }
-
-        if (WordCountText is not null)
-        {
-            var wordUnit = totalCount == 1 ? "WORD" : "WORDS";
-            WordCountText.Text = rows.Length == totalCount
-                ? $"{totalCount} {wordUnit}"
-                : $"Showing {rows.Length} of {totalCount} {wordUnit}";
-        }
-
-        UpdateSelectionDependentButtons();
-    }
 
     internal void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e) =>
         HandleWordCorrectionToggleChanged(DictionaryEnabledToggle);

@@ -16,7 +16,7 @@ public sealed partial class MainWindow
     private double? _sidebarStartingWidth;
     private bool _sidebarResizing;
 
-    private static double LayoutDouble(string key) => (double)Application.Current.Resources[key];
+    internal static double LayoutDouble(string key) => (double)Application.Current.Resources[key];
 
     /// <summary>Shows every section heading in upper case, as macOS draws its pane eyebrows.</summary>
     /// <remarks>

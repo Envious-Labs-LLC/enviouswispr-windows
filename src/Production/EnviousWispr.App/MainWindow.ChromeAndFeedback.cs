@@ -215,7 +215,7 @@ public sealed partial class MainWindow
     internal void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
 
-    private static void UpdateListAndEmptyStateVisibility(
+    internal static void UpdateListAndEmptyStateVisibility(
         ListView list,
         FrameworkElement emptyState,
         int itemCount)
@@ -238,7 +238,7 @@ public sealed partial class MainWindow
     /// so a live region declared on one has nothing to raise through and the raise silently does
     /// nothing. TextBlock has one.
     /// </remarks>
-    private static void SetLiveRegion(TextBlock region, string text, Visibility visibility)
+    internal static void SetLiveRegion(TextBlock region, string text, Visibility visibility)
     {
         var textChanged = !string.Equals(region.Text, text, StringComparison.Ordinal);
         var becameVisible = region.Visibility != visibility && visibility == Visibility.Visible;

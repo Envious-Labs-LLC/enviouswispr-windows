@@ -89,9 +89,6 @@ public sealed partial class MainWindow
             onShutdown: () =>
             {
                 InvalidateAliasSuggestions(clearSurface: false);
-                _dictionaryRefreshCts?.Cancel();
-                _dictionaryRefreshCts?.Dispose();
-                _dictionaryRefreshCts = null;
                 if (_dictionaryPageView is { } view)
                 {
                     view.Detach();
@@ -243,16 +240,10 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (DictionaryList is not null)
-        {
-            DictionaryList.ItemsSource = _dictionaryRows;
-        }
-
         ResetMatchStrictness();
         WireDictionaryPageAutoSave();
         ApplySettingsToDictionaryPageControls();
         RefreshVocabularyPacksPanel();
-        _dictionaryViewDirty = true;
     }
 
     private void EnsureSnippetsPageLoaded()
