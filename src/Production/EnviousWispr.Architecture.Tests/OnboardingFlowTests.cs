@@ -253,6 +253,9 @@ public sealed class OnboardingFlowTests
     [Fact]
     public async Task CheckpointStoreSavesAtomicallyRestoresCleanlyClearsAndNeverStoresApiKeys()
     {
+        var expectedDefaultSuffix = Path.Combine("Envious Labs", "EnviousWispr", "onboarding-checkpoint.json");
+        Assert.EndsWith(expectedDefaultSuffix, OnboardingCheckpointStore.DefaultFilePath(), StringComparison.Ordinal);
+
         var directory = Directory.CreateTempSubdirectory("ew-checkpoint-");
         try
         {

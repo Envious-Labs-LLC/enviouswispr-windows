@@ -234,6 +234,53 @@ public sealed class OnboardingDownloadCoordinatorTests
         Assert.Equal(OnboardingDownloadStage.Installed, recovered.Speech.Stage);
     }
 
+    [Fact]
+    public async Task DiskPreflightAccountsForShardedManifestAssemblyAndAlreadyInstalledPublishesSnapshot()
+    {
+        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+        var whisperManifest = BundledModelManifests.Load(WhisperModelIds.Final, verifier);
+        Assert.True(whisperManifest.Succeeded);
+        var downloadBytes = whisperManifest.Manifest!.Payload.Files.Sum(f => f.SizeBytes);
+        var diskBytes = OnboardingDownloadCoordinator.ComputeManifestRequiredDiskBytes(whisperManifest.Manifest!);
+        Assert.True(diskBytes > downloadBytes);
+
+        var shardedPlan = new OnboardingDownloadPlan(
+            SpeechModelId: WhisperModelIds.Final,
+            SpeechTotalBytes: downloadBytes,
+            PolishModelId: null,
+            PolishTotalBytes: 0,
+            ParallelDownloads: false,
+            SpeechDiskBytes: diskBytes);
+
+        long tooTightForShardedAssembly = downloadBytes + OnboardingDownloadCoordinator.DiskHeadroomBytes;
+        var blocked = OnboardingDownloadCoordinator.PreflightDiskSpace(shardedPlan, tooTightForShardedAssembly);
+        Assert.False(blocked.Succeeded);
+        Assert.Equal(ModelDeliveryFailure.InsufficientDisk, blocked.Failure);
+
+        long enoughForShardedAssembly = diskBytes + OnboardingDownloadCoordinator.DiskHeadroomBytes;
+        Assert.True(OnboardingDownloadCoordinator.PreflightDiskSpace(shardedPlan, enoughForShardedAssembly).Succeeded);
+
+        // When both models are already installed, RunAsync publishes the ready snapshot to observers.
+        OnboardingDownloadSnapshot? observed = null;
+        var installedPlan = new OnboardingDownloadPlan(
+            SpeechModelId: ParakeetModelIds.Final,
+            SpeechTotalBytes: 100,
+            PolishModelId: EgOneModelCatalog.MicroId,
+            PolishTotalBytes: 100,
+            ParallelDownloads: true,
+            SpeechAlreadyInstalled: true,
+            PolishAlreadyInstalled: true);
+        using var coordinator = new OnboardingDownloadCoordinator(
+            installedPlan,
+            provisionAsync: (_, _, _) => throw new InvalidOperationException("Should not download"),
+            onSnapshotChanged: snap => observed = snap);
+        var result = await coordinator.RunAsync();
+        Assert.NotNull(observed);
+        Assert.Equal(result, observed);
+        Assert.True(observed!.IsSpeechReady);
+        Assert.True(observed.IsPolishReady);
+    }
+
     private sealed class FixedDiskProbe(long availableBytes) : IDiskSpaceProbe
     {
         public long GetAvailableBytes(string path) => availableBytes;

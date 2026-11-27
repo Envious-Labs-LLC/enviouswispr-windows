@@ -20,7 +20,9 @@ public sealed record OnboardingDownloadPlan(
     long PolishTotalBytes,
     bool ParallelDownloads,
     bool SpeechAlreadyInstalled = false,
-    bool PolishAlreadyInstalled = false);
+    bool PolishAlreadyInstalled = false,
+    long? SpeechDiskBytes = null,
+    long? PolishDiskBytes = null);
 
 public sealed record OnboardingDownloadPreflightResult(
     bool Succeeded,
@@ -129,16 +131,22 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
         }
     }
 
+    public static long ComputeManifestRequiredDiskBytes(VerifiedModelManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return manifest.Payload.Files.Sum(file => file.SizeBytes + (file.IsSharded ? file.SizeBytes : 0L));
+    }
+
     public static OnboardingDownloadPreflightResult PreflightDiskSpace(
         OnboardingDownloadPlan plan,
         long availableBytes)
     {
         ArgumentNullException.ThrowIfNull(plan);
 
-        var speechRemaining = plan.SpeechAlreadyInstalled ? 0L : Math.Max(0L, plan.SpeechTotalBytes);
+        var speechRemaining = plan.SpeechAlreadyInstalled ? 0L : Math.Max(0L, plan.SpeechDiskBytes ?? plan.SpeechTotalBytes);
         var polishRemaining = string.IsNullOrWhiteSpace(plan.PolishModelId) || plan.PolishAlreadyInstalled
             ? 0L
-            : Math.Max(0L, plan.PolishTotalBytes);
+            : Math.Max(0L, plan.PolishDiskBytes ?? plan.PolishTotalBytes);
         var neededModelBytes = speechRemaining + polishRemaining;
 
         if (neededModelBytes == 0)
@@ -222,10 +230,11 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
     public async Task<OnboardingDownloadSnapshot> RunAsync(CancellationToken externalCancellation = default)
     {
-        CancellationTokenSource runCts;
+        CancellationTokenSource? runCts = null;
         bool needSpeech;
         bool needPolish;
 
+        var alreadyComplete = false;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -240,35 +249,42 @@ public sealed class OnboardingDownloadCoordinator : IDisposable
 
             if (!needSpeech && !needPolish)
             {
-                return BuildSnapshotLocked();
+                alreadyComplete = true;
             }
-
-            _activeCts?.Dispose();
-            _activeCts = CancellationTokenSource.CreateLinkedTokenSource(externalCancellation);
-            runCts = _activeCts;
-            _isRunning = true;
-
-            if (needSpeech)
+            else
             {
-                _speechState = _speechState with
-                {
-                    Stage = OnboardingDownloadStage.Pending,
-                    CanRetry = false,
-                    CanCancel = true,
-                    StatusDetail = "Waiting to download\u2026",
-                };
-            }
+                _activeCts?.Dispose();
+                _activeCts = CancellationTokenSource.CreateLinkedTokenSource(externalCancellation);
+                runCts = _activeCts;
+                _isRunning = true;
 
-            if (needPolish && _polishState is not null)
-            {
-                _polishState = _polishState with
+                if (needSpeech)
                 {
-                    Stage = OnboardingDownloadStage.Pending,
-                    CanRetry = false,
-                    CanCancel = true,
-                    StatusDetail = "Waiting to download\u2026",
-                };
+                    _speechState = _speechState with
+                    {
+                        Stage = OnboardingDownloadStage.Pending,
+                        CanRetry = false,
+                        CanCancel = true,
+                        StatusDetail = "Waiting to download\u2026",
+                    };
+                }
+
+                if (needPolish && _polishState is not null)
+                {
+                    _polishState = _polishState with
+                    {
+                        Stage = OnboardingDownloadStage.Pending,
+                        CanRetry = false,
+                        CanCancel = true,
+                        StatusDetail = "Waiting to download\u2026",
+                    };
+                }
             }
+        }
+
+        if (alreadyComplete || runCts is null)
+        {
+            return PublishSnapshot();
         }
 
         var preflight = Preflight();

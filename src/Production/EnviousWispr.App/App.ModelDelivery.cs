@@ -1688,22 +1688,36 @@ public partial class App
         var polishState = normalizedPolishId is null
             ? null
             : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
-        var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true && _polishProvider is not null);
-        var speechInstalled = speechState.IsInstalled && _transcriptionEngine is not null;
+        var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true &&
+            _polishProvider is not null &&
+            _settings.Preferences.Polish.Provider == PolishProvider.EgOne &&
+            string.Equals(ConfiguredEgOneModelId(_settings.Preferences.Polish), normalizedPolishId, StringComparison.Ordinal));
+        var speechInstalled = speechState.IsInstalled &&
+            _transcriptionEngine is not null &&
+            _settings.Preferences.Dictation.FinalEngine == speechEngine;
 
         if (Leaving)
         {
             return;
         }
 
+        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
         var rules = WindowsSetupRules.Current;
-        var speechTotalBytes = rules.SpeechCatalog.TryGetValue(speechModelId, out var speechRule)
+        var speechFallbackBytes = rules.SpeechCatalog.TryGetValue(speechModelId, out var speechRule)
             ? speechRule.SizeBytes
             : 0L;
-        var polishTotalBytes = normalizedPolishId is not null &&
+        var (speechTotalBytes, speechDiskBytes) = MeasureBundledDownloadAndDiskBytes(
+            speechModelId,
+            verifier,
+            speechFallbackBytes);
+
+        var polishFallbackBytes = normalizedPolishId is not null &&
             rules.PolishCatalog.TryGetValue(normalizedPolishId, out var polishRule)
                 ? polishRule.SizeBytes
                 : 0L;
+        var (polishTotalBytes, polishDiskBytes) = normalizedPolishId is not null
+            ? MeasureBundledDownloadAndDiskBytes(normalizedPolishId, verifier, polishFallbackBytes)
+            : (0L, 0L);
 
         var plan = new OnboardingDownloadPlan(
             SpeechModelId: speechModelId,
@@ -1712,12 +1726,13 @@ public partial class App
             PolishTotalBytes: polishTotalBytes,
             ParallelDownloads: parallelDownloads,
             SpeechAlreadyInstalled: speechInstalled,
-            PolishAlreadyInstalled: polishInstalled);
+            PolishAlreadyInstalled: polishInstalled,
+            SpeechDiskBytes: speechDiskBytes,
+            PolishDiskBytes: polishDiskBytes);
 
         using var cancellation = new CancellationTokenSource();
         _onboardingDownloadCancellation = cancellation;
         var appVersion = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
-        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
 
         using var coordinator = new OnboardingDownloadCoordinator(
             plan,
@@ -1741,6 +1756,12 @@ public partial class App
                     return;
                 }
 
+                await ApplyOnboardingSpeechChoiceAsync(speechEngine).ConfigureAwait(true);
+                if (Leaving)
+                {
+                    return;
+                }
+
                 await ReconfigureTranscriptionAsync().ConfigureAwait(true);
                 if (Leaving)
                 {
@@ -1752,6 +1773,12 @@ public partial class App
             }, ct),
             onPolishInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
             {
+                if (Leaving || normalizedPolishId is null)
+                {
+                    return;
+                }
+
+                await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true);
                 if (Leaving)
                 {
                     return;
@@ -1846,6 +1873,80 @@ public partial class App
         if (!IsSpeechEngineBusy && snapshot.BackgroundPillSummary is { } pillSummary)
         {
             window.SetSessionStatus(DictationStatus.Quiet(pillSummary));
+        }
+    }
+
+    private static (long TotalBytes, long DiskBytes) MeasureBundledDownloadAndDiskBytes(
+        string modelId,
+        ModelManifestVerifier verifier,
+        long fallbackBytes)
+    {
+        var loaded = BundledModelManifests.Load(modelId, verifier);
+        if (!loaded.Succeeded || loaded.Manifest is null)
+        {
+            return (fallbackBytes, fallbackBytes);
+        }
+
+        var totalBytes = loaded.Manifest.Payload.Files.Sum(file => file.SizeBytes);
+        var diskBytes = OnboardingDownloadCoordinator.ComputeManifestRequiredDiskBytes(loaded.Manifest);
+        return (totalBytes, diskBytes);
+    }
+
+    private async Task ApplyOnboardingSpeechChoiceAsync(FinalAsrEngine engine)
+    {
+        if (_settings.Preferences.Dictation.FinalEngine == engine)
+        {
+            return;
+        }
+
+        var updated = _settings with
+        {
+            Preferences = _settings.Preferences with
+            {
+                Dictation = _settings.Preferences.Dictation with { FinalEngine = engine },
+            },
+        };
+        _settings = updated;
+        _trayIcon?.SetEngineAndPolishSummary(updated.Preferences.Dictation.FinalEngine, updated.Preferences.Polish.Provider);
+        try
+        {
+            await _settingsStore.SaveAsync(updated).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.SettingsRecovered, AppFailureCategory.StorageUnavailable));
+        }
+    }
+
+    private async Task ApplyOnboardingPolishChoiceAsync(string egOneModelId)
+    {
+        var currentPolish = _settings.Preferences.Polish;
+        if (currentPolish.Provider == PolishProvider.EgOne &&
+            string.Equals(ConfiguredEgOneModelId(currentPolish), egOneModelId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var updated = _settings with
+        {
+            Preferences = _settings.Preferences with
+            {
+                Polish = currentPolish with
+                {
+                    Provider = PolishProvider.EgOne,
+                    EgOneModelId = egOneModelId,
+                },
+            },
+        };
+        _settings = updated;
+        _trayIcon?.SetEngineAndPolishSummary(updated.Preferences.Dictation.FinalEngine, updated.Preferences.Polish.Provider);
+        try
+        {
+            await _settingsStore.SaveAsync(updated).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.SettingsRecovered, AppFailureCategory.StorageUnavailable));
         }
     }
 }

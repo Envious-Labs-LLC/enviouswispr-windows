@@ -1,4 +1,5 @@
 using System.Text.Json;
+using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Onboarding;
 
 namespace EnviousWispr.Services.Settings;
@@ -36,10 +37,31 @@ public sealed class OnboardingCheckpointStore : IOnboardingCheckpointStore, IDis
             : Path.GetFullPath(filePath);
     }
 
-    public static string DefaultFilePath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "EnviousWispr",
-        "onboarding-checkpoint.json");
+    public static OnboardingCheckpointStore ForDataDirectory(string dataDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
+        return new OnboardingCheckpointStore(DefaultFilePath(dataDirectory));
+    }
+
+    public static string DefaultFilePath(string? dataDirectory = null)
+    {
+        if (!string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return Path.Combine(Path.GetFullPath(dataDirectory), "onboarding-checkpoint.json");
+        }
+
+        var envDataDir = Environment.GetEnvironmentVariable("ENVIOUSWISPR_DATA_DIRECTORY");
+        if (!string.IsNullOrWhiteSpace(envDataDir))
+        {
+            return Path.Combine(Path.GetFullPath(envDataDir), "onboarding-checkpoint.json");
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Envious Labs",
+            ReleaseIdentity.Stable.DataDirectoryName,
+            "onboarding-checkpoint.json");
+    }
 
     public async Task<OnboardingCheckpointLoadResult> LoadAsync(CancellationToken cancellationToken = default)
     {
