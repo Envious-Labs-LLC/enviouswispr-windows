@@ -400,7 +400,8 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     var engineDetectsLanguage = DeliveryLanguagePolicy.EngineDetectsLanguage(transcript);
                     var protectedWords = DictationLanguageResolver.BuildProtectedWords(
                         options.CustomWords,
-                        options.EnabledVocabularyPackIds);
+                        options.EnabledVocabularyPackIds,
+                        options.VocabularyPackOverrides);
                     var result = await delivery.DeliverAsync(
                         new TextDeliveryRequest(
                             processed.Output,

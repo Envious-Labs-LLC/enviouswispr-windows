@@ -397,7 +397,8 @@ public partial class App
                 cancellation),
             ProtectedWords: () => DictationLanguageResolver.BuildProtectedWords(
                 _customWords,
-                _enabledVocabularyPackIds)));
+                _enabledVocabularyPackIds,
+                _vocabularyPackOverrides)));
         // HOME'S UNDO AND HISTORY'S PASTE: the same borrowing as the reuse above - its own delivery over the
         // shared adapter, and the same way back to a window remembered without its field. The own-window rule
         // is the dictation's, which has none; the reuse's own-window refusal is not carried over.
@@ -422,7 +423,8 @@ public partial class App
             _sessionPersistence,
             ProtectedWords: () => DictationLanguageResolver.BuildProtectedWords(
                 _customWords,
-                _enabledVocabularyPackIds)));
+                _enabledVocabularyPackIds,
+                _vocabularyPackOverrides)));
         RefreshLastDictationPreview();
         _sessionController = new PushToTalkSessionController(
             audioCapture,

@@ -171,7 +171,8 @@ public static class DictationLanguageResolver
 
     public static IReadOnlyList<string> BuildProtectedWords(
         IEnumerable<CustomWordEntry>? customWords,
-        IEnumerable<string>? enabledVocabularyPackIds)
+        IEnumerable<string>? enabledVocabularyPackIds,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides = null)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<string>();
@@ -201,7 +202,7 @@ public static class DictationLanguageResolver
         if (enabledVocabularyPackIds is not null)
         {
             var packIds = enabledVocabularyPackIds as IReadOnlyList<string> ?? enabledVocabularyPackIds.ToArray();
-            foreach (var entry in VocabularyPacks.ResolveEntries(packIds))
+            foreach (var entry in VocabularyPacks.ResolveEntries(packIds, vocabularyPackOverrides))
             {
                 AddIfProtected(entry.Replacement);
             }

@@ -443,12 +443,12 @@ public sealed class PortableProfileServiceTests
     }
 
     [Fact]
-    public async Task ImportMigratesVersionTwentyTwoSmartInsertionDefaultWhilePreservingExplicitFalse()
+    public async Task ImportMigratesVersionTwentyThreeSmartInsertionDefaultWhilePreservingExplicitFalse()
     {
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
         {
-            var missingPath = Path.Combine(directory, "profile-v22-missing.json");
-            var legacy = AppSettings.Default.ToPortableProfile() with { SchemaVersion = 22 };
+            var missingPath = Path.Combine(directory, "profile-v23-missing.json");
+            var legacy = AppSettings.Default.ToPortableProfile() with { SchemaVersion = 23 };
             var missingRoot = JsonNode.Parse(JsonSerializer.Serialize(legacy, JsonSettingsStore.SerializerOptions))!.AsObject();
             missingRoot["preferences"]!.AsObject().Remove("smartInsertionEnabled");
             await File.WriteAllTextAsync(missingPath, missingRoot.ToJsonString(JsonSettingsStore.SerializerOptions));
@@ -458,13 +458,13 @@ public sealed class PortableProfileServiceTests
             Assert.Equal(PortableProfile.CurrentSchemaVersion, importedMissing.Profile?.SchemaVersion);
             Assert.True(importedMissing.Profile?.Preferences.SmartInsertionEnabled);
 
-            var explicitFalsePath = Path.Combine(directory, "profile-v22-false.json");
+            var explicitFalsePath = Path.Combine(directory, "profile-v23-false.json");
             var legacyFalse = (AppSettings.Default with
             {
                 Preferences = UserPreferences.Default with { SmartInsertionEnabled = false },
             }).ToPortableProfile() with
             {
-                SchemaVersion = 22,
+                SchemaVersion = 23,
             };
             await File.WriteAllTextAsync(
                 explicitFalsePath,

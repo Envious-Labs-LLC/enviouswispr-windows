@@ -701,8 +701,10 @@ public sealed class FocusTargetArchitectureTests
             "WindowsTextTargetAdapter.cs"));
 
         Assert.Contains("elementClassName: focus?.ClassName", adapterSource, StringComparison.Ordinal);
-        Assert.Contains("checkCaretTextUnchanged: request.CandidateDeletesDictatedText", adapterSource, StringComparison.Ordinal);
-        Assert.Contains("request.CandidateDeletesDictatedText))", adapterSource, StringComparison.Ordinal);
+        Assert.Contains("WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged", adapterSource, StringComparison.Ordinal);
+        Assert.Contains("checkCaretTextUnchanged: verifyCaretText", adapterSource, StringComparison.Ordinal);
+        Assert.Contains("PreflightInput(", adapterSource, StringComparison.Ordinal);
+        Assert.Contains("verifyCaretText)),", adapterSource, StringComparison.Ordinal);
     }
 
     [Fact]

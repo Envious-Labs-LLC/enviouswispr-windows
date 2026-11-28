@@ -12,7 +12,7 @@ namespace EnviousWispr.Services.Settings;
 public sealed class JsonSettingsStore : ISettingsStore
 {
     private const int LastDictationShortcutsSchema = 17;
-    private const int SmartInsertionDefaultSchema = 30;
+    private const int SmartInsertionDefaultSchema = 31;
 
     internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -611,7 +611,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 Preferences = SettingsSchemaMigration.ApplyFixLearnedWordsDefault(legacy.Preferences),
             },
-            >= 12 and <= 29 => legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion },
+            >= 12 and < AppSettings.CurrentSchemaVersion => legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion },
             _ => null,
         };
     }
