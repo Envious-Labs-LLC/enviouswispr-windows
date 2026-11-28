@@ -19,7 +19,7 @@ public sealed class WindowsTerminalProcessScannerTests
             new(100, 10, "WindowsTerminal.exe"),
             new(101, 100, "OpenConsole.exe"),
             new(102, 100, "pwsh.exe"),
-            new(103, 102, "node.exe", "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js\""),
+            new(103, 102, "node.exe", "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\ProgramData\\npm\\node_modules\\@openai\\codex\\bin\\codex.js\""),
             new(104, 102, "claude.exe"),
         };
 

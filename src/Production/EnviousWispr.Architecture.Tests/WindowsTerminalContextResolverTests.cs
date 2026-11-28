@@ -94,11 +94,11 @@ public sealed class WindowsTerminalContextResolverTests
     public void BarePowerShellScreenPromptRefusesEvenWhenAnotherTabRunsCodex()
     {
         var ui = new WindowsTerminalContextResolver.TerminalUiSnapshot(
-            CaretLeft: "PS C:\\Users\\dev> ",
+            CaretLeft: "PS C:\\Work\\repo> ",
             CaretSelected: string.Empty,
             CaretRight: new string(' ', 40),
             CaretNoSelection: false,
-            ScreenTail: "PS C:\\Users\\dev> " + new string(' ', 40));
+            ScreenTail: "PS C:\\Work\\repo> " + new string(' ', 40));
 
         var context = WindowsTerminalContextResolver.Resolve(
             TerminalWindow,

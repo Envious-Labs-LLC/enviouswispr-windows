@@ -40,8 +40,8 @@ public sealed class WindowsTerminalScreenParserTests
     [InlineData("\u203A Ask Codex to do anything...\n\n  90% left")]
     [InlineData("\u203A   \n\n  90% left")]
     [InlineData("\u203A line one\n  \n\n  90% left")]
-    [InlineData("\u203A old command\nPS C:\\Users\\dev> ")]
-    [InlineData("\u203A old command\nC:\\Users\\dev>")]
+    [InlineData("\u203A old command\nPS C:\\Work\\repo> ")]
+    [InlineData("\u203A old command\nC:\\Work\\repo>")]
     public void CodexRefusesPlaceholderEmptyInputAmbiguousBlankRowAndShellScrollback(string screen)
     {
         Assert.Null(WindowsTerminalScreenParser.Locate(screen));
@@ -115,7 +115,7 @@ public sealed class WindowsTerminalScreenParserTests
     }
 
     [Theory]
-    [InlineData("PS C:\\Users\\dev> ")]
+    [InlineData("PS C:\\Work\\repo> ")]
     [InlineData("C:\\Windows\\System32>")]
     [InlineData("user@host:~$ ")]
     [InlineData("% ")]
