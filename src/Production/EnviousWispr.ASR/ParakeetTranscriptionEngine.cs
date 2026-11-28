@@ -97,11 +97,8 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
 
     private readonly IParakeetBackend _backend;
     private readonly ParakeetVocabulary _vocabulary;
+    private readonly ParakeetTdtRecipe _recipe;
     private readonly SemaphoreSlim _transcriptionGate = new(1, 1);
-    private readonly int _maximumTokensPerStep;
-    private readonly int _encoderDimension;
-    private readonly int _stateDimension;
-    private readonly int _stateLeadingDimension;
     private bool _disposed;
 
     public ParakeetTranscriptionEngine(ParakeetEngineOptions options)
@@ -116,10 +113,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         var (backend, vocabulary) = OnnxParakeetBackend.Create(options);
         _backend = backend;
         _vocabulary = vocabulary;
-        _encoderDimension = backend.EncoderDimension;
-        _stateLeadingDimension = backend.StateLeadingDimension;
-        _stateDimension = backend.StateDimension;
-        _maximumTokensPerStep = options.MaximumTokensPerStep;
+        _recipe = new ParakeetTdtRecipe(backend, vocabulary, options.MaximumTokensPerStep);
     }
 
     internal ParakeetTranscriptionEngine(
@@ -136,10 +130,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         EngineId = $"{ModelId}:{Provider.ToString().ToLowerInvariant()}";
         _backend = backend;
         _vocabulary = vocabulary;
-        _encoderDimension = backend.EncoderDimension;
-        _stateLeadingDimension = backend.StateLeadingDimension;
-        _stateDimension = backend.StateDimension;
-        _maximumTokensPerStep = options.MaximumTokensPerStep;
+        _recipe = new ParakeetTdtRecipe(backend, vocabulary, options.MaximumTokensPerStep);
     }
 
     public string EngineId { get; }
@@ -166,6 +157,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         TranscribeWithLanguageAsync(
             audio,
             allowedTokenMask: null,
+            blockedTokenMask: null,
             recognitionLanguage: null,
             cancellationToken);
 
@@ -186,6 +178,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         return TranscribeWithLanguageAsync(
             audio,
             _vocabulary.MaskFor(script),
+            _vocabulary.FrenchBlocklistMaskFor(effectiveLanguage),
             effectiveLanguage,
             cancellationToken);
     }
@@ -193,6 +186,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
     private async Task<Transcript> TranscribeWithLanguageAsync(
         CapturedAudio audio,
         bool[]? allowedTokenMask,
+        bool[]? blockedTokenMask,
         string? recognitionLanguage,
         CancellationToken cancellationToken)
     {
@@ -225,7 +219,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             return await Task.Run(
-                () => TranscribeCore(audio, allowedTokenMask, recognitionLanguage, cancellationToken),
+                () => TranscribeCore(audio, allowedTokenMask, blockedTokenMask, recognitionLanguage, cancellationToken),
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -355,6 +349,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
     private Transcript TranscribeCore(
         CapturedAudio audio,
         bool[]? allowedTokenMask,
+        bool[]? blockedTokenMask,
         string? recognitionLanguage,
         CancellationToken cancellationToken)
     {
@@ -367,121 +362,24 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             array.Length == audio.Samples.Length
             ? array
             : audio.Samples.ToArray();
-        var (features, featureLength) = _backend.Preprocess(samples, runContext, cancellationToken);
-        var (encodedRaw, encodedLength) = _backend.Encode(features, featureLength, runContext, cancellationToken);
-        var encoded = TransposeEncoderOutput(encodedRaw);
-        var decoded = Decode(encoded, encodedLength, allowedTokenMask, runContext, cancellationToken);
 
-        var timingStartSample = 0;
-        var timingSampleCount = samples.Length;
-        var timingEncodedLength = encodedLength;
+        var recipeResult = _recipe.Transcribe(
+            samples,
+            allowedTokenMask,
+            blockedTokenMask,
+            runContext,
+            cancellationToken,
+            Provider == RuntimeProviderKind.Cpu && ModelPack == ParakeetModelPack.Quantized
+                ? RescueSinglePassBlankOutput
+                : null);
 
-        // The bundled istupakov INT8 encoder uses per-tensor DynamicQuantizeLinear + ConvInteger across
-        // FastConformer layers, which can collapse all TDT steps to <blk> on voiced utterances framed
-        // by silence or activation outliers (#268). When voiced speech produced zero tokens on CPU INT8,
-        // rescue first with the QDQ-free FP32 encoder on the already-computed mel features when present,
-        // or retry once on the silence-trimmed voiced span when only the INT8 pack is installed.
-        if (decoded.Count == 0 &&
-            Provider == RuntimeProviderKind.Cpu &&
-            ModelPack == ParakeetModelPack.Quantized)
-        {
-            var speech = AnalyzeVoicedSpeech(samples);
-            if (speech.HasVoicedSpeech)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    if (_backend.TryEncodeWithFullPrecisionFallback(
-                            features,
-                            featureLength,
-                            runContext,
-                            cancellationToken,
-                            out var fp32EncodedRaw,
-                            out var fp32EncodedLength) &&
-                        fp32EncodedLength > 0 &&
-                        fp32EncodedRaw.Length >= (long)_encoderDimension * fp32EncodedLength &&
-                        fp32EncodedRaw.Length % _encoderDimension == 0)
-                    {
-                        var fp32Encoded = TransposeEncoderOutput(fp32EncodedRaw);
-                        var fp32Decoded = Decode(fp32Encoded, fp32EncodedLength, allowedTokenMask, runContext, cancellationToken);
-                        if (fp32Decoded.Count > 0)
-                        {
-                            decoded = fp32Decoded;
-                            timingEncodedLength = fp32EncodedLength;
-                        }
-                    }
-                }
-                catch (Exception) when (cancellationToken.IsCancellationRequested)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    throw;
-                }
-                catch (Exception exception) when (
-                    exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
-                {
-                    // Rescue is best-effort: a faulty optional sidecar or decode step must not turn a
-                    // completed zero-token pass into a failed dictation, and trimmed retry can still run.
-                }
-
-                if (decoded.Count == 0 &&
-                    speech.TrimmedLength >= MinimumPreprocessorInputSamples &&
-                    speech.TrimmedLength < samples.Length)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    try
-                    {
-                        var trimmedSamples = samples.AsSpan(speech.TrimmedStartSample, speech.TrimmedLength).ToArray();
-                        var (trimmedFeatures, trimmedFeatureLength) = _backend.Preprocess(
-                            trimmedSamples,
-                            runContext,
-                            cancellationToken);
-                        var (trimmedEncodedRaw, trimmedEncodedLength) = _backend.Encode(
-                            trimmedFeatures,
-                            trimmedFeatureLength,
-                            runContext,
-                            cancellationToken);
-                        if (trimmedEncodedLength > 0 &&
-                            trimmedEncodedRaw.Length >= (long)_encoderDimension * trimmedEncodedLength &&
-                            trimmedEncodedRaw.Length % _encoderDimension == 0)
-                        {
-                            var trimmedEncoded = TransposeEncoderOutput(trimmedEncodedRaw);
-                            var trimmedDecoded = Decode(
-                                trimmedEncoded,
-                                trimmedEncodedLength,
-                                allowedTokenMask,
-                                runContext,
-                                cancellationToken);
-                            if (trimmedDecoded.Count > 0)
-                            {
-                                decoded = trimmedDecoded;
-                                timingStartSample = speech.TrimmedStartSample;
-                                timingSampleCount = speech.TrimmedLength;
-                                timingEncodedLength = trimmedEncodedLength;
-                            }
-                        }
-                    }
-                    catch (Exception) when (cancellationToken.IsCancellationRequested)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        throw;
-                    }
-                    catch (Exception exception) when (
-                        exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
-                    {
-                        // Leave the original empty transcript intact when the best-effort retry fails.
-                    }
-                }
-            }
-        }
-
-        var text = TokensToText(decoded);
+        var text = _recipe.TokensToText(recipeResult.Tokens);
         var fullDuration = TimeSpan.FromSeconds(samples.Length / (double)RequiredSampleRate);
-        var timings = CreateTimings(
-            decoded,
-            timingEncodedLength,
+        var timings = ParakeetTdtRecipe.BuildTimings(
+            recipeResult.Tokens,
+            _vocabulary.Tokens,
             fullDuration,
-            timingStartSample,
-            timingSampleCount);
+            recipeResult.StartSampleOffset);
         return new Transcript(
             audio.SessionId,
             text,
@@ -491,93 +389,120 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             RecognitionLanguage: recognitionLanguage);
     }
 
-    private float[] TransposeEncoderOutput(float[] encoded)
-    {
-        var frameCount = encoded.Length / _encoderDimension;
-        var transposed = new float[encoded.Length];
-        for (var frame = 0; frame < frameCount; frame++)
-        {
-            for (var dimension = 0; dimension < _encoderDimension; dimension++)
-            {
-                transposed[(frame * _encoderDimension) + dimension] =
-                    encoded[(dimension * frameCount) + frame];
-            }
-        }
-
-        return transposed;
-    }
-
-    private List<DecodedToken> Decode(
-        float[] encoded,
-        int encodedLength,
+    // The bundled istupakov INT8 encoder uses per-tensor DynamicQuantizeLinear + ConvInteger across
+    // FastConformer layers, which can collapse all TDT steps to <blk> on voiced utterances framed
+    // by silence or activation outliers (#268). When voiced speech produced zero tokens on CPU INT8,
+    // rescue first with the QDQ-free FP32 encoder on the already-computed mel features when present,
+    // or retry once on the silence-trimmed voiced span when only the INT8 pack is installed.
+    private ParakeetTdtRecipe.SinglePassRescueResult RescueSinglePassBlankOutput(
+        float[] originalSamples,
+        float[] primaryFeatures,
+        long primaryFeatureLength,
         bool[]? allowedTokenMask,
+        bool[]? blockedTokenMask,
         IParakeetRunContext runContext,
         CancellationToken cancellationToken)
     {
-        var decoded = new List<DecodedToken>();
-        var stateLength = _stateLeadingDimension * _stateDimension;
-        var state1 = new float[stateLength];
-        var state2 = new float[stateLength];
-        var encoderFrame = new float[_encoderDimension];
-        var target = new[] { _vocabulary.BlankIndex };
-        var targetLength = new[] { 1 };
-        var frame = 0;
-        var emittedAtFrame = 0;
+        var speech = AnalyzeVoicedSpeech(originalSamples);
+        if (!speech.HasVoicedSpeech)
+        {
+            return new ParakeetTdtRecipe.SinglePassRescueResult([], 0);
+        }
 
-        while (frame < encodedLength)
+        var alignedSampleCount = originalSamples.Length % ParakeetTdtRecipe.FrameSamples == 0
+            ? originalSamples.Length
+            : originalSamples.Length + ParakeetTdtRecipe.FrameSamples - (originalSamples.Length % ParakeetTdtRecipe.FrameSamples);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            if (_backend.TryEncodeWithFullPrecisionFallback(
+                    primaryFeatures,
+                    primaryFeatureLength,
+                    runContext,
+                    cancellationToken,
+                    out var fp32EncodedRaw,
+                    out var fp32EncodedLength))
+            {
+                var fp32Decoded = _recipe.DecodeEncoded(
+                    fp32EncodedRaw,
+                    fp32EncodedLength,
+                    realSampleCount: alignedSampleCount,
+                    contextSamples: 0,
+                    offsetSample: 0,
+                    isLast: true,
+                    padToWindow: false,
+                    allowedTokenMask,
+                    blockedTokenMask,
+                    runContext,
+                    cancellationToken);
+                if (fp32Decoded.Count > 0)
+                {
+                    return new ParakeetTdtRecipe.SinglePassRescueResult(fp32Decoded, StartSampleOffset: 0);
+                }
+            }
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Array.Copy(encoded, frame * _encoderDimension, encoderFrame, 0, _encoderDimension);
-            target[0] = decoded.Count == 0 ? _vocabulary.BlankIndex : decoded[^1].Id;
-            var stepResult = _backend.DecodeStep(
-                encoderFrame,
-                target,
-                targetLength,
-                state1,
-                state2,
-                _vocabulary.Size,
-                _vocabulary.BlankIndex,
-                allowedTokenMask,
-                runContext,
-                cancellationToken);
-
-            var token = stepResult.Token;
-            var step = stepResult.Step;
-            if (token != _vocabulary.BlankIndex)
-            {
-                decoded.Add(new DecodedToken(token, frame));
-                emittedAtFrame++;
-            }
-
-            if (step > 0)
-            {
-                frame += step;
-                emittedAtFrame = 0;
-            }
-            else if (token == _vocabulary.BlankIndex || emittedAtFrame >= _maximumTokensPerStep)
-            {
-                frame++;
-                emittedAtFrame = 0;
-            }
+            throw;
         }
-
-        return decoded;
-    }
-
-    private string TokensToText(IReadOnlyList<DecodedToken> tokens)
-    {
-        if (tokens.Count == 0)
+        catch (Exception exception) when (
+            exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
         {
-            return string.Empty;
+            // Rescue is best-effort: a faulty optional sidecar or decode step must not turn a
+            // completed zero-token pass into a failed dictation, and trimmed retry can still run.
         }
 
-        var text = new StringBuilder();
-        foreach (var token in tokens)
+        if (speech.TrimmedLength >= MinimumPreprocessorInputSamples &&
+            speech.TrimmedLength < originalSamples.Length)
         {
-            text.Append(_vocabulary.Tokens[token.Id]);
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var trimmedSamples = originalSamples.AsSpan(speech.TrimmedStartSample, speech.TrimmedLength).ToArray();
+                var (trimmedFeatures, trimmedFeatureLength) = _backend.Preprocess(
+                    trimmedSamples,
+                    trimmedSamples.Length,
+                    runContext,
+                    cancellationToken);
+                var (trimmedEncodedRaw, trimmedEncodedLength) = _backend.Encode(
+                    trimmedFeatures,
+                    trimmedFeatureLength,
+                    runContext,
+                    cancellationToken);
+                var trimmedDecoded = _recipe.DecodeEncoded(
+                    trimmedEncodedRaw,
+                    trimmedEncodedLength,
+                    realSampleCount: trimmedSamples.Length,
+                    contextSamples: 0,
+                    offsetSample: 0,
+                    isLast: true,
+                    padToWindow: false,
+                    allowedTokenMask,
+                    blockedTokenMask,
+                    runContext,
+                    cancellationToken);
+                if (trimmedDecoded.Count > 0)
+                {
+                    return new ParakeetTdtRecipe.SinglePassRescueResult(
+                        trimmedDecoded,
+                        StartSampleOffset: speech.TrimmedStartSample);
+                }
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
+            {
+                // Leave the original empty transcript intact when the best-effort retry fails.
+            }
         }
 
-        return NormalizeDecodedTokenText(text.ToString());
+        return new ParakeetTdtRecipe.SinglePassRescueResult([], 0);
     }
 
     internal static string NormalizeDecodedTokenText(string rawText)
@@ -753,65 +678,6 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         return SentenceStarterRightWords.Contains(rightWord);
     }
 
-    private TranscriptTokenTiming[] CreateTimings(
-        IReadOnlyList<DecodedToken> tokens,
-        int encodedLength,
-        TimeSpan fullAudioDuration,
-        int windowStartSample,
-        int windowSampleCount)
-    {
-        if (tokens.Count == 0 || encodedLength <= 0)
-        {
-            return [];
-        }
-
-        var windowDuration = windowStartSample == 0 &&
-            TimeSpan.FromSeconds(windowSampleCount / (double)RequiredSampleRate) == fullAudioDuration
-            ? fullAudioDuration
-            : TimeSpan.FromSeconds(windowSampleCount / (double)RequiredSampleRate);
-        var startOffset = windowStartSample == 0
-            ? TimeSpan.Zero
-            : TimeSpan.FromSeconds(windowStartSample / (double)RequiredSampleRate);
-
-        var result = new TranscriptTokenTiming[tokens.Count];
-        for (var index = 0; index < tokens.Count; index++)
-        {
-            var currentFrame = tokens[index].Frame;
-            var nextFrame = index + 1 < tokens.Count
-                ? Math.Max(currentFrame + 1, tokens[index + 1].Frame)
-                : encodedLength;
-            var rawStart = startOffset + ScaleTime(windowDuration, currentFrame, encodedLength);
-            var rawEnd = startOffset + ScaleTime(windowDuration, Math.Min(nextFrame, encodedLength), encodedLength);
-            var clampedEnd = rawEnd > fullAudioDuration ? fullAudioDuration : rawEnd;
-            var clampedStart = rawStart > clampedEnd ? clampedEnd : rawStart;
-            result[index] = new TranscriptTokenTiming(
-                _vocabulary.Tokens[tokens[index].Id],
-                clampedStart,
-                clampedEnd);
-        }
-
-        return result;
-    }
-
-    private static TimeSpan ScaleTime(TimeSpan duration, int frame, int frameCount) =>
-        TimeSpan.FromTicks(checked((long)(duration.Ticks * (frame / (double)frameCount))));
-
-    private static int IndexOfMaximum(ReadOnlySpan<float> values)
-    {
-        var bestIndex = 0;
-        var bestValue = float.NegativeInfinity;
-        for (var index = 0; index < values.Length; index++)
-        {
-            if (values[index] > bestValue)
-            {
-                bestValue = values[index];
-                bestIndex = index;
-            }
-        }
-
-        return bestIndex;
-    }
-
     private static double RootMeanSquare(ReadOnlySpan<float> frame)
     {
         double sumSquares = 0;
@@ -930,8 +796,6 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         GC.SuppressFinalize(this);
     }
 
-    private readonly record struct DecodedToken(int Id, int Frame);
-
     internal readonly record struct VoicedSpeechAnalysis(
         bool HasVoicedSpeech,
         int TrimmedStartSample,
@@ -957,6 +821,13 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             float[] samples,
             IParakeetRunContext runContext,
             CancellationToken cancellationToken);
+
+        (float[] Features, long FeatureLength) Preprocess(
+            float[] samples,
+            int validSampleCount,
+            IParakeetRunContext runContext,
+            CancellationToken cancellationToken) =>
+            Preprocess(samples, runContext, cancellationToken);
 
         (float[] EncodedChannelFirst, int EncodedLength) Encode(
             float[] features,
@@ -1004,10 +875,36 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                 blankIndex,
                 runContext,
                 cancellationToken);
+
+        ParakeetDecoderStepResult DecodeStep(
+            float[] encoderFrame,
+            int[] target,
+            int[] targetLength,
+            float[] state1,
+            float[] state2,
+            int vocabularySize,
+            int blankIndex,
+            bool[]? allowedTokenMask,
+            bool[]? blockedTokenMask,
+            IParakeetRunContext runContext,
+            CancellationToken cancellationToken) =>
+            DecodeStep(
+                encoderFrame,
+                target,
+                targetLength,
+                state1,
+                state2,
+                vocabularySize,
+                blankIndex,
+                allowedTokenMask,
+                runContext,
+                cancellationToken);
     }
 
     private sealed class OnnxParakeetBackend : IParakeetBackend
     {
+        private const int MelChannelCount = 128;
+
         private readonly ParakeetEngineOptions _options;
         private readonly string _modelDirectory;
         private readonly InferenceSession _preprocessor;
@@ -1099,8 +996,18 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         public (float[] Features, long FeatureLength) Preprocess(
             float[] samples,
             IParakeetRunContext runContext,
+            CancellationToken cancellationToken) =>
+            Preprocess(samples, samples.Length, runContext, cancellationToken);
+
+        public (float[] Features, long FeatureLength) Preprocess(
+            float[] samples,
+            int validSampleCount,
+            IParakeetRunContext runContext,
             CancellationToken cancellationToken)
         {
+            ArgumentOutOfRangeException.ThrowIfNegative(validSampleCount);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(validSampleCount, samples.Length);
+
             var options = ((OnnxRunContext)runContext).Options;
             try
             {
@@ -1112,7 +1019,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                             new DenseTensor<float>(samples.AsMemory(), [1, samples.Length])),
                         NamedOnnxValue.CreateFromTensor(
                             "waveforms_lens",
-                            new DenseTensor<long>(new long[] { samples.Length }, [1])),
+                            new DenseTensor<long>(new long[] { validSampleCount }, [1])),
                     ],
                     PreprocessorOutputs,
                     options);
@@ -1143,26 +1050,14 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             CancellationToken cancellationToken)
         {
             var options = ((OnnxRunContext)runContext).Options;
+            if (!TryGetFeatureTimeSteps(features, featureLength, out var featureTimeSteps))
+            {
+                throw CreateStageFailure(ParakeetOnnxStage.Encoder);
+            }
+
             try
             {
-                using var encoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Encoder);
-                using var encoderResult = _encoder.Run(
-                    [
-                        NamedOnnxValue.CreateFromTensor(
-                            "audio_signal",
-                            new DenseTensor<float>(features.AsMemory(), [1, 128, checked((int)featureLength)])),
-                        NamedOnnxValue.CreateFromTensor(
-                            "length",
-                            new DenseTensor<long>(new long[] { featureLength }, [1])),
-                    ],
-                    EncoderOutputs,
-                    options);
-                encoderPhase.Returned();
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var encoded = TensorArray<float>(encoderResult[0]);
-                var encodedLength = checked((int)TensorSingle<long>(encoderResult[1]));
-                return (encoded, encodedLength);
+                return RunEncoderSession(_encoder, features, featureLength, featureTimeSteps, options, cancellationToken);
             }
             catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
             {
@@ -1191,7 +1086,8 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                 !_options.AllowFullPrecisionFallback ||
                 _options.Provider != RuntimeProviderKind.Cpu ||
                 _options.ModelPack != ParakeetModelPack.Quantized ||
-                !HasFullPrecisionEncoder(_modelDirectory))
+                !HasFullPrecisionEncoder(_modelDirectory) ||
+                !TryGetFeatureTimeSteps(features, featureLength, out var featureTimeSteps))
             {
                 return false;
             }
@@ -1209,23 +1105,13 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                using var encoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Encoder);
-                using var encoderResult = _fp32FallbackEncoder.Run(
-                    [
-                        NamedOnnxValue.CreateFromTensor(
-                            "audio_signal",
-                            new DenseTensor<float>(features.AsMemory(), [1, 128, checked((int)featureLength)])),
-                        NamedOnnxValue.CreateFromTensor(
-                            "length",
-                            new DenseTensor<long>(new long[] { featureLength }, [1])),
-                    ],
-                    EncoderOutputs,
-                    options);
-                encoderPhase.Returned();
-                cancellationToken.ThrowIfCancellationRequested();
-
-                encodedChannelFirst = TensorArray<float>(encoderResult[0]);
-                encodedLength = checked((int)TensorSingle<long>(encoderResult[1]));
+                (encodedChannelFirst, encodedLength) = RunEncoderSession(
+                    _fp32FallbackEncoder,
+                    features,
+                    featureLength,
+                    featureTimeSteps,
+                    options,
+                    cancellationToken);
                 if (encodedLength <= 0 ||
                     encodedChannelFirst.Length < (long)EncoderDimension * encodedLength ||
                     encodedChannelFirst.Length % EncoderDimension != 0)
@@ -1260,6 +1146,52 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             }
         }
 
+        private static bool TryGetFeatureTimeSteps(float[] features, long featureLength, out int featureTimeSteps)
+        {
+            featureTimeSteps = 0;
+            if (featureLength <= 0 || features.Length == 0 || features.Length % MelChannelCount != 0)
+            {
+                return false;
+            }
+
+            var steps = features.Length / MelChannelCount;
+            if (steps < featureLength)
+            {
+                return false;
+            }
+
+            featureTimeSteps = steps;
+            return true;
+        }
+
+        private static (float[] EncodedChannelFirst, int EncodedLength) RunEncoderSession(
+            InferenceSession session,
+            float[] features,
+            long featureLength,
+            int featureTimeSteps,
+            RunOptions options,
+            CancellationToken cancellationToken)
+        {
+            using var encoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Encoder);
+            using var encoderResult = session.Run(
+                [
+                    NamedOnnxValue.CreateFromTensor(
+                        "audio_signal",
+                        new DenseTensor<float>(features.AsMemory(), [1, MelChannelCount, featureTimeSteps])),
+                    NamedOnnxValue.CreateFromTensor(
+                        "length",
+                        new DenseTensor<long>(new long[] { featureLength }, [1])),
+                ],
+                EncoderOutputs,
+                options);
+            encoderPhase.Returned();
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var encoded = TensorArray<float>(encoderResult[0]);
+            var encodedLength = checked((int)TensorSingle<long>(encoderResult[1]));
+            return (encoded, encodedLength);
+        }
+
         public ParakeetDecoderStepResult DecodeStep(
             float[] encoderFrame,
             int[] target,
@@ -1279,6 +1211,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                 vocabularySize,
                 blankIndex,
                 allowedTokenMask: null,
+                blockedTokenMask: null,
                 runContext,
                 cancellationToken);
 
@@ -1291,6 +1224,31 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             int vocabularySize,
             int blankIndex,
             bool[]? allowedTokenMask,
+            IParakeetRunContext runContext,
+            CancellationToken cancellationToken) =>
+            DecodeStep(
+                encoderFrame,
+                target,
+                targetLength,
+                state1,
+                state2,
+                vocabularySize,
+                blankIndex,
+                allowedTokenMask,
+                blockedTokenMask: null,
+                runContext,
+                cancellationToken);
+
+        public ParakeetDecoderStepResult DecodeStep(
+            float[] encoderFrame,
+            int[] target,
+            int[] targetLength,
+            float[] state1,
+            float[] state2,
+            int vocabularySize,
+            int blankIndex,
+            bool[]? allowedTokenMask,
+            bool[]? blockedTokenMask,
             IParakeetRunContext runContext,
             CancellationToken cancellationToken)
         {
@@ -1325,8 +1283,12 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                 decoderPhase.Returned();
 
                 var output = TensorSpan<float>(result[0]);
-                var token = ParakeetVocabulary.SelectToken(output[..vocabularySize], blankIndex, allowedTokenMask);
-                var step = IndexOfMaximum(output[vocabularySize..]);
+                var token = ParakeetVocabulary.SelectToken(
+                    output[..vocabularySize],
+                    blankIndex,
+                    allowedTokenMask,
+                    blockedTokenMask);
+                var step = ParakeetVocabulary.IndexOfMaximum(output[vocabularySize..]);
                 if (token != blankIndex)
                 {
                     TensorSpan<float>(result[1])[..state1.Length].CopyTo(state1);
