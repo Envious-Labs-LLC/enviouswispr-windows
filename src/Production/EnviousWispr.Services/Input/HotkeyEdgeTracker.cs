@@ -13,7 +13,8 @@ internal readonly record struct HotkeyEdgeDecision(
     bool Consume,
     PushToTalkSignal? Signal = null,
     bool MaskMenuKey = false,
-    bool IsHandsFree = false);
+    bool IsHandsFree = false,
+    bool ArmPasteLastTarget = false);
 
 internal readonly record struct HotkeyBinding(uint VirtualKey, HotkeyModifiers Modifiers);
 
@@ -903,7 +904,8 @@ internal sealed class HotkeyEdgeTracker
         return new HotkeyEdgeDecision(
             Consume: true,
             oneShot.Signal == PushToTalkSignal.PasteLast ? null : oneShot.Signal,
-            MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
+            MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0,
+            ArmPasteLastTarget: oneShot.Signal == PushToTalkSignal.PasteLast);
     }
 
     private sealed class OneShotBinding(HotkeyBinding binding, PushToTalkSignal signal)

@@ -619,7 +619,7 @@ public partial class App
             // The window only, here - microseconds. Naming its focused field takes UI Automation, which must not
             // hold up the signal loop a recording key is waiting in, so it runs off it and is accepted only if the
             // same window is still the one in front.
-            var pressedWindow = WindowsForegroundTargetProvider.ForegroundWindow();
+            var pressedWindow = args.TargetWindow ?? WindowsForegroundTargetProvider.ForegroundWindow();
             _ = ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressedWindow);
             return;
         }

@@ -37,6 +37,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     private readonly System.Threading.Timer _gestureTimer;
     private bool _timerRunning;
     private bool _disposed;
+    private TargetWindowId? _pasteLastPressedWindow;
 
     /// <summary>How often a pending gesture or held-key reconciliation check runs.</summary>
     /// <remarks>
@@ -85,9 +86,21 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     private void EmitDecision(HotkeyEdgeDecision decision)
     {
+        if (decision.ArmPasteLastTarget)
+        {
+            _pasteLastPressedWindow = WindowsForegroundTargetProvider.ForegroundWindow();
+        }
+
         if (decision.Signal is { } signal)
         {
-            _signals.Writer.TryWrite(new PushToTalkSignalEvent(signal, decision.IsHandsFree));
+            TargetWindowId? targetWindow = null;
+            if (signal == PushToTalkSignal.PasteLast)
+            {
+                targetWindow = _pasteLastPressedWindow;
+                _pasteLastPressedWindow = null;
+            }
+
+            _signals.Writer.TryWrite(new PushToTalkSignalEvent(signal, decision.IsHandsFree, targetWindow));
         }
 
         if (decision.MaskMenuKey)
@@ -357,6 +370,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             _heldModifiers.Clear();
         }
 
+        _pasteLastPressedWindow = null;
         _edgeTracker.ResetHeldKeys(preserveActiveRecording);
         UpdateGestureTimer();
     }

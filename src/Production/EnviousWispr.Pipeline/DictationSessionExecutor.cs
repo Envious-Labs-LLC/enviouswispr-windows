@@ -708,7 +708,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 _background.CloseStreamingAdmission();
                 _ = CleanupRemaining;
                 await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
-                var result = await _controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
+                var result = await _controller
+                    .ReleaseAsync(releaseContext: null, allowShortHold: true, CancellationToken.None)
+                    .ConfigureAwait(false);
                 RecordTransition(result);
                 if (result.Kind == SessionTransitionKind.FinalizeReady &&
                     result.Session is not null &&

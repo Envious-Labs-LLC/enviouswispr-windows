@@ -194,6 +194,19 @@ public sealed class HotkeyGesturePolicy
             {
                 var holdConfirmed = _holdConfirmed ||
                     (_pressedAt is { } heldSince && now - heldSince >= _holdThreshold);
+                if (_toggleMode && _pressedAt is null && _tentativeRecording)
+                {
+                    // The user already released the toggle key after a brief tap and immediately resumed
+                    // typing inside MultiTapWindow: promote the completed tap instead of discarding it.
+                    _holding = false;
+                    _holdConfirmed = false;
+                    _tentativeRecording = false;
+                    _tapCount = 0;
+                    _lastTapAt = null;
+                    _toggleRecording = true;
+                    return HotkeyGestureOutcome.ToggleStarted;
+                }
+
                 if (_holdThreshold > TimeSpan.Zero && !_toggleRecording && !holdConfirmed &&
                     (_holding || _tentativeRecording))
                 {

@@ -5,6 +5,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
@@ -259,17 +260,20 @@ public sealed class Wave1HotkeyAndAudioHardeningTests
         Assert.True(down.Consume);
         Assert.Null(down.Signal);
         Assert.True(down.MaskMenuKey);
+        Assert.True(down.ArmPasteLastTarget);
 
         // Key repeat must also be consumed silently without double-triggering.
         var repeat = tracker.Process(LetterV, isKeyDown: true, chordMods);
         Assert.True(repeat.Consume);
         Assert.Null(repeat.Signal);
+        Assert.False(repeat.ArmPasteLastTarget);
 
         // Key-up emits PasteLast once and clears held state; releasing an unarmed key later does not re-fire.
         var up = tracker.Process(LetterV, isKeyDown: false, HotkeyModifiers.None);
         Assert.True(up.Consume);
         Assert.Equal(PushToTalkSignal.PasteLast, up.Signal);
         Assert.True(up.MaskMenuKey);
+        Assert.False(up.ArmPasteLastTarget);
         Assert.False(tracker.HasHeldState);
 
         var spuriousUp = tracker.Process(LetterV, isKeyDown: false, HotkeyModifiers.None);
@@ -508,6 +512,35 @@ public sealed class Wave1HotkeyAndAudioHardeningTests
         var delivered = Assert.Single(world.Delivery.Requests);
         Assert.Equal("spoken words", delivered.Text.Text);
         Assert.Equal(1, world.Engine.Calls);
+    }
+
+    [Fact]
+    public async Task ComposedSessionInterruptAsyncInsideMinimumHoldFinalizesInsteadOfDiscarding()
+    {
+        var clock = new Deterministic.ManualClock();
+        var world = ComposedSessionWorld.CreateWithHoldMinimum("spoken words", clock);
+
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+        var interrupted = await world.Coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+
+        Assert.Equal(SessionCommandDisposition.Applied, interrupted.Disposition);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.Equal(1, world.Engine.Calls);
+    }
+
+    [Fact]
+    public void ToggleModePromotesReleasedBriefTapToHandsFreeWhenTypingStartsInsideMultiTapWindow()
+    {
+        var policy = new HotkeyGesturePolicy(RightControl, needsHoldThreshold: true, toggleMode: true);
+
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, isKeyDown: true, TimeSpan.Zero));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, isKeyDown: false, TimeSpan.FromMilliseconds(60)));
+        Assert.True(policy.HasTentativeRecording);
+
+        Assert.Equal(HotkeyGestureOutcome.ToggleStarted, policy.Process(LetterC, isKeyDown: true, TimeSpan.FromMilliseconds(120)));
+        Assert.True(policy.IsRecordingHandsFree);
+        Assert.False(policy.HasTentativeRecording);
     }
 
     // ---- F15: Zero-conversion 16kHz mono IEEE Float fast path ----

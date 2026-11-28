@@ -302,7 +302,10 @@ public enum LastDictationShortcutState
     Unavailable,
 }
 
-public sealed record PushToTalkSignalEvent(PushToTalkSignal Signal, bool IsHandsFree = false);
+public sealed record PushToTalkSignalEvent(
+    PushToTalkSignal Signal,
+    bool IsHandsFree = false,
+    TargetWindowId? TargetWindow = null);
 
 public interface IGlobalPushToTalk : IAsyncDisposable
 {
