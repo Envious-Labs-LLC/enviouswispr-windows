@@ -1108,4 +1108,45 @@ public sealed class WasapiAudioCaptureTests
 
         await capture.CancelAsync();
     }
+
+    [Fact]
+    public async Task BluetoothWatchdogRetryAccessDeniedFailsCleanlyViaUnexpectedStop()
+    {
+        var clock = new Deterministic.ManualClock();
+        var createCount = 0;
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(_ =>
+            {
+                createCount++;
+                if (createCount == 2)
+                {
+                    throw new UnauthorizedAccessException("mic privacy revoked");
+                }
+
+                return new FakeRecorderSession();
+            }),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => true);
+
+        var faultTcs = new TaskCompletionSource<AudioCaptureStopped>(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.UnexpectedStop += (_, args) => faultTcs.TrySetResult(args);
+
+        var sessionId = DictationSessionId.Create();
+        var started = await capture.StartAsync(new AudioCaptureRequest(sessionId, IsBluetooth: true));
+        Assert.True(started.Succeeded);
+
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+
+        var fault = await faultTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(sessionId, fault.SessionId);
+        Assert.Equal(AppErrorCode.AccessDenied, fault.Error.Code);
+
+        var stopped = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Interrupted, stopped.Outcome);
+        Assert.Equal(AppErrorCode.AccessDenied, stopped.Error?.Code);
+    }
 }

@@ -1787,6 +1787,7 @@ public sealed class WasapiAudioCapture :
         }
 
         var stalledSession = false;
+        var stallErrorCode = AppErrorCode.AudioDeviceUnavailable;
         IAudioRecorderSession? stalledRecorder = null;
         TaskCompletionSource<Exception?>? stoppedTcs = null;
         try
@@ -1900,9 +1901,14 @@ public sealed class WasapiAudioCapture :
                     return;
                 }
                 catch (Exception exception) when (
-                    exception is InvalidOperationException or ArgumentException or COMException)
+                    exception is InvalidOperationException or ArgumentException or COMException or UnauthorizedAccessException)
                 {
-                    // Fall through to stall termination.
+                    stallErrorCode = exception switch
+                    {
+                        UnauthorizedAccessException => AppErrorCode.AccessDenied,
+                        ArgumentException => AppErrorCode.AudioFormatUnsupported,
+                        _ => AppErrorCode.AudioDeviceUnavailable,
+                    };
                 }
             }
 
@@ -1923,7 +1929,7 @@ public sealed class WasapiAudioCapture :
                 _unexpectedStop = true;
                 _backendStopped = true;
                 _isCapturing = false;
-                _stallErrorCode = AppErrorCode.AudioDeviceUnavailable;
+                _stallErrorCode = stallErrorCode;
                 _capturedBytes.SetLength(0);
                 _capturedBytes.Capacity = 0;
                 _drainedPreRollSampleCount = 0;
@@ -1960,7 +1966,7 @@ public sealed class WasapiAudioCapture :
                 new AudioCaptureStopped(
                     request.SessionId,
                     new AppError(
-                        AppErrorCode.AudioDeviceUnavailable,
+                        stallErrorCode,
                         AppErrorStage.AudioCapture,
                         CanRetry: true)));
         }
