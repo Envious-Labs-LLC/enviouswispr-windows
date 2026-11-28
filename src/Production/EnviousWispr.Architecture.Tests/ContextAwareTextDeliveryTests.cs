@@ -525,7 +525,8 @@ public sealed class ContextAwareTextDeliveryTests
     {
         using var cts = new CancellationTokenSource();
         var adapter = new CancelingCaptureAdapter(AvailableContext(left: "Vi ska ", right: string.Empty), cts);
-        var delivery = new ContextAwareTextDelivery(adapter);
+        var isolatedRuntime = new SeamCasingOracleRuntime();
+        var delivery = new ContextAwareTextDelivery(adapter, seamCasingOracle: isolatedRuntime);
 
         var result = await delivery.DeliverAsync(
             new TextDeliveryRequest(
@@ -540,6 +541,30 @@ public sealed class ContextAwareTextDeliveryTests
         Assert.Equal(TextDeliveryRefusalReason.Cancelled, result.RefusalReason);
         Assert.Null(result.Fault);
         Assert.Equal("Gå hem.", delivery.RecoveryText?.Text);
+    }
+
+    [Fact]
+    public async Task CancellationAfterContextCaptureOnWarmOracleStopsBeforeCommitWithRecoveryText()
+    {
+        using var cts = new CancellationTokenSource();
+        var adapter = new CancelingCaptureAdapter(AvailableContext(left: "Can you ", right: string.Empty), cts);
+        var isolatedRuntime = new SeamCasingOracleRuntime();
+        Assert.True(isolatedRuntime.WarmLanguage("en"));
+        var delivery = new ContextAwareTextDelivery(adapter, seamCasingOracle: isolatedRuntime);
+
+        var result = await delivery.DeliverAsync(
+            new TextDeliveryRequest(
+                new ProcessedText(SessionId, "Ask them."),
+                Target,
+                LanguageCode: "en",
+                TextDeliveryOptions.Default,
+                SnippetExpanded: false),
+            cts.Token);
+
+        Assert.False(result.Delivered);
+        Assert.Equal(TextDeliveryRefusalReason.Cancelled, result.RefusalReason);
+        Assert.Null(result.Fault);
+        Assert.Equal("Ask them.", delivery.RecoveryText?.Text);
     }
 
     private sealed class CancelingCaptureAdapter(TargetContextResult capture, CancellationTokenSource cts) : ITextTargetAdapter

@@ -134,6 +134,7 @@ public sealed class SeamCasingOracleRuntime : ISeamCasingOracle
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_testingOverride is not null)
         {
             return true;

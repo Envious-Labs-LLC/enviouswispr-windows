@@ -145,17 +145,17 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             identifier: _languageIdentifier);
 
         var effectiveOracle = _seamCasingOracle;
-        if (ReferenceEquals(_seamCasingOracle, SeamCasingOracleRuntime.Shared))
+        if (_seamCasingOracle is SeamCasingOracleRuntime runtime)
         {
             if (request.Options.SmartInsertionEnabled &&
                 repairContext is { HasTextContext: true } &&
                 SeamCasingPolicies.NormalizeBaseCode(resolution.Language) is { } baseLanguage &&
                 SeamCasingPolicies.PolicyFor(baseLanguage) is not null &&
-                !SeamCasingOracleRuntime.Shared.IsLanguageReady(baseLanguage))
+                !runtime.IsLanguageReady(baseLanguage))
             {
                 try
                 {
-                    await SeamCasingOracleRuntime.Shared
+                    await runtime
                         .WaitForLanguageReadyAsync(baseLanguage, _oracleColdLoadBudget, cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -165,7 +165,7 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 }
             }
 
-            effectiveOracle = SeamCasingOracleRuntime.Shared.NonBlockingOracle;
+            effectiveOracle = runtime.NonBlockingOracle;
         }
 
         // A TAKE THAT EXPANDED A SNIPPET IS NOT REPAIRED. Handing the repair no context is its whole
@@ -179,6 +179,19 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             request.ProtectedWords,
             request.Options.SmartInsertionEnabled,
             effectiveOracle);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Stopped(
+                request,
+                DeliveryStage.Commit,
+                new OperationCanceledException(cancellationToken),
+                cancellationToken,
+                repair.Disposition,
+                repair.LowercasedFirst,
+                repair.CaseDecision,
+                repair.CandidateDeletesDictatedText);
+        }
+
         var targetKind = capture.Context?.TargetKind ?? TextTargetKind.Unknown;
         TextCommitResult commit;
         try
