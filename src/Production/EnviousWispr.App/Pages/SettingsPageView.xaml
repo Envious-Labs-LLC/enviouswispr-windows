@@ -138,7 +138,7 @@
                                         <TextBlock x:Name="ActiveEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
                                     </Border>
                                 </StackPanel>
-                                <TextBlock x:Name="ActiveEngineDescriptionText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Fast local speech recognition for 25 languages (640 MB) that runs smoothly on most PCs." TextWrapping="Wrap" />
+                                <TextBlock x:Name="ActiveEngineDescriptionText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Fast local speech recognition for 25 languages (638 MB) that runs smoothly on most PCs." TextWrapping="Wrap" />
                             </StackPanel>
                             <Border Grid.Column="2" x:Name="ActiveEngineStatusBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}">
                                 <TextBlock x:Name="ActiveEngineStatusText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Checking..." />
@@ -168,7 +168,7 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <RadioButton x:Name="ParakeetEngineCard" x:FieldModifier="internal" Grid.Column="0" GroupName="FinalTranscriptionEngine" Checked="EngineCardChecked" Click="EngineCardClicked" Content="Parakeet" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Padding="4,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Parakeet speech engine" AutomationProperties.HelpText="Fast local speech recognition for 25 languages, 640 MB." />
+                                        <RadioButton x:Name="ParakeetEngineCard" x:FieldModifier="internal" Grid.Column="0" GroupName="FinalTranscriptionEngine" Checked="EngineCardChecked" Click="EngineCardClicked" Content="Parakeet" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Padding="4,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Parakeet speech engine" AutomationProperties.HelpText="Fast local speech recognition for 25 languages, 638 MB." />
                                         <Border x:Name="ParakeetEngineBadge" x:FieldModifier="internal" Grid.Column="1" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
                                             <TextBlock x:Name="ParakeetEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
                                         </Border>
@@ -187,11 +187,11 @@
                                                 <RowDefinition Height="Auto" />
                                             </Grid.RowDefinitions>
                                             <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Model" />
-                                            <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="parakeet-tdt-0.6b-v3" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="parakeet-ultra" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Languages" />
                                             <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="25 languages" />
                                             <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Download size" />
-                                            <TextBlock x:Name="ParakeetCardSizeText" x:FieldModifier="internal" Grid.Row="2" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="640 MB" />
+                                            <TextBlock x:Name="ParakeetCardSizeText" x:FieldModifier="internal" Grid.Row="2" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="638 MB" />
                                             <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Hardware" />
                                             <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Runs fast on CPU" TextWrapping="Wrap" />
                                         </Grid>
@@ -204,7 +204,7 @@
                                         </StackPanel>
                                         <ProgressBar x:Name="ParakeetCardProgress" x:FieldModifier="internal" AutomationProperties.Name="Parakeet speech model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                            <Button x:Name="ParakeetDownloadButton" x:FieldModifier="internal" AutomationProperties.Name="Download Parakeet speech model" Click="ParakeetDownloadButton_Click" Content="Download (640 MB)" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                            <Button x:Name="ParakeetDownloadButton" x:FieldModifier="internal" AutomationProperties.Name="Download Parakeet speech model" Click="ParakeetDownloadButton_Click" Content="Download (638 MB)" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                             <Button x:Name="ParakeetCancelButton" x:FieldModifier="internal" AutomationProperties.Name="Cancel Parakeet download" Click="CancelModelDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
                                             <Button x:Name="ParakeetRemoveButton" x:FieldModifier="internal" AutomationProperties.Name="Remove Parakeet speech model" Click="ParakeetRemoveButton_Click" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
                                         </StackPanel>
@@ -1481,7 +1481,7 @@
                                                     <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
                                                 <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Model" />
-                                                <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="parakeet-tdt-0.6b-v3" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="parakeet-ultra" TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Languages" />
                                                 <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="25 languages" />
                                                 <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Download size" />

@@ -57,6 +57,10 @@ public partial class App
     private bool _livePreviewReconfigurePending;
     private bool _transcriptionReconfigurePending;
     private bool _polishReconfigurePending;
+    private bool _retireLegacyParakeetPending;
+    private bool _silentParakeetUpgradePending;
+    private bool _silentParakeetUpgradeAttemptedThisSession;
+    private bool _isSilentParakeetUpgrade;
     private TaskCompletionSource? _pendingSpeechReconfigureCompletion;
     private TaskCompletionSource? _pendingPolishReconfigureCompletion;
     private ModelStore? _offlineModelStore;
@@ -93,10 +97,24 @@ public partial class App
     /// The order is <see cref="InstalledModelLocator"/>'s: an explicit override, then the version the
     /// store admitted, then a hand-copied directory when it is COMPLETE, then the development checkout.
     /// </remarks>
+    private Task<ParakeetModelResolution> ResolveParakeetModelAsync(
+        string environmentVariable = "ENVIOUSWISPR_MODEL_DIRECTORY") =>
+        ParakeetModelLocator.ResolveAsync(
+            OfflineModelStore,
+            ModelStoreRoot,
+            Environment.GetEnvironmentVariable(environmentVariable),
+            DevelopmentModelDirectory(ParakeetModelIds.Final));
+
     private async Task<string?> ResolveModelDirectoryAsync(
         string modelId,
         string environmentVariable = "ENVIOUSWISPR_MODEL_DIRECTORY")
     {
+        if (string.Equals(modelId, ParakeetTranscriptionEngine.ModelId, StringComparison.Ordinal))
+        {
+            var resolution = await ResolveParakeetModelAsync(environmentVariable).ConfigureAwait(true);
+            return resolution.DirectoryPath;
+        }
+
         var active = await OfflineModelStore.OpenActiveOfflineAsync(modelId).ConfigureAwait(true);
         var development = DevelopmentModelDirectory(modelId);
         return InstalledModelLocator.Resolve(
@@ -120,10 +138,10 @@ public partial class App
 
     private static bool ModelIsComplete(string modelId, string directory)
     {
-        if (string.Equals(modelId, ParakeetTranscriptionEngine.ModelId, StringComparison.Ordinal))
+        if (string.Equals(modelId, ParakeetTranscriptionEngine.ModelId, StringComparison.Ordinal) ||
+            string.Equals(modelId, ParakeetModelIds.LegacyV3, StringComparison.Ordinal))
         {
-            var parakeet = new LocalParakeetModelProbe().Probe(directory);
-            return parakeet.Int8Complete || parakeet.Fp32Complete;
+            return ParakeetModelLocator.IsModelComplete(directory);
         }
 
         var whisper = new LocalWhisperModelProbe().Probe(directory);
@@ -213,12 +231,25 @@ public partial class App
     private async Task<SpeechEngineModelState> ProbeSpeechEngineModelAsync(FinalAsrEngine engine)
     {
         var modelId = SpeechEngineModelId(engine);
-        var directory = await ResolveModelDirectoryAsync(modelId).ConfigureAwait(true);
-        var installed = directory is not null && ModelIsComplete(modelId, directory);
-        var storeInstalled = installed &&
-            (await OfflineModelStore.ListInstalledAsync(modelId).ConfigureAwait(true)).Count > 0;
-        var legacyRoot = Path.Combine(ModelStoreRoot, modelId);
-        var canRemove = storeInstalled || (installed && Directory.Exists(legacyRoot));
+        bool installed;
+        bool canRemove;
+        if (engine == FinalAsrEngine.Parakeet)
+        {
+            var resolution = await ResolveParakeetModelAsync().ConfigureAwait(true);
+            installed = resolution.IsInstalled;
+            canRemove = installed &&
+                await ParakeetModelLocator.HasAnyInstalledPackageAsync(OfflineModelStore, ModelStoreRoot).ConfigureAwait(true);
+        }
+        else
+        {
+            var directory = await ResolveModelDirectoryAsync(modelId).ConfigureAwait(true);
+            installed = directory is not null && ModelIsComplete(modelId, directory);
+            var storeInstalled = installed &&
+                (await OfflineModelStore.ListInstalledAsync(modelId).ConfigureAwait(true)).Count > 0;
+            var legacyRoot = Path.Combine(ModelStoreRoot, modelId);
+            canRemove = storeInstalled || (installed && Directory.Exists(legacyRoot));
+        }
+
         var canDownload = BundledModelManifests.TryRead(modelId) is not null;
         var sizeLabel = SpeechEngineBundleSizeText(engine);
 
@@ -558,14 +589,24 @@ public partial class App
                !IsSpeechEngineBusy &&
                (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending));
 
+        await EvaluateParakeetUpgradeStateAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return false;
+        }
+
         return true;
     }
 
-    private void OnDictationEnded() => TrySchedulePendingModelRefresh();
+    private void OnDictationEnded()
+    {
+        TrySchedulePendingModelRefresh();
+        TryStartSilentParakeetUpgrade();
+    }
 
     private void TrySchedulePendingModelRefresh()
     {
-        if ((!_livePreviewReconfigurePending && !_transcriptionReconfigurePending && !_polishReconfigurePending) ||
+        if ((!_livePreviewReconfigurePending && !_transcriptionReconfigurePending && !_polishReconfigurePending && !_retireLegacyParakeetPending) ||
             _modelDelivery is { IsCompleted: false } ||
             IsSpeechEngineBusy ||
             Leaving)
@@ -593,13 +634,98 @@ public partial class App
             if (completedCleanly &&
                 !Leaving &&
                 !IsSpeechEngineBusy &&
-                (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending))
+                (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending || _retireLegacyParakeetPending))
             {
                 // If dictation ended after PresentModelDeliveryCoreAsync checked IsSpeechEngineBusy and before
                 // _modelDelivery completed, OnDictationEnded skipped scheduling; drain on the next UI tick.
                 PostToLiveWindow(_ => TrySchedulePendingModelRefresh());
             }
         }
+    }
+
+    private bool IsConfiguredTranscriptionUsingLegacyV3() =>
+        ParakeetModelLocator.IsDirectoryUnderLegacyV3(_configuredTranscription?.ModelDirectory, ModelStoreRoot);
+
+    private async Task EvaluateParakeetUpgradeStateAsync()
+    {
+        if (Leaving)
+        {
+            return;
+        }
+
+        var developmentLegacyDir = DevelopmentModelDirectory(ParakeetModelIds.LegacyV3);
+        var action = await ParakeetModelLocator.EvaluateUpgradeActionAsync(
+            OfflineModelStore,
+            ModelStoreRoot,
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_MODEL_DIRECTORY"),
+            DevelopmentModelDirectory(ParakeetModelIds.Final),
+            developmentLegacyDir).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
+        switch (action)
+        {
+            case ParakeetUpgradeAction.None:
+                _retireLegacyParakeetPending = false;
+                return;
+            case ParakeetUpgradeAction.RetireLegacyV3:
+                if (IsSpeechEngineBusy)
+                {
+                    _retireLegacyParakeetPending = true;
+                    return;
+                }
+
+                if (IsConfiguredTranscriptionUsingLegacyV3())
+                {
+                    if (!await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true) || Leaving)
+                    {
+                        _retireLegacyParakeetPending = true;
+                        return;
+                    }
+
+                    PresentGraphicsRuntime();
+                }
+
+                if (!IsConfiguredTranscriptionUsingLegacyV3() && !IsSpeechEngineBusy)
+                {
+                    _retireLegacyParakeetPending = false;
+                    await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                        OfflineModelStore, ModelStoreRoot, () => Task.CompletedTask, developmentLegacyDir).ConfigureAwait(true);
+                }
+
+                return;
+            case ParakeetUpgradeAction.StartSilentUpgrade when !_silentParakeetUpgradeAttemptedThisSession:
+                _silentParakeetUpgradePending = true;
+                if (_modelDelivery is not { IsCompleted: false })
+                {
+                    TryStartSilentParakeetUpgrade();
+                }
+                else
+                {
+                    PostToLiveWindow(_ => TryStartSilentParakeetUpgrade());
+                }
+
+                return;
+        }
+    }
+
+    private void TryStartSilentParakeetUpgrade()
+    {
+        if (!_silentParakeetUpgradePending ||
+            _silentParakeetUpgradeAttemptedThisSession ||
+            _modelDelivery is { IsCompleted: false } ||
+            _onboardingDelivery is { IsCompleted: false } ||
+            IsSpeechEngineBusy ||
+            Leaving)
+        {
+            return;
+        }
+
+        _silentParakeetUpgradePending = false;
+        _silentParakeetUpgradeAttemptedThisSession = true;
+        _modelDelivery = RunSilentParakeetUpgradeAsync();
     }
 
     /// <summary>The person asked for local transcription to be started again, from the first-run checklist or warm-up.</summary>
@@ -610,8 +736,20 @@ public partial class App
     /// </remarks>
     private void OnTranscriptionRetryRequested()
     {
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        if (Leaving)
         {
+            return;
+        }
+
+        if (_modelDelivery is { IsCompleted: false } existing)
+        {
+            if (!_isSilentParakeetUpgrade)
+            {
+                return;
+            }
+
+            _modelDownload?.Cancel();
+            _modelDelivery = RunAfterExistingDeliveryAsync(existing, RetryTranscriptionAsync);
             return;
         }
 

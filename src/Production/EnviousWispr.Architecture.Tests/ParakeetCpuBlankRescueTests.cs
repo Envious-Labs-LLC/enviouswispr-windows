@@ -330,6 +330,30 @@ public sealed class ParakeetCpuBlankRescueTests
         Assert.Equal(prefixLength, backend.LastPreprocessedSampleCount);
     }
 
+    [Fact]
+    public async Task SingleFrameShortInputPastMinimumPreprocessorBoundaryStillDecodes()
+    {
+        var samples = new float[ParakeetTranscriptionEngine.MinimumPreprocessorInputSamples];
+        Array.Fill(samples, 0.05f);
+        var backend = new FakeParakeetBackend
+        {
+            PrimaryEncoderFrameSignal = 1.0f,
+            FixedEncodedFrameCount = 1,
+        };
+        using var engine = CreateEngine(backend);
+
+        var result = await engine.TranscribeAsync(
+            new CapturedAudio(
+                DictationSessionId.Create(),
+                samples,
+                ParakeetTranscriptionEngine.RequiredSampleRate,
+                Channels: 1));
+
+        Assert.Equal("popular", result.Text);
+        Assert.Single(result.TokenTimings!);
+        Assert.True(result.TokenTimings![0].End <= TimeSpan.FromSeconds(samples.Length / (double)ParakeetTranscriptionEngine.RequiredSampleRate));
+    }
+
     private static ParakeetTranscriptionEngine CreateEngine(
         ParakeetTranscriptionEngine.IParakeetBackend backend)
     {
@@ -412,6 +436,8 @@ public sealed class ParakeetCpuBlankRescueTests
 
         public float Fp32EncoderFrameSignal { get; init; } = 1.0f;
 
+        public int? FixedEncodedFrameCount { get; init; }
+
         public bool EmitWordsOnlyWhenTrimmed { get; init; }
 
         public bool ThrowOnFp32Decode { get; init; }
@@ -445,7 +471,10 @@ public sealed class ParakeetCpuBlankRescueTests
 
             LastPreprocessedSampleCount = samples.Length;
             var signal = EmitWordsOnlyWhenTrimmed && samples.Length < 70_000 ? 1.0f : PrimaryEncoderFrameSignal;
-            return ([signal, signal, signal], 3);
+            var frameCount = FixedEncodedFrameCount ?? 3;
+            var features = new float[frameCount];
+            Array.Fill(features, signal);
+            return (features, frameCount);
         }
 
         public (float[] EncodedChannelFirst, int EncodedLength) Encode(

@@ -295,6 +295,19 @@ public sealed class OnboardingFlowTests
             Assert.Equal("gpt-4o-mini", resumedFlow.Choices.CloudModelId);
 
             // Overlay sub-steps collapse to their owning picker step on restore; worked practice jumps to Closing; Done never resumes.
+            var legacyParakeetCheckpoint = checkpoint with
+            {
+                Choices = checkpoint.Choices with
+                {
+                    SpeechEngine = FinalAsrEngine.Parakeet,
+                    SpeechModelId = ParakeetModelIds.LegacyV3,
+                },
+            };
+            var normalizedParakeetDecision = OnboardingRestore.Resolve(
+                legacyParakeetCheckpoint,
+                hasCompletedOnboarding: false);
+            Assert.Equal(ParakeetModelIds.Final, normalizedParakeetDecision.Choices.SpeechModelId);
+
             var compareDecision = OnboardingRestore.Resolve(
                 checkpoint with { Step = OnboardingStep.SpeechCompare },
                 hasCompletedOnboarding: false);

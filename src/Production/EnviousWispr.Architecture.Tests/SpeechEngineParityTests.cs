@@ -120,7 +120,7 @@ public sealed class SpeechEngineParityTests
     }
 
     [Fact]
-    public void BundledManifestBundleSizesMatchParakeet640MbAndWhisper548Mb()
+    public void BundledManifestBundleSizesMatchParakeet638MbAndWhisper548Mb()
     {
         var parakeet = BundledModelManifests.Load(
             ParakeetModelIds.Final,
@@ -131,13 +131,16 @@ public sealed class SpeechEngineParityTests
 
         Assert.True(parakeet.Succeeded);
         Assert.True(whisper.Succeeded);
+        Assert.Equal(ParakeetModelIds.Final, parakeet.Manifest!.Payload.ModelId);
+        Assert.Equal(5, parakeet.Manifest.Payload.Files.Count);
+        Assert.Equal(667_974_615L, parakeet.Manifest.Payload.Files.Sum(f => f.SizeBytes));
 
         static string FormatMb(VerifiedModelManifest manifest) =>
             $"{(manifest.Payload.Files.Sum(f => f.SizeBytes) + (1024 * 1024) - 1) / (1024 * 1024)} MB";
 
         Assert.Equal(EnginePolishPresentation.ParakeetBundleSizeLabel, FormatMb(parakeet.Manifest!));
         Assert.Equal(EnginePolishPresentation.WhisperBundleSizeLabel, FormatMb(whisper.Manifest!));
-        Assert.Equal("640 MB", EnginePolishPresentation.ParakeetBundleSizeLabel);
+        Assert.Equal("638 MB", EnginePolishPresentation.ParakeetBundleSizeLabel);
         Assert.Equal("548 MB", EnginePolishPresentation.WhisperBundleSizeLabel);
     }
 
@@ -149,7 +152,7 @@ public sealed class SpeechEngineParityTests
             CanRemove: false,
             CanDownload: true,
             DeliveryStage: SpeechModelDelivery.Missing,
-            BundleSizeText: "640 MB");
+            BundleSizeText: "638 MB");
 
         var parakeetMissing = EnginePolishPresentation.DescribeEngineCard(
             FinalAsrEngine.Parakeet,
@@ -158,7 +161,7 @@ public sealed class SpeechEngineParityTests
             otherDownloadInFlight: false);
         Assert.True(parakeetMissing.IsSelected);
         Assert.True(parakeetMissing.ShowDownloadButton);
-        Assert.Equal("Download (640 MB)", parakeetMissing.DownloadButtonText);
+        Assert.Equal("Download (638 MB)", parakeetMissing.DownloadButtonText);
         Assert.False(parakeetMissing.ShowRemoveButton);
         Assert.Equal("25 languages", parakeetMissing.LanguagesText);
         Assert.Equal(ParakeetModelIds.Final, parakeetMissing.ModelName);
@@ -192,7 +195,7 @@ public sealed class SpeechEngineParityTests
                 CanRemove: true,
                 CanDownload: true,
                 DeliveryStage: SpeechModelDelivery.Installed,
-                BundleSizeText: "640 MB"),
+                BundleSizeText: "638 MB"),
             otherDownloadInFlight: true);
         Assert.True(siblingWhileOtherDownloads.ShowRemoveButton);
         Assert.False(siblingWhileOtherDownloads.RemoveButtonEnabled);
@@ -398,6 +401,10 @@ public sealed class SpeechEngineParityTests
             removeBody.IndexOf("ModelPackageCleaner.RemoveAsync", StringComparison.Ordinal)
                 < removeBody.IndexOf("ReconfigureTranscriptionAsync", StringComparison.Ordinal),
             "Model files must be removed after teardown and before engine reconfiguration.");
+        Assert.Contains("RemoveLegacyV3FromStoreOrDataAsync", removeBody, StringComparison.Ordinal);
+        Assert.Contains("RunSilentParakeetUpgradeAsync", deliveryCode, StringComparison.Ordinal);
+        Assert.Contains("RetireLegacyV3AfterUltraInstalledAsync", deliveryCode, StringComparison.Ordinal);
+        Assert.Contains("IsConfiguredTranscriptionUsingLegacyV3", deliveryCode, StringComparison.Ordinal);
     }
 
     private static XElement FindNamed(XDocument document, string name)

@@ -16,8 +16,15 @@ public static class DeliveryLanguagePolicy
     public static string? For(Transcript transcript)
     {
         ArgumentNullException.ThrowIfNull(transcript);
-        return transcript.EngineId.StartsWith(ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase)
+        return IsParakeetEngineId(transcript.EngineId)
             ? null
             : transcript.DetectedLanguage;
+    }
+
+    private static bool IsParakeetEngineId(string engineId)
+    {
+        var modelId = engineId.Split(':', 2)[0];
+        return string.Equals(modelId, ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(modelId, ParakeetModelIds.LegacyV3, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -255,6 +255,8 @@ public sealed class ModelProvisioningTests
             }
         }
 
+        Assert.Contains(ParakeetModelIds.Final, BundledModelManifests.ModelIds);
+        Assert.DoesNotContain(ParakeetModelIds.LegacyV3, BundledModelManifests.ModelIds);
         Assert.Equal(ManifestVerificationStatus.Unreachable, BundledModelManifests.Load("no-such-model", verifier).Status);
     }
 
@@ -397,6 +399,295 @@ public sealed class ModelProvisioningTests
         Assert.Equal(
             ManifestVerificationStatus.InvalidPayload,
             verifier.VerifyBundled(BundledDocument("speech", "1.0.0", parts: parts)).Status);
+    }
+
+    [Fact]
+    public async Task ParakeetModelLocatorPrefersUltraOverLegacyDonorAndTriggersSilentUpgradeOnlyForDonor()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("EnviousWispr.ParakeetLocator.").FullName;
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        try
+        {
+            var storeRoot = Path.Combine(tempRoot, "data", "models");
+            var overrideDir = Directory.CreateDirectory(Path.Combine(tempRoot, "override")).FullName;
+            var devUltraDir = Directory.CreateDirectory(Path.Combine(tempRoot, "repo", "models", ParakeetModelIds.Final)).FullName;
+            var devLegacyDir = Directory.CreateDirectory(Path.Combine(tempRoot, "repo", "models", ParakeetModelIds.LegacyV3)).FullName;
+            var donorLegacyDataDir = Directory.CreateDirectory(Path.Combine(storeRoot, ParakeetModelIds.LegacyV3)).FullName;
+            var ultraLegacyDataDir = Directory.CreateDirectory(Path.Combine(storeRoot, ParakeetModelIds.Final)).FullName;
+
+            WriteCompleteParakeetPack(devUltraDir);
+            WriteCompleteParakeetPack(devLegacyDir);
+            WriteCompleteParakeetPack(donorLegacyDataDir);
+            WriteCompleteParakeetPack(ultraLegacyDataDir);
+
+            var verifier = new ModelManifestVerifier(new Dictionary<string, string>
+            {
+                ["test-2026"] = ModelManifestSigning.ExportPublicKeyPem(key),
+            });
+            var payloadBytes = Encoding.UTF8.GetBytes("synthetic-parakeet-onnx-bytes");
+            using var handler = new RoutingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(payloadBytes),
+            });
+            var store = new ModelStore(
+                storeRoot,
+                new HttpClient(handler, disposeHandler: false),
+                verifier,
+                new Version(1, 0, 0),
+                new FixedDiskSpaceProbe(long.MaxValue),
+                options: new ModelDeliveryOptions(DiskReserveBytes: 0, MaximumAttemptsPerSource: 1, RetryDelay: _ => TimeSpan.Zero));
+
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.Final, payloadBytes))).Succeeded);
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.LegacyV3, payloadBytes))).Succeeded);
+
+            // 1. Override wins over everything and never schedules silent upgrade.
+            var fromOverride = await ParakeetModelLocator.ResolveAsync(store, storeRoot, overrideDir, devUltraDir);
+            Assert.Equal(ParakeetModelSource.Override, fromOverride.Source);
+            Assert.Equal(overrideDir, fromOverride.DirectoryPath);
+            Assert.True(fromOverride.IsUltra);
+            Assert.False(fromOverride.ShouldTriggerSilentUpgrade);
+
+            // 2. Ultra store beats Ultra legacy data, Ultra development, and legacy donors.
+            var fromUltraStore = await ParakeetModelLocator.ResolveAsync(store, storeRoot, null, devUltraDir);
+            Assert.Equal(ParakeetModelSource.UltraStore, fromUltraStore.Source);
+            Assert.True(fromUltraStore.IsUltra);
+            Assert.True(fromUltraStore.IsUltraStoreOrData);
+            Assert.False(fromUltraStore.ShouldTriggerSilentUpgrade);
+
+            // 3. Remove Ultra store -> falls back to Ultra legacy data.
+            Assert.True((await store.RemoveVersionAsync(ParakeetModelIds.Final, "1.0.0")).Succeeded);
+            var fromUltraLegacy = await ParakeetModelLocator.ResolveAsync(store, storeRoot, null, devUltraDir);
+            Assert.Equal(ParakeetModelSource.UltraLegacyData, fromUltraLegacy.Source);
+            Assert.Equal(ultraLegacyDataDir, fromUltraLegacy.DirectoryPath);
+            Assert.True(fromUltraLegacy.IsUltraStoreOrData);
+            Assert.False(fromUltraLegacy.ShouldTriggerSilentUpgrade);
+
+            // 4. Remove Ultra legacy data -> falls back to Ultra development checkout.
+            Directory.Delete(ultraLegacyDataDir, recursive: true);
+            var fromUltraDev = await ParakeetModelLocator.ResolveAsync(store, storeRoot, null, devUltraDir);
+            Assert.Equal(ParakeetModelSource.UltraDevelopment, fromUltraDev.Source);
+            Assert.Equal(devUltraDir, fromUltraDev.DirectoryPath);
+            Assert.True(fromUltraDev.IsUltra);
+            Assert.False(fromUltraDev.IsUltraStoreOrData);
+            Assert.False(fromUltraDev.ShouldTriggerSilentUpgrade);
+
+            // 5. No Ultra anywhere -> falls back to LegacyV3 store donor and flags silent upgrade.
+            Directory.Delete(devUltraDir, recursive: true);
+            var fromLegacyStore = await ParakeetModelLocator.ResolveAsync(store, storeRoot, null, devUltraDir);
+            Assert.Equal(ParakeetModelSource.LegacyV3DonorStore, fromLegacyStore.Source);
+            Assert.True(fromLegacyStore.IsInstalled);
+            Assert.True(fromLegacyStore.IsLegacyDonor);
+            Assert.True(fromLegacyStore.ShouldTriggerSilentUpgrade);
+
+            // 6. Remove LegacyV3 store -> falls back to LegacyV3 data-folder donor.
+            Assert.True((await store.RemoveVersionAsync(ParakeetModelIds.LegacyV3, "1.0.0")).Succeeded);
+            var fromLegacyData = await ParakeetModelLocator.ResolveAsync(store, storeRoot, null, devUltraDir);
+            Assert.Equal(ParakeetModelSource.LegacyV3DonorData, fromLegacyData.Source);
+            Assert.Equal(donorLegacyDataDir, fromLegacyData.DirectoryPath);
+            Assert.True(fromLegacyData.IsLegacyDonor);
+            Assert.True(fromLegacyData.ShouldTriggerSilentUpgrade);
+
+            // 7. Remove LegacyV3 data folder -> returns None even though devLegacyDir exists in repo checkout.
+            Directory.Delete(donorLegacyDataDir, recursive: true);
+            var absent = await ParakeetModelLocator.ResolveAsync(store, storeRoot, null, devUltraDir);
+            Assert.Equal(ParakeetModelSource.None, absent.Source);
+            Assert.Null(absent.DirectoryPath);
+            Assert.False(absent.IsInstalled);
+            Assert.False(absent.ShouldTriggerSilentUpgrade);
+            Assert.True(Directory.Exists(devLegacyDir));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ParakeetModelLocatorRetiresLegacyV3SafelyOnlyAfterUltraInstallAndNeverDeletesCheckout()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("EnviousWispr.ParakeetRetire.").FullName;
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        try
+        {
+            var storeRoot = Path.Combine(tempRoot, "data", "models");
+            var devLegacyDir = Directory.CreateDirectory(Path.Combine(tempRoot, "repo", "models", ParakeetModelIds.LegacyV3)).FullName;
+            var donorLegacyDataDir = Directory.CreateDirectory(Path.Combine(storeRoot, ParakeetModelIds.LegacyV3)).FullName;
+            WriteCompleteParakeetPack(devLegacyDir);
+            WriteCompleteParakeetPack(donorLegacyDataDir);
+
+            var verifier = new ModelManifestVerifier(new Dictionary<string, string>
+            {
+                ["test-2026"] = ModelManifestSigning.ExportPublicKeyPem(key),
+            });
+            var payloadBytes = Encoding.UTF8.GetBytes("synthetic-parakeet-onnx-bytes");
+            using var handler = new RoutingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(payloadBytes),
+            });
+            var store = new ModelStore(
+                storeRoot,
+                new HttpClient(handler, disposeHandler: false),
+                verifier,
+                new Version(1, 0, 0),
+                new FixedDiskSpaceProbe(long.MaxValue),
+                options: new ModelDeliveryOptions(DiskReserveBytes: 0, MaximumAttemptsPerSource: 1, RetryDelay: _ => TimeSpan.Zero));
+
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.LegacyV3, payloadBytes))).Succeeded);
+
+            // Refuses to retire legacy v3 before Ultra is installed in store or data folder.
+            var beforeUltra = await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.False(beforeUltra.Succeeded);
+            Assert.True(Directory.Exists(donorLegacyDataDir));
+            Assert.NotEmpty(await store.ListInstalledAsync(ParakeetModelIds.LegacyV3));
+
+            // Install Ultra into store -> retire legacy v3 cleanly, leaving Ultra active and devLegacyDir intact.
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.Final, payloadBytes))).Succeeded);
+            var unloaded = false;
+            var retired = await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () =>
+                {
+                    unloaded = true;
+                    return Task.CompletedTask;
+                },
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.True(retired.Succeeded);
+            Assert.True(unloaded);
+            Assert.Empty(await store.ListInstalledAsync(ParakeetModelIds.LegacyV3));
+            Assert.False(Directory.Exists(donorLegacyDataDir));
+            Assert.True((await store.OpenActiveOfflineAsync(ParakeetModelIds.Final)).Succeeded);
+            Assert.True(Directory.Exists(devLegacyDir));
+
+            // Guard check: if storeRoot ever equalled the repo models directory, legacy checkout deletion is refused.
+            var repoModelsRoot = Path.Combine(tempRoot, "repo", "models");
+            Assert.False(ParakeetModelLocator.TryGetSafeLegacyDataDirectory(repoModelsRoot, devLegacyDir, out _));
+
+            // Remove Parakeet path: even without Ultra installed, RemoveLegacyV3FromStoreOrDataAsync cleans leftover legacy store + data files.
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.LegacyV3, payloadBytes))).Succeeded);
+            WriteCompleteParakeetPack(donorLegacyDataDir);
+            Assert.True(await ParakeetModelLocator.HasAnyInstalledPackageAsync(store, storeRoot));
+            var removeBoth = await ModelPackageCleaner.RemoveAsync(
+                store,
+                ParakeetModelIds.Final,
+                Path.Combine(storeRoot, ParakeetModelIds.Final),
+                () => Task.CompletedTask);
+            var removeLegacy = await ParakeetModelLocator.RemoveLegacyV3FromStoreOrDataAsync(
+                store,
+                storeRoot,
+                () => Task.CompletedTask,
+                devLegacyDir);
+            Assert.True(removeBoth.Succeeded);
+            Assert.True(removeLegacy.Succeeded);
+            Assert.False(await ParakeetModelLocator.HasAnyInstalledPackageAsync(store, storeRoot));
+            Assert.False(Directory.Exists(donorLegacyDataDir));
+            Assert.True(Directory.Exists(devLegacyDir));
+
+            // Upgrade action evaluator & active legacy path detection.
+            Assert.Equal(
+                ParakeetUpgradeAction.None,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+            WriteCompleteParakeetPack(donorLegacyDataDir);
+            Assert.Equal(
+                ParakeetUpgradeAction.StartSilentUpgrade,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+            Assert.Equal(
+                ParakeetUpgradeAction.None,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, donorLegacyDataDir, developmentUltraDirectory: null, devLegacyDir));
+            Assert.True(ParakeetModelLocator.IsDirectoryUnderLegacyV3(donorLegacyDataDir, storeRoot));
+            Assert.True(ParakeetModelLocator.IsDirectoryUnderLegacyV3(Path.Combine(donorLegacyDataDir, "versions", "1.0.0"), storeRoot));
+            Assert.False(ParakeetModelLocator.IsDirectoryUnderLegacyV3(Path.Combine(storeRoot, ParakeetModelIds.Final), storeRoot));
+            // Corrupt hand-copied Ultra folder must NOT trigger legacy v3 retirement even if all filenames exist.
+            var corruptUltraDir = Path.Combine(storeRoot, ParakeetModelIds.Final);
+            WriteCompleteParakeetPack(corruptUltraDir);
+            Assert.False(await ParakeetModelLocator.IsUltraInstalledInStoreOrDataAsync(store, storeRoot));
+            var blockedRetire = await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.False(blockedRetire.Succeeded);
+            Assert.Equal(ModelDeliveryFailure.VersionNotInstalled, blockedRetire.Failure);
+            Assert.True(Directory.Exists(donorLegacyDataDir));
+            Directory.Delete(corruptUltraDir, recursive: true);
+
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.Final, payloadBytes))).Succeeded);
+            Assert.Equal(
+                ParakeetUpgradeAction.RetireLegacyV3,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+
+            // Hand-copied FP32 legacy v3 sidecar (encoder-model.onnx + decoder_joint-model.onnx) is preserved during
+            // automatic post-Ultra retirement so CUDA users keep their GPU model, while store legacy versions are still
+            // retired and explicit RemoveLegacyV3FromStoreOrDataAsync still removes the folder cleanly.
+            var fp32DonorDir = Directory.CreateDirectory(donorLegacyDataDir).FullName;
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "nemo128.onnx"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "vocab.txt"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "encoder-model.onnx"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "encoder-model.onnx.data"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "decoder_joint-model.onnx"), [1, 2, 3, 4]);
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.LegacyV3, payloadBytes))).Succeeded);
+            Assert.Equal(
+                ParakeetUpgradeAction.RetireLegacyV3,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+            var fp32Retire = await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.True(fp32Retire.Succeeded);
+            Assert.Empty(await store.ListInstalledAsync(ParakeetModelIds.LegacyV3));
+            Assert.True(File.Exists(Path.Combine(fp32DonorDir, "encoder-model.onnx")));
+            Assert.Equal(
+                ParakeetUpgradeAction.None,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+            var explicitRemoval = await ParakeetModelLocator.RemoveLegacyV3FromStoreOrDataAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.True(explicitRemoval.Succeeded);
+            Assert.False(Directory.Exists(fp32DonorDir));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static readonly string[] ParakeetPackFileNames =
+        ["nemo128.onnx", "vocab.txt", "encoder-model.int8.onnx", "decoder_joint-model.int8.onnx"];
+
+    private static void WriteCompleteParakeetPack(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (var fileName in ParakeetPackFileNames)
+        {
+            File.WriteAllBytes(Path.Combine(directory, fileName), [1, 2, 3, 4]);
+        }
+    }
+
+    private static byte[] SignedParakeetEnvelope(ECDsa key, string modelId, byte[] bytes)
+    {
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var artifacts = ParakeetPackFileNames
+            .Select(name => new ModelArtifact(
+                name,
+                bytes.Length,
+                sha,
+                [new Uri($"https://example.invalid/{modelId}/1.0.0/{name}")]))
+            .ToArray();
+        var payload = new ModelManifestPayload(
+            ModelManifestVerifier.CurrentManifestSchemaVersion,
+            modelId,
+            "1.0.0",
+            "1.0.0",
+            new ModelLicenseNotice("Fixture", new Uri("https://example.invalid/license"), "Test weights."),
+            artifacts);
+        return ModelManifestSigning.CreateEnvelope(payload, "test-2026", key);
     }
 
     private static byte[] BundledDocument(

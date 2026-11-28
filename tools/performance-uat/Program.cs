@@ -35,7 +35,12 @@ Directory.CreateDirectory(scratch);
 try
 {
     var dataDirectory = Path.Combine(scratch, "app-data");
-    var localModelDirectory = Path.Combine(repositoryRoot, "models", "parakeet-tdt-0.6b-v3");
+    var ultraModelDirectory = Path.Combine(repositoryRoot, "models", EnviousWispr.Core.Runtime.ParakeetModelIds.Final);
+    var legacyModelDirectory = Path.Combine(repositoryRoot, "models", EnviousWispr.Core.Runtime.ParakeetModelIds.LegacyV3);
+    var localModelDirectory = File.Exists(Path.Combine(ultraModelDirectory, "encoder-model.int8.onnx")) ||
+        File.Exists(Path.Combine(ultraModelDirectory, "encoder-model.onnx"))
+        ? ultraModelDirectory
+        : legacyModelDirectory;
     if (requireLocalRuntime && !Directory.Exists(localModelDirectory))
     {
         throw new DirectoryNotFoundException(

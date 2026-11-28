@@ -19,6 +19,9 @@ public sealed class WindowsSetupRecommenderTests
         Assert.Equal(fallback.Revision, embedded.Revision);
         Assert.Equal(fallback.ParallelDownloadsMinRamGb, embedded.ParallelDownloadsMinRamGb);
         Assert.Equal(fallback.SpeechCatalog, embedded.SpeechCatalog);
+        Assert.Equal(ParakeetModelIds.Final, embedded.SpeechRules[0].PrimaryModelId);
+        Assert.Equal(667_974_615L, embedded.SpeechCatalog[ParakeetModelIds.Final].SizeBytes);
+        Assert.Equal("638 MB", embedded.SpeechCatalog[ParakeetModelIds.Final].SizeLabel);
         Assert.Equal(fallback.PolishCatalog, embedded.PolishCatalog);
         Assert.Equal(fallback.SpeechRules, embedded.SpeechRules);
         Assert.Equal(fallback.PolishRules.Count, embedded.PolishRules.Count);
@@ -86,7 +89,7 @@ public sealed class WindowsSetupRecommenderTests
             {
                 Assert.Equal(ParakeetModelIds.Final, rec.Speech.PrimaryModelId);
                 Assert.Equal(FinalAsrEngine.Parakeet, rec.Speech.PrimaryEngine);
-                Assert.Equal("640 MB", rec.Speech.PrimarySizeLabel);
+                Assert.Equal("638 MB", rec.Speech.PrimarySizeLabel);
                 Assert.True(rec.Speech.IsParakeetAvailable);
                 Assert.Null(rec.Speech.ParakeetUnavailableReason);
             }

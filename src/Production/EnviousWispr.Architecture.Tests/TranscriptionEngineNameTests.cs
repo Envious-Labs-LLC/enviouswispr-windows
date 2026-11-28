@@ -27,6 +27,9 @@ public sealed partial class DesignSystemTokenTests
     /// </summary>
     private static readonly string[] EngineIdsTheProductWrites =
     [
+        "parakeet-ultra:cpu",
+        "parakeet-ultra:cuda",
+        "parakeet-ultra:cuda:isolated",
         "parakeet-tdt-0.6b-v3:cpu",
         "parakeet-tdt-0.6b-v3:cuda",
         "parakeet-tdt-0.6b-v3:cuda:isolated",
@@ -141,10 +144,12 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheParakeetEngineConstantIsTheCoreOne()
     {
+        Assert.Equal("parakeet-ultra", ParakeetModelIds.Final);
+        Assert.Equal("parakeet-tdt-0.6b-v3", ParakeetModelIds.LegacyV3);
         Assert.Equal(ParakeetModelIds.Final, ParakeetTranscriptionEngine.ModelId);
     }
 
-    [GeneratedRegex(@"parakeet-tdt-[0-9.]+b-v[0-9]+|whisper-large-v[0-9]+-turbo|""whisper-small""")]
+    [GeneratedRegex(@"parakeet-ultra|parakeet-tdt-[0-9.]+b-v[0-9]+|whisper-large-v[0-9]+-turbo|""whisper-small""")]
     private static partial Regex ModelNameLiteral();
 
     /// <summary>

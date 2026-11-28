@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.ASR;
@@ -47,12 +49,11 @@ public static class TokenLanguageFilter
 
         foreach (var rune in cleaned.EnumerateRunes())
         {
-            var scalar = (uint)rune.Value;
             var matchesScalar = script switch
             {
-                ParakeetScript.Latin => IsLatinAllowed(scalar),
-                ParakeetScript.Cyrillic => IsCyrillicAllowed(scalar),
-                ParakeetScript.Greek => IsGreekAllowed(scalar),
+                ParakeetScript.Latin => IsLatinAllowed(rune),
+                ParakeetScript.Cyrillic => IsCyrillicAllowed(rune),
+                ParakeetScript.Greek => IsGreekAllowed(rune),
                 _ => false,
             };
 
@@ -65,25 +66,35 @@ public static class TokenLanguageFilter
         return true;
     }
 
-    private static bool IsLatinAllowed(uint scalar) =>
-        scalar is (>= 0x0020 and <= 0x007F)
+    private static bool IsLatinAllowed(Rune rune) =>
+        (uint)rune.Value is (>= 0x0020 and <= 0x007F)
             or (>= 0x00A0 and <= 0x00FF)
             or (>= 0x0100 and <= 0x017F)
             or (>= 0x0180 and <= 0x024F)
             or (>= 0x0300 and <= 0x036F)
             or (>= 0x1E00 and <= 0x1EFF)
-            || IsCommonCurrency(scalar);
+        || IsNeutralUnicodePunctuation((uint)rune.Value)
+        || IsCurrencySymbol(rune);
 
-    private static bool IsCyrillicAllowed(uint scalar) =>
-        scalar is >= 0x0400 and <= 0x04FF || IsCommonNonLetterAscii(scalar) || IsCommonCurrency(scalar);
+    private static bool IsCyrillicAllowed(Rune rune) =>
+        (uint)rune.Value is >= 0x0400 and <= 0x04FF
+        || IsCommonNonLetterAscii((uint)rune.Value)
+        || IsNeutralUnicodePunctuation((uint)rune.Value)
+        || IsCurrencySymbol(rune);
 
-    private static bool IsGreekAllowed(uint scalar) =>
-        scalar is (>= 0x0370 and <= 0x03FF)
+    private static bool IsGreekAllowed(Rune rune) =>
+        (uint)rune.Value is (>= 0x0370 and <= 0x03FF)
             or (>= 0x1F00 and <= 0x1FFF)
-            or (>= 0x0300 and <= 0x036F) || IsCommonNonLetterAscii(scalar) || IsCommonCurrency(scalar);
+            or (>= 0x0300 and <= 0x036F)
+        || IsCommonNonLetterAscii((uint)rune.Value)
+        || IsNeutralUnicodePunctuation((uint)rune.Value)
+        || IsCurrencySymbol(rune);
 
-    private static bool IsCommonCurrency(uint scalar) =>
-        scalar is 0x00A3 or 0x00A5 or 0x20AC;
+    private static bool IsCurrencySymbol(Rune rune) =>
+        CharUnicodeInfo.GetUnicodeCategory(rune.Value) == UnicodeCategory.CurrencySymbol;
+
+    private static bool IsNeutralUnicodePunctuation(uint scalar) =>
+        scalar is (>= 0x2010 and <= 0x2027) or 0x00AB or 0x00BB or 0x2039 or 0x203A;
 
     private static bool IsCommonNonLetterAscii(uint scalar) =>
         scalar is >= 0x0020 and <= 0x007F &&

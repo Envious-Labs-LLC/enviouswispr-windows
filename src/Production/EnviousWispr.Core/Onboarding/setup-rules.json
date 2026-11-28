@@ -4,11 +4,11 @@
   "revision": 1,
   "parallelDownloadsMinRamGb": 16.0,
   "speechCatalog": {
-    "parakeet-tdt-0.6b-v3": {
+    "parakeet-ultra": {
       "displayName": "Parakeet",
       "engine": "Parakeet",
-      "sizeLabel": "640 MB",
-      "sizeBytes": 670619803,
+      "sizeLabel": "638 MB",
+      "sizeBytes": 667974615,
       "languagesSummary": "25 languages"
     },
     "whisper-large-v3-turbo": {
@@ -40,7 +40,7 @@
     {
       "id": "speech-parakeet-supported",
       "effectiveLanguageInParakeet": true,
-      "primaryModelId": "parakeet-tdt-0.6b-v3",
+      "primaryModelId": "parakeet-ultra",
       "primaryLabel": "Recommended",
       "secondaryModelId": "whisper-large-v3-turbo",
       "secondaryLabel": "99+ languages",

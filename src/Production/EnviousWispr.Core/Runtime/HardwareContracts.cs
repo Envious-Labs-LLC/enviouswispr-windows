@@ -139,7 +139,8 @@ public static class WhisperModelFileNames
 
 public static class ParakeetModelIds
 {
-    public const string Final = "parakeet-tdt-0.6b-v3";
+    public const string Final = "parakeet-ultra";
+    public const string LegacyV3 = "parakeet-tdt-0.6b-v3";
 }
 
 public static class WhisperModelIds
