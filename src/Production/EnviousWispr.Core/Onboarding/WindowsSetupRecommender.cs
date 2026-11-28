@@ -36,11 +36,11 @@ public sealed record SpeechRecommendation(
     string? ParakeetUnavailableReason,
     string ParakeetSpeedNote,
     string WhisperSpeedNote,
-    string HeroTimeText = "< 0.5 sec",
+    string HeroTimeText = "Fast local",
     string HeroSubtext = WindowsSetupRecommender.DefaultHeroSubtext,
     string HardwareBadgeText = "Runs locally on your CPU",
-    string ParakeetHeroTimeText = "~1.2 sec",
-    string WhisperHeroTimeText = "~3 sec",
+    string ParakeetHeroTimeText = "Fast local",
+    string WhisperHeroTimeText = "99+ langs",
     string ParakeetHardwareBadgeText = "Runs locally on your CPU",
     string WhisperHardwareBadgeText = "Runs locally on your CPU");
 
@@ -73,7 +73,7 @@ public sealed record WindowsSetupRecommendation(
 /// <summary>Pure deterministic recommendation engine pairing setup-rules.json with Windows hardware profiling.</summary>
 public static class WindowsSetupRecommender
 {
-    public const string DefaultHeroSubtext = "For 30 seconds of speech on this PC.";
+    public const string DefaultHeroSubtext = "Private local transcription on this PC.";
 
     /// <summary>
     /// Languages Parakeet technically lists in its 25-language lock table that should still recommend
@@ -122,8 +122,8 @@ public static class WindowsSetupRecommender
         var usesNvidiaCuda = snapshot.GpuKind == GpuAccelerationKind.NvidiaCuda && snapshot.CudaRuntimeInstalled;
         return engine switch
         {
-            FinalAsrEngine.Whisper => usesNvidiaCuda ? "~0.8 sec" : "~3 sec",
-            _ => usesNvidiaCuda ? "< 0.5 sec" : "~1.2 sec",
+            FinalAsrEngine.Whisper => usesNvidiaCuda ? "GPU fast" : "99+ langs",
+            _ => usesNvidiaCuda ? "Fastest" : "Fast local",
         };
     }
 

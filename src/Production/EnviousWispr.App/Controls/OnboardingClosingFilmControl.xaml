@@ -448,7 +448,7 @@
                                         <Border.RenderTransform><TranslateTransform x:Name="CopiedClipboardTranslate" Y="6" /></Border.RenderTransform>
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
                                             <FontIcon FontSize="12" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="\uE73E" />
-                                            <TextBlock Style="{StaticResource BrandSuccessChipTextStyle}" Text="Your earlier clipboard is back" />
+                                            <TextBlock Style="{StaticResource BrandSuccessChipTextStyle}" Text="Pasted from your clipboard" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

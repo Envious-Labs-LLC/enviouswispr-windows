@@ -139,7 +139,7 @@ public sealed class OnboardingClosingFilmEngineTests
             OnboardingClosingFilmEngine.BringWordsSubtitle,
             OnboardingClosingFilmEngine.BringWordsAppsLine,
             OnboardingClosingFilmEngine.BringWordsImportPath,
-            OnboardingClosingFilmEngine.ClipboardRestoredText,
+            OnboardingClosingFilmEngine.ClipboardSavedBadgeText,
         };
 
         foreach (var feature in OnboardingClosingFilmEngine.ShippedWindowsFeatures)
@@ -167,10 +167,14 @@ public sealed class OnboardingClosingFilmEngineTests
             }
         }
 
-        // Scene 4 uses Windows Ctrl+V, never macOS Command-V symbol.
+        // Scene 4 uses Windows Ctrl+V (never Command-V) and does not falsely claim prior clipboard restoration.
         var copiedCaptions = OnboardingClosingFilmEngine.GetCaptions(ClosingFilmSceneKind.Copied);
+        var copiedSummary = OnboardingClosingFilmEngine.GetSpokenSummary(ClosingFilmSceneKind.Copied, SampleSummary);
         Assert.Contains(copiedCaptions, c => c.Title.Contains("Ctrl+V", StringComparison.Ordinal));
-        Assert.Contains("Ctrl+V", OnboardingClosingFilmEngine.GetSpokenSummary(ClosingFilmSceneKind.Copied, SampleSummary), StringComparison.Ordinal);
+        Assert.Contains("Ctrl+V", copiedSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain(copiedCaptions, c => c.Subtitle.Contains("comes back after", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("earlier clipboard", copiedSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("comes back after", copiedSummary, StringComparison.OrdinalIgnoreCase);
 
         // Scene 7 teaches Windows System Tray and Your Words -> Import.
         Assert.Equal("Find EnviousWispr in your system tray.", OnboardingClosingFilmEngine.TrayTeachingText);

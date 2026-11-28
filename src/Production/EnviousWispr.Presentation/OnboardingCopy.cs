@@ -166,7 +166,7 @@ public static class OnboardingCopy
             DurationSeconds: OnboardingClosingFilmEngine.Scenes[3].DurationSeconds,
             Title: "No text box selected?",
             Subtitle: "EnviousWispr copies your words. Press Ctrl+V wherever you want them.",
-            SpokenSummaryTemplate: "No text box selected? EnviousWispr copies your words. Click any text box and press Ctrl+V to paste them. Your earlier clipboard comes back after."),
+            SpokenSummaryTemplate: "No text box selected? EnviousWispr copies your words. Click any text box and press Ctrl+V to paste them."),
         new(
             Index: 4,
             Kind: OnboardingClosingBeatKind.Learn,

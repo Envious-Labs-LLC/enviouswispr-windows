@@ -120,7 +120,7 @@ public sealed class WindowsSetupRecommenderTests
                 Assert.Equal("638 MB", rec.Speech.PrimarySizeLabel);
                 Assert.True(rec.Speech.IsParakeetAvailable);
                 Assert.Null(rec.Speech.ParakeetUnavailableReason);
-                Assert.Equal("< 0.5 sec", rec.Speech.HeroTimeText);
+                Assert.Equal("Fastest", rec.Speech.HeroTimeText);
                 Assert.Equal("Runs on your NVIDIA GPU", rec.Speech.HardwareBadgeText);
             }
             else
@@ -134,26 +134,27 @@ public sealed class WindowsSetupRecommenderTests
                         ? $"Whisper is more accurate for {entry.EnglishName}"
                         : $"Doesn't support {entry.EnglishName}",
                     rec.Speech.ParakeetUnavailableReason);
-                Assert.Equal("~0.8 sec", rec.Speech.HeroTimeText);
+                Assert.Equal("GPU fast", rec.Speech.HeroTimeText);
                 Assert.Equal("Runs on your NVIDIA GPU", rec.Speech.HardwareBadgeText);
             }
 
-            Assert.Equal("For 30 seconds of speech on this PC.", rec.Speech.HeroSubtext);
+            Assert.Equal("Private local transcription on this PC.", rec.Speech.HeroSubtext);
+            Assert.DoesNotContain("sec", rec.Speech.HeroTimeText, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("NVIDIA GPU", rec.Speech.WhisperSpeedNote, StringComparison.Ordinal);
             Assert.DoesNotContain('\u2014', rec.Speech.WhisperSpeedNote);
             Assert.DoesNotContain('\u2013', rec.Speech.WhisperSpeedNote);
         }
 
-        // CPU speed estimates and badges reflect local CPU execution cleanly.
+        // CPU capability labels and badges reflect local CPU execution cleanly without unmeasured timings.
         var cpuEnglish = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "en" });
-        Assert.Equal("~1.2 sec", cpuEnglish.Speech.HeroTimeText);
-        Assert.Equal("~1.2 sec", cpuEnglish.Speech.ParakeetHeroTimeText);
-        Assert.Equal("~3 sec", cpuEnglish.Speech.WhisperHeroTimeText);
+        Assert.Equal("Fast local", cpuEnglish.Speech.HeroTimeText);
+        Assert.Equal("Fast local", cpuEnglish.Speech.ParakeetHeroTimeText);
+        Assert.Equal("99+ langs", cpuEnglish.Speech.WhisperHeroTimeText);
         Assert.Equal("Runs locally on your CPU", cpuEnglish.Speech.HardwareBadgeText);
 
         var cpuGreek = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "el" });
         Assert.Equal(FinalAsrEngine.Whisper, cpuGreek.Speech.PrimaryEngine);
-        Assert.Equal("~3 sec", cpuGreek.Speech.HeroTimeText);
+        Assert.Equal("99+ langs", cpuGreek.Speech.HeroTimeText);
         Assert.Equal("Runs locally on your CPU", cpuGreek.Speech.HardwareBadgeText);
 
         // Auto mode follows OS UI language when Whisper-only or Greek, otherwise recommends Parakeet.
@@ -175,19 +176,23 @@ public sealed class WindowsSetupRecommenderTests
         Assert.True(autoGreek.Speech.IsParakeetAvailable);
         Assert.Equal("Whisper is more accurate for Greek", autoGreek.Speech.ParakeetUnavailableReason);
 
-        // NVIDIA GPU without CUDA runtime pack installed falls back to CPU execution estimates and badge.
+        // NVIDIA GPU without CUDA runtime pack installed falls back to CPU capability labels and badge.
         var nvidiaWithoutCuda = CreateSnapshot(ramGb: 32, gpu: GpuAccelerationKind.NvidiaCuda, vramGb: 12, cores: 12, cudaInstalled: false);
         var noCudaParakeet = WindowsSetupRecommender.Recommend(nvidiaWithoutCuda with { SelectedLanguageCode = "en" });
-        Assert.Equal("~1.2 sec", noCudaParakeet.Speech.HeroTimeText);
-        Assert.Equal("~1.2 sec", noCudaParakeet.Speech.ParakeetHeroTimeText);
-        Assert.Equal("~3 sec", noCudaParakeet.Speech.WhisperHeroTimeText);
+        Assert.Equal("Fast local", noCudaParakeet.Speech.HeroTimeText);
+        Assert.Equal("Fast local", noCudaParakeet.Speech.ParakeetHeroTimeText);
+        Assert.Equal("99+ langs", noCudaParakeet.Speech.WhisperHeroTimeText);
+        Assert.DoesNotContain("sec", noCudaParakeet.Speech.ParakeetHeroTimeText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sec", noCudaParakeet.Speech.WhisperHeroTimeText, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("Runs locally on your CPU", noCudaParakeet.Speech.HardwareBadgeText);
         Assert.Equal("Runs locally on your CPU", noCudaParakeet.Speech.ParakeetHardwareBadgeText);
         Assert.Equal("Runs locally on your CPU", noCudaParakeet.Speech.WhisperHardwareBadgeText);
 
         var withCudaParakeet = WindowsSetupRecommender.Recommend(nvidiaSnapshot with { SelectedLanguageCode = "en" });
-        Assert.Equal("< 0.5 sec", withCudaParakeet.Speech.HeroTimeText);
-        Assert.Equal("~0.8 sec", withCudaParakeet.Speech.WhisperHeroTimeText);
+        Assert.Equal("Fastest", withCudaParakeet.Speech.HeroTimeText);
+        Assert.Equal("GPU fast", withCudaParakeet.Speech.WhisperHeroTimeText);
+        Assert.DoesNotContain("sec", withCudaParakeet.Speech.ParakeetHeroTimeText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sec", withCudaParakeet.Speech.WhisperHeroTimeText, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("Runs on your NVIDIA GPU", withCudaParakeet.Speech.HardwareBadgeText);
     }
 

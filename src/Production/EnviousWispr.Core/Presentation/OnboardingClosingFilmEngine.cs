@@ -244,7 +244,7 @@ public static class OnboardingClosingFilmEngine
     public const string BringWordsSubtitle = "Import your custom words from another dictation app.";
     public const string BringWordsAppsLine = "Wispr Flow \u00B7 FluidVoice \u00B7 Superwhisper \u00B7 and more";
     public const string BringWordsImportPath = "Check out Your Words -> Import";
-    public const string ClipboardRestoredText = "Your earlier clipboard is back";
+    public const string ClipboardSavedBadgeText = "Pasted from your clipboard";
     public const string LearnedWordExample = "Tuist";
     public const string MisheardWordExample = "twist";
 
@@ -433,7 +433,7 @@ public static class OnboardingClosingFilmEngine
         [
             new("No text box selected?", "You clicked File Explorer. Talk anyway.", Captions.Copied[0]),
             new("EnviousWispr copies your words.", "The pill says: Copied. Press Ctrl+V to paste.", Captions.Copied[1]),
-            new("Press Ctrl+V wherever you want them.", "Anything you copied before comes back after.", Captions.Copied[2]),
+            new("Press Ctrl+V wherever you want them.", "Your words stay on the clipboard until you paste.", Captions.Copied[2]),
         ],
         ClosingFilmSceneKind.Learn =>
         [
@@ -466,7 +466,7 @@ public static class OnboardingClosingFilmEngine
             ClosingFilmSceneKind.Land =>
                 $"Hold {summary.EffectiveKeyLabel} and talk. Click away if you need to. Your words land where you started.",
             ClosingFilmSceneKind.Copied =>
-                "No text box selected? EnviousWispr copies your words. Click any text box and press Ctrl+V to paste them. Your earlier clipboard comes back after.",
+                "No text box selected? EnviousWispr copies your words. Click any text box and press Ctrl+V to paste them.",
             ClosingFilmSceneKind.Learn =>
                 "Fix a word once and EnviousWispr learns it. Use Undo if it learned the wrong word.",
             ClosingFilmSceneKind.More =>

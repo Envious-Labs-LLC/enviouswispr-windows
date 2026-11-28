@@ -304,9 +304,9 @@
                         <Border x:Name="OnboardingSpeechPickCard" x:FieldModifier="internal" Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="{StaticResource BrandOnboardingHeroCardPadding}">
                             <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                 <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandOnboardingTextSpacing}">
-                                    <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="YOUR WORDS, TRANSCRIBED IN ABOUT" TextAlignment="Center" />
-                                    <TextBlock x:Name="OnboardingSpeechHeroTimeText" x:FieldModifier="internal" Style="{StaticResource BrandOnboardingMetricHeroStyle}" Text="&lt; 0.5 sec" />
-                                    <TextBlock x:Name="OnboardingSpeechHeroSubtext" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="For 30 seconds of speech on this PC." TextAlignment="Center" TextWrapping="Wrap" />
+                                    <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="LOCAL SPEECH ENGINE" TextAlignment="Center" />
+                                    <TextBlock x:Name="OnboardingSpeechHeroTimeText" x:FieldModifier="internal" Style="{StaticResource BrandOnboardingMetricHeroStyle}" Text="Fast local" />
+                                    <TextBlock x:Name="OnboardingSpeechHeroSubtext" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Private local transcription on this PC." TextAlignment="Center" TextWrapping="Wrap" />
                                 </StackPanel>
 
                                 <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
@@ -374,7 +374,7 @@
                                             <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
                                         </Border>
                                     </StackPanel>
-                                    <TextBlock x:Name="OnboardingParakeetCompareTimeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentTitleStyle}" Text="&lt; 0.5 sec" />
+                                    <TextBlock x:Name="OnboardingParakeetCompareTimeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentTitleStyle}" Text="Fast local" />
                                     <Border x:Name="OnboardingParakeetCompareStatusBadge" x:FieldModifier="internal" Style="{StaticResource BrandNeutralChipStyle}" HorizontalAlignment="Left">
                                         <TextBlock x:Name="OnboardingParakeetCompareStatusBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandNeutralChipTextStyle}" Text="25 European languages" TextWrapping="Wrap" />
                                     </Border>
@@ -391,7 +391,7 @@
                                             <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Recommended" />
                                         </Border>
                                     </StackPanel>
-                                    <TextBlock x:Name="OnboardingWhisperCompareTimeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentTitleStyle}" Text="~0.8 sec" />
+                                    <TextBlock x:Name="OnboardingWhisperCompareTimeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentTitleStyle}" Text="99+ langs" />
                                     <Border x:Name="OnboardingWhisperCompareStatusBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" HorizontalAlignment="Left">
                                         <TextBlock x:Name="OnboardingWhisperCompareStatusBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="99+ languages" TextWrapping="Wrap" />
                                     </Border>
