@@ -167,7 +167,10 @@ public sealed partial class MainWindow
 
         if (showDownloadPill && pillSummary is not null)
         {
-            OnboardingDownloadPillText.Text = pillSummary;
+            OnboardingDownloadPillText.Text = pillSummary.Replace(
+                "Downloading models",
+                "Models",
+                StringComparison.Ordinal);
             ToolTipService.SetToolTip(OnboardingDownloadPillButton, pillSummary);
             var isDone = _onboardingDownloadSnapshot is { IsSpeechReady: true, IsPolishReady: true } snap &&
                 string.IsNullOrWhiteSpace(snap.FailureMessage);

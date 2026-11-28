@@ -108,6 +108,7 @@ public sealed partial class MainWindow
         if (OnboardingLanguageChipsGrid is null ||
             OnboardingLanguageChipsCol0 is null ||
             OnboardingLanguageChipsCol1 is null ||
+            OnboardingLanguageEngineBadge is null ||
             OnboardingSuggestedLanguageButton is null)
         {
             return;
@@ -117,26 +118,30 @@ public sealed partial class MainWindow
         var width = availableWidth > 0
             ? availableWidth
             : OnboardingStageHost?.ActualWidth ?? 0;
-        var stack = !suggestionVisible || (width > 0 && width < 460);
+        var stack = !suggestionVisible || (width > 0 && width < 480);
         var spacing = LayoutDouble("BrandSpacingS");
+
+        OnboardingLanguageChipsGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
 
         if (stack)
         {
-            OnboardingLanguageChipsGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
             OnboardingLanguageChipsGrid.ColumnSpacing = 0;
             OnboardingLanguageChipsGrid.RowSpacing = suggestionVisible ? spacing : 0;
             OnboardingLanguageChipsCol0.Width = new GridLength(1, GridUnitType.Star);
             OnboardingLanguageChipsCol1.Width = new GridLength(0);
+            OnboardingLanguageEngineBadge.HorizontalAlignment = HorizontalAlignment.Center;
+            OnboardingSuggestedLanguageButton.HorizontalAlignment = HorizontalAlignment.Center;
             Grid.SetRow(OnboardingSuggestedLanguageButton, 1);
             Grid.SetColumn(OnboardingSuggestedLanguageButton, 0);
         }
         else
         {
-            OnboardingLanguageChipsGrid.HorizontalAlignment = HorizontalAlignment.Center;
             OnboardingLanguageChipsGrid.ColumnSpacing = spacing;
             OnboardingLanguageChipsGrid.RowSpacing = 0;
-            OnboardingLanguageChipsCol0.Width = GridLength.Auto;
-            OnboardingLanguageChipsCol1.Width = new GridLength(1, GridUnitType.Star);
+            OnboardingLanguageChipsCol0.Width = new GridLength(2, GridUnitType.Star);
+            OnboardingLanguageChipsCol1.Width = new GridLength(3, GridUnitType.Star);
+            OnboardingLanguageEngineBadge.HorizontalAlignment = HorizontalAlignment.Right;
+            OnboardingSuggestedLanguageButton.HorizontalAlignment = HorizontalAlignment.Left;
             Grid.SetRow(OnboardingSuggestedLanguageButton, 0);
             Grid.SetColumn(OnboardingSuggestedLanguageButton, 1);
         }

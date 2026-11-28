@@ -87,7 +87,7 @@
     <x:Double x:Key="BrandOnboardingPrimaryButtonMaxWidth">360</x:Double>
     <x:Double x:Key="BrandOnboardingPrimaryButtonHeight">48</x:Double>
     <CornerRadius x:Key="BrandOnboardingButtonRadius">12</CornerRadius>
-    <x:Double x:Key="BrandOnboardingProgressSegmentWidth">28</x:Double>
+    <x:Double x:Key="BrandOnboardingProgressSegmentWidth">20</x:Double>
     <x:Double x:Key="BrandOnboardingLipsHeroSize">104</x:Double>
     <x:Double x:Key="BrandOnboardingLipsStepSize">72</x:Double>
     <x:Double x:Key="BrandOnboardingLipsCompactSize">60</x:Double>

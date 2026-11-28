@@ -32,10 +32,16 @@
             Padding="{StaticResource BrandOnboardingChromePadding}"
             MinHeight="{StaticResource BrandOnboardingChromeHeight}"
             Visibility="Collapsed">
-            <Grid>
+            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
                 <Button
                     x:Name="OnboardingBackButton"
                     x:FieldModifier="internal"
+                    Grid.Column="0"
                     Click="OnboardingBackButton_Click"
                     Style="{StaticResource BrandQuietButtonStyle}"
                     AutomationProperties.Name="Go back to the previous setup step"
@@ -51,6 +57,7 @@
                 <Grid
                     x:Name="OnboardingProgressGrid"
                     x:FieldModifier="internal"
+                    Grid.Column="1"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     ColumnSpacing="{StaticResource BrandSpacingXs}"
@@ -59,6 +66,7 @@
                 <Button
                     x:Name="OnboardingDownloadPillButton"
                     x:FieldModifier="internal"
+                    Grid.Column="2"
                     Click="OnboardingDownloadPillButton_Click"
                     Style="{StaticResource BrandQuietButtonStyle}"
                     Padding="{StaticResource BrandOnboardingDownloadPillPadding}"
@@ -66,10 +74,14 @@
                     HorizontalAlignment="Right"
                     VerticalAlignment="Center"
                     Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                        <Ellipse x:Name="OnboardingDownloadPillDot" x:FieldModifier="internal" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                        <TextBlock x:Name="OnboardingDownloadPillText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Text="Downloading models" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Ellipse x:Name="OnboardingDownloadPillDot" x:FieldModifier="internal" Grid.Column="0" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                        <TextBlock x:Name="OnboardingDownloadPillText" x:FieldModifier="internal" Grid.Column="1" Style="{StaticResource BrandRowLabelStyle}" Text="Models" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    </Grid>
                 </Button>
             </Grid>
         </Border>
@@ -226,24 +238,28 @@
                     <!-- 2. LANGUAGE -->
                     <StackPanel x:Name="OnboardingLanguagePanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
                         <Grid x:Name="OnboardingLanguageChipsHost" x:FieldModifier="internal" HorizontalAlignment="Stretch" SizeChanged="OnboardingLanguageChipsHost_SizeChanged">
-                            <Grid x:Name="OnboardingLanguageChipsGrid" x:FieldModifier="internal" HorizontalAlignment="Center" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingS}">
+                            <Grid x:Name="OnboardingLanguageChipsGrid" x:FieldModifier="internal" HorizontalAlignment="Stretch" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingS}">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition x:Name="OnboardingLanguageChipsCol0" x:FieldModifier="internal" Width="Auto" />
-                                    <ColumnDefinition x:Name="OnboardingLanguageChipsCol1" x:FieldModifier="internal" Width="*" />
+                                    <ColumnDefinition x:Name="OnboardingLanguageChipsCol0" x:FieldModifier="internal" Width="2*" />
+                                    <ColumnDefinition x:Name="OnboardingLanguageChipsCol1" x:FieldModifier="internal" Width="3*" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
-                                <Border x:Name="OnboardingLanguageEngineBadge" x:FieldModifier="internal" Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandAccentChipStyle}" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                        <Ellipse x:Name="OnboardingLanguageEngineDot" x:FieldModifier="internal" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                        <TextBlock x:Name="OnboardingLanguageEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Parakeet · 25 languages" />
-                                    </StackPanel>
+                                <Border x:Name="OnboardingLanguageEngineBadge" x:FieldModifier="internal" Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandAccentChipStyle}" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingXs}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse x:Name="OnboardingLanguageEngineDot" x:FieldModifier="internal" Grid.Column="0" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock x:Name="OnboardingLanguageEngineBadgeText" x:FieldModifier="internal" Grid.Column="1" Style="{StaticResource BrandAccentChipTextStyle}" Text="Parakeet · 25 languages" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
                                 </Border>
 
-                                <Button x:Name="OnboardingSuggestedLanguageButton" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Click="OnboardingSuggestedLanguageButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                <Button x:Name="OnboardingSuggestedLanguageButton" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Click="OnboardingSuggestedLanguageButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" HorizontalAlignment="Left" VerticalAlignment="Center" Visibility="Collapsed">
                                     <Grid ColumnSpacing="{StaticResource BrandSpacingXs}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="16" />
