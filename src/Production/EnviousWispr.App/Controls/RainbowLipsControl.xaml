@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Controls.RainbowLipsControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.AccessibilityView="Raw">
+    <Grid
+        x:Name="LipsRoot"
+        Background="{ThemeResource BrandHitTestBrush}"
+        RenderTransformOrigin="0.5,0.5"
+        Tapped="LipsRoot_Tapped">
+        <Grid.RenderTransform>
+            <ScaleTransform x:Name="TapScaleTransform" ScaleX="1" ScaleY="1" />
+        </Grid.RenderTransform>
+        <Viewbox Stretch="Uniform">
+            <Canvas x:Name="LipsCanvas" Width="256" Height="256">
+                <!-- Soft ambient accent glow for Triumph, Heart, and Speech Pick moods (hidden under Reduce Motion & HighContrast). -->
+                <Ellipse
+                    x:Name="GlowEllipse"
+                    Canvas.Left="28"
+                    Canvas.Top="44"
+                    Width="200"
+                    Height="168"
+                    Fill="{ThemeResource BrandAccentBrush}"
+                    IsHitTestVisible="False"
+                    Opacity="0" />
+
+                <!-- 9 Upper bars (bottom-anchored so they scale upward from mouth center; +8 X, +13 Y canvas offset). -->
+                <Border x:Name="UpperBar0" Canvas.Left="24" Canvas.Top="97.2" Width="14" Height="20" CornerRadius="5" Background="{ThemeResource BrandSpectrumRedBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale0" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer0" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar1" Canvas.Left="48" Canvas.Top="78.75" Width="14" Height="32" CornerRadius="5" Background="{ThemeResource BrandSpectrumOrangeBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale1" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer1" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar2" Canvas.Left="72" Canvas.Top="56.36" Width="14" Height="48" CornerRadius="5" Background="{ThemeResource BrandSpectrumGoldBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale2" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer2" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar3" Canvas.Left="96" Canvas.Top="76.04" Width="14" Height="36" CornerRadius="5" Background="{ThemeResource BrandSpectrumLimeBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale3" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer3" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar4" Canvas.Left="120" Canvas.Top="94.43" Width="14" Height="24" CornerRadius="5" Background="{ThemeResource BrandSpectrumSpringBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale4" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer4" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar5" Canvas.Left="144" Canvas.Top="76.04" Width="14" Height="36" CornerRadius="5" Background="{ThemeResource BrandSpectrumCyanBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale5" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer5" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar6" Canvas.Left="168" Canvas.Top="56.36" Width="14" Height="48" CornerRadius="5" Background="{ThemeResource BrandSpectrumBlueBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale6" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer6" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar7" Canvas.Left="192" Canvas.Top="78.75" Width="14" Height="32" CornerRadius="5" Background="{ThemeResource BrandSpectrumRoyalBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale7" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer7" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="UpperBar8" Canvas.Left="216" Canvas.Top="97.2" Width="14" Height="20" CornerRadius="5" Background="{ThemeResource BrandSpectrumVioletBrush}" Opacity="0.92" RenderTransformOrigin="0.5,1" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="UpperScale8" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="UpperShimmer8" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+
+                <!-- 9 Lower bars (top-anchored so they scale downward from mouth center; +8 X, +13 Y canvas offset). -->
+                <Border x:Name="LowerBar0" Canvas.Left="24" Canvas.Top="138.8" Width="14" Height="20" CornerRadius="5" Background="{ThemeResource BrandSpectrumRoyalBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale0" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer0" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar1" Canvas.Left="48" Canvas.Top="132.35" Width="14" Height="36" CornerRadius="5" Background="{ThemeResource BrandSpectrumBlueBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale1" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer1" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar2" Canvas.Left="72" Canvas.Top="125.96" Width="14" Height="48" CornerRadius="5" Background="{ThemeResource BrandSpectrumCyanBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale2" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer2" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar3" Canvas.Left="96" Canvas.Top="133.64" Width="14" Height="60" CornerRadius="5" Background="{ThemeResource BrandSpectrumSpringBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale3" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer3" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar4" Canvas.Left="120" Canvas.Top="140.03" Width="14" Height="68" CornerRadius="5" Background="{ThemeResource BrandSpectrumLimeBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale4" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer4" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar5" Canvas.Left="144" Canvas.Top="133.64" Width="14" Height="60" CornerRadius="5" Background="{ThemeResource BrandSpectrumGoldBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale5" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer5" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar6" Canvas.Left="168" Canvas.Top="125.96" Width="14" Height="48" CornerRadius="5" Background="{ThemeResource BrandSpectrumOrangeBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale6" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer6" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar7" Canvas.Left="192" Canvas.Top="132.35" Width="14" Height="36" CornerRadius="5" Background="{ThemeResource BrandSpectrumRedBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale7" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer7" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+                <Border x:Name="LowerBar8" Canvas.Left="216" Canvas.Top="138.8" Width="14" Height="20" CornerRadius="5" Background="{ThemeResource BrandSpectrumVioletBrush}" Opacity="0.88" RenderTransformOrigin="0.5,0" IsHitTestVisible="False">
+                    <Border.RenderTransform><ScaleTransform x:Name="LowerScale8" ScaleY="1" /></Border.RenderTransform>
+                    <Border x:Name="LowerShimmer8" CornerRadius="5" Background="{ThemeResource BrandOnAccentBrush}" Opacity="0" />
+                </Border>
+            </Canvas>
+        </Viewbox>
+    </Grid>
+</UserControl>

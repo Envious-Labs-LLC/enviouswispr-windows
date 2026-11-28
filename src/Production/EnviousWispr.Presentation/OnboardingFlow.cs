@@ -110,8 +110,8 @@ public sealed class OnboardingFlow
     /// <summary>Number of steps in the legacy 5-panel shell projection until Wave C replaces MainWindow.xaml.</summary>
     public const int LegacyShellStepCount = 5;
 
-    /// <summary>Total numbered milestones along the full #4528 setup wizard (excluding terminal Done).</summary>
-    public const int PrimaryStepCount = 11;
+    /// <summary>Total numbered milestone segments matching macOS Setup (0: Language .. 5: First dictation).</summary>
+    public const int PrimaryStepCount = 6;
 
     public static readonly TimeSpan WarmingDisplayFloor = TimeSpan.FromMilliseconds(600);
 
@@ -271,19 +271,44 @@ public sealed class OnboardingFlow
         _ => 5,
     };
 
+    /// <summary>
+    /// 0-based progress strip segment index (0..5), or null for screens that hide the strip
+    /// (Welcome, Closing, Done). Matches macOS SetupWindowRoot 6-segment milestones.
+    /// </summary>
+    public static int? MilestoneIndexFor(OnboardingStep step) => step switch
+    {
+        OnboardingStep.Language => 0,
+        OnboardingStep.SpeechPick or OnboardingStep.SpeechCompare => 1,
+        OnboardingStep.PolishIntro or OnboardingStep.PolishPick or OnboardingStep.PolishSeeAll or OnboardingStep.Downloads => 2,
+        OnboardingStep.Permissions => 3,
+        OnboardingStep.Key => 4,
+        OnboardingStep.GettingReady or OnboardingStep.Practice => 5,
+        _ => null,
+    };
+
+    public static bool ShowsProgressStrip(OnboardingStep step) => MilestoneIndexFor(step).HasValue;
+
+    public static string? MilestoneNameFor(OnboardingStep step) => MilestoneIndexFor(step) switch
+    {
+        0 => "Language",
+        1 => "Speech model",
+        2 => "AI polish",
+        3 => "Permissions",
+        4 => "Your key",
+        5 => "First dictation",
+        _ => null,
+    };
+
     public static int PrimaryStepNumberFor(OnboardingStep step) => step switch
     {
         OnboardingStep.Welcome => 1,
-        OnboardingStep.Language => 2,
-        OnboardingStep.SpeechPick or OnboardingStep.SpeechCompare => 3,
-        OnboardingStep.PolishIntro => 4,
-        OnboardingStep.PolishPick or OnboardingStep.PolishSeeAll => 5,
-        OnboardingStep.Downloads => 6,
-        OnboardingStep.Permissions => 7,
-        OnboardingStep.Key => 8,
-        OnboardingStep.GettingReady => 9,
-        OnboardingStep.Practice => 10,
-        OnboardingStep.Closing or OnboardingStep.Done => 11,
+        OnboardingStep.Language => 1,
+        OnboardingStep.SpeechPick or OnboardingStep.SpeechCompare => 2,
+        OnboardingStep.PolishIntro or OnboardingStep.PolishPick or OnboardingStep.PolishSeeAll or OnboardingStep.Downloads => 3,
+        OnboardingStep.Permissions => 4,
+        OnboardingStep.Key => 5,
+        OnboardingStep.GettingReady or OnboardingStep.Practice => 6,
+        OnboardingStep.Closing or OnboardingStep.Done => 6,
         _ => 1,
     };
 
@@ -858,6 +883,71 @@ public sealed class OnboardingFlow
 
         Step = OnboardingStep.Done;
         _backStack.Clear();
+        Touch();
+    }
+
+    /// <summary>
+    /// Pins onboarding directly to a specific step for isolated UAT inspection (honored only when an
+    /// isolated data directory is active), populating a realistic back stack so Back chrome matches
+    /// the normal user journey without normalizing sub-steps like SpeechCompare or PolishSeeAll.
+    /// </summary>
+    public void ForceStepForUat(OnboardingStep targetStep)
+    {
+        if (targetStep == OnboardingStep.Done)
+        {
+            return;
+        }
+
+        _backStack.Clear();
+        switch (targetStep)
+        {
+            case OnboardingStep.Welcome:
+                break;
+            case OnboardingStep.Language:
+                _backStack.Add(OnboardingStep.Welcome);
+                break;
+            case OnboardingStep.SpeechPick:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language]);
+                break;
+            case OnboardingStep.SpeechCompare:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick]);
+                break;
+            case OnboardingStep.PolishIntro:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick]);
+                break;
+            case OnboardingStep.PolishPick:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro]);
+                break;
+            case OnboardingStep.PolishSeeAll:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick]);
+                break;
+            case OnboardingStep.Downloads:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick]);
+                break;
+            case OnboardingStep.Permissions:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick]);
+                break;
+            case OnboardingStep.Key:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions]);
+                break;
+            case OnboardingStep.GettingReady:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions, OnboardingStep.Key]);
+                break;
+            case OnboardingStep.Practice:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions, OnboardingStep.Key]);
+                break;
+            case OnboardingStep.Closing:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions, OnboardingStep.Key, OnboardingStep.Practice]);
+                break;
+        }
+
+        Step = targetStep;
+        ClosingBeatIndex = 0;
+        if (targetStep == OnboardingStep.Practice)
+        {
+            ResetPractice();
+        }
+
         Touch();
     }
 

@@ -82,133 +82,157 @@ public partial class App
             return;
         }
 
-        var speechEngine = string.Equals(speechModelId, WhisperTranscriptionEngine.ModelId, StringComparison.Ordinal)
-            ? FinalAsrEngine.Whisper
-            : FinalAsrEngine.Parakeet;
-        var speechState = await ProbeSpeechEngineModelAsync(speechEngine).ConfigureAwait(true);
-        var normalizedPolishId = string.IsNullOrWhiteSpace(polishModelId)
-            ? null
-            : EgOneModelCatalog.NormalizeOrDefault(polishModelId);
-        var polishState = normalizedPolishId is null
-            ? null
-            : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
-        var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true &&
-            IsExpectedEgOneConfigured(normalizedPolishId));
-        var speechInstalled = speechState.IsInstalled &&
-            IsExpectedSpeechConfigured(speechEngine);
-
-        if (Leaving)
-        {
-            return;
-        }
-
-        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
-        var rules = WindowsSetupRules.Current;
-        var speechFallbackBytes = rules.SpeechCatalog.TryGetValue(speechModelId, out var speechRule)
-            ? speechRule.SizeBytes
-            : 0L;
-        var (speechTotalBytes, speechDiskBytes) = MeasureBundledDownloadAndDiskBytes(
-            speechModelId,
-            verifier,
-            speechFallbackBytes);
-
-        var polishFallbackBytes = normalizedPolishId is not null &&
-            rules.PolishCatalog.TryGetValue(normalizedPolishId, out var polishRule)
-                ? polishRule.SizeBytes
-                : 0L;
-        var (polishTotalBytes, polishDiskBytes) = normalizedPolishId is not null
-            ? MeasureBundledDownloadAndDiskBytes(normalizedPolishId, verifier, polishFallbackBytes)
-            : (0L, 0L);
-
-        var plan = new OnboardingDownloadPlan(
-            SpeechModelId: speechModelId,
-            SpeechTotalBytes: speechTotalBytes,
-            PolishModelId: normalizedPolishId,
-            PolishTotalBytes: polishTotalBytes,
-            ParallelDownloads: parallelDownloads,
-            SpeechAlreadyInstalled: speechInstalled,
-            PolishAlreadyInstalled: polishInstalled,
-            SpeechDiskBytes: speechState.IsInstalled ? 0L : speechDiskBytes,
-            PolishDiskBytes: normalizedPolishId is null || polishState?.IsInstalled == true ? 0L : polishDiskBytes);
-
-        using var cancellation = new CancellationTokenSource();
-        _onboardingDownloadCancellation = cancellation;
-
-        using var coordinator = new OnboardingDownloadCoordinator(
-            plan,
-            provisionAsync: async (modelId, observer, ct) =>
-            {
-                if (string.Equals(modelId, ParakeetTranscriptionEngine.ModelId, StringComparison.Ordinal) &&
-                    _isSilentParakeetUpgrade &&
-                    _modelDelivery is { IsCompleted: false } silentUpgrade)
-                {
-                    _modelDownload?.Cancel();
-                    try
-                    {
-                        await silentUpgrade.ConfigureAwait(true);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                    }
-                }
-
-                var provisioner = new ModelProvisioner(
-                    CreateModelStore(observer),
-                    id => BundledModelManifests.Load(id, verifier));
-                return await provisioner.ProvisionAsync(modelId, ct).ConfigureAwait(true);
-            },
-            onSpeechInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
-            {
-                if (!await ApplyOnboardingSpeechChoiceAsync(speechEngine).ConfigureAwait(true) || Leaving)
-                {
-                    return;
-                }
-
-                if (!await EnsureOnboardingActivationAsync(
-                    TryReconfigureTranscriptionUnderHoldAsync,
-                    () => _transcriptionReconfigurePending,
-                    completion => _pendingSpeechReconfigureCompletion = completion,
-                    () => IsExpectedSpeechConfigured(speechEngine),
-                    $"Could not start the {speechEngine} speech engine after download.",
-                    ct).ConfigureAwait(true))
-                {
-                    return;
-                }
-
-                PresentGraphicsRuntime();
-                await PresentModelDeliveryAsync().ConfigureAwait(true);
-            }, ct),
-            onPolishInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
-            {
-                if (Leaving || normalizedPolishId is null)
-                {
-                    return;
-                }
-
-                if (!await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true) || Leaving)
-                {
-                    return;
-                }
-
-                if (!await EnsureOnboardingActivationAsync(
-                    TryReconfigurePolishUnderHoldAsync,
-                    () => _polishReconfigurePending,
-                    completion => _pendingPolishReconfigureCompletion = completion,
-                    () => IsExpectedEgOneConfigured(normalizedPolishId),
-                    $"Could not configure local AI polish ({normalizedPolishId}) after download.",
-                    ct).ConfigureAwait(true))
-                {
-                    return;
-                }
-
-                await RefreshEgOneInventoryAsync().ConfigureAwait(true);
-            }, ct),
-            onSnapshotChanged: snapshot => PostToLiveWindow(window => ApplyOnboardingDownloadSnapshot(window, snapshot)),
-            diskProbePath: ModelStoreRoot,
-            failureFormatter: FailureSentence);
-
         try
         {
+            var speechEngine = string.Equals(speechModelId, WhisperTranscriptionEngine.ModelId, StringComparison.Ordinal)
+                ? FinalAsrEngine.Whisper
+                : FinalAsrEngine.Parakeet;
+            var speechState = await ProbeSpeechEngineModelAsync(speechEngine).ConfigureAwait(true);
+            var normalizedPolishId = string.IsNullOrWhiteSpace(polishModelId)
+                ? null
+                : EgOneModelCatalog.NormalizeOrDefault(polishModelId);
+            var polishState = normalizedPolishId is null
+                ? null
+                : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
+            var speechOnDisk = speechState.IsInstalled;
+            var polishOnDisk = normalizedPolishId is null || polishState?.IsInstalled == true;
+
+            if (Leaving || _pendingOnboardingDownloadRequest is not null)
+            {
+                return;
+            }
+
+            // Models already present on disk never trigger a network download or spurious "Downloading models" pill;
+            // activate them directly if engine configuration has not switched yet.
+            if (speechOnDisk && polishOnDisk)
+            {
+                await ActivateOnDiskOnboardingModelsAsync(speechEngine, normalizedPolishId).ConfigureAwait(true);
+                return;
+            }
+
+            if (speechOnDisk && !IsExpectedSpeechConfigured(speechEngine))
+            {
+                await ActivateOnDiskOnboardingModelsAsync(speechEngine, normalizedPolishId: null).ConfigureAwait(true);
+                if (Leaving || _pendingOnboardingDownloadRequest is not null)
+                {
+                    return;
+                }
+            }
+
+            if (normalizedPolishId is not null && polishOnDisk && !IsExpectedEgOneConfigured(normalizedPolishId))
+            {
+                await ActivateOnDiskOnboardingModelsAsync(speechEngine: null, normalizedPolishId).ConfigureAwait(true);
+                if (Leaving || _pendingOnboardingDownloadRequest is not null)
+                {
+                    return;
+                }
+            }
+
+            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+            var rules = WindowsSetupRules.Current;
+            var speechFallbackBytes = rules.SpeechCatalog.TryGetValue(speechModelId, out var speechRule)
+                ? speechRule.SizeBytes
+                : 0L;
+            var (speechTotalBytes, speechDiskBytes) = MeasureBundledDownloadAndDiskBytes(
+                speechModelId,
+                verifier,
+                speechFallbackBytes);
+
+            var polishFallbackBytes = normalizedPolishId is not null &&
+                rules.PolishCatalog.TryGetValue(normalizedPolishId, out var polishRule)
+                    ? polishRule.SizeBytes
+                    : 0L;
+            var (polishTotalBytes, polishDiskBytes) = normalizedPolishId is not null
+                ? MeasureBundledDownloadAndDiskBytes(normalizedPolishId, verifier, polishFallbackBytes)
+                : (0L, 0L);
+
+            var plan = new OnboardingDownloadPlan(
+                SpeechModelId: speechModelId,
+                SpeechTotalBytes: speechTotalBytes,
+                PolishModelId: normalizedPolishId,
+                PolishTotalBytes: polishTotalBytes,
+                ParallelDownloads: parallelDownloads,
+                SpeechAlreadyInstalled: speechOnDisk,
+                PolishAlreadyInstalled: polishOnDisk,
+                SpeechDiskBytes: speechOnDisk ? 0L : speechDiskBytes,
+                PolishDiskBytes: polishOnDisk ? 0L : polishDiskBytes);
+
+            using var cancellation = new CancellationTokenSource();
+            _onboardingDownloadCancellation = cancellation;
+
+            using var coordinator = new OnboardingDownloadCoordinator(
+                plan,
+                provisionAsync: async (modelId, observer, ct) =>
+                {
+                    if (string.Equals(modelId, ParakeetTranscriptionEngine.ModelId, StringComparison.Ordinal) &&
+                        _isSilentParakeetUpgrade &&
+                        _modelDelivery is { IsCompleted: false } silentUpgrade)
+                    {
+                        _modelDownload?.Cancel();
+                        try
+                        {
+                            await silentUpgrade.ConfigureAwait(true);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                        }
+                    }
+
+                    var provisioner = new ModelProvisioner(
+                        CreateModelStore(observer),
+                        id => BundledModelManifests.Load(id, verifier));
+                    return await provisioner.ProvisionAsync(modelId, ct).ConfigureAwait(true);
+                },
+                onSpeechInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
+                {
+                    if (!await ApplyOnboardingSpeechChoiceAsync(speechEngine).ConfigureAwait(true) || Leaving)
+                    {
+                        return;
+                    }
+
+                    if (!await EnsureOnboardingActivationAsync(
+                        TryReconfigureTranscriptionUnderHoldAsync,
+                        () => _transcriptionReconfigurePending,
+                        completion => _pendingSpeechReconfigureCompletion = completion,
+                        () => IsExpectedSpeechConfigured(speechEngine),
+                        $"Could not start the {speechEngine} speech engine after download.",
+                        ct).ConfigureAwait(true))
+                    {
+                        return;
+                    }
+
+                    PresentGraphicsRuntime();
+                    await PresentModelDeliveryAsync().ConfigureAwait(true);
+                }, ct),
+                onPolishInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
+                {
+                    if (Leaving || normalizedPolishId is null)
+                    {
+                        return;
+                    }
+
+                    if (!await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true) || Leaving)
+                    {
+                        return;
+                    }
+
+                    if (!await EnsureOnboardingActivationAsync(
+                        TryReconfigurePolishUnderHoldAsync,
+                        () => _polishReconfigurePending,
+                        completion => _pendingPolishReconfigureCompletion = completion,
+                        () => IsExpectedEgOneConfigured(normalizedPolishId),
+                        $"Could not configure local AI polish ({normalizedPolishId}) after download.",
+                        ct).ConfigureAwait(true))
+                    {
+                        return;
+                    }
+
+                    await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+                }, ct),
+                onSnapshotChanged: snapshot => PostToLiveWindow(window => ApplyOnboardingDownloadSnapshot(window, snapshot)),
+                diskProbePath: ModelStoreRoot,
+                failureFormatter: FailureSentence);
+
             _activeOnboardingCoordinator = coordinator;
             await coordinator.RunAsync(cancellation.Token).ConfigureAwait(true);
         }
@@ -224,6 +248,41 @@ public partial class App
                     pending.SpeechModelId,
                     pending.PolishModelId,
                     pending.ParallelDownloads);
+            }
+        }
+    }
+
+    private async Task ActivateOnDiskOnboardingModelsAsync(
+        FinalAsrEngine? speechEngine,
+        string? normalizedPolishId)
+    {
+        if (Leaving)
+        {
+            return;
+        }
+
+        if (speechEngine is { } engine && !IsExpectedSpeechConfigured(engine))
+        {
+            if (await ApplyOnboardingSpeechChoiceAsync(engine).ConfigureAwait(true) && !Leaving)
+            {
+                await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
+                if (!Leaving)
+                {
+                    PresentGraphicsRuntime();
+                    await PresentModelDeliveryAsync().ConfigureAwait(true);
+                }
+            }
+        }
+
+        if (normalizedPolishId is not null && !Leaving && !IsExpectedEgOneConfigured(normalizedPolishId))
+        {
+            if (await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true) && !Leaving)
+            {
+                await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
+                if (!Leaving)
+                {
+                    await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+                }
             }
         }
     }

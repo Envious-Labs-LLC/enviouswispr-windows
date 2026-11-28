@@ -3471,18 +3471,55 @@ static async Task<SyntheticHotkeyEvidence> DriveOnboardingPracticeAsync(
             $"Setup never reached \"{title}\"; it shows \"{TitleOf(window)}\".");
     }
 
-    WaitForTitle(window, "Your voice, instantly captured.", TimeSpan.FromSeconds(10));
-    PressPrimary(window, "Get Started");
-    WaitForTitle(window, "Almost there. Just one permission.", TimeSpan.FromSeconds(60));
+    // Walk the current 13-screen onboarding journey to Practice (skipping optional AI polish).
+    var welcomeButton = JourneyUi.WaitForElement(window, "FinishOnboardingButton", TimeSpan.FromSeconds(10))
+        ?? throw new JourneyExpectationException("Welcome screen never exposed FinishOnboardingButton.");
+    PressPrimary(window, welcomeButton.Current.Name);
+
+    WaitForTitle(window, "Which language do you dictate in?", TimeSpan.FromSeconds(10));
     PressPrimary(window, "Continue");
-    WaitForTitle(window, "Ready to Wispr!", TimeSpan.FromSeconds(10));
-    PressPrimary(window, "GET STARTED!");
-    WaitForTitle(window, "Time for your first dictation!", TimeSpan.FromSeconds(15));
+    WaitForTitle(window, "Meet your speech model", TimeSpan.FromSeconds(10));
+    PressPrimary(window, "Continue");
+    WaitForTitle(window, "Cleaner writing that still sounds like you", TimeSpan.FromSeconds(10));
+    if (JourneyUi.WaitForElement(window, "OnboardingSkipButton", TimeSpan.FromSeconds(5)) is { } skipPolish)
+    {
+        ((InvokePattern)skipPolish.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+    }
+    else
+    {
+        PressPrimary(window, "Set up AI polish");
+    }
+
+    // If Downloads appeared before Permissions, advance non-blocking.
+    var postPolishDeadline = Stopwatch.StartNew();
+    while (postPolishDeadline.Elapsed < TimeSpan.FromSeconds(15))
+    {
+        var currentTitle = TitleOf(window);
+        if (string.Equals(currentTitle, "Downloading your models", StringComparison.Ordinal))
+        {
+            PressPrimary(window, "Continue");
+            Thread.Sleep(250);
+            continue;
+        }
+
+        if (string.Equals(currentTitle, "Microphone is ready", StringComparison.Ordinal) ||
+            string.Equals(currentTitle, "One quick permission", StringComparison.Ordinal))
+        {
+            break;
+        }
+
+        Thread.Sleep(200);
+    }
+
+    PressPrimary(window, "Continue");
+    WaitForTitle(window, "Meet your dictation key", TimeSpan.FromSeconds(10));
+    PressPrimary(window, "Continue");
+    WaitForTitle(window, "Time for your first dictation!", TimeSpan.FromSeconds(60));
     var box = JourneyUi.WaitForElement(window, "OnboardingPracticeBox", TimeSpan.FromSeconds(5))
         ?? throw new JourneyExpectationException("The practice screen has no practice box.");
     if (JourneyUi.WaitForElement(window, "FinishOnboardingButton", TimeSpan.FromSeconds(2)) is not { Current.IsEnabled: false })
     {
-        throw new JourneyExpectationException("FINISH SETUP was available before any take reached the box.");
+        throw new JourneyExpectationException("Continue was available before any take reached the box.");
     }
 
     // NEGATIVE HALF: nothing is pressed, so nothing may start.
@@ -3555,7 +3592,10 @@ static async Task<SyntheticHotkeyEvidence> DriveOnboardingPracticeAsync(
     }
 
     WaitForTitle(window, "That is it. You are set.", TimeSpan.FromSeconds(5));
-    PressPrimary(window, "FINISH SETUP");
+    PressPrimary(window, "Continue");
+    var finishSetupButton = JourneyUi.WaitForElement(window, "FinishOnboardingButton", TimeSpan.FromSeconds(10))
+        ?? throw new JourneyExpectationException("Closing film screen never exposed FinishOnboardingButton.");
+    PressPrimary(window, finishSetupButton.Current.Name);
     var stored = false;
     timer.Restart();
     while (timer.Elapsed < TimeSpan.FromSeconds(5) && !stored)

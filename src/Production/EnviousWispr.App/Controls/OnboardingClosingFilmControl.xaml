@@ -1,0 +1,844 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Controls.OnboardingClosingFilmControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:EnviousWispr.App.Controls">
+    <StackPanel Spacing="{StaticResource BrandSpacingM}">
+        <!-- Clock-synced Rainbow Lips + scene caption header -->
+        <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+            <controls:RainbowLipsControl
+                x:Name="FilmLips"
+                Width="72"
+                Height="72"
+                HorizontalAlignment="Center"
+                TapToBounceEnabled="False" />
+
+            <Grid Height="60">
+                <StackPanel
+                    x:Name="CaptionStack"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="{StaticResource BrandSpacingXs}">
+                    <StackPanel.RenderTransform>
+                        <TranslateTransform x:Name="CaptionTranslate" Y="0" />
+                    </StackPanel.RenderTransform>
+                    <TextBlock
+                        x:Name="CaptionTitleText"
+                        AutomationProperties.AutomationId="OnboardingClosingBeatTitle"
+                        FontSize="20"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        HorizontalTextAlignment="Center"
+                        Style="{StaticResource BrandRowTitleStyle}"
+                        Text="Congratulations! You are all set."
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        x:Name="CaptionSubtitleText"
+                        Foreground="{ThemeResource BrandTextSecondaryBrush}"
+                        HorizontalTextAlignment="Center"
+                        Style="{StaticResource BrandBodyStyle}"
+                        Text="Here is a quick refresher."
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <!-- 7-scene animated Windows 11 stage (decorative choreography; spoken summary is announced separately) -->
+        <Border
+            x:Name="FilmStageBorder"
+            Height="328"
+            AutomationProperties.AccessibilityView="Raw"
+            Background="{ThemeResource BrandPageBgBrush}"
+            BorderBrush="{ThemeResource BrandDividerBrush}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource BrandSectionRadius}">
+            <Grid>
+                <!-- SCENE 1: READY (3 staggered user summary rows) -->
+                <StackPanel
+                    x:Name="SceneReadyPanel"
+                    Padding="24,28,24,28"
+                    Spacing="{StaticResource BrandSpacingM}"
+                    VerticalAlignment="Center">
+                    <Border x:Name="ReadyRow0" Padding="14,12,14,12" Style="{StaticResource BrandSettingsCardStyle}">
+                        <Border.RenderTransform><TranslateTransform x:Name="ReadyRow0Translate" Y="0" /></Border.RenderTransform>
+                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" Background="{ThemeResource BrandSuccessSoftBrush}" CornerRadius="8">
+                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Speech model" />
+                                <TextBlock x:Name="ReadySpeechValueText" Style="{StaticResource BrandRowLabelStyle}" Text="Parakeet" />
+                            </StackPanel>
+                            <Border Grid.Column="2" Style="{StaticResource BrandSuccessChipStyle}">
+                                <TextBlock Style="{StaticResource BrandSuccessChipTextStyle}" Text="Ready" />
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="ReadyRow1" Padding="14,12,14,12" Style="{StaticResource BrandSettingsCardStyle}">
+                        <Border.RenderTransform><TranslateTransform x:Name="ReadyRow1Translate" Y="0" /></Border.RenderTransform>
+                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" Background="{ThemeResource BrandSuccessSoftBrush}" CornerRadius="8">
+                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="AI polish" />
+                                <TextBlock x:Name="ReadyPolishValueText" Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Mini" />
+                            </StackPanel>
+                            <Border Grid.Column="2" Style="{StaticResource BrandAccentChipStyle}">
+                                <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Set" />
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="ReadyRow2" Padding="14,12,14,12" Style="{StaticResource BrandSettingsCardStyle}">
+                        <Border.RenderTransform><TranslateTransform x:Name="ReadyRow2Translate" Y="0" /></Border.RenderTransform>
+                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" Background="{ThemeResource BrandSuccessSoftBrush}" CornerRadius="8">
+                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Dictation key" />
+                                <TextBlock x:Name="ReadyKeyValueText" Style="{StaticResource BrandRowLabelStyle}" Text="Ctrl+Win" />
+                            </StackPanel>
+                            <Border Grid.Column="2" Style="{StaticResource BrandNeutralChipStyle}">
+                                <TextBlock Style="{StaticResource BrandNeutralChipTextStyle}" Text="Active" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- SCENE 2: APPS (18-app drifting badge wall + ANY TEXT BOX card + mini recording pill) -->
+                <Grid x:Name="SceneAppsPanel" Visibility="Collapsed">
+                    <Grid
+                        x:Name="AppsWallGrid"
+                        Padding="18,16,18,16"
+                        ColumnSpacing="{StaticResource BrandSpacingS}"
+                        RowSpacing="{StaticResource BrandSpacingS}"
+                        VerticalAlignment="Top">
+                        <Grid.RenderTransform>
+                            <TranslateTransform x:Name="AppsWallTranslate" Y="0" />
+                        </Grid.RenderTransform>
+                    </Grid>
+
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="{StaticResource BrandSpacingS}">
+                        <Border
+                            x:Name="AppsTextBoxCard"
+                            Width="280"
+                            Padding="16,12,16,12"
+                            Background="{ThemeResource BrandCardBgBrush}"
+                            BorderBrush="{ThemeResource BrandAccentBrush}"
+                            BorderThickness="2"
+                            CornerRadius="12">
+                            <Border.RenderTransform>
+                                <TranslateTransform x:Name="AppsTextBoxTranslate" Y="0" />
+                            </Border.RenderTransform>
+                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                <TextBlock
+                                    Style="{StaticResource BrandSubsectionEyebrowStyle}"
+                                    FontSize="12"
+                                    Text="ANY TEXT BOX" />
+                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Start here" />
+                                    <Border
+                                        x:Name="AppsCaretBar"
+                                        Width="2"
+                                        Height="16"
+                                        Background="{ThemeResource BrandAccentBrush}"
+                                        CornerRadius="1" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            x:Name="AppsMiniPill"
+                            HorizontalAlignment="Center"
+                            Padding="14,6,14,6"
+                            Background="{ThemeResource BrandAccentSolidBrush}"
+                            CornerRadius="14">
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="AppsMiniPillScale" ScaleX="1" ScaleY="1" />
+                            </Border.RenderTransform>
+                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                    <Border Width="3" Height="10" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" />
+                                    <Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" />
+                                    <Border Width="3" Height="12" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" />
+                                    <Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" />
+                                    <Border Width="3" Height="9" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" />
+                                </StackPanel>
+                                <TextBlock
+                                    FontSize="14"
+                                    FontWeight="SemiBold"
+                                    Foreground="{ThemeResource BrandOnAccentBrush}"
+                                    Text="Listening..." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <!-- SCENE 3: LAND (Windows 11 Mail + Chat desktop, focus swap, held key, pill, 3-line email) -->
+                <Grid x:Name="SceneLandPanel" Background="{ThemeResource BrandSidebarBgBrush}" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="28" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Padding="14">
+                        <!-- Chat window (bottom-right) -->
+                        <Border
+                            x:Name="LandChatWindow"
+                            Width="220"
+                            Height="146"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom"
+                            Margin="0,0,8,20"
+                            Background="{ThemeResource BrandCardBgBrush}"
+                            BorderBrush="{ThemeResource BrandDividerBrush}"
+                            BorderThickness="1"
+                            CornerRadius="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="26" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
+                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Chat  #design" />
+                                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Grid.Row="1" Padding="10,8,10,8" Spacing="{StaticResource BrandSpacingS}">
+                                    <TextBlock FontSize="12" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Alex: Did you share the Friday agenda?" TextWrapping="Wrap" />
+                                    <Border Padding="8,5,8,5" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="6">
+                                        <TextBlock FontSize="12" Foreground="{ThemeResource BrandTextTertiaryBrush}" Text="Checking notes while talking..." />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Mail window (top-left) -->
+                        <Border
+                            x:Name="LandMailWindow"
+                            Width="270"
+                            Height="172"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            Margin="8,8,0,0"
+                            Background="{ThemeResource BrandCardBgBrush}"
+                            BorderBrush="{ThemeResource BrandAccentBrush}"
+                            BorderThickness="2"
+                            CornerRadius="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="26" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
+                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Mail  New message" />
+                                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Grid.Row="1" Padding="12,8,12,8" Spacing="{StaticResource BrandSpacingXs}">
+                                    <TextBlock FontSize="12" Foreground="{ThemeResource BrandTextTertiaryBrush}" Text="To: Priya Shah" />
+                                    <Border Height="1" Background="{ThemeResource BrandDividerBrush}" Margin="0,2,0,4" />
+                                    <TextBlock x:Name="LandEmailLine0" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Opacity="0" Text="Hi Priya,">
+                                        <TextBlock.RenderTransform><TranslateTransform x:Name="LandEmailLine0Translate" Y="6" /></TextBlock.RenderTransform>
+                                    </TextBlock>
+                                    <TextBlock x:Name="LandEmailLine1" FontSize="13" Foreground="{ThemeResource BrandTextBodyBrush}" Opacity="0" Text="Can we move our call to Thursday at 3 PM?" TextWrapping="Wrap">
+                                        <TextBlock.RenderTransform><TranslateTransform x:Name="LandEmailLine1Translate" Y="6" /></TextBlock.RenderTransform>
+                                    </TextBlock>
+                                    <TextBlock x:Name="LandEmailLine2" FontSize="13" Foreground="{ThemeResource BrandTextBodyBrush}" Opacity="0" Text="Thanks so much!">
+                                        <TextBlock.RenderTransform><TranslateTransform x:Name="LandEmailLine2Translate" Y="6" /></TextBlock.RenderTransform>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Animated pointer + click ring -->
+                        <Grid
+                            x:Name="LandPointerGroup"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            Margin="120,96,0,0"
+                            IsHitTestVisible="False">
+                            <Grid.RenderTransform>
+                                <TranslateTransform x:Name="LandPointerTranslate" X="0" Y="0" />
+                            </Grid.RenderTransform>
+                            <Ellipse
+                                x:Name="LandClickRing"
+                                Width="24"
+                                Height="24"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Opacity="0"
+                                RenderTransformOrigin="0.5,0.5"
+                                Stroke="{ThemeResource BrandAccentBrush}"
+                                StrokeThickness="2">
+                                <Ellipse.RenderTransform><ScaleTransform x:Name="LandClickRingScale" ScaleX="0.3" ScaleY="0.3" /></Ellipse.RenderTransform>
+                            </Ellipse>
+                            <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" Foreground="{ThemeResource BrandTextPrimaryBrush}" Glyph="&#xE8B0;" />
+                        </Grid>
+
+                        <!-- Held key chip + floating Recording / Polishing pills -->
+                        <StackPanel
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Bottom"
+                            Orientation="Horizontal"
+                            Spacing="{StaticResource BrandSpacingS}">
+                            <Border
+                                x:Name="LandHeldKeyChip"
+                                Padding="10,4,10,4"
+                                Background="{ThemeResource BrandCardBgBrush}"
+                                BorderBrush="{ThemeResource BrandAccentBrush}"
+                                BorderThickness="1.5"
+                                CornerRadius="8">
+                                <TextBlock x:Name="LandHeldKeyText" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="Ctrl+Win" />
+                            </Border>
+
+                            <Border
+                                x:Name="LandRecordingPill"
+                                Padding="12,5,12,5"
+                                Background="{ThemeResource BrandAccentSolidBrush}"
+                                CornerRadius="12"
+                                Opacity="0">
+                                <Border.RenderTransform><TranslateTransform x:Name="LandRecordingPillTranslate" Y="0" /></Border.RenderTransform>
+                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource BrandOnAccentBrush}" Text="Listening  0:04" />
+                            </Border>
+
+                            <Border
+                                x:Name="LandPolishingPill"
+                                Padding="12,5,12,5"
+                                Background="{ThemeResource BrandAccentLightBrush}"
+                                BorderBrush="{ThemeResource BrandAccentBrush}"
+                                BorderThickness="1"
+                                CornerRadius="12"
+                                Opacity="0">
+                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="Polishing..." />
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Drawn Windows 11 taskbar -->
+                    <Grid Grid.Row="1" Padding="12,0,12,0" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="3" />
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="3" />
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="3" />
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="3" />
+                        </StackPanel>
+                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="9:41 AM" />
+                    </Grid>
+                </Grid>
+
+                <!-- SCENE 4: COPIED (File Explorer -> Copied toast -> Notepad + Ctrl+V keycaps + clipboard restored) -->
+                <Grid x:Name="SceneCopiedPanel" Background="{ThemeResource BrandSidebarBgBrush}" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="28" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Padding="16">
+                        <!-- File Explorer (no text box) -->
+                        <Border
+                            x:Name="CopiedExplorerWindow"
+                            Width="300"
+                            Height="164"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Top"
+                            Margin="0,8,0,0"
+                            Background="{ThemeResource BrandCardBgBrush}"
+                            BorderBrush="{ThemeResource BrandDividerBrush}"
+                            BorderThickness="1"
+                            CornerRadius="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="26" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
+                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="File Explorer" />
+                                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Grid.Row="1" Padding="14,12,14,12" Spacing="{StaticResource BrandSpacingS}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B7;" />
+                                        <TextBlock FontSize="13" Foreground="{ThemeResource BrandTextBodyBrush}" Text="Documents" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B7;" />
+                                        <TextBlock FontSize="13" Foreground="{ThemeResource BrandTextBodyBrush}" Text="Downloads" />
+                                    </StackPanel>
+                                    <TextBlock FontSize="12" Foreground="{ThemeResource BrandTextTertiaryBrush}" Text="No text field focused here" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Notepad rising in -->
+                        <Border
+                            x:Name="CopiedNotepadWindow"
+                            Width="316"
+                            Height="170"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Top"
+                            Margin="0,12,0,0"
+                            Background="{ThemeResource BrandCardBgBrush}"
+                            BorderBrush="{ThemeResource BrandAccentBrush}"
+                            BorderThickness="2"
+                            CornerRadius="10"
+                            Opacity="0">
+                            <Border.RenderTransform><TranslateTransform x:Name="CopiedNotepadTranslate" Y="12" /></Border.RenderTransform>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="26" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
+                                    <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Notepad  notes.txt" />
+                                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Grid.Row="1" Padding="14,12,14,12" Spacing="{StaticResource BrandSpacingS}">
+                                    <TextBlock
+                                        x:Name="CopiedWordsText"
+                                        FontSize="14"
+                                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                                        Opacity="0"
+                                        Text="Send the updated launch checklist before 4 PM."
+                                        TextWrapping="Wrap">
+                                        <TextBlock.RenderTransform><TranslateTransform x:Name="CopiedWordsTranslate" Y="6" /></TextBlock.RenderTransform>
+                                    </TextBlock>
+
+                                    <Border
+                                        x:Name="CopiedClipboardRow"
+                                        HorizontalAlignment="Left"
+                                        Opacity="0"
+                                        Style="{StaticResource BrandSuccessChipStyle}">
+                                        <Border.RenderTransform><TranslateTransform x:Name="CopiedClipboardTranslate" Y="6" /></Border.RenderTransform>
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                            <FontIcon FontSize="12" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
+                                            <TextBlock Style="{StaticResource BrandSuccessChipTextStyle}" Text="Pasted from your clipboard" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Floating Copied toast + animated Ctrl + V keycaps -->
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Bottom" Spacing="{StaticResource BrandSpacingS}">
+                            <Border
+                                x:Name="CopiedToastPill"
+                                HorizontalAlignment="Center"
+                                Padding="14,6,14,6"
+                                Background="{ThemeResource BrandAccentSolidBrush}"
+                                CornerRadius="12"
+                                Opacity="0">
+                                <Border.RenderTransform><TranslateTransform x:Name="CopiedToastTranslate" Y="8" /></Border.RenderTransform>
+                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource BrandOnAccentBrush}" Text="Copied. Press Ctrl+V to paste." />
+                            </Border>
+
+                            <StackPanel
+                                x:Name="CopiedPasteKeysPanel"
+                                HorizontalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="{StaticResource BrandSpacingS}"
+                                Opacity="0">
+                                <StackPanel.RenderTransform><TranslateTransform x:Name="CopiedPasteKeysTranslate" Y="8" /></StackPanel.RenderTransform>
+                                <Border
+                                    x:Name="CopiedCtrlKeycap"
+                                    Padding="14,6,14,6"
+                                    Background="{ThemeResource BrandCardBgBrush}"
+                                    BorderBrush="{ThemeResource BrandAccentBrush}"
+                                    BorderThickness="2"
+                                    CornerRadius="8">
+                                    <TextBlock x:Name="CopiedCtrlKeyText" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="Ctrl" />
+                                </Border>
+                                <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="+" />
+                                <Border
+                                    x:Name="CopiedVKeycap"
+                                    Padding="14,6,14,6"
+                                    Background="{ThemeResource BrandCardBgBrush}"
+                                    BorderBrush="{ThemeResource BrandAccentBrush}"
+                                    BorderThickness="2"
+                                    CornerRadius="8">
+                                    <TextBlock x:Name="CopiedVKeyText" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="V" />
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Drawn Windows 11 taskbar -->
+                    <Grid Grid.Row="1" Padding="12,0,12,0" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="3" />
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="3" />
+                            <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="3" />
+                        </StackPanel>
+                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="9:41 AM" />
+                    </Grid>
+                </Grid>
+
+                <!-- SCENE 5: LEARN (twist -> Tuist, learned-word card with Undo countdown rail, Next dictation) -->
+                <StackPanel
+                    x:Name="SceneLearnPanel"
+                    Padding="24,18,24,18"
+                    Spacing="{StaticResource BrandSpacingM}"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed">
+                    <Border Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="26" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
+                                <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Chat  #dev" />
+                                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Grid.Row="1" Padding="14,12,14,12" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Run" VerticalAlignment="Center" />
+                                <Border
+                                    x:Name="LearnMisheardChip"
+                                    Padding="6,2,6,2"
+                                    Background="{ThemeResource BrandOnboardingFilmMistakeBgBrush}"
+                                    CornerRadius="5"
+                                    VerticalAlignment="Center">
+                                    <Grid>
+                                        <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource BrandErrorBrush}" Text="twist" />
+                                        <Border x:Name="LearnStrikeLine" Height="1.5" Background="{ThemeResource BrandErrorBrush}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                                <Border
+                                    x:Name="LearnFixChip"
+                                    Padding="6,2,6,2"
+                                    Background="{ThemeResource BrandAccentLightBrush}"
+                                    CornerRadius="5"
+                                    Opacity="0"
+                                    VerticalAlignment="Center">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="Tuist" />
+                                </Border>
+                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="generate before you build." VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Learned-word card with 4 s Undo countdown rail -->
+                    <Border
+                        x:Name="LearnLearnedCard"
+                        Background="{ThemeResource BrandCardBgBrush}"
+                        BorderBrush="{ThemeResource BrandAccentBrush}"
+                        BorderThickness="1.5"
+                        CornerRadius="12"
+                        Opacity="0">
+                        <Border.RenderTransform><TranslateTransform x:Name="LearnLearnedTranslate" Y="8" /></Border.RenderTransform>
+                        <StackPanel>
+                            <Grid Padding="14,10,14,10" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Width="28" Height="28" Background="{ThemeResource BrandAccentLightBrush}" CornerRadius="8">
+                                    <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE82D;" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Learned &quot;Tuist&quot;" />
+                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Added to Your Words automatically" />
+                                </StackPanel>
+                                <Border Grid.Column="2" Style="{StaticResource BrandAccentChipStyle}">
+                                    <TextBlock Style="{StaticResource BrandAccentChipTextStyle}" Text="Undo" />
+                                </Border>
+                            </Grid>
+                            <Border Height="3" Margin="14,0,14,8" Background="{ThemeResource BrandDividerBrush}" CornerRadius="1.5">
+                                <Border
+                                    x:Name="LearnUndoRailFill"
+                                    Height="3"
+                                    Background="{ThemeResource BrandAccentSolidBrush}"
+                                    CornerRadius="1.5"
+                                    RenderTransformOrigin="0,0.5">
+                                    <Border.RenderTransform><ScaleTransform x:Name="LearnUndoRailScale" ScaleX="1" /></Border.RenderTransform>
+                                </Border>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Next dictation result -->
+                    <Border
+                        x:Name="LearnNextWindow"
+                        Background="{ThemeResource BrandCardBgBrush}"
+                        BorderBrush="{ThemeResource BrandDividerBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Opacity="0">
+                        <Border.RenderTransform><TranslateTransform x:Name="LearnNextTranslate" Y="10" /></Border.RenderTransform>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="24" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
+                                <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Next dictation" />
+                            </Grid>
+                            <StackPanel Grid.Row="1" Padding="14,10,14,10" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                <Border Padding="6,2,6,2" Background="{ThemeResource BrandAccentLightBrush}" CornerRadius="5">
+                                    <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="Tuist" />
+                                </Border>
+                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="is set up. The build is green." VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- SCENE 6: MORE (2-column drifting wall of 10 real shipped Windows features) -->
+                <Grid x:Name="SceneMorePanel" Visibility="Collapsed">
+                    <Grid
+                        x:Name="MoreFeaturesGrid"
+                        Padding="18,18,18,18"
+                        ColumnSpacing="{StaticResource BrandSpacingS}"
+                        RowSpacing="{StaticResource BrandSpacingS}"
+                        VerticalAlignment="Top">
+                        <Grid.RenderTransform>
+                            <TranslateTransform x:Name="MoreFeaturesTranslate" Y="0" />
+                        </Grid.RenderTransform>
+                    </Grid>
+                </Grid>
+
+                <!-- SCENE 7: YOURS (Windows 11 System Tray teaching + Bring your words import card; holds forever) -->
+                <StackPanel
+                    x:Name="SceneYoursPanel"
+                    Padding="20,16,20,16"
+                    Spacing="{StaticResource BrandSpacingM}"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed">
+                    <!-- Top card: Windows 11 Taskbar & System Tray -->
+                    <Border
+                        x:Name="YoursTrayCard"
+                        Height="134"
+                        Background="{ThemeResource BrandCardBgBrush}"
+                        BorderBrush="{ThemeResource BrandDividerBrush}"
+                        BorderThickness="1"
+                        CornerRadius="12">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="34" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Teaching text + pointer stem pointing down to the system tray icon -->
+                            <StackPanel
+                                x:Name="YoursPointerStack"
+                                Grid.Row="0"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Bottom"
+                                Margin="0,0,14,4"
+                                Spacing="{StaticResource BrandSpacingXs}">
+                                <TextBlock
+                                    HorizontalAlignment="Center"
+                                    HorizontalTextAlignment="Center"
+                                    Style="{StaticResource BrandRowLabelStyle}"
+                                    Text="Find EnviousWispr in your system tray." />
+                                <Border Width="2" Height="16" HorizontalAlignment="Center" Background="{ThemeResource BrandAccentBrush}" />
+                                <Ellipse Width="6" Height="6" HorizontalAlignment="Center" Fill="{ThemeResource BrandAccentBrush}" />
+                            </StackPanel>
+
+                            <!-- Drawn Windows 11 bottom taskbar with right-aligned System Tray -->
+                            <Grid Grid.Row="1" Padding="12,0,12,0" Background="{ThemeResource BrandSidebarBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0" CornerRadius="0,0,12,12">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                    <Border Width="14" Height="14" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="3" />
+                                    <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="3" />
+                                    <Border Width="14" Height="14" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="3" />
+                                </StackPanel>
+
+                                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                    <FontIcon FontSize="10" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE70E;" />
+                                    <!-- Ringed breathing EnviousWispr tray icon -->
+                                    <Border
+                                        x:Name="YoursTrayIconRing"
+                                        Width="28"
+                                        Height="24"
+                                        Background="{ThemeResource BrandAccentLightBrush}"
+                                        BorderBrush="{ThemeResource BrandAccentBrush}"
+                                        BorderThickness="2"
+                                        CornerRadius="6"
+                                        RenderTransformOrigin="0.5,0.5">
+                                        <Border.RenderTransform>
+                                            <ScaleTransform x:Name="YoursTrayIconScale" ScaleX="1" ScaleY="1" />
+                                        </Border.RenderTransform>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Orientation="Horizontal">
+                                            <Border Width="2.5" Height="8" Margin="0,0,1.5,0" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1" />
+                                            <Border Width="2.5" Height="12" Margin="0,0,1.5,0" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1" />
+                                            <Border Width="2.5" Height="10" Margin="0,0,1.5,0" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1" />
+                                            <Border Width="2.5" Height="12" Margin="0,0,1.5,0" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1" />
+                                            <Border Width="2.5" Height="8" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1" />
+                                        </StackPanel>
+                                    </Border>
+                                    <FontIcon FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE701;" />
+                                    <FontIcon FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE767;" />
+                                    <TextBlock VerticalAlignment="Center" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="9:41 AM" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- Bottom card: Bring your words with you -> Your Words -> Import -->
+                    <Border
+                        x:Name="YoursWordsCard"
+                        Padding="18,14,18,14"
+                        Style="{StaticResource BrandSettingsCardStyle}">
+                        <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                            <TextBlock
+                                HorizontalTextAlignment="Center"
+                                Style="{StaticResource BrandRowTitleStyle}"
+                                Text="Bring your words with you." />
+                            <TextBlock
+                                Foreground="{ThemeResource BrandAccentBrush}"
+                                HorizontalTextAlignment="Center"
+                                Style="{StaticResource BrandBodyStyle}"
+                                Text="Import your custom words from another dictation app."
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                HorizontalTextAlignment="Center"
+                                Style="{StaticResource BrandHelperStyle}"
+                                Text="Wispr Flow · FluidVoice · Superwhisper · and more"
+                                TextWrapping="Wrap" />
+                            <Border
+                                x:Name="YoursImportPathChip"
+                                Margin="0,4,0,0"
+                                HorizontalAlignment="Center"
+                                Padding="14,6,14,6"
+                                Style="{StaticResource BrandAccentChipStyle}">
+                                <TextBlock
+                                    Style="{StaticResource BrandAccentChipTextStyle}"
+                                    Text="Check out Your Words -&gt; Import" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 7 clickable thin progress segment bars + Pause/Play + Watch again -->
+        <Grid x:Name="BuiltInTransportGrid" ColumnSpacing="{StaticResource BrandSpacingM}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Grid x:Name="SegmentsGrid" Grid.Column="0" ColumnSpacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="SegmentButton0" Grid.Column="0" AutomationProperties.Name="Scene 1 of 7: All set summary" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="0">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill0" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale0" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+                <Button x:Name="SegmentButton1" Grid.Column="1" AutomationProperties.Name="Scene 2 of 7: Works in any app" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="1">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill1" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale1" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+                <Button x:Name="SegmentButton2" Grid.Column="2" AutomationProperties.Name="Scene 3 of 7: Words land where you started" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="2">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill2" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale2" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+                <Button x:Name="SegmentButton3" Grid.Column="3" AutomationProperties.Name="Scene 4 of 7: Press Ctrl+V when no box is selected" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="3">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill3" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale3" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+                <Button x:Name="SegmentButton4" Grid.Column="4" AutomationProperties.Name="Scene 5 of 7: Fix a word once" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="4">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill4" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale4" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+                <Button x:Name="SegmentButton5" Grid.Column="5" AutomationProperties.Name="Scene 6 of 7: More features in Settings" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="5">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill5" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale5" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+                <Button x:Name="SegmentButton6" Grid.Column="6" AutomationProperties.Name="Scene 7 of 7: System tray and import words" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Click="SegmentButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="20" MinWidth="0" Padding="0,8,0,8" Tag="6">
+                    <Border Height="4" Background="{ThemeResource BrandDividerBrush}" CornerRadius="2">
+                        <Border x:Name="SegmentFill6" Height="4" Background="{ThemeResource BrandAccentSolidBrush}" CornerRadius="2" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="SegmentScale6" ScaleX="0" /></Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Button>
+            </Grid>
+
+            <Button
+                x:Name="PausePlayButton"
+                Grid.Column="1"
+                AutomationProperties.Name="Pause closing film"
+                Click="PausePlayButton_Click"
+                Content="Pause"
+                Padding="12,5,12,5"
+                Style="{StaticResource BrandQuietButtonStyle}" />
+
+            <Button
+                x:Name="WatchAgainButton"
+                Grid.Column="2"
+                AutomationProperties.Name="Watch closing film again"
+                Click="WatchAgainButton_Click"
+                Content="Watch again"
+                Padding="12,5,12,5"
+                Style="{StaticResource BrandQuietButtonStyle}" />
+        </Grid>
+    </StackPanel>
+</UserControl>

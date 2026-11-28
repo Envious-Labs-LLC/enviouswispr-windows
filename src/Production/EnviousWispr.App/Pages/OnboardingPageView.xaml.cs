@@ -35,9 +35,7 @@ public sealed partial class OnboardingPageView : UserControl
 
     private void OnboardingBackButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingBackButton_Click(sender, e);
 
-    private void OnboardingClosingCard_PointerEntered(object sender, PointerRoutedEventArgs e) => Host.OnboardingClosingCard_PointerEntered(sender, e);
-
-    private void OnboardingClosingCard_PointerExited(object sender, PointerRoutedEventArgs e) => Host.OnboardingClosingCard_PointerExited(sender, e);
+    private void OnboardingClosingPausePlayButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingClosingPausePlayButton_Click(sender, e);
 
     private void OnboardingClosingWatchAgainButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingClosingWatchAgainButton_Click(sender, e);
 
@@ -46,6 +44,8 @@ public sealed partial class OnboardingPageView : UserControl
     private void OnboardingCloudCheckKeyButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingCloudCheckKeyButton_Click(sender, e);
 
     private void OnboardingCloudClearKeyButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingCloudClearKeyButton_Click(sender, e);
+
+    private void OnboardingCloudGetKeyLink_Click(object sender, RoutedEventArgs e) => Host.OnboardingCloudGetKeyLink_Click(sender, e);
 
     private void OnboardingCloudModelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => Host.OnboardingCloudModelComboBox_SelectionChanged(sender, e);
 
@@ -61,7 +61,13 @@ public sealed partial class OnboardingPageView : UserControl
 
     private void OnboardingGateSkipPolishButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingGateSkipPolishButton_Click(sender, e);
 
+    private void OnboardingGateSlowSkipButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingGateSlowSkipButton_Click(sender, e);
+
+    private void OnboardingGateSlowWaitButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingGateSlowWaitButton_Click(sender, e);
+
     private void OnboardingKeycapButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingKeycapButton_Click(sender, e);
+
+    private void OnboardingLanguageChipsHost_SizeChanged(object sender, SizeChangedEventArgs e) => Host.OnboardingLanguageChipsHost_SizeChanged(sender, e);
 
     private void OnboardingLanguageListView_ItemClick(object sender, ItemClickEventArgs e) => Host.OnboardingLanguageListView_ItemClick(sender, e);
 
@@ -84,6 +90,8 @@ public sealed partial class OnboardingPageView : UserControl
     private void OnboardingPolishTabLocalButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingPolishTabLocalButton_Click(sender, e);
 
     private void OnboardingPracticeBox_TextChanged(object sender, TextChangedEventArgs e) => Host.OnboardingPracticeBox_TextChanged(sender, e);
+
+    private void OnboardingPracticeMicComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => Host.OnboardingPracticeMicComboBox_SelectionChanged(sender, e);
 
     private void OnboardingPresetHotkeyButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingPresetHotkeyButton_Click(sender, e);
 
@@ -108,6 +116,8 @@ public sealed partial class OnboardingPageView : UserControl
     private void OnboardingView_PreviewKeyDown(object sender, KeyRoutedEventArgs e) => Host.OnboardingView_PreviewKeyDown(sender, e);
 
     private void OnboardingView_PreviewKeyUp(object sender, KeyRoutedEventArgs e) => Host.OnboardingView_PreviewKeyUp(sender, e);
+
+    private void OnboardingView_SizeChanged(object sender, SizeChangedEventArgs e) => Host.OnboardingView_SizeChanged(sender, e);
 
     private void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e) => Host.OpenMicrophonePrivacyButton_Click(sender, e);
 }

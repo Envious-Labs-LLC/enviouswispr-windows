@@ -15,7 +15,7 @@ using Windows.System;
 
 namespace EnviousWispr.App;
 
-/// <summary>13-screen Fluent 2 onboarding walkthrough, checkpoint resume, key rehearsal, and dual model delivery.</summary>
+/// <summary>13-screen Fluent 2 onboarding walkthrough step handlers, cloud API key setup, and key rehearsal.</summary>
 public sealed partial class MainWindow
 {
     internal void OnboardingSuggestedLanguageButton_Click(object sender, RoutedEventArgs e)
@@ -65,16 +65,19 @@ public sealed partial class MainWindow
 
     private void SelectOnboardingLanguage(string? languageCode)
     {
+        _onboardingLanguageSpeakingActive = true;
         var rec = ComputeOnboardingRecommendation(languageCode);
         _onboardingRecommendation = rec;
         _onboarding.SelectLanguage(languageCode, rec);
         SyncLiveInventoryToOnboarding();
         QueueOnboardingCheckpointSave();
         RenderOnboarding();
+        OnboardingRainbowLips?.TriggerBurst();
     }
 
     internal void OnboardingOpenSpeechCompareButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         _onboarding.OpenSpeechCompare();
         QueueOnboardingCheckpointSave();
         RenderOnboarding();
@@ -97,11 +100,58 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
+    internal void OnboardingLanguageChipsHost_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateOnboardingLanguageChipsLayout(e.NewSize.Width);
+
+    private void UpdateOnboardingLanguageChipsLayout(double availableWidth)
+    {
+        if (OnboardingLanguageChipsGrid is null ||
+            OnboardingLanguageChipsCol0 is null ||
+            OnboardingLanguageChipsCol1 is null ||
+            OnboardingLanguageEngineBadge is null ||
+            OnboardingSuggestedLanguageButton is null)
+        {
+            return;
+        }
+
+        var suggestionVisible = OnboardingSuggestedLanguageButton.Visibility == Visibility.Visible;
+        var width = availableWidth > 0
+            ? availableWidth
+            : OnboardingStageHost?.ActualWidth ?? 0;
+        var stack = !suggestionVisible || (width > 0 && width < 480);
+        var spacing = LayoutDouble("BrandSpacingS");
+
+        OnboardingLanguageChipsGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
+
+        if (stack)
+        {
+            OnboardingLanguageChipsGrid.ColumnSpacing = 0;
+            OnboardingLanguageChipsGrid.RowSpacing = suggestionVisible ? spacing : 0;
+            OnboardingLanguageChipsCol0.Width = new GridLength(1, GridUnitType.Star);
+            OnboardingLanguageChipsCol1.Width = new GridLength(0);
+            OnboardingLanguageEngineBadge.HorizontalAlignment = HorizontalAlignment.Center;
+            OnboardingSuggestedLanguageButton.HorizontalAlignment = HorizontalAlignment.Center;
+            Grid.SetRow(OnboardingSuggestedLanguageButton, 1);
+            Grid.SetColumn(OnboardingSuggestedLanguageButton, 0);
+        }
+        else
+        {
+            OnboardingLanguageChipsGrid.ColumnSpacing = spacing;
+            OnboardingLanguageChipsGrid.RowSpacing = 0;
+            OnboardingLanguageChipsCol0.Width = new GridLength(2, GridUnitType.Star);
+            OnboardingLanguageChipsCol1.Width = new GridLength(3, GridUnitType.Star);
+            OnboardingLanguageEngineBadge.HorizontalAlignment = HorizontalAlignment.Right;
+            OnboardingSuggestedLanguageButton.HorizontalAlignment = HorizontalAlignment.Left;
+            Grid.SetRow(OnboardingSuggestedLanguageButton, 0);
+            Grid.SetColumn(OnboardingSuggestedLanguageButton, 1);
+        }
+    }
+
     internal void OnboardingSpeechCompareGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveTwoColumnGrid(
             OnboardingSpeechCompareGrid,
             e.NewSize.Width,
-            600,
+            420,
             OnboardingSpeechCompareCol1,
             OnboardingWhisperCompareCard);
 
@@ -109,7 +159,7 @@ public sealed partial class MainWindow
         ApplyResponsiveTwoColumnGrid(
             OnboardingPolishPickGrid,
             e.NewSize.Width,
-            600,
+            420,
             OnboardingPolishPickCol1,
             OnboardingPolishSecondaryCard);
 
@@ -161,6 +211,7 @@ public sealed partial class MainWindow
 
     internal void OnboardingOpenPolishSeeAllButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         _onboardingSeeAllCloudTab = TryGetCloudProvider(_onboarding.Choices.PolishChoice, out _);
         _onboarding.OpenPolishSeeAll();
         QueueOnboardingCheckpointSave();
@@ -169,6 +220,7 @@ public sealed partial class MainWindow
 
     internal async void OnboardingSkipPolish_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
         SyncLiveInventoryToOnboarding();
         await AdvanceFromPolishChoiceAsync().ConfigureAwait(true);
@@ -176,6 +228,7 @@ public sealed partial class MainWindow
 
     internal void OnboardingPolishLowSpecCloudButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         _onboardingSeeAllCloudTab = true;
         _onboarding.OpenPolishSeeAll();
         SelectOnboardingCloudProvider(_onboardingCloudProvider);
@@ -236,6 +289,23 @@ public sealed partial class MainWindow
         };
         SelectOnboardingCloudProvider(provider);
         RenderOnboarding();
+    }
+
+    internal async void OnboardingCloudGetKeyLink_Click(object sender, RoutedEventArgs e)
+    {
+        var url = _onboardingCloudProvider switch
+        {
+            PolishProvider.Gemini => "https://aistudio.google.com/apikey",
+            PolishProvider.Anthropic => "https://console.anthropic.com/settings/keys",
+            _ => "https://platform.openai.com/api-keys",
+        };
+        try
+        {
+            await Launcher.LaunchUriAsync(new Uri(url));
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+        }
     }
 
     private void SelectOnboardingCloudProvider(PolishProvider provider)
@@ -577,6 +647,7 @@ public sealed partial class MainWindow
 
     internal void OnboardingSkipPolishAndAdvance_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         SkipOnboardingPolishDownload();
         _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
         SyncLiveInventoryToOnboarding();
@@ -593,41 +664,83 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
-    private bool TrySkipPolishFromGettingReady()
+    private bool TrySkipAheadWithDeferredPolish()
     {
-        if (_onboarding.MayFinish(OnboardingExit.SkipAheadWithoutPolish))
+        if (!_onboarding.MayFinish(OnboardingExit.SkipAheadWithoutPolish))
         {
-            SkipOnboardingPolishDownload();
-            if (_onboarding.SkipAheadWithoutPolish())
-            {
-                _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
-                SyncLiveInventoryToOnboarding();
-                return true;
-            }
+            return false;
         }
-        else if (_onboarding.MayFinish(OnboardingExit.ContinueWithoutPolish))
+
+        // Keep EG-1 downloading in the background while advancing to Practice with basic cleanup.
+        if (_onboarding.SkipAheadWithoutPolish())
         {
-            SkipOnboardingPolishDownload();
-            if (_onboarding.ContinueWithoutAiPolish())
-            {
-                _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
-                SyncLiveInventoryToOnboarding();
-                return true;
-            }
+            _onboardingPolishDeferredInPractice = true;
+            _onboardingSlowPolishCardVisible = false;
+            _onboardingSlowPolishTimer.Stop();
+            return true;
         }
 
         return false;
     }
 
+    private bool TryContinueWithoutFailedPolishFromGate()
+    {
+        if (!_onboarding.MayFinish(OnboardingExit.ContinueWithoutPolish))
+        {
+            return false;
+        }
+
+        SkipOnboardingPolishDownload();
+        if (_onboarding.ContinueWithoutAiPolish())
+        {
+            _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
+            SyncLiveInventoryToOnboarding();
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryDropPolishAndAdvanceFromGate()
+    {
+        if (_onboarding.Step != OnboardingStep.GettingReady)
+        {
+            return false;
+        }
+
+        SkipOnboardingPolishDownload();
+        _onboarding.SelectPolish(OnboardingPolishChoiceKind.None);
+        SyncLiveInventoryToOnboarding();
+        return _onboarding.TryAdvanceFromGate();
+    }
+
     internal void OnboardingGateSkipPolishButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!TrySkipPolishFromGettingReady())
+        _onboardingUatPinnedStep = null;
+        if (!TryContinueWithoutFailedPolishFromGate() && !TryDropPolishAndAdvanceFromGate())
         {
             OnboardingSkipPolishAndAdvance_Click(sender, e);
             return;
         }
 
         QueueOnboardingCheckpointSave();
+        RenderOnboarding();
+    }
+
+    internal void OnboardingGateSlowSkipButton_Click(object sender, RoutedEventArgs e)
+    {
+        _onboardingUatPinnedStep = null;
+        if (TrySkipAheadWithDeferredPolish())
+        {
+            QueueOnboardingCheckpointSave();
+            RenderOnboarding();
+        }
+    }
+
+    internal void OnboardingGateSlowWaitButton_Click(object sender, RoutedEventArgs e)
+    {
+        _onboardingSlowPolishCardVisible = false;
+        _onboardingSlowPolishTimer.Stop();
         RenderOnboarding();
     }
 
@@ -663,6 +776,7 @@ public sealed partial class MainWindow
         KeybindCaptureActiveChanged?.Invoke(true);
         OnboardingKeyRehearsalActiveChanged?.Invoke(false);
         SetLiveText(OnboardingKeyStatusText, "Press your new dictation shortcut (press Esc to cancel)...");
+        SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
 
         try
         {
@@ -680,15 +794,21 @@ public sealed partial class MainWindow
                 {
                     CancelOnboardingKeyCapture();
                     SetLiveText(OnboardingKeyStatusText, string.Empty);
+                    SetLiveVisibility(OnboardingKeyStatusText, Visibility.Collapsed);
                     RenderOnboarding();
                 },
-                onInvalidAttempt: hint => SetLiveText(OnboardingKeyStatusText, hint),
+                onInvalidAttempt: hint =>
+                {
+                    SetLiveText(OnboardingKeyStatusText, hint);
+                    SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
+                },
                 dispatchToUi: action => DispatcherQueue.TryEnqueue(() => action()));
         }
         catch (System.ComponentModel.Win32Exception)
         {
             CancelOnboardingKeyCapture();
             SetLiveText(OnboardingKeyStatusText, "Could not start shortcut capture. Pick a preset or try again.");
+            SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
         }
 
         RenderOnboarding();
@@ -717,6 +837,7 @@ public sealed partial class MainWindow
         if (!parsed.Succeeded || parsed.Gesture is not { } parsedGesture)
         {
             SetLiveText(OnboardingKeyStatusText, "Use a supported shortcut such as Ctrl+Win, RightCtrl, or F8.");
+            SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
             return;
         }
 
@@ -729,6 +850,7 @@ public sealed partial class MainWindow
             if (!applied)
             {
                 SetLiveText(OnboardingKeyStatusText, error ?? "Could not switch shortcut right now.");
+                SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
                 return;
             }
         }
@@ -739,6 +861,7 @@ public sealed partial class MainWindow
         _onboardingLastTapUpUtc = null;
         _onboarding.ReportRecordingKey(canonical, mode);
         SetLiveText(OnboardingKeyStatusText, $"Shortcut set to {canonical}. Test holding or double-pressing it below.");
+        SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
         QueueOnboardingCheckpointSave();
         RenderOnboarding();
     }
@@ -759,6 +882,7 @@ public sealed partial class MainWindow
 
         if (!_onboardingRehearsalKeyDown)
         {
+            var newlyRehearsed = !_onboardingHoldRehearsed;
             _onboardingRehearsalKeyDown = true;
             _onboardingHoldRehearsed = true;
             _onboardingKeyHoldTimer.Tick -= OnOnboardingKeyHoldTimerTick;
@@ -768,10 +892,16 @@ public sealed partial class MainWindow
             if (_onboardingLastTapUpUtc is { } lastTap &&
                 DateTimeOffset.UtcNow - lastTap <= RehearsalDoubleTapWindow)
             {
+                newlyRehearsed = newlyRehearsed || !_onboardingDoubleTapRehearsed;
                 _onboardingDoubleTapRehearsed = true;
             }
 
             _onboarding.MarkKeyRehearsalCompleted();
+            if (newlyRehearsed)
+            {
+                OnboardingRainbowLips?.TriggerBurst();
+            }
+
             RenderOnboarding();
         }
     }
@@ -861,45 +991,69 @@ public sealed partial class MainWindow
 
     internal void OnboardingPracticeBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        var hadSucceeded = _onboarding.PracticeSucceeded;
         _onboarding.PracticeTextChanged(OnboardingPracticeBox.Text);
         if (_onboarding.PracticeSucceeded)
         {
+            if (!hadSucceeded)
+            {
+                OnboardingRainbowLips?.TriggerBurst();
+            }
+
             QueueOnboardingCheckpointSave();
         }
 
         RenderOnboarding();
     }
 
-    internal void OnboardingClosingCard_PointerEntered(object sender, PointerRoutedEventArgs e)
+    internal async void OnboardingPracticeMicComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        _onboardingClosingPaused = true;
-        _onboardingBeat.Stop();
-    }
-
-    internal void OnboardingClosingCard_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        _onboardingClosingPaused = false;
-        ArmClosingBeatTimer();
-    }
-
-    private void OnboardingClosingDot_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: int beatIndex })
+        if (_onboardingIsUpdatingPracticeMic ||
+            _isRefreshingMicrophones ||
+            OnboardingPracticeMicComboBox?.SelectedItem is not MicrophoneChoice choice)
         {
             return;
         }
 
-        _onboardingClosingPaused = true;
-        _onboardingBeat.Stop();
-        _onboarding.SetClosingBeat(beatIndex);
-        RenderOnboarding();
+        _selectedMicrophoneChoice = choice;
+        if (MicrophoneComboBox is not null)
+        {
+            _isRefreshingMicrophones = true;
+            try
+            {
+                MicrophoneComboBox.SelectedItem = choice;
+            }
+            finally
+            {
+                _isRefreshingMicrophones = false;
+            }
+        }
+
+        await UpdateSettingsAsync(current => current with { PreferredMicrophoneId = choice.Id }).ConfigureAwait(true);
+    }
+
+    private void OnboardingClosingDot_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: int sceneIndex })
+        {
+            return;
+        }
+
+        _onboarding.SetClosingBeat(sceneIndex);
+        OnboardingClosingFilm?.SeekToScene(sceneIndex);
+        UpdateOnboardingClosingPausePlayButton();
+    }
+
+    internal void OnboardingClosingPausePlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        OnboardingClosingFilm?.AdvanceOrTogglePause();
+        UpdateOnboardingClosingPausePlayButton();
     }
 
     internal void OnboardingClosingWatchAgainButton_Click(object sender, RoutedEventArgs e)
     {
-        _onboardingClosingPaused = false;
         _onboarding.RestartClosing();
-        RenderOnboarding();
-        ArmClosingBeatTimer();
+        OnboardingClosingFilm?.Restart();
+        UpdateOnboardingClosingPausePlayButton();
     }
 }
