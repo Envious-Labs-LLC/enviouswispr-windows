@@ -539,23 +539,8 @@ public sealed partial class MainWindow
         }
     }
 
-    private WindowsSetupRecommendation ComputeOnboardingRecommendation(string? selectedLanguageCode)
-    {
-        var profile = _hardwareProfile ?? HardwareProfileSummary.GetCurrent();
-        _hardwareProfile = profile;
-        var snapshot = new SetupHardwareSnapshot(
-            TotalRamGb: profile.TotalRamGb,
-            GpuKind: profile.GpuKind,
-            DedicatedVramGb: profile.DedicatedVramGb,
-            PhysicalCoreCount: profile.PhysicalCoreCount,
-            PerformanceCoreCount: profile.PerformanceCoreCount,
-            Architecture: profile.Architecture,
-            AvailableDiskGb: profile.AvailableDiskGb,
-            SelectedLanguageCode: selectedLanguageCode,
-            SystemLanguageCode: CultureInfo.CurrentUICulture.Name,
-            CudaRuntimeInstalled: _cudaRuntimeAvailable);
-        return WindowsSetupRecommender.Recommend(snapshot);
-    }
+    private WindowsSetupRecommendation ComputeOnboardingRecommendation(string? selectedLanguageCode) =>
+        WindowsSetupRecommender.Recommend(BuildSetupHardwareSnapshot(selectedLanguageCode));
 
     private void SyncLiveInventoryToOnboarding()
     {

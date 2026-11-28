@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Runtime;
 
@@ -109,39 +110,15 @@ public static class HardwareProfileSummary
             : hasVulkanGpu
                 ? " · Vulkan GPU"
                 : string.Empty;
-        return FormatMemoryPrefix(totalRamGb) + suffix;
+        return HardwareSummaryFormatting.FormatMemoryPrefix(totalRamGb) + suffix;
     }
 
     public static string FormatSummary(
         double totalRamGb,
         GpuAccelerationKind gpuKind,
         double? dedicatedVramGb,
-        int physicalCoreCount)
-    {
-        var suffix = gpuKind switch
-        {
-            GpuAccelerationKind.NvidiaCuda when HasPositiveFiniteValue(dedicatedVramGb) =>
-                string.Format(
-                    CultureInfo.InvariantCulture,
-                    " \u00B7 NVIDIA GPU ({0} GB VRAM)",
-                    RoundPositiveWhole(dedicatedVramGb!.Value)),
-            GpuAccelerationKind.NvidiaCuda => " \u00B7 NVIDIA GPU",
-            GpuAccelerationKind.DiscreteVulkan when HasPositiveFiniteValue(dedicatedVramGb) =>
-                string.Format(
-                    CultureInfo.InvariantCulture,
-                    " \u00B7 Discrete GPU ({0} GB VRAM)",
-                    RoundPositiveWhole(dedicatedVramGb!.Value)),
-            GpuAccelerationKind.DiscreteVulkan => " \u00B7 Discrete GPU",
-            GpuAccelerationKind.IntegratedVulkan => " \u00B7 Integrated GPU",
-            GpuAccelerationKind.None when physicalCoreCount > 0 =>
-                string.Format(
-                    CultureInfo.InvariantCulture,
-                    " \u00B7 {0}-core CPU",
-                    physicalCoreCount),
-            _ => string.Empty,
-        };
-        return FormatMemoryPrefix(totalRamGb) + suffix;
-    }
+        int physicalCoreCount) =>
+        HardwareSummaryFormatting.FormatSummary(totalRamGb, gpuKind, dedicatedVramGb, physicalCoreCount);
 
     public static string RecommendEgOneModelId(double totalRamGb) =>
         RecommendEgOneModelId(totalRamGb, hasGpuAcceleration: true);
@@ -227,6 +204,38 @@ public static class HardwareProfileSummary
     public static bool DetectNvidiaGpu() => TryDetectNvidiaCuda().HasNvidiaGpu;
 
     public static bool DetectVulkanGpu() => TryDetectVulkanCapabilities().HasAnyGpu;
+
+    internal static bool TryParseUatRamGb(string? raw, out double totalRamGb)
+    {
+        totalRamGb = 0d;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        foreach (var segment in raw.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = segment.IndexOf('=');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var key = segment[..separator].Trim().ToLowerInvariant();
+            if (key == "ram" && TryParsePositiveFiniteDouble(segment[(separator + 1)..].Trim(), out var parsedRam))
+            {
+                totalRamGb = parsedRam;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryParsePositiveFiniteDouble(string raw, out double value) =>
+        double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value) &&
+        double.IsFinite(value) &&
+        value > 0d;
 
     internal static bool TryParseUatOverride(
         string? raw,
@@ -344,25 +353,6 @@ public static class HardwareProfileSummary
             AvailableDiskGb: diskGb);
         return true;
     }
-
-    private static string FormatMemoryPrefix(double totalRamGb)
-    {
-        if (!HasPositiveFiniteValue(totalRamGb))
-        {
-            return "This PC: Local Memory";
-        }
-
-        return string.Format(
-            CultureInfo.InvariantCulture,
-            "This PC: {0} GB RAM",
-            RoundPositiveWhole(totalRamGb));
-    }
-
-    private static bool HasPositiveFiniteValue(double? value) =>
-        value is { } actual && actual > 0d && double.IsFinite(actual);
-
-    private static int RoundPositiveWhole(double value) =>
-        Math.Max(1, (int)Math.Round(value, MidpointRounding.AwayFromZero));
 
     private static ProcessorArchitectureKind ProbeProcessArchitecture() =>
         RuntimeInformation.OSArchitecture switch

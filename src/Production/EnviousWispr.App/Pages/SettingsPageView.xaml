@@ -763,12 +763,25 @@
                                     <FontIcon x:Name="ActivePolishProviderIcon" x:FieldModifier="internal" Glyph="&#xE70F;" FontSize="20" Foreground="{ThemeResource BrandAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                        <TextBlock x:Name="ActivePolishProviderNameText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" />
-                                        <Border x:Name="ActivePolishProviderBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
-                                            <TextBlock x:Name="ActivePolishProviderBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="On this PC" />
-                                        </Border>
-                                    </StackPanel>
+                                    <Grid x:Name="ActivePolishProviderHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingXs}" SizeChanged="ActivePolishProviderHeaderGrid_SizeChanged">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock x:Name="ActivePolishProviderNameText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" TextWrapping="NoWrap" VerticalAlignment="Center" />
+                                        <StackPanel x:Name="ActivePolishProviderBadgesPanel" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                            <Border x:Name="ActivePolishProviderRecommendedBadge" x:FieldModifier="internal" Style="{StaticResource BrandSolidAccentChipStyle}" HorizontalAlignment="Left" Padding="8,2">
+                                                <TextBlock Style="{StaticResource BrandSolidAccentChipTextStyle}" Text="Recommended" />
+                                            </Border>
+                                            <Border x:Name="ActivePolishProviderBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" HorizontalAlignment="Left" Padding="8,2">
+                                                <TextBlock x:Name="ActivePolishProviderBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="On this PC" />
+                                            </Border>
+                                        </StackPanel>
+                                    </Grid>
                                     <TextBlock x:Name="ActivePolishProviderStatusText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Our model for cleaning up dictation on this PC." TextWrapping="Wrap" />
                                 </StackPanel>
                                 <Button Grid.Column="2" x:Name="ChangePolishProviderButton" x:FieldModifier="internal" Click="ChangePolishProviderButton_Click" Content="Change ⇅" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
@@ -784,10 +797,17 @@
                         </StackPanel>
                         <!-- EG-1 Configuration Panel -->
                         <StackPanel x:Name="EgOneSettingsPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="EG-1 · CHOOSE A SIZE" />
-                                <TextBlock Grid.Column="1" x:Name="EgOneMemoryText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="This PC: Local Memory" />
+                            <Grid x:Name="EgOneSectionHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}" SizeChanged="EgOneSectionHeaderGrid_SizeChanged">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="EgOneSectionTitleText" x:FieldModifier="internal" Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="EG-1 · CHOOSE A SIZE" TextWrapping="NoWrap" />
+                                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="EgOneMemoryText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="This PC: Local Memory" TextWrapping="Wrap" HorizontalAlignment="Right" />
                             </Grid>
                             <Grid x:Name="EgOneCardsGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="EgOneCardsGrid_SizeChanged">
                                 <Grid.ColumnDefinitions>
@@ -814,7 +834,52 @@
                                             </Border>
                                             <TextBlock x:Name="EgOneFullTaglineText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Text="Best quality" Foreground="{ThemeResource BrandAccentBrush}" />
                                             <TextBlock x:Name="EgOneFullDescriptionText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="The most accurate offline model. Best on PCs with 24 GB+ RAM and GPU acceleration for long dictation and multilingual cleanup." TextWrapping="Wrap" />
-                                            <TextBlock x:Name="EgOneFullSpecsText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Best accuracy · Standard speed · ~3.4 GB memory · ~3.0 GB disk" TextWrapping="Wrap" />
+                                            <TextBlock x:Name="EgOneFullSpecsText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Best accuracy · Standard speed · ~3.0 GB disk" TextWrapping="Wrap" />
+                                            <StackPanel x:Name="EgOneFullMemoryPanel" x:FieldModifier="internal" Tag="eg-1" Margin="0,4,0,0" Spacing="{StaticResource BrandSpacingXs}" SizeChanged="EgOneMemoryPanel_SizeChanged">
+                                                <Grid x:Name="EgOneFullMemoryHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingXs}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" FontWeight="SemiBold" Text="Memory" />
+                                                    <StackPanel x:Name="EgOneFullMemoryValueRow" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                        <TextBlock x:Name="EgOneFullMemoryValueText" x:FieldModifier="internal" Style="{StaticResource BrandMemoryDefaultTextStyle}" Text="~3.4 GB" />
+                                                        <TextBlock x:Name="EgOneFullMemoryLightestText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandSuccessBrush}" Text=" &#x00B7; lightest" Visibility="Collapsed" />
+                                                    </StackPanel>
+                                                </Grid>
+                                                <Border x:Name="EgOneFullMemoryTrack" x:FieldModifier="internal" Height="6" CornerRadius="3" Background="{ThemeResource BrandDividerBrush}" HorizontalAlignment="Stretch" AutomationProperties.AccessibilityView="Raw">
+                                                    <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                                        <Border x:Name="EgOneFullMemoryUsedBar" x:FieldModifier="internal" HorizontalAlignment="Left" Height="6" CornerRadius="3" Background="{ThemeResource BrandTextTertiaryBrush}" Width="0" Visibility="Collapsed" />
+                                                        <Border x:Name="EgOneFullMemoryPeakBar" x:FieldModifier="internal" HorizontalAlignment="Left" Height="6" CornerRadius="3" Style="{StaticResource BrandMemoryAccentFillStyle}" Width="0" />
+                                                    </Grid>
+                                                </Border>
+                                                <Grid x:Name="EgOneFullMemoryKeyGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <StackPanel x:Name="EgOneFullMemoryKeyInUseEntry" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Border Width="7" Height="7" CornerRadius="3.5" Background="{ThemeResource BrandTextTertiaryBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="EgOneFullMemoryKeyInUseText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="EgOneFullMemoryKeySizeEntry" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Border x:Name="EgOneFullMemoryKeySizeDot" x:FieldModifier="internal" Width="7" Height="7" CornerRadius="3.5" Style="{StaticResource BrandMemoryAccentFillStyle}" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="EgOneFullMemoryKeySizeText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <TextBlock x:Name="EgOneFullMemoryKeyPercentText" x:FieldModifier="internal" Style="{StaticResource BrandMemorySecondaryTextStyle}" HorizontalAlignment="Right" />
+                                                </Grid>
+                                                <TextBlock x:Name="EgOneFullMemoryWarningText" x:FieldModifier="internal" Style="{StaticResource BrandMemoryWarningTextStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                                            </StackPanel>
                                         </StackPanel>
                                     </RadioButton>
                                     <Border VerticalAlignment="Bottom" Margin="16,0,16,14" Padding="0,10,0,0" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0" Tag="eg-1" SizeChanged="EgOneCardFooter_SizeChanged">
@@ -844,7 +909,52 @@
                                             </Border>
                                             <TextBlock x:Name="EgOneMiniTaglineText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Text="Fast all-rounder" Foreground="{ThemeResource BrandAccentBrush}" />
                                             <TextBlock x:Name="EgOneMiniDescriptionText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="High accuracy at roughly half the size of EG-1. Ideal for everyday laptops and fast GPU-accelerated polish." TextWrapping="Wrap" />
-                                            <TextBlock x:Name="EgOneMiniSpecsText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="High accuracy · Fast · ~1.6 GB memory · ~1.4 GB disk" TextWrapping="Wrap" />
+                                            <TextBlock x:Name="EgOneMiniSpecsText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="High accuracy · Fast · ~1.4 GB disk" TextWrapping="Wrap" />
+                                            <StackPanel x:Name="EgOneMiniMemoryPanel" x:FieldModifier="internal" Tag="eg-1-mini" Margin="0,4,0,0" Spacing="{StaticResource BrandSpacingXs}" SizeChanged="EgOneMemoryPanel_SizeChanged">
+                                                <Grid x:Name="EgOneMiniMemoryHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingXs}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" FontWeight="SemiBold" Text="Memory" />
+                                                    <StackPanel x:Name="EgOneMiniMemoryValueRow" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                        <TextBlock x:Name="EgOneMiniMemoryValueText" x:FieldModifier="internal" Style="{StaticResource BrandMemoryDefaultTextStyle}" Text="~1.6 GB" />
+                                                        <TextBlock x:Name="EgOneMiniMemoryLightestText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandSuccessBrush}" Text=" &#x00B7; lightest" Visibility="Collapsed" />
+                                                    </StackPanel>
+                                                </Grid>
+                                                <Border x:Name="EgOneMiniMemoryTrack" x:FieldModifier="internal" Height="6" CornerRadius="3" Background="{ThemeResource BrandDividerBrush}" HorizontalAlignment="Stretch" AutomationProperties.AccessibilityView="Raw">
+                                                    <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                                        <Border x:Name="EgOneMiniMemoryUsedBar" x:FieldModifier="internal" HorizontalAlignment="Left" Height="6" CornerRadius="3" Background="{ThemeResource BrandTextTertiaryBrush}" Width="0" Visibility="Collapsed" />
+                                                        <Border x:Name="EgOneMiniMemoryPeakBar" x:FieldModifier="internal" HorizontalAlignment="Left" Height="6" CornerRadius="3" Style="{StaticResource BrandMemoryAccentFillStyle}" Width="0" />
+                                                    </Grid>
+                                                </Border>
+                                                <Grid x:Name="EgOneMiniMemoryKeyGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <StackPanel x:Name="EgOneMiniMemoryKeyInUseEntry" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Border Width="7" Height="7" CornerRadius="3.5" Background="{ThemeResource BrandTextTertiaryBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="EgOneMiniMemoryKeyInUseText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="EgOneMiniMemoryKeySizeEntry" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Border x:Name="EgOneMiniMemoryKeySizeDot" x:FieldModifier="internal" Width="7" Height="7" CornerRadius="3.5" Style="{StaticResource BrandMemoryAccentFillStyle}" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="EgOneMiniMemoryKeySizeText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <TextBlock x:Name="EgOneMiniMemoryKeyPercentText" x:FieldModifier="internal" Style="{StaticResource BrandMemorySecondaryTextStyle}" HorizontalAlignment="Right" />
+                                                </Grid>
+                                                <TextBlock x:Name="EgOneMiniMemoryWarningText" x:FieldModifier="internal" Style="{StaticResource BrandMemoryWarningTextStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                                            </StackPanel>
                                         </StackPanel>
                                     </RadioButton>
                                     <Border VerticalAlignment="Bottom" Margin="16,0,16,14" Padding="0,10,0,0" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0" Tag="eg-1-mini" SizeChanged="EgOneCardFooter_SizeChanged">
@@ -874,7 +984,52 @@
                                             </Border>
                                             <TextBlock x:Name="EgOneMicroTaglineText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Text="Smallest and fastest" Foreground="{ThemeResource BrandAccentBrush}" />
                                             <TextBlock x:Name="EgOneMicroDescriptionText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Ultra-lightweight model built for fast local polish on CPU-only laptops and PCs with tighter memory." TextWrapping="Wrap" />
-                                            <TextBlock x:Name="EgOneMicroSpecsText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Fast lightweight polish · Fastest · ~1.0 GB memory · ~520 MB disk" TextWrapping="Wrap" />
+                                            <TextBlock x:Name="EgOneMicroSpecsText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Fast lightweight polish · Fastest · ~520 MB disk" TextWrapping="Wrap" />
+                                            <StackPanel x:Name="EgOneMicroMemoryPanel" x:FieldModifier="internal" Tag="eg-1-micro" Margin="0,4,0,0" Spacing="{StaticResource BrandSpacingXs}" SizeChanged="EgOneMemoryPanel_SizeChanged">
+                                                <Grid x:Name="EgOneMicroMemoryHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingXs}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" FontWeight="SemiBold" Text="Memory" />
+                                                    <StackPanel x:Name="EgOneMicroMemoryValueRow" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                        <TextBlock x:Name="EgOneMicroMemoryValueText" x:FieldModifier="internal" Style="{StaticResource BrandMemoryDefaultTextStyle}" Text="~1.0 GB" />
+                                                        <TextBlock x:Name="EgOneMicroMemoryLightestText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandSuccessBrush}" Text=" &#x00B7; lightest" Visibility="Collapsed" />
+                                                    </StackPanel>
+                                                </Grid>
+                                                <Border x:Name="EgOneMicroMemoryTrack" x:FieldModifier="internal" Height="6" CornerRadius="3" Background="{ThemeResource BrandDividerBrush}" HorizontalAlignment="Stretch" AutomationProperties.AccessibilityView="Raw">
+                                                    <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                                        <Border x:Name="EgOneMicroMemoryUsedBar" x:FieldModifier="internal" HorizontalAlignment="Left" Height="6" CornerRadius="3" Background="{ThemeResource BrandTextTertiaryBrush}" Width="0" Visibility="Collapsed" />
+                                                        <Border x:Name="EgOneMicroMemoryPeakBar" x:FieldModifier="internal" HorizontalAlignment="Left" Height="6" CornerRadius="3" Style="{StaticResource BrandMemoryAccentFillStyle}" Width="0" />
+                                                    </Grid>
+                                                </Border>
+                                                <Grid x:Name="EgOneMicroMemoryKeyGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <StackPanel x:Name="EgOneMicroMemoryKeyInUseEntry" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Border Width="7" Height="7" CornerRadius="3.5" Background="{ThemeResource BrandTextTertiaryBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="EgOneMicroMemoryKeyInUseText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="EgOneMicroMemoryKeySizeEntry" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Border x:Name="EgOneMicroMemoryKeySizeDot" x:FieldModifier="internal" Width="7" Height="7" CornerRadius="3.5" Style="{StaticResource BrandMemoryAccentFillStyle}" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="EgOneMicroMemoryKeySizeText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                    <TextBlock x:Name="EgOneMicroMemoryKeyPercentText" x:FieldModifier="internal" Style="{StaticResource BrandMemorySecondaryTextStyle}" HorizontalAlignment="Right" />
+                                                </Grid>
+                                                <TextBlock x:Name="EgOneMicroMemoryWarningText" x:FieldModifier="internal" Style="{StaticResource BrandMemoryWarningTextStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                                            </StackPanel>
                                         </StackPanel>
                                     </RadioButton>
                                     <Border VerticalAlignment="Bottom" Margin="16,0,16,14" Padding="0,10,0,0" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0" Tag="eg-1-micro" SizeChanged="EgOneCardFooter_SizeChanged">

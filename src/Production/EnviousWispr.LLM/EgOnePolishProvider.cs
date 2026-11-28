@@ -6,6 +6,7 @@ using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Networking;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
@@ -85,6 +86,14 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
     public string ModelId => _modelId;
 
     public bool IsLocalRuntimeReady => !_disposed && _runtime.TryGetReadyEndpoint() is not null;
+
+    public EgOneServerActivity ServerActivity => _disposed ? EgOneServerActivity.Inactive : _runtime.ServerActivity;
+
+    public event EventHandler? ServerActivityChanged
+    {
+        add => _runtime.ServerActivityChanged += value;
+        remove => _runtime.ServerActivityChanged -= value;
+    }
 
     public int? OwnedProcessId => _runtime.OwnedProcessId;
 
@@ -174,12 +183,21 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 
                     try
                     {
-                        var parsed = await SendAsync(
-                            endpoint,
-                            systemPrompt,
-                            userMessage,
-                            maximumOutputTokens,
-                            timeoutCancellation.Token).ConfigureAwait(false);
+                        _runtime.BeginModelRequest();
+                        string? parsed;
+                        try
+                        {
+                            parsed = await SendAsync(
+                                endpoint,
+                                systemPrompt,
+                                userMessage,
+                                maximumOutputTokens,
+                                timeoutCancellation.Token).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            _runtime.EndModelRequest();
+                        }
                         if (parsed is null || !IsSafeOutput(input.Text, parsed))
                         {
                             return Fallback(
@@ -341,13 +359,21 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
             slotAcquired = true;
 
-            reply = await SendAsync(
-                endpoint,
-                AliasSuggestionPrompt.SystemPrompt,
-                AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
-                maximumOutputTokens: 256,
-                timeoutCancellation.Token,
-                cachePrompt: false).ConfigureAwait(false);
+            _runtime.BeginModelRequest();
+            try
+            {
+                reply = await SendAsync(
+                    endpoint,
+                    AliasSuggestionPrompt.SystemPrompt,
+                    AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
+                    maximumOutputTokens: 256,
+                    timeoutCancellation.Token,
+                    cachePrompt: false).ConfigureAwait(false);
+            }
+            finally
+            {
+                _runtime.EndModelRequest();
+            }
         }
         catch (Exception exception) when (
             exception is HttpRequestException or OperationCanceledException or JsonException)
@@ -434,44 +460,52 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                 id_slot = 0,
                 response_format = responseFormat,
             });
-            using var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                timeoutCts.Token).ConfigureAwait(false);
-            if (response.StatusCode != HttpStatusCode.OK)
+            _runtime.BeginModelRequest();
+            try
             {
-                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
-            }
+                using var response = await _httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeoutCts.Token).ConfigureAwait(false);
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+                }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token)
-                .ConfigureAwait(false);
-            using var document = await JsonDocument.ParseAsync(
-                stream,
-                cancellationToken: timeoutCts.Token).ConfigureAwait(false);
-            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-                choices.ValueKind != JsonValueKind.Array ||
-                choices.GetArrayLength() == 0)
+                await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
+                using var document = await JsonDocument.ParseAsync(
+                    stream,
+                    cancellationToken: timeoutCts.Token).ConfigureAwait(false);
+                if (!document.RootElement.TryGetProperty("choices", out var choices) ||
+                    choices.ValueKind != JsonValueKind.Array ||
+                    choices.GetArrayLength() == 0)
+                {
+                    return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+                }
+
+                var choice = choices[0];
+                if (choice.TryGetProperty("finish_reason", out var finishReason) &&
+                    string.Equals(finishReason.GetString(), "length", StringComparison.Ordinal))
+                {
+                    return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+                }
+
+                if (!choice.TryGetProperty("message", out var message) ||
+                    !message.TryGetProperty("content", out var content))
+                {
+                    return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+                }
+
+                var raw = content.GetString()?.Trim();
+                return string.IsNullOrWhiteSpace(raw)
+                    ? new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null)
+                    : new EgOneJudgeCallResult(EgOneJudgeCallStatus.Completed, raw);
+            }
+            finally
             {
-                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
+                _runtime.EndModelRequest();
             }
-
-            var choice = choices[0];
-            if (choice.TryGetProperty("finish_reason", out var finishReason) &&
-                string.Equals(finishReason.GetString(), "length", StringComparison.Ordinal))
-            {
-                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
-            }
-
-            if (!choice.TryGetProperty("message", out var message) ||
-                !message.TryGetProperty("content", out var content))
-            {
-                return new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null);
-            }
-
-            var raw = content.GetString()?.Trim();
-            return string.IsNullOrWhiteSpace(raw)
-                ? new EgOneJudgeCallResult(EgOneJudgeCallStatus.Failed, null)
-                : new EgOneJudgeCallResult(EgOneJudgeCallStatus.Completed, raw);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

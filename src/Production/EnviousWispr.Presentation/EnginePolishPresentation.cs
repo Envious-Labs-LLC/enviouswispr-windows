@@ -10,7 +10,8 @@ public sealed record EngineSummaryPresentation(
     string BadgeText,
     string Description,
     string IconGlyph,
-    bool ShowWhisperLanguage);
+    bool ShowWhisperLanguage,
+    bool IsRecommended = false);
 
 /// <summary>Runtime installation and download state for one final transcription engine model pack.</summary>
 public sealed record SpeechEngineModelState(
@@ -52,7 +53,8 @@ public sealed record SpeechEngineCardPresentation(
     double DownloadPercent,
     bool ShowCancelButton,
     bool ShowRemoveButton,
-    bool RemoveButtonEnabled);
+    bool RemoveButtonEnabled,
+    bool IsRecommended = false);
 
 /// <summary>Confirmation copy shown before uninstalling a currently active speech engine model.</summary>
 public sealed record SpeechEngineRemovalConfirmation(
@@ -117,7 +119,8 @@ public sealed record EgOneCardPresentation(
     bool RemoveButtonEnabled,
     string AutomationName,
     bool CanSelect = true,
-    bool ShowChooseProviderButton = false);
+    bool ShowChooseProviderButton = false,
+    EgOneMemoryPresentation? Memory = null);
 
 /// <summary>Summary badge and status text for the active AI Polish provider header card.</summary>
 public sealed record ActivePolishProviderBadgePresentation(
@@ -182,14 +185,38 @@ public static class EnginePolishPresentation
             BadgeText: "99+ languages",
             Description: "Multilingual speech recognition for 99+ languages (548 MB). Best with an NVIDIA graphics card; slower on processor-only PCs.",
             IconGlyph: "\uE774",
-            ShowWhisperLanguage: true),
+            ShowWhisperLanguage: true,
+            IsRecommended: false),
         _ => new EngineSummaryPresentation(
             Name: "Parakeet",
             BadgeText: "Recommended",
             Description: "Fast local speech recognition for 25 languages (640 MB) that runs smoothly on most PCs.",
             IconGlyph: "\uE945",
-            ShowWhisperLanguage: true),
+            ShowWhisperLanguage: true,
+            IsRecommended: true),
     };
+
+    public static EngineSummaryPresentation DescribeEngine(
+        FinalAsrEngine engine,
+        FinalAsrEngine? recommendedEngine,
+        string? recommendedBadgeText = null)
+    {
+        var baseSummary = DescribeEngine(engine);
+        if (recommendedEngine is not { } recommended)
+        {
+            return baseSummary;
+        }
+
+        var isRecommended = engine == recommended;
+        var badgeText = isRecommended
+            ? (string.IsNullOrWhiteSpace(recommendedBadgeText) ? "Recommended" : recommendedBadgeText.Trim())
+            : (engine == FinalAsrEngine.Whisper ? "99+ languages" : "25 languages");
+        return baseSummary with
+        {
+            BadgeText = badgeText,
+            IsRecommended = isRecommended,
+        };
+    }
 
     public static string DefaultBundleSizeLabel(FinalAsrEngine engine) => engine switch
     {
@@ -201,10 +228,25 @@ public static class EnginePolishPresentation
         FinalAsrEngine engine,
         FinalAsrEngine selectedEngine,
         SpeechEngineModelState state,
-        bool otherDownloadInFlight)
+        bool otherDownloadInFlight) =>
+        DescribeEngineCard(
+            engine,
+            selectedEngine,
+            state,
+            otherDownloadInFlight,
+            recommendedEngine: null,
+            recommendedBadgeText: null);
+
+    public static SpeechEngineCardPresentation DescribeEngineCard(
+        FinalAsrEngine engine,
+        FinalAsrEngine selectedEngine,
+        SpeechEngineModelState state,
+        bool otherDownloadInFlight,
+        FinalAsrEngine? recommendedEngine,
+        string? recommendedBadgeText = null)
     {
         ArgumentNullException.ThrowIfNull(state);
-        var summary = DescribeEngine(engine);
+        var summary = DescribeEngine(engine, recommendedEngine, recommendedBadgeText);
         var bundleSize = string.IsNullOrWhiteSpace(state.BundleSizeText)
             ? DefaultBundleSizeLabel(engine)
             : state.BundleSizeText;
@@ -254,7 +296,8 @@ public static class EnginePolishPresentation
             DownloadPercent: state.DownloadPercent ?? 0,
             ShowCancelButton: isDownloading,
             ShowRemoveButton: state.IsInstalled && state.CanRemove && !isDownloading && !isActivating,
-            RemoveButtonEnabled: !otherDownloadInFlight);
+            RemoveButtonEnabled: !otherDownloadInFlight,
+            IsRecommended: summary.IsRecommended);
     }
 
     public static SpeechEngineRemovalConfirmation DescribeActiveEngineRemovalDialog(
@@ -434,7 +477,11 @@ public static class EnginePolishPresentation
         string? recommendedModelId,
         EgOneModelState state,
         bool otherDownloadInFlight,
-        bool serverExecutableExists)
+        bool serverExecutableExists,
+        ulong? totalPhysicalMemoryBytes = null,
+        ulong? systemUsedMemoryBytes = null,
+        EgOneServerActivity serverActivity = EgOneServerActivity.Inactive,
+        bool? isLightestOverride = null)
     {
         ArgumentNullException.ThrowIfNull(state);
 
@@ -487,9 +534,17 @@ public static class EnginePolishPresentation
         var showChooseProviderButton = isSelected && isUnavailable;
 
         var specsSummary = $"{facts.QualityText} · {facts.SpeedText} · {facts.MemoryText} · {diskSizeText}";
+        var isLightest = isLightestOverride ?? string.Equals(normalizedId, EgOneMicroModelId, StringComparison.Ordinal);
+        var memory = EgOneMemoryBarPresentation.Describe(
+            normalizedId,
+            facts.Title,
+            totalPhysicalMemoryBytes,
+            systemUsedMemoryBytes,
+            serverActivity,
+            isLightest);
         var automationName = isRecommended
-            ? $"{facts.Title}. Best for this PC. {facts.Tagline}. {facts.Description}"
-            : $"{facts.Title}. {facts.Tagline}. {facts.Description}";
+            ? $"{facts.Title}. Best for this PC. {facts.Tagline}. {facts.Description} {memory.AccessibilityValue}"
+            : $"{facts.Title}. {facts.Tagline}. {facts.Description} {memory.AccessibilityValue}";
 
         return new EgOneCardPresentation(
             ModelId: normalizedId,
@@ -516,7 +571,8 @@ public static class EnginePolishPresentation
             RemoveButtonEnabled: !otherDownloadInFlight,
             AutomationName: automationName,
             CanSelect: canSelect,
-            ShowChooseProviderButton: showChooseProviderButton);
+            ShowChooseProviderButton: showChooseProviderButton,
+            Memory: memory);
     }
 
     public static EgOneRemovalConfirmation DescribeEgOneRemovalDialog(

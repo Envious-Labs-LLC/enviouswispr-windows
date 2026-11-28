@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Presentation;
@@ -735,18 +736,25 @@ public sealed partial class MainWindow
     private void RenderSpeechEngineCards()
     {
         var selectedEngine = SelectedFinalEngine();
+        var recommendation = WindowsSetupRecommender.Recommend(BuildSetupHardwareSnapshot());
+        var recommendedEngine = recommendation.Speech.PrimaryEngine;
+        var recommendedBadge = recommendation.Speech.PrimaryLabel;
         var parakeetOtherInFlight = _activeSpeechDownloadEngine is not null && _activeSpeechDownloadEngine != FinalAsrEngine.Parakeet;
         var whisperOtherInFlight = _activeSpeechDownloadEngine is not null && _activeSpeechDownloadEngine != FinalAsrEngine.Whisper;
         var parakeetCard = EnginePolishPresentation.DescribeEngineCard(
             FinalAsrEngine.Parakeet,
             selectedEngine,
             _parakeetModelState,
-            parakeetOtherInFlight);
+            parakeetOtherInFlight,
+            recommendedEngine,
+            recommendedBadge);
         var whisperCard = EnginePolishPresentation.DescribeEngineCard(
             FinalAsrEngine.Whisper,
             selectedEngine,
             _whisperModelState,
-            whisperOtherInFlight);
+            whisperOtherInFlight,
+            recommendedEngine,
+            recommendedBadge);
 
         if (ParakeetCardStatusText is not null)
         {
@@ -757,6 +765,17 @@ public sealed partial class MainWindow
         {
             SetLiveText(WhisperCardStatusText, whisperCard.StatusText);
         }
+
+        ApplySpeechEngineChipBadge(
+            ParakeetEngineBadge,
+            ParakeetEngineBadgeText,
+            parakeetCard.BadgeText,
+            parakeetCard.IsRecommended);
+        ApplySpeechEngineChipBadge(
+            WhisperEngineBadge,
+            WhisperEngineBadgeText,
+            whisperCard.BadgeText,
+            whisperCard.IsRecommended);
 
         ApplySpeechEngineCardPresentation(
             parakeetCard,
@@ -776,6 +795,32 @@ public sealed partial class MainWindow
             WhisperDownloadButton,
             WhisperCancelButton,
             WhisperRemoveButton);
+    }
+
+    private static void ApplySpeechEngineChipBadge(
+        Border? badge,
+        TextBlock? badgeText,
+        string text,
+        bool isRecommended)
+    {
+        if (badge is not null)
+        {
+            var chipKey = isRecommended ? "BrandAccentChipStyle" : "BrandNeutralChipStyle";
+            if (Application.Current.Resources[chipKey] is Style chipStyle)
+            {
+                badge.Style = chipStyle;
+            }
+        }
+
+        if (badgeText is not null)
+        {
+            badgeText.Text = text;
+            var textKey = isRecommended ? "BrandAccentChipTextStyle" : "BrandNeutralChipTextStyle";
+            if (Application.Current.Resources[textKey] is Style textStyle)
+            {
+                badgeText.Style = textStyle;
+            }
+        }
     }
 
     private static void ApplySpeechEngineCardPresentation(
@@ -837,17 +882,22 @@ public sealed partial class MainWindow
     private void UpdateActiveEngineDisplay(FinalAsrEngine? engineOverride = null)
     {
         var engine = engineOverride ?? SelectedFinalEngine();
-        var summary = EnginePolishPresentation.DescribeEngine(engine);
+        var recommendation = WindowsSetupRecommender.Recommend(BuildSetupHardwareSnapshot());
+        var summary = EnginePolishPresentation.DescribeEngine(
+            engine,
+            recommendation.Speech.PrimaryEngine,
+            recommendation.Speech.PrimaryLabel);
 
         if (ActiveEngineNameText is not null)
         {
             ActiveEngineNameText.Text = summary.Name;
         }
 
-        if (ActiveEngineBadgeText is not null)
-        {
-            ActiveEngineBadgeText.Text = summary.BadgeText;
-        }
+        ApplySpeechEngineChipBadge(
+            ActiveEngineBadge,
+            ActiveEngineBadgeText,
+            summary.BadgeText,
+            summary.IsRecommended);
 
         if (ActiveEngineDescriptionText is not null)
         {
@@ -1009,6 +1059,7 @@ public sealed partial class MainWindow
     {
         _hasGraphicsRuntimeSnapshot = true;
         _latestGraphicsRuntimeDelivery = presentation;
+        var previousCudaAvailable = _cudaRuntimeAvailable;
         _cudaRuntimeAvailable = presentation?.Stage == SpeechModelDelivery.Installed;
         if (!IsSettingsPageLoaded
             || GraphicsRuntimeRow is null
@@ -1018,6 +1069,13 @@ public sealed partial class MainWindow
             || CancelGraphicsRuntimeDownloadButton is null)
         {
             return;
+        }
+
+        if (previousCudaAvailable != _cudaRuntimeAvailable)
+        {
+            RenderSpeechEngineCards();
+            UpdateActiveEngineDisplay();
+            UpdateEgOneCards();
         }
 
         if (presentation is null)

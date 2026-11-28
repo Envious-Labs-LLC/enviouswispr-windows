@@ -562,6 +562,7 @@ public partial class App : Application, IAsyncDisposable
                 EgOneModelDownloadRequested: OnEgOneModelDownloadRequested,
                 EgOneModelDownloadCancelRequested: OnModelDownloadCancelRequested,
                 EgOneModelRemoveRequested: OnEgOneModelRemoveRequested,
+                GetEgOneServerActivities: QueryEgOneServerActivities,
                 SpeechEngineDownloadRequested: OnSpeechEngineDownloadRequested,
                 SpeechEngineRemoveRequested: OnSpeechEngineRemoveRequested,
                 IsSpeechEngineBusy: () => IsSpeechEngineBusy,

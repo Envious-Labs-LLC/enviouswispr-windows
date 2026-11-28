@@ -240,6 +240,8 @@ public sealed partial class MainWindow
             StopOnboardingTimers();
         }
 
+        UpdateEgOneMemoryTimer(tickImmediately: !show);
+
         if (!show && _windowFitsOnboarding)
         {
             // THE RESIZE IS DELIBERATE AND HAPPENS ONCE, when setup finishes and the navigation
@@ -360,6 +362,7 @@ public sealed partial class MainWindow
         }
 
         UpdateOllamaLivePollTimer();
+        UpdateEgOneMemoryTimer(tickImmediately: resolvedTag == "settings-ai-polish");
         if (resolvedTag == "settings-ai-polish" &&
             PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) == PolishProvider.Ollama)
         {

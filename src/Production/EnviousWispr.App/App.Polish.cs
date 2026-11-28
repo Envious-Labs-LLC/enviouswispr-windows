@@ -536,7 +536,7 @@ public partial class App
         }
 
         _configuredEgOneModelPath = modelFile;
-        _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
+        var egOneProvider = new EgOnePolishProvider(new EgOnePolishOptions(
             new EgOneServerOptions(
                 serverExecutable,
                 modelFile,
@@ -547,8 +547,30 @@ public partial class App
                 BatchThreads: batchThreads,
                 SleepIdleSeconds: sleepIdleSeconds),
             modelId));
+        egOneProvider.ServerActivityChanged += OnEgOneServerActivityChanged;
+        _polishProvider = egOneProvider;
         _polishUsesLocalRuntime = true;
+        NotifyWindowEgOneActivityChanged();
     }
+
+    private Dictionary<string, EgOneServerActivity> QueryEgOneServerActivities()
+    {
+        if (_polishProvider is not EgOnePolishProvider egOne)
+        {
+            return new Dictionary<string, EgOneServerActivity>(StringComparer.Ordinal);
+        }
+
+        return new Dictionary<string, EgOneServerActivity>(StringComparer.Ordinal)
+        {
+            [EgOneModelCatalog.NormalizeOrDefault(egOne.ModelId)] = egOne.ServerActivity,
+        };
+    }
+
+    private void OnEgOneServerActivityChanged(object? sender, EventArgs args) =>
+        NotifyWindowEgOneActivityChanged();
+
+    private void NotifyWindowEgOneActivityChanged() =>
+        PostToLiveWindow(window => window.NotifyEgOneActivityChanged());
 
     private async Task ProbeOllamaRuntimeAsync(
         OllamaPolishProvider provider,
@@ -696,11 +718,16 @@ public partial class App
                 EgOneHealthResult health;
                 try
                 {
+                    NotifyWindowEgOneActivityChanged();
                     health = await provider.ProbeHealthAsync(linked.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (linked.IsCancellationRequested)
                 {
                     return;
+                }
+                finally
+                {
+                    NotifyWindowEgOneActivityChanged();
                 }
 
                 timer.Stop();

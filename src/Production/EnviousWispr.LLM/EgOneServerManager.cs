@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using EnviousWispr.Core.Networking;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.LLM;
@@ -40,6 +41,10 @@ internal interface IEgOneRuntime : IAsyncDisposable
 
     int? SleepIdleSeconds { get; }
 
+    EgOneServerActivity ServerActivity { get; }
+
+    event EventHandler? ServerActivityChanged;
+
     Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken);
 
     /// <summary>Returns the live loopback endpoint only if the server is already running and ready; never cold-starts it.</summary>
@@ -48,26 +53,48 @@ internal interface IEgOneRuntime : IAsyncDisposable
     Task<bool> TryPreWakeAsync(CancellationToken cancellationToken);
 
     void TerminateImmediately();
+
+    void BeginModelRequest() { }
+
+    void EndModelRequest() { }
 }
 
 public sealed class EgOneServerManager : IEgOneRuntime
 {
     private readonly EgOneServerOptions _options;
     private readonly HttpClient _healthClient;
+    private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly Lock _activityNotifyLock = new();
     private volatile Process? _process;
     private WindowsProcessJob? _processJob;
     private volatile EgOneEndpoint? _endpoint;
     private bool _hasReachedReady;
     private bool _restartUsed;
     private int _failedStarts;
+    private volatile bool _isStarting;
     private volatile bool _disposed;
     private int _preWakeInFlight;
     private volatile bool _isUsingAccelerator;
+    private int _activeModelRequests;
+    private long _lastModelActivityTick;
+    private volatile bool _hasModelActivityTick;
+    private ITimer? _sleepIdleTimer;
+    private volatile bool _assumeProcessAliveForTesting;
+    private int _lastPublishedActivity = (int)EgOneServerActivity.Inactive;
 
     public EgOneServerManager(EgOneServerOptions options, HttpMessageHandler? healthHandler = null)
+        : this(options, healthHandler, TimeProvider.System)
+    {
+    }
+
+    internal EgOneServerManager(
+        EgOneServerOptions options,
+        HttpMessageHandler? healthHandler,
+        TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ServerExecutable);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ModelFile);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.ContextTokens, 1_024);
@@ -77,13 +104,36 @@ public sealed class EgOneServerManager : IEgOneRuntime
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sleepSeconds, 0);
         }
         _options = options;
+        _timeProvider = timeProvider;
         _isUsingAccelerator = options.GpuLayers is > 0;
         _healthClient = SharedHttpClients.CreateClient(healthHandler);
     }
 
+    public event EventHandler? ServerActivityChanged;
+
     public bool IsUsingAccelerator => _isUsingAccelerator;
 
     public int? SleepIdleSeconds => _options.SleepIdleSeconds is > 0 ? _options.SleepIdleSeconds : null;
+
+    public EgOneServerActivity ServerActivity
+    {
+        get
+        {
+            if (_disposed)
+            {
+                return EgOneServerActivity.Inactive;
+            }
+
+            if (_endpoint is not null && IsOwnedServerAlive())
+            {
+                return IsSleptForIdle()
+                    ? EgOneServerActivity.Inactive
+                    : EgOneServerActivity.Ready;
+            }
+
+            return _isStarting ? EgOneServerActivity.Starting : EgOneServerActivity.Inactive;
+        }
+    }
 
     public int? OwnedProcessId
     {
@@ -140,7 +190,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
         if (_disposed ||
             _options.SleepIdleSeconds is not > 0 ||
             _endpoint is not { } endpoint ||
-            _process is not { HasExited: false })
+            !IsOwnedServerAlive())
         {
             return Task.FromResult(false);
         }
@@ -164,7 +214,13 @@ public sealed class EgOneServerManager : IEgOneRuntime
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken).WaitAsync(TimeSpan.FromSeconds(15), cancellationToken)
                 .ConfigureAwait(false);
-            return response.StatusCode == HttpStatusCode.OK;
+            if (response.StatusCode == HttpStatusCode.OK)
+            {
+                RecordModelActivityAndArmTimer();
+                return true;
+            }
+
+            return false;
         }
         catch (Exception exception) when (
             exception is HttpRequestException
@@ -253,15 +309,25 @@ public sealed class EgOneServerManager : IEgOneRuntime
             return null;
         }
 
-        var initialOptions = _options with { StartupTimeout = ResolveInitialAttemptTimeout(_options) };
-        var endpoint = await StartWithOptionsAsync(initialOptions, cancellationToken).ConfigureAwait(false);
-        if (ShouldRetryOnCpuFallback(_options, endpoint, cancellationToken.IsCancellationRequested))
+        _isStarting = true;
+        NotifyServerActivityChanged();
+        try
         {
-            var cpuOptions = _options with { GpuLayers = 0, AllowCpuFallback = false };
-            endpoint = await StartWithOptionsAsync(cpuOptions, cancellationToken).ConfigureAwait(false);
-        }
+            var initialOptions = _options with { StartupTimeout = ResolveInitialAttemptTimeout(_options) };
+            var endpoint = await StartWithOptionsAsync(initialOptions, cancellationToken).ConfigureAwait(false);
+            if (ShouldRetryOnCpuFallback(_options, endpoint, cancellationToken.IsCancellationRequested))
+            {
+                var cpuOptions = _options with { GpuLayers = 0, AllowCpuFallback = false };
+                endpoint = await StartWithOptionsAsync(cpuOptions, cancellationToken).ConfigureAwait(false);
+            }
 
-        return endpoint;
+            return endpoint;
+        }
+        finally
+        {
+            _isStarting = false;
+            NotifyServerActivityChanged();
+        }
     }
 
     public EgOneEndpoint? TryGetReadyEndpoint()
@@ -306,11 +372,13 @@ public sealed class EgOneServerManager : IEgOneRuntime
             startInfo.ArgumentList.Add(argument);
         }
 
-        var process = new Process { StartInfo = startInfo };
+        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        process.Exited += OnOwnedProcessExited;
         try
         {
             if (!process.Start())
             {
+                process.Exited -= OnOwnedProcessExited;
                 process.Dispose();
                 return null;
             }
@@ -318,6 +386,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
             var processJob = WindowsProcessJob.TryCreateFor(process);
             if (processJob is null)
             {
+                process.Exited -= OnOwnedProcessExited;
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
                 process.Dispose();
@@ -337,9 +406,9 @@ public sealed class EgOneServerManager : IEgOneRuntime
                 return null;
             }
 
-            _endpoint = endpoint;
             _isUsingAccelerator = attemptOptions.GpuLayers is > 0;
             _hasReachedReady = true;
+            MarkEndpointReadyAndNotify(endpoint);
             return endpoint;
         }
         catch (OperationCanceledException)
@@ -413,17 +482,95 @@ public sealed class EgOneServerManager : IEgOneRuntime
         }
     }
 
+    public void BeginModelRequest()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        EgOneServerActivity? notifyActivity = null;
+        lock (_activityNotifyLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _activeModelRequests++;
+            Volatile.Write(ref _lastModelActivityTick, _timeProvider.GetTimestamp());
+            _hasModelActivityTick = true;
+            DisarmSleepIdleTimerLocked();
+            if (TryComputeActivityTransitionLocked(out var next))
+            {
+                notifyActivity = next;
+            }
+        }
+
+        if (notifyActivity is not null)
+        {
+            ServerActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void EndModelRequest()
+    {
+        EgOneServerActivity? notifyActivity = null;
+        lock (_activityNotifyLock)
+        {
+            if (_activeModelRequests > 0)
+            {
+                _activeModelRequests--;
+            }
+
+            if (_disposed)
+            {
+                DisarmSleepIdleTimerLocked();
+            }
+            else
+            {
+                Volatile.Write(ref _lastModelActivityTick, _timeProvider.GetTimestamp());
+                _hasModelActivityTick = true;
+                if (_activeModelRequests == 0 && _endpoint is not null && IsOwnedServerAlive())
+                {
+                    ArmSleepIdleTimerLocked();
+                }
+            }
+
+            if (TryComputeActivityTransitionLocked(out var next))
+            {
+                notifyActivity = next;
+            }
+        }
+
+        if (notifyActivity is not null)
+        {
+            ServerActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    internal void MarkEndpointReadyForTesting(EgOneEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        _assumeProcessAliveForTesting = true;
+        MarkEndpointReadyAndNotify(endpoint);
+    }
+
     private async Task StopOwnedProcessAsync()
     {
         _endpoint = null;
+        _assumeProcessAliveForTesting = false;
+        DisposeSleepIdleTimer();
         var process = Interlocked.Exchange(ref _process, null);
         var processJob = Interlocked.Exchange(ref _processJob, null);
         if (process is null)
         {
             processJob?.Dispose();
+            NotifyServerActivityChanged();
             return;
         }
 
+        process.Exited -= OnOwnedProcessExited;
         try
         {
             if (!process.HasExited)
@@ -447,20 +594,26 @@ public sealed class EgOneServerManager : IEgOneRuntime
         {
             process.Dispose();
             processJob?.Dispose();
+            NotifyServerActivityChanged();
         }
     }
 
     public void TerminateImmediately()
     {
         _endpoint = null;
+        _isStarting = false;
+        _assumeProcessAliveForTesting = false;
+        DisposeSleepIdleTimer();
         var process = Interlocked.Exchange(ref _process, null);
         var processJob = Interlocked.Exchange(ref _processJob, null);
         if (process is null)
         {
             processJob?.Dispose();
+            NotifyServerActivityChanged();
             return;
         }
 
+        process.Exited -= OnOwnedProcessExited;
         try
         {
             if (!process.HasExited)
@@ -476,6 +629,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
         {
             process.Dispose();
             processJob?.Dispose();
+            NotifyServerActivityChanged();
         }
     }
 
@@ -495,6 +649,9 @@ public sealed class EgOneServerManager : IEgOneRuntime
             }
 
             _disposed = true;
+            _isStarting = false;
+            _assumeProcessAliveForTesting = false;
+            DisposeSleepIdleTimer();
             await StopOwnedProcessAsync().ConfigureAwait(false);
         }
         finally
@@ -502,8 +659,174 @@ public sealed class EgOneServerManager : IEgOneRuntime
             _gate.Release();
             _gate.Dispose();
             _healthClient.Dispose();
+            NotifyServerActivityChanged();
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    private bool IsOwnedServerAlive() =>
+        _assumeProcessAliveForTesting || IsProcessAlive(_process);
+
+    private bool IsSleptForIdle()
+    {
+        if (_options.SleepIdleSeconds is not > 0 ||
+            Volatile.Read(ref _activeModelRequests) > 0 ||
+            !_hasModelActivityTick)
+        {
+            return false;
+        }
+
+        var lastTick = Volatile.Read(ref _lastModelActivityTick);
+        return _timeProvider.GetElapsedTime(lastTick) >= TimeSpan.FromSeconds(_options.SleepIdleSeconds.Value);
+    }
+
+    private void MarkEndpointReadyAndNotify(EgOneEndpoint endpoint)
+    {
+        var changed = false;
+        lock (_activityNotifyLock)
+        {
+            if (!_disposed)
+            {
+                Volatile.Write(ref _lastModelActivityTick, _timeProvider.GetTimestamp());
+                _hasModelActivityTick = true;
+                _endpoint = endpoint;
+                if (_activeModelRequests == 0)
+                {
+                    ArmSleepIdleTimerLocked();
+                }
+            }
+
+            changed = TryComputeActivityTransitionLocked(out _);
+        }
+
+        if (changed)
+        {
+            ServerActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void RecordModelActivityAndArmTimer()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        var changed = false;
+        lock (_activityNotifyLock)
+        {
+            if (!_disposed)
+            {
+                Volatile.Write(ref _lastModelActivityTick, _timeProvider.GetTimestamp());
+                _hasModelActivityTick = true;
+                if (_activeModelRequests == 0 && _endpoint is not null && IsOwnedServerAlive())
+                {
+                    ArmSleepIdleTimerLocked();
+                }
+            }
+
+            changed = TryComputeActivityTransitionLocked(out _);
+        }
+
+        if (changed)
+        {
+            ServerActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ArmSleepIdleTimerLocked()
+    {
+        if (_disposed || _options.SleepIdleSeconds is not > 0)
+        {
+            return;
+        }
+
+        var delay = TimeSpan.FromSeconds(_options.SleepIdleSeconds.Value);
+        if (_sleepIdleTimer is null)
+        {
+            _sleepIdleTimer = _timeProvider.CreateTimer(
+                OnSleepIdleTimerElapsed,
+                null,
+                delay,
+                Timeout.InfiniteTimeSpan);
+        }
+        else
+        {
+            _sleepIdleTimer.Change(delay, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void DisarmSleepIdleTimerLocked()
+    {
+        _sleepIdleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+
+    private void DisposeSleepIdleTimer()
+    {
+        ITimer? timer;
+        lock (_activityNotifyLock)
+        {
+            timer = _sleepIdleTimer;
+            _sleepIdleTimer = null;
+        }
+
+        timer?.Dispose();
+    }
+
+    private void OnSleepIdleTimerElapsed(object? state)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        NotifyServerActivityChanged();
+    }
+
+    private bool TryComputeActivityTransitionLocked(out EgOneServerActivity current)
+    {
+        current = ServerActivity;
+        if (_lastPublishedActivity == (int)current)
+        {
+            return false;
+        }
+
+        _lastPublishedActivity = (int)current;
+        return true;
+    }
+
+    private static bool IsProcessAlive(Process? process)
+    {
+        if (process is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return !process.HasExited;
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private void OnOwnedProcessExited(object? sender, EventArgs args) =>
+        NotifyServerActivityChanged();
+
+    private void NotifyServerActivityChanged()
+    {
+        bool changed;
+        lock (_activityNotifyLock)
+        {
+            changed = TryComputeActivityTransitionLocked(out _);
+        }
+
+        if (changed)
+        {
+            ServerActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 }
