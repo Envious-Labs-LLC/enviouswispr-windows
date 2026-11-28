@@ -163,6 +163,16 @@ internal static class WindowsTextDeliveryPolicy
         }
     }
 
+    internal static bool ShouldCheckCaretTextUnchanged(
+        CaretContext expected,
+        bool candidateDeletesDictatedText)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        // Honest editable targets always revalidate caret text so mid-commit cursor moves fail closed;
+        // screen-derived terminals allow non-deleting insertions to tolerate UIA cell-grid redraws.
+        return !expected.IsScreenDerived || candidateDeletesDictatedText;
+    }
+
     internal static bool CaretUnchanged(
         CaretContext expected,
         CaretContext actual,

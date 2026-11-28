@@ -132,4 +132,30 @@ public sealed class SeamCasingOracleTests
         Assert.Equal(SeamCasingVerdictKind.Unavailable, verdict.Kind);
         Assert.Equal(CaseRepairDecision.SkippedOracleWarming, verdict.Decision);
     }
+
+    [Fact]
+    public async Task WaitForLanguageReadyAsyncHonorsBudgetWhileDictionaryLoadIsInFlight()
+    {
+        using var loadStarted = new ManualResetEventSlim(false);
+        using var allowFinish = new ManualResetEventSlim(false);
+        var runtime = new SeamCasingOracleRuntime(
+            _ =>
+            {
+                loadStarted.Set();
+                allowFinish.Wait(TimeSpan.FromSeconds(5));
+                return null;
+            },
+            static () => ArmBContextVeto.Shared);
+
+        runtime.BeginBackgroundWarmup("pt");
+        Assert.True(loadStarted.Wait(TimeSpan.FromSeconds(2)));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var ready = await runtime.WaitForLanguageReadyAsync("pt", TimeSpan.FromMilliseconds(40));
+        sw.Stop();
+        allowFinish.Set();
+
+        Assert.False(ready);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(1), $"Expected timeout to return promptly, took {sw.ElapsedMilliseconds} ms.");
+    }
 }

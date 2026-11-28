@@ -110,6 +110,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
+        var verifyCaretText = WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(
+            request.ExpectedContext,
+            request.CandidateDeletesDictatedText);
         var (current, focus) = await CaptureContextWithFocusAsync(
             request.Target,
             request.Options,
@@ -119,7 +122,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             !CaretUnchanged(
                 request.ExpectedContext,
                 current.Context,
-                checkCaretTextUnchanged: request.CandidateDeletesDictatedText))
+                checkCaretTextUnchanged: verifyCaretText))
         {
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.FallbackText.Text,
@@ -176,7 +179,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 request.Target,
                 request.ExpectedContext,
                 request.Options,
-                request.CandidateDeletesDictatedText)),
+                verifyCaretText)),
             cancellationToken,
             settleDelay,
             onPasteDispatched: () => dispatchedWatch = Stopwatch.StartNew()).ConfigureAwait(false);

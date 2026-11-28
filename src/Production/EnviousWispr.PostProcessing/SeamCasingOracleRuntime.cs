@@ -22,6 +22,7 @@ public sealed class SeamCasingOracleRuntime : ISeamCasingOracle
     {
         public readonly object Gate = new();
         public LanguagePhase Phase = LanguagePhase.Warming;
+        public bool IsLoading;
         public WordList? Dictionary;
         public CaseRepairDecision UnavailableReason = CaseRepairDecision.SkippedOracleWarming;
         public TaskCompletionSource<bool> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -308,6 +309,7 @@ public sealed class SeamCasingOracleRuntime : ISeamCasingOracle
 
     private void LoadIntoSlot(string baseCode, LanguageSlot slot)
     {
+        Task<bool>? existingLoad = null;
         lock (slot.Gate)
         {
             if (slot.Phase != LanguagePhase.Warming)
@@ -315,28 +317,58 @@ public sealed class SeamCasingOracleRuntime : ISeamCasingOracle
                 return;
             }
 
-            try
+            if (slot.IsLoading)
             {
-                var wordList = _dictionaryLoader(baseCode);
-                if (wordList is null || !ValidateSentinel(wordList))
+                existingLoad = slot.Completion.Task;
+            }
+            else
+            {
+                slot.IsLoading = true;
+            }
+        }
+
+        if (existingLoad is not null)
+        {
+            _ = existingLoad.GetAwaiter().GetResult();
+            return;
+        }
+
+        WordList? loadedDictionary = null;
+        var ready = false;
+        try
+        {
+            var wordList = _dictionaryLoader(baseCode);
+            if (wordList is not null && ValidateSentinel(wordList))
+            {
+                loadedDictionary = wordList;
+                ready = true;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException)
+        {
+            ready = false;
+        }
+
+        lock (slot.Gate)
+        {
+            if (slot.Phase == LanguagePhase.Warming)
+            {
+                if (ready && loadedDictionary is not null)
+                {
+                    slot.Dictionary = loadedDictionary;
+                    slot.Phase = LanguagePhase.Ready;
+                }
+                else
                 {
                     slot.Phase = LanguagePhase.Unavailable;
                     slot.UnavailableReason = CaseRepairDecision.SkippedOracleUnavailable;
-                    slot.Completion.TrySetResult(false);
-                    return;
                 }
+            }
 
-                slot.Dictionary = wordList;
-                slot.Phase = LanguagePhase.Ready;
-                slot.Completion.TrySetResult(true);
-            }
-            catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException)
-            {
-                slot.Phase = LanguagePhase.Unavailable;
-                slot.UnavailableReason = CaseRepairDecision.SkippedOracleUnavailable;
-                slot.Completion.TrySetResult(false);
-            }
+            slot.IsLoading = false;
         }
+
+        slot.Completion.TrySetResult(ready);
     }
 
     private static bool ValidateSentinel(WordList wordList)

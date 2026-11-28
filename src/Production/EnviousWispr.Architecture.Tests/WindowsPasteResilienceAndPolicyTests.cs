@@ -1530,6 +1530,13 @@ public sealed class WindowsPasteResilienceAndPolicyTests
         var differentWindow = expected with { Target = new TargetWindowId(0x2002, 42, "WindowsTerminal") };
         Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, differentFocus, checkCaretTextUnchanged: false));
         Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, differentWindow, checkCaretTextUnchanged: false));
+
+        // Honest editable targets always revalidate caret text even for non-deleting insertions.
+        var honestEdit = expected with { TargetKind = TextTargetKind.StandardEdit, IsScreenDerived = false };
+        Assert.True(WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(honestEdit, candidateDeletesDictatedText: false));
+        Assert.True(WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(honestEdit, candidateDeletesDictatedText: true));
+        Assert.False(WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(expected, candidateDeletesDictatedText: false));
+        Assert.True(WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(expected, candidateDeletesDictatedText: true));
     }
 
     [Fact]
