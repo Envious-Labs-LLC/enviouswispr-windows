@@ -100,6 +100,48 @@ public sealed partial class MainWindow
         RenderOnboarding();
     }
 
+    internal void OnboardingLanguageChipsHost_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateOnboardingLanguageChipsLayout(e.NewSize.Width);
+
+    private void UpdateOnboardingLanguageChipsLayout(double availableWidth)
+    {
+        if (OnboardingLanguageChipsGrid is null ||
+            OnboardingLanguageChipsCol0 is null ||
+            OnboardingLanguageChipsCol1 is null ||
+            OnboardingSuggestedLanguageButton is null)
+        {
+            return;
+        }
+
+        var suggestionVisible = OnboardingSuggestedLanguageButton.Visibility == Visibility.Visible;
+        var width = availableWidth > 0
+            ? availableWidth
+            : OnboardingStageHost?.ActualWidth ?? 0;
+        var stack = !suggestionVisible || (width > 0 && width < 460);
+        var spacing = LayoutDouble("BrandSpacingS");
+
+        if (stack)
+        {
+            OnboardingLanguageChipsGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
+            OnboardingLanguageChipsGrid.ColumnSpacing = 0;
+            OnboardingLanguageChipsGrid.RowSpacing = suggestionVisible ? spacing : 0;
+            OnboardingLanguageChipsCol0.Width = new GridLength(1, GridUnitType.Star);
+            OnboardingLanguageChipsCol1.Width = new GridLength(0);
+            Grid.SetRow(OnboardingSuggestedLanguageButton, 1);
+            Grid.SetColumn(OnboardingSuggestedLanguageButton, 0);
+        }
+        else
+        {
+            OnboardingLanguageChipsGrid.HorizontalAlignment = HorizontalAlignment.Center;
+            OnboardingLanguageChipsGrid.ColumnSpacing = spacing;
+            OnboardingLanguageChipsGrid.RowSpacing = 0;
+            OnboardingLanguageChipsCol0.Width = GridLength.Auto;
+            OnboardingLanguageChipsCol1.Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetRow(OnboardingSuggestedLanguageButton, 0);
+            Grid.SetColumn(OnboardingSuggestedLanguageButton, 1);
+        }
+    }
+
     internal void OnboardingSpeechCompareGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
         ApplyResponsiveTwoColumnGrid(
             OnboardingSpeechCompareGrid,

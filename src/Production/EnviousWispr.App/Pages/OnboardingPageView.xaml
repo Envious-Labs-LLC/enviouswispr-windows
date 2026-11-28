@@ -225,21 +225,36 @@
 
                     <!-- 2. LANGUAGE -->
                     <StackPanel x:Name="OnboardingLanguagePanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                            <Border x:Name="OnboardingLanguageEngineBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" VerticalAlignment="Center">
-                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                    <Ellipse x:Name="OnboardingLanguageEngineDot" x:FieldModifier="internal" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                    <TextBlock x:Name="OnboardingLanguageEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Parakeet · 25 languages" />
-                                </StackPanel>
-                            </Border>
+                        <Grid x:Name="OnboardingLanguageChipsHost" x:FieldModifier="internal" HorizontalAlignment="Stretch" SizeChanged="OnboardingLanguageChipsHost_SizeChanged">
+                            <Grid x:Name="OnboardingLanguageChipsGrid" x:FieldModifier="internal" HorizontalAlignment="Center" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingS}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="OnboardingLanguageChipsCol0" x:FieldModifier="internal" Width="Auto" />
+                                    <ColumnDefinition x:Name="OnboardingLanguageChipsCol1" x:FieldModifier="internal" Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                            <Button x:Name="OnboardingSuggestedLanguageButton" x:FieldModifier="internal" Click="OnboardingSuggestedLanguageButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" Visibility="Collapsed">
-                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                    <FontIcon FontSize="14" Glyph="&#xE774;" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                    <TextBlock x:Name="OnboardingSuggestedLanguageText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Suggested from Windows: English" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
+                                <Border x:Name="OnboardingLanguageEngineBadge" x:FieldModifier="internal" Grid.Row="0" Grid.Column="0" Style="{StaticResource BrandAccentChipStyle}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                        <Ellipse x:Name="OnboardingLanguageEngineDot" x:FieldModifier="internal" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock x:Name="OnboardingLanguageEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Parakeet · 25 languages" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Button x:Name="OnboardingSuggestedLanguageButton" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Click="OnboardingSuggestedLanguageButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingXs}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="16" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0" FontSize="14" Glyph="&#xE774;" VerticalAlignment="Top" Margin="{StaticResource BrandRowIconInset}" AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock x:Name="OnboardingSuggestedLanguageText" x:FieldModifier="internal" Grid.Column="1" Style="{StaticResource BrandRowLabelStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Suggested from Windows: English" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </Grid>
+                        </Grid>
 
                         <RadioButton x:Name="OnboardingDetectAutoCard" x:FieldModifier="internal" GroupName="OnboardingLanguageAuto" Checked="OnboardingDetectAutoCard_Checked" HorizontalAlignment="Stretch" VerticalContentAlignment="Center" Padding="14,10,14,10" Style="{StaticResource BrandSelectableCardStyle}" AutomationProperties.Name="Detect automatically">
                             <StackPanel Spacing="{StaticResource BrandOnboardingTextSpacing}">

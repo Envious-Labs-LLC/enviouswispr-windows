@@ -315,6 +315,7 @@ public sealed partial class MainWindow
             OnboardingSuggestedLanguageButton.Visibility = Visibility.Collapsed;
         }
 
+        UpdateOnboardingLanguageChipsLayout(OnboardingLanguageChipsHost?.ActualWidth ?? 0);
         RefreshOnboardingLanguageList();
     }
 

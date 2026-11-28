@@ -32,6 +32,10 @@ public sealed partial class MainWindow
     private global::Microsoft.UI.Xaml.Controls.TextBlock OnboardingSubtitle => _onboardingPageView?.OnboardingSubtitle;
     private global::Microsoft.UI.Xaml.Controls.StackPanel OnboardingWelcomePanel => _onboardingPageView?.OnboardingWelcomePanel;
     private global::Microsoft.UI.Xaml.Controls.StackPanel OnboardingLanguagePanel => _onboardingPageView?.OnboardingLanguagePanel;
+    private global::Microsoft.UI.Xaml.Controls.Grid OnboardingLanguageChipsHost => _onboardingPageView?.OnboardingLanguageChipsHost;
+    private global::Microsoft.UI.Xaml.Controls.Grid OnboardingLanguageChipsGrid => _onboardingPageView?.OnboardingLanguageChipsGrid;
+    private global::Microsoft.UI.Xaml.Controls.ColumnDefinition OnboardingLanguageChipsCol0 => _onboardingPageView?.OnboardingLanguageChipsCol0;
+    private global::Microsoft.UI.Xaml.Controls.ColumnDefinition OnboardingLanguageChipsCol1 => _onboardingPageView?.OnboardingLanguageChipsCol1;
     private global::Microsoft.UI.Xaml.Controls.Border OnboardingLanguageEngineBadge => _onboardingPageView?.OnboardingLanguageEngineBadge;
     private global::Microsoft.UI.Xaml.Shapes.Ellipse OnboardingLanguageEngineDot => _onboardingPageView?.OnboardingLanguageEngineDot;
     private global::Microsoft.UI.Xaml.Controls.TextBlock OnboardingLanguageEngineBadgeText => _onboardingPageView?.OnboardingLanguageEngineBadgeText;

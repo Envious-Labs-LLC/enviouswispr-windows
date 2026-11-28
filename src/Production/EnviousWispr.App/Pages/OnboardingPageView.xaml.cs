@@ -67,6 +67,8 @@ public sealed partial class OnboardingPageView : UserControl
 
     private void OnboardingKeycapButton_Click(object sender, RoutedEventArgs e) => Host.OnboardingKeycapButton_Click(sender, e);
 
+    private void OnboardingLanguageChipsHost_SizeChanged(object sender, SizeChangedEventArgs e) => Host.OnboardingLanguageChipsHost_SizeChanged(sender, e);
+
     private void OnboardingLanguageListView_ItemClick(object sender, ItemClickEventArgs e) => Host.OnboardingLanguageListView_ItemClick(sender, e);
 
     private void OnboardingLanguageSearchBox_KeyDown(object sender, KeyRoutedEventArgs e) => Host.OnboardingLanguageSearchBox_KeyDown(sender, e);
