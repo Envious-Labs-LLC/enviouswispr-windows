@@ -260,7 +260,8 @@ public static class CustomWordAppImport
     public static (IReadOnlyList<CustomWordEntry>? Next, WordImportCommitOutcome Outcome) Commit(
         IReadOnlyList<CustomWordEntry> current,
         IReadOnlyList<CustomWordEntry> baseline,
-        IReadOnlyList<CustomWordEntry> entries)
+        IReadOnlyList<CustomWordEntry> entries,
+        int? currentStoredCount = null)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(baseline);
@@ -276,7 +277,7 @@ public static class CustomWordAppImport
             return (null, new WordImportCommitOutcome(WordImportCommitKind.NothingNew, plan, current));
         }
 
-        if (current.Count + plan.Additions.Count > AppSettingsValidator.MaximumCustomWords)
+        if ((currentStoredCount ?? current.Count) + plan.Additions.Count > AppSettingsValidator.MaximumCustomWords)
         {
             return (null, new WordImportCommitOutcome(WordImportCommitKind.WouldExceedStore, plan, current));
         }

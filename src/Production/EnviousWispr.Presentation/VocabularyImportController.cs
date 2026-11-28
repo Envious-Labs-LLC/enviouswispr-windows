@@ -74,7 +74,11 @@ public sealed class VocabularyImportController
         return _vocabulary.ChangeAsync(data =>
         {
             var effective = data.EffectiveCustomWords();
-            var (next, outcome) = CustomWordAppImport.Commit(effective, baselineCopy, entriesCopy);
+            var (next, outcome) = CustomWordAppImport.Commit(
+                effective,
+                baselineCopy,
+                entriesCopy,
+                currentStoredCount: data.CustomWords.Count);
             if (next is null)
             {
                 return (data, outcome);
@@ -98,33 +102,37 @@ public sealed class VocabularyImportController
             var effective = data.EffectiveCustomWords();
             var mergedEffective = CustomWordImport.Merge(effective, replacements);
             var nextUserWords = new List<CustomWordEntry>(mergedEffective.Count);
+            var retainedBuiltinIds = new HashSet<string>(StringComparer.Ordinal);
             var nextDeleted = data.DeletedBuiltinWordIds;
 
             foreach (var entry in mergedEffective)
             {
-                if (entry.Origin == CustomWordOrigin.Builtin)
+                if (entry.Origin == CustomWordOrigin.Builtin &&
+                    BuiltinWords.FindByEntryId(entry.Id) is { } builtin &&
+                    entry.Equals(builtin.Entry))
                 {
+                    retainedBuiltinIds.Add(builtin.BuiltinId);
                     continue;
                 }
 
-                nextUserWords.Add(entry);
+                nextUserWords.Add(entry.OwnedByUser());
             }
+
+            var normalizedUserWords = CustomWordEntry.NormalizeLegacyEntries(nextUserWords);
 
             foreach (var effectiveEntry in effective)
             {
                 if (effectiveEntry.Origin == CustomWordOrigin.Builtin &&
                     BuiltinWords.FindByEntryId(effectiveEntry.Id) is { } builtin &&
-                    !mergedEffective.Any(m =>
-                        m.Origin == CustomWordOrigin.Builtin &&
-                        string.Equals(m.Id, effectiveEntry.Id, StringComparison.Ordinal)) &&
-                    !nextUserWords.Any(u =>
+                    !retainedBuiltinIds.Contains(builtin.BuiltinId) &&
+                    !normalizedUserWords.Any(u =>
                         string.Equals(u.Replacement, builtin.Entry.Replacement, StringComparison.OrdinalIgnoreCase)))
                 {
                     nextDeleted = BuiltinWords.WithTombstone(nextDeleted, builtin.BuiltinId);
                 }
             }
 
-            return data.WithCustomWordsAndDeletedBuiltins(nextUserWords.ToArray(), nextDeleted);
+            return data.WithCustomWordsAndDeletedBuiltins(normalizedUserWords, nextDeleted);
         });
     }
 

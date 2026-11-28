@@ -429,21 +429,17 @@ public sealed partial class DictionaryPageView : UserControl
             return (allRows, nextCache);
         }
 
-        var byEntry = new Dictionary<CustomWordEntry, DictionaryWordRow>(allRows.Length, ReferenceEqualityComparer.Instance);
+        var matchingSet = new HashSet<CustomWordEntry>(matching, ReferenceEqualityComparer.Instance);
+        var result = new List<DictionaryWordRow>(matching.Count);
         for (var i = 0; i < allRows.Length; i++)
         {
-            byEntry[allRows[i].Entry] = allRows[i];
+            if (matchingSet.Contains(allRows[i].Entry))
+            {
+                result.Add(allRows[i]);
+            }
         }
 
-        var result = new DictionaryWordRow[matching.Count];
-        for (var i = 0; i < matching.Count; i++)
-        {
-            result[i] = byEntry.TryGetValue(matching[i], out var row)
-                ? row
-                : new DictionaryWordRow(matching[i]);
-        }
-
-        return (result, nextCache);
+        return (result.ToArray(), nextCache);
     }
 
     private void ApplyFilteredDictionaryRows(DictionaryWordRow[] rows, int totalCount)

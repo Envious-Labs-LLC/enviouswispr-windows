@@ -301,6 +301,52 @@ public sealed class BuiltinWordsLifecycleTests
         Assert.Empty(autoLearned);
     }
 
+    [Fact]
+    public async Task ReplaceConflictsOverBuiltinPersistsOverrideAndRetiresChangedCanonical()
+    {
+        var (vocab, presenter, _) = Build();
+        var importer = new VocabularyImportController(vocab);
+
+        // API has a single alias ("A P I"); replacing its replacement via conflict import must
+        // persist the user's replacement AND retire the built-in API entry instead of dropping the change.
+        var plan = await importer.ImportAsync("A P I,ApiCorp").WaitAsync(Patience);
+        Assert.True(plan.Saved);
+        var conflict = Assert.Single(plan.Value!.Conflicts);
+
+        var replaced = await importer.ReplaceConflictsAsync([conflict]).WaitAsync(Patience);
+        Assert.True(replaced.Saved);
+
+        var effective = presenter.Current.UserData.EffectiveCustomWords();
+        Assert.Contains(effective, e => e.Replacement == "ApiCorp" && e.Aliases.Contains("A P I", StringComparer.OrdinalIgnoreCase));
+        Assert.DoesNotContain(effective, e => e.Replacement == "API");
+        Assert.Contains("api", presenter.Current.UserData.DeletedBuiltinWordIds);
+    }
+
+    [Fact]
+    public async Task CommitFromAppExcludesBuiltinsFromUserStorageCapacityCheck()
+    {
+        var existingUserWords = Enumerable.Range(0, AppSettingsValidator.MaximumCustomWords - BuiltinWords.All.Count)
+            .Select(i => new CustomWordEntry($"spoken{i}", $"Canonical{i}"))
+            .ToArray();
+        var seed = AppSettings.FreshInstall with
+        {
+            UserData = AppSettings.FreshInstall.UserData.WithCustomWords(existingUserWords),
+        };
+        var store = new RecordingStore();
+        var settings = new SettingsPresenter(store, seed);
+        var vocab = new VocabularyPresenter(settings);
+        var importer = new VocabularyImportController(vocab);
+
+        var baseline = settings.Current.UserData.EffectiveCustomWords();
+        Assert.Equal(AppSettingsValidator.MaximumCustomWords, baseline.Count);
+
+        var addition = new CustomWordEntry("newword", "NewWord");
+        var commit = await importer.CommitFromAppAsync(baseline, [addition]).WaitAsync(Patience);
+        Assert.True(commit.Saved);
+        Assert.Equal(WordImportCommitKind.Committed, commit.Value!.Kind);
+        Assert.Contains(settings.Current.UserData.CustomWords, e => e.Replacement == "NewWord");
+    }
+
     private static (VocabularyPresenter Vocab, SettingsPresenter Settings, RecordingStore Store) Build()
     {
         var store = new RecordingStore();
