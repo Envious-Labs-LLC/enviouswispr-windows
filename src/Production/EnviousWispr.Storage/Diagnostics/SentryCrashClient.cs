@@ -167,7 +167,8 @@ public sealed class SentryCrashClient : IDisposable
     /// <summary>Stage 1: scrubs tag value at write time.</summary>
     public void SetTag(string key, string? value)
     {
-        if (string.IsNullOrWhiteSpace(key))
+        if (string.IsNullOrWhiteSpace(key) ||
+            string.Equals(key, "app.build_type", StringComparison.Ordinal))
         {
             return;
         }

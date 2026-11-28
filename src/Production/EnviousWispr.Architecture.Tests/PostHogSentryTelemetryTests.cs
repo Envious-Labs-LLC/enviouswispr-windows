@@ -566,6 +566,11 @@ public sealed class PostHogSentryTelemetryTests
 
         Assert.Equal(expectedBuildType, sentry.GetScopeTagsSnapshot()["app.build_type"]);
 
+        sentry.SetTag("app.build_type", "tampered");
+        Assert.Equal(expectedBuildType, sentry.GetScopeTagsSnapshot()["app.build_type"]);
+        sentry.SetTag("app.build_type", null);
+        Assert.Equal(expectedBuildType, sentry.GetScopeTagsSnapshot()["app.build_type"]);
+
         await sentry.CaptureEventAsync(new SentryCaptureEvent(
             Level: "error",
             Message: "build_type_check",
