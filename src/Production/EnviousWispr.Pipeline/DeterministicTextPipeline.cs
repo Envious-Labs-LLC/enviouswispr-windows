@@ -38,7 +38,8 @@ public sealed record DeterministicTextRequest(
     IReadOnlyList<CustomWordEntry> CustomWords,
     DeterministicTextOptions Options,
     string? PolishedText = null,
-    IReadOnlyList<string>? EnabledVocabularyPackIds = null);
+    IReadOnlyList<string>? EnabledVocabularyPackIds = null,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? VocabularyPackOverrides = null);
 
 public sealed record DeterministicTextResult(
     ProcessedText Output,
@@ -56,7 +57,8 @@ public sealed record DeterministicTextContext(
     DeterministicTextOptions Options,
     string? PolishedText = null,
     bool SpokenFinalFullStop = false,
-    IReadOnlyList<string>? EnabledVocabularyPackIds = null);
+    IReadOnlyList<string>? EnabledVocabularyPackIds = null,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? VocabularyPackOverrides = null);
 
 public interface IDeterministicTextStep
 {
@@ -120,7 +122,8 @@ public sealed class DeterministicTextPipeline
             request.Options,
             request.PolishedText,
             SpokenFinalFullStop: false,
-            EnabledVocabularyPackIds: request.EnabledVocabularyPackIds);
+            EnabledVocabularyPackIds: request.EnabledVocabularyPackIds,
+            VocabularyPackOverrides: request.VocabularyPackOverrides);
         var receipts = new List<DeterministicStageReceipt>(_steps.Length);
         var degraded = false;
         foreach (var step in _steps)
@@ -176,7 +179,8 @@ public sealed class DeterministicTextPipeline
             request.Options,
             polishedText,
             deterministicResult.SpokenFinalFullStop,
-            request.EnabledVocabularyPackIds);
+            request.EnabledVocabularyPackIds,
+            request.VocabularyPackOverrides);
         // THE SPELLING FIRST, THEN THE EMOJI: the restorer aligns the polish with the deterministic text, and
         // both are British by then. Ref: macOS #3124 runs the same two in the same order.
         var spelling = _steps.SingleOrDefault(candidate => candidate.Stage == DeterministicTextStage.EnglishSpellingAfterPolish);
@@ -357,12 +361,13 @@ public sealed class DeterministicTextPipeline
 
         public bool IsEnabled(DeterministicTextContext context) =>
             context.Options.WordCorrectionEnabled &&
-            (context.CustomWords.Count > 0 || VocabularyPacks.HasAny(context.EnabledVocabularyPackIds));
+            (context.CustomWords.Count > 0 ||
+             VocabularyPacks.HasAnyActiveTerms(context.EnabledVocabularyPackIds, context.VocabularyPackOverrides));
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var packEntries = VocabularyPacks.ResolveEntries(context.EnabledVocabularyPackIds);
+            var packEntries = VocabularyPacks.ResolveEntries(context.EnabledVocabularyPackIds, context.VocabularyPackOverrides);
             return context with
             {
                 Text = CustomWordCorrector.Correct(
@@ -500,7 +505,8 @@ public sealed class DeterministicTextPipeline
         {
             cancellationToken.ThrowIfCancellationRequested();
             var activePackReplacements = context.Options.WordCorrectionEnabled
-                ? VocabularyPacks.ResolveEntries(context.EnabledVocabularyPackIds).Select(entry => entry.Replacement)
+                ? VocabularyPacks.ResolveEntries(context.EnabledVocabularyPackIds, context.VocabularyPackOverrides)
+                    .Select(entry => entry.Replacement)
                 : [];
             var protectedWords = BritishSpellingConverter.ProtectedWords(
                 context.CustomWords.Select(entry => entry.Replacement).Concat(activePackReplacements));

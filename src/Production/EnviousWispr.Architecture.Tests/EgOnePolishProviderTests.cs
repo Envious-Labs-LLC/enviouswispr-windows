@@ -441,6 +441,21 @@ public sealed class EgOnePolishProviderTests
         public EgOneEndpoint? Endpoint { get; set; } =
             new(18_082, "test-token", 16_384);
 
+        public EgOneServerActivity Activity { get; set; } = EgOneServerActivity.Ready;
+
+        public EgOneServerActivity ServerActivity =>
+            Disposed
+                ? EgOneServerActivity.Inactive
+                : Endpoint is not null
+                    ? Activity
+                    : EgOneServerActivity.Inactive;
+
+        public event EventHandler? ServerActivityChanged
+        {
+            add { }
+            remove { }
+        }
+
         public int EnsureReadyCalls { get; private set; }
 
         public int PreWakeCalls { get; private set; }

@@ -133,6 +133,26 @@ public sealed class TranscriptFinalizer
             enabledVocabularyPackIds: null,
             cancellationToken);
 
+    public Task<FinalizedTranscript> FinalizeAsync(
+        Transcript transcript,
+        IReadOnlyList<CustomWordEntry> customWords,
+        DeterministicTextOptions options,
+        SnippetVocabulary snippets,
+        PolishSetup? polish,
+        string? targetAppName,
+        IReadOnlyList<string>? enabledVocabularyPackIds,
+        CancellationToken cancellationToken) =>
+        FinalizeAsync(
+            transcript,
+            customWords,
+            options,
+            snippets,
+            polish,
+            targetAppName,
+            enabledVocabularyPackIds,
+            vocabularyPackOverrides: null,
+            cancellationToken);
+
     public async Task<FinalizedTranscript> FinalizeAsync(
         Transcript transcript,
         IReadOnlyList<CustomWordEntry> customWords,
@@ -141,6 +161,7 @@ public sealed class TranscriptFinalizer
         PolishSetup? polish,
         string? targetAppName,
         IReadOnlyList<string>? enabledVocabularyPackIds,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transcript);
@@ -154,7 +175,8 @@ public sealed class TranscriptFinalizer
             transcript,
             customWords,
             options,
-            EnabledVocabularyPackIds: enabledVocabularyPackIds);
+            EnabledVocabularyPackIds: enabledVocabularyPackIds,
+            VocabularyPackOverrides: vocabularyPackOverrides);
         var expansion = await _snippets.ExpandAsync(transcript.Text, snippets, cancellationToken).ConfigureAwait(false);
         var records = expansion.Outcome.Records;
         var masked = records.Count == 0

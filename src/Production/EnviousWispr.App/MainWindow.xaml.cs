@@ -221,6 +221,7 @@ public sealed partial class MainWindow : Window, IDisposable
             "Brand",
             "EnviousWispr.ico"));
         Activated += OnWindowActivated;
+        AppWindow.Changed += OnMainAppWindowChanged;
         Closed += (_, _) => CancelKeybindCapture();
 
         // Preserve persisted language offer history across restarts.
@@ -375,6 +376,16 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             EnsureOnboardingViewLoaded();
             FinishOnboardingButton?.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void OnMainAppWindowChanged(
+        AppWindow sender,
+        AppWindowChangedEventArgs args)
+    {
+        if (args.DidVisibilityChange || args.DidPresenterChange)
+        {
+            UpdateEgOneMemoryTimer(tickImmediately: true);
         }
     }
 
@@ -633,7 +644,9 @@ public sealed partial class MainWindow : Window, IDisposable
         _audioPlayback.StateChanged -= OnAudioPlaybackStateChanged;
         _audioPlayback.PlaybackFailed -= OnAudioPlaybackFailed;
         _audioPlayback.Dispose();
+        AppWindow.Changed -= OnMainAppWindowChanged;
         StopOllamaLivePollTimer();
+        StopEgOneMemoryTimer();
         StopOnboardingTimers();
         // THE WRITER IS NOT DISPOSED HERE, AND THAT IS DELIBERATE. Shutdown is synchronous and a
         // save may still be inside it; disposing its gate makes the release throw. The session that

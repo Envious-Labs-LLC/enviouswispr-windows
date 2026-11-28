@@ -73,6 +73,8 @@ public partial class App : Application, IAsyncDisposable
     private IDisposable? _windowHostBinding;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
     private IReadOnlyList<string> _enabledVocabularyPackIds = [];
+    private IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>> _vocabularyPackOverrides =
+        VocabularyPacks.EmptyOverrides;
     private SnippetVocabulary _snippetVocabulary = SnippetVocabulary.Empty;
     // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
     // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
@@ -144,8 +146,9 @@ public partial class App : Application, IAsyncDisposable
                 new WindowRuntimeView(this),
                 LivePreviewEnabled: () => _settings.Preferences.LivePreviewEnabled,
                 History: () => _settings.Preferences.History,
-                CustomWords: () => _settings.UserData.CustomWords,
+                CustomWords: () => _settings.UserData.EffectiveCustomWords(),
                 EnabledVocabularyPackIds: () => _settings.UserData.EnabledVocabularyPackIds,
+                VocabularyPackOverrides: () => _settings.UserData.VocabularyPackOverrides,
                 Audio: () => _audioCapture as IAudioSnapshotSource,
                 Engine: () => _transcriptionEngine,
                 PreviewEngine: () => _previewEngine,
@@ -280,8 +283,9 @@ public partial class App : Application, IAsyncDisposable
             LaunchCount = checked(loadResult.Settings.LaunchCount + 1),
         };
         _settings = settings;
-        _customWords = settings.UserData.CustomWords;
+        _customWords = settings.UserData.EffectiveCustomWords();
         _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
+        _vocabularyPackOverrides = settings.UserData.VocabularyPackOverrides;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         ConfigurePolish(settings.Preferences.Polish);
@@ -340,7 +344,8 @@ public partial class App : Application, IAsyncDisposable
             clock: TimeProvider.System,
             enabledVocabularyPackIds: () => _enabledVocabularyPackIds,
             targetAdapterProvider: () => _textTargetAdapter,
-            beginExecution: BeginHistoryRepolishExecution);
+            beginExecution: BeginHistoryRepolishExecution,
+            vocabularyPackOverrides: () => _vocabularyPackOverrides);
         _ollamaModelHost = new OllamaModelHost(
             _logger,
             () => _ollamaActiveModel,
@@ -559,6 +564,7 @@ public partial class App : Application, IAsyncDisposable
                 EgOneModelDownloadRequested: OnEgOneModelDownloadRequested,
                 EgOneModelDownloadCancelRequested: OnModelDownloadCancelRequested,
                 EgOneModelRemoveRequested: OnEgOneModelRemoveRequested,
+                GetEgOneServerActivities: QueryEgOneServerActivities,
                 SpeechEngineDownloadRequested: OnSpeechEngineDownloadRequested,
                 SpeechEngineRemoveRequested: OnSpeechEngineRemoveRequested,
                 IsSpeechEngineBusy: () => IsSpeechEngineBusy,
@@ -617,8 +623,9 @@ public partial class App : Application, IAsyncDisposable
         var previousPolish = _settings.Preferences.Polish;
         var previousLearnFromEdits = _settings.Preferences.Dictation.LearnFromEditsEnabled;
         _settings = settings;
-        _customWords = settings.UserData.CustomWords;
+        _customWords = settings.UserData.EffectiveCustomWords();
         _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
+        _vocabularyPackOverrides = settings.UserData.VocabularyPackOverrides;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         try

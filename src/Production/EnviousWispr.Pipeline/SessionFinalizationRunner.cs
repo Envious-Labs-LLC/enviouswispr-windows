@@ -111,7 +111,8 @@ public sealed record FinalizationOptions(
     DeterministicTextOptions TextOptions,
     SnippetVocabulary Snippets,
     PolishSetup? Polish,
-    IReadOnlyList<string>? EnabledVocabularyPackIds = null);
+    IReadOnlyList<string>? EnabledVocabularyPackIds = null,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? VocabularyPackOverrides = null);
 
 /// <summary>
 /// Turns a finished capture into delivered text: the speech engine, the text decisions, delivery,
@@ -367,6 +368,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     options.Polish,
                     targetAppName: targetAppName,
                     enabledVocabularyPackIds: options.EnabledVocabularyPackIds,
+                    vocabularyPackOverrides: options.VocabularyPackOverrides,
                     cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             var processed = finalized.Processed;

@@ -471,7 +471,7 @@ public sealed partial class MainWindow
     public void SyncExternalSettingsUpdate()
     {
         _settings = _session.Settings.Current;
-        ApplyUserDataRefresh(UserDataRefreshScope.Dictionary);
+        ApplyUserDataRefresh(UserDataRefreshScope.Dictionary | UserDataRefreshScope.VocabularyPacks);
         RefreshLearnMemoryUi();
     }
 

@@ -4,6 +4,7 @@ using EnviousWispr.Services.Diagnostics;
 
 namespace EnviousWispr.Architecture.Tests;
 
+[Collection("UatHardwareProfileEnv")]
 public sealed class HardwareProfileSummaryTests
 {
     [Theory]

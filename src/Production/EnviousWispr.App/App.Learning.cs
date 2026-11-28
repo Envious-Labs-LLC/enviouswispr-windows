@@ -46,7 +46,7 @@ public partial class App
         var coordinator = new LearnedCorrectionCoordinator(
             _presentation.Vocabulary,
             memoryStore,
-            () => VocabularyPacks.ResolveEntries(_enabledVocabularyPackIds),
+            () => VocabularyPacks.ResolveEntries(_enabledVocabularyPackIds, _vocabularyPackOverrides),
             _logger,
             onSettingsCommitted: PublishSelfLearningSettings);
         var presenter = new OverlayLearnedCorrectionPresenter(this, coordinator);
@@ -57,7 +57,7 @@ public partial class App
             () => judge,
             observer,
             () => _customWords,
-            () => VocabularyPacks.ResolveEntries(_enabledVocabularyPackIds),
+            () => VocabularyPacks.ResolveEntries(_enabledVocabularyPackIds, _vocabularyPackOverrides),
             coordinator,
             memoryStore,
             _logger);
@@ -129,8 +129,9 @@ public partial class App
 
         var latest = presentation.Settings.Current;
         _settings = latest;
-        _customWords = latest.UserData.CustomWords;
+        _customWords = latest.UserData.EffectiveCustomWords();
         _enabledVocabularyPackIds = latest.UserData.EnabledVocabularyPackIds;
+        _vocabularyPackOverrides = latest.UserData.VocabularyPackOverrides;
         _snippetVocabulary = Core.Settings.SnippetVocabulary.From(latest.UserData);
         PostToLiveWindow(window => window.SyncExternalSettingsUpdate());
     }

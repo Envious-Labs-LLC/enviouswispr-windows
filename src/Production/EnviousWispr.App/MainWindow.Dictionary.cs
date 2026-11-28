@@ -86,7 +86,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var existing = _settings.UserData.CustomWords
+        var existing = _settings.UserData.EffectiveCustomWords()
             .Where(entry => string.Equals(entry.Replacement, term, StringComparison.OrdinalIgnoreCase))
             .Select(entry => entry.SpokenForm)
             .ToArray();
@@ -310,7 +310,9 @@ public sealed partial class MainWindow
     internal bool IsClosing => _session.Closing;
 
     internal IReadOnlyList<CustomWordEntry> CurrentCustomWords =>
-        _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
+        _settings?.UserData?.EffectiveCustomWords() ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
+
+    internal int CurrentUserWordCount => _settings?.UserData?.CustomWords.Count ?? 0;
 
     /// <summary>Removes every selected word, asking first when it is more than one.</summary>
     /// <remarks>
@@ -399,158 +401,53 @@ public sealed partial class MainWindow
     /// Each item carries the pack's DESCRIPTION as its help text rather than its name twice, so a
     /// screen reader user hears what the list is for rather than a label they already heard.
     /// </remarks>
-    private bool _syncingVocabularyPacks;
-
     private void RefreshVocabularyPacksPanel()
     {
-        if (VocabularyPacksList is null || _settings is null)
+        if (_dictionaryPageView is null || _settings is null)
         {
             return;
         }
 
-        var enabledIds = new HashSet<string>(
+        _dictionaryPageView.ApplyVocabularyPacks(
             _settings.UserData.EnabledVocabularyPackIds,
-            StringComparer.OrdinalIgnoreCase);
-
-        if (VocabularyPacksList.Children.Count != VocabularyPacks.All.Count)
-        {
-            VocabularyPacksList.Children.Clear();
-            foreach (var pack in VocabularyPacks.All)
-            {
-                VocabularyPacksList.Children.Add(BuildVocabularyPackCard(pack));
-            }
-        }
-
-        _syncingVocabularyPacks = true;
-        try
-        {
-            foreach (var child in VocabularyPacksList.Children.OfType<Border>())
-            {
-                if (child.Tag is ToggleSwitch toggle && toggle.Tag is string packId)
-                {
-                    toggle.IsOn = enabledIds.Contains(packId);
-                }
-            }
-        }
-        finally
-        {
-            _syncingVocabularyPacks = false;
-        }
+            _settings.UserData.VocabularyPackOverrides);
     }
 
-    private Border BuildVocabularyPackCard(VocabularyPack pack)
+    internal Task<SettingsSaveResult> SetVocabularyPackEnabledAsync(string packId, bool enabled) =>
+        CommitVocabularyPackMutationAsync(_session.Vocabulary.SetVocabularyPackEnabledAsync(packId, enabled));
+
+    internal Task<SettingsSaveResult> SetVocabularyPackWordEnabledAsync(string packId, string canonical, bool enabled) =>
+        CommitVocabularyPackMutationAsync(_session.Vocabulary.SetVocabularyPackWordEnabledAsync(packId, canonical, enabled));
+
+    internal Task<SettingsSaveResult> SetVocabularyPackWordAliasesAsync(
+        string packId,
+        string canonical,
+        IReadOnlyList<string> aliases) =>
+        CommitVocabularyPackMutationAsync(_session.Vocabulary.SetVocabularyPackWordAliasesAsync(packId, canonical, aliases));
+
+    internal Task<SettingsSaveResult> RestoreVocabularyPackWordAsync(string packId, string canonical) =>
+        CommitVocabularyPackMutationAsync(_session.Vocabulary.RestoreVocabularyPackWordAsync(packId, canonical));
+
+    internal Task<SettingsSaveResult> RestoreVocabularyPackAsync(string packId) =>
+        CommitVocabularyPackMutationAsync(_session.Vocabulary.RestoreVocabularyPackAsync(packId));
+
+    internal Task<bool> ConfirmRestoreVocabularyPackAsync(string packName, int editedCount) =>
+        ConfirmAsync(
+            $"Restore {packName}?",
+            $"This resets all {editedCount} edited words in {packName} back to their shipped defaults.",
+            "Restore all");
+
+    private async Task<SettingsSaveResult> CommitVocabularyPackMutationAsync(Task<SettingsSaveResult> mutation)
     {
-        var icon = new FontIcon
+        var result = await mutation.ConfigureAwait(true);
+        if (!result.Saved)
         {
-            Glyph = pack.IconGlyph,
-            FontSize = 16,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BrandAccentBrush"],
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var iconTile = new Border
-        {
-            Width = 36,
-            Height = 36,
-            Style = (Style)Application.Current.Resources["BrandIconTileStyle"],
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = icon,
-        };
+            return result;
+        }
 
-        var titleText = new TextBlock
-        {
-            Text = pack.Name,
-            Style = (Style)Application.Current.Resources["BrandRowLabelStyle"],
-        };
-        var descText = new TextBlock
-        {
-            Text = pack.Description,
-            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
-            TextWrapping = TextWrapping.Wrap,
-        };
-        var summaryText = new TextBlock
-        {
-            Text = $"{pack.FixCount} fixes \u00B7 e.g. {string.Join(", ", pack.ExampleTerms)}",
-            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
-            TextWrapping = TextWrapping.Wrap,
-        };
-        var infoStack = new StackPanel
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            Spacing = 2,
-            Children = { titleText, descText, summaryText },
-        };
-
-        var seeAllButton = new Button
-        {
-            Content = "See all",
-            Style = (Style)Application.Current.Resources["BrandQuietButtonStyle"],
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(seeAllButton, $"See all words in {pack.Name}");
-        seeAllButton.Click += async (_, _) => await ShowPackDetailDialogAsync(pack).ConfigureAwait(true);
-
-        var toggle = new ToggleSwitch
-        {
-            Style = (Style)Application.Current.Resources["BrandToggleSwitchStyle"],
-            MinWidth = 0,
-            Tag = pack.Id,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLabeledBy(toggle, titleText);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(toggle, pack.Description);
-        toggle.Toggled += async (_, _) =>
-        {
-            if (_syncingVocabularyPacks || _settings is null)
-            {
-                return;
-            }
-
-            var enabled = toggle.IsOn;
-            var saveResult = await _session.Vocabulary.SetVocabularyPackEnabledAsync(pack.Id, enabled)
-                .ConfigureAwait(true);
-            if (!saveResult.Saved)
-            {
-                _syncingVocabularyPacks = true;
-                toggle.IsOn = !enabled;
-                _syncingVocabularyPacks = false;
-                if (saveResult.Refusal is { } refusal)
-                {
-                    ShowSettingsRefusal(refusal);
-                }
-
-                return;
-            }
-
-            PublishSettings();
-            ApplyUserDataRefresh(UserDataRefreshScope.VocabularyPacks);
-        };
-
-        var actions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children = { seeAllButton, toggle },
-        };
-
-        var rowGrid = new Grid { ColumnSpacing = 12 };
-        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        rowGrid.Children.Add(iconTile);
-        Grid.SetColumn(infoStack, 1);
-        rowGrid.Children.Add(infoStack);
-        Grid.SetColumn(actions, 2);
-        rowGrid.Children.Add(actions);
-
-        return new Border
-        {
-            Padding = new Thickness(14, 12, 14, 12),
-            Style = (Style)Application.Current.Resources["BrandSettingsCardStyle"],
-            Child = rowGrid,
-            Tag = toggle,
-        };
+        PublishSettings();
+        ApplyUserDataRefresh(UserDataRefreshScope.VocabularyPacks);
+        return result;
     }
 
     private Button BuildOfferButton(ImportConflictOffer offer)
@@ -712,6 +609,15 @@ public sealed partial class MainWindow
 
     internal async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_settings.UserData.CustomWords.Count == 0)
+        {
+            ShowMessage(
+                "No personal words to export",
+                "Built-in words are already included automatically. Add or edit a word first to export your own list.",
+                InfoBarSeverity.Informational);
+            return;
+        }
+
         var picker = new FileSavePicker
         {
             SuggestedFileName = "EnviousWispr-words",
@@ -870,6 +776,7 @@ public sealed partial class MainWindow
         DictPanelPacks.Visibility = tabKey == "packs" ? Visibility.Visible : Visibility.Collapsed;
         DictPanelLearnFrom.Visibility = tabKey == "learn-from" ? Visibility.Visible : Visibility.Collapsed;
         DictPanelQuickAdd.Visibility = tabKey == "quick-add" ? Visibility.Visible : Visibility.Collapsed;
+        _dictionaryPageView?.ClosePackDetail();
 
         if (DictionaryTabStrip is not null)
         {

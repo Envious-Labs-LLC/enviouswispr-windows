@@ -52,6 +52,9 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 
     public IReadOnlyList<string> EnabledVocabularyPackIds => shell.EnabledVocabularyPackIds?.Invoke() ?? [];
 
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>> VocabularyPackOverrides =>
+        shell.VocabularyPackOverrides?.Invoke() ?? VocabularyPacks.EmptyOverrides;
+
     public EnglishSpelling EnglishSpelling => shell.Dictation?.Invoke().EnglishSpelling ?? EnglishSpelling.American;
 
     public void ShowPreview(LivePreviewFrame frame) => shell.View.ShowPreview(frame);

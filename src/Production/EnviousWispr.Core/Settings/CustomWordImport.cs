@@ -293,7 +293,16 @@ public static class CustomWordImport
 
             if (remaining.Count > 0)
             {
-                merged.Add(new CustomWordEntry(remaining, entry.Replacement, entry.Strictness, entry.Category));
+                var preservedLearned = CustomWordEntry.NormalizeLearnedAliases(
+                    entry.EffectiveLearnedAliases(),
+                    remaining);
+                merged.Add(new CustomWordEntry(
+                    remaining,
+                    entry.Replacement,
+                    entry.Strictness,
+                    entry.Category,
+                    learnedAliases: preservedLearned,
+                    learnedAt: preservedLearned.Count > 0 ? entry.LearnedAt : null));
             }
 
             foreach (var group in matched.GroupBy(m => (m.Taken.Replacement, m.Taken.Strictness, m.Taken.Category)))

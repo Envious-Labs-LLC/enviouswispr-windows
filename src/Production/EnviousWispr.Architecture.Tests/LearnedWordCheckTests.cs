@@ -374,6 +374,8 @@ public sealed class LearnedWordCheckTests : IDisposable
         public int EnsureReadyCalls { get; private set; }
         public int? OwnedProcessId => null;
         public int? SleepIdleSeconds => 10;
+        public EnviousWispr.Core.Polish.EgOneServerActivity ServerActivity => EnviousWispr.Core.Polish.EgOneServerActivity.Ready;
+        public event EventHandler? ServerActivityChanged { add { } remove { } }
         public Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken)
         {
             EnsureReadyCalls++;
