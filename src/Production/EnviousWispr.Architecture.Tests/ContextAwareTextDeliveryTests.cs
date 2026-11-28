@@ -520,6 +520,43 @@ public sealed class ContextAwareTextDeliveryTests
         Assert.Equal("complete your tests. ", hybridResult.DeliveredText);
     }
 
+    [Fact]
+    public async Task CancellationDuringColdDictionaryWaitReturnsNamedCancellationWithRecoveryText()
+    {
+        using var cts = new CancellationTokenSource();
+        var adapter = new CancelingCaptureAdapter(AvailableContext(left: "Vi ska ", right: string.Empty), cts);
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(
+            new TextDeliveryRequest(
+                new ProcessedText(SessionId, "Gå hem."),
+                Target,
+                LanguageCode: "da",
+                TextDeliveryOptions.Default,
+                SnippetExpanded: false),
+            cts.Token);
+
+        Assert.False(result.Delivered);
+        Assert.Equal(TextDeliveryRefusalReason.Cancelled, result.RefusalReason);
+        Assert.Null(result.Fault);
+        Assert.Equal("Gå hem.", delivery.RecoveryText?.Text);
+    }
+
+    private sealed class CancelingCaptureAdapter(TargetContextResult capture, CancellationTokenSource cts) : ITextTargetAdapter
+    {
+        public Task<TargetContextResult> CaptureContextAsync(TargetWindowId target, TextDeliveryOptions options, CancellationToken cancellationToken = default)
+        {
+            cts.Cancel();
+            return Task.FromResult(capture);
+        }
+
+        public Task<TextCommitResult> CommitAsync(TextCommitRequest request, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Commit should not run after cancellation.");
+
+        public Task<TextCommitResult> CopyOnlyAsync(ProcessedText text, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("CopyOnly should not run after cancellation.");
+    }
+
     private sealed class FakeOsLanguageDetector(IReadOnlyList<string> tags) : IOsLanguageDetector
     {
         public IReadOnlyList<string> DetectBaseTags(string text) => tags;

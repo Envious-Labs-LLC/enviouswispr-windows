@@ -1914,17 +1914,24 @@ public sealed class WindowsTextDeliverySafetyTests
     [Fact]
     public void PreflightRefusalHonorsCheckCaretTextUnchangedFlag()
     {
-        var target = new TargetWindowId(0x555, 77, "msedge", "edge-focus");
+        var target = new TargetWindowId(0x555, 77, "WindowsTerminal", "term-focus");
         var expected = Context(target, "hello ", string.Empty, string.Empty);
-        var drifted = expected with { Left = "hello world " };
-        var current = new TargetContextResult(TargetContextStatus.Available, drifted);
+        var leftDrifted = new TargetContextResult(TargetContextStatus.Available, expected with { Left = "hello world " });
+        var selectionDrifted = new TargetContextResult(TargetContextStatus.Available, expected with { Selection = "hello" });
+        var rightRedrew = new TargetContextResult(TargetContextStatus.Available, expected with { Right = "status redraw " });
 
         Assert.Equal(
             TextDeliveryRefusalReason.TargetChanged,
-            WindowsTextTargetAdapter.PreflightRefusal(current, expected, checkCaretTextUnchanged: true));
+            WindowsTextTargetAdapter.PreflightRefusal(leftDrifted, expected, checkCaretTextUnchanged: false));
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(selectionDrifted, expected, checkCaretTextUnchanged: false));
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(rightRedrew, expected, checkCaretTextUnchanged: true));
         Assert.Equal(
             TextDeliveryRefusalReason.None,
-            WindowsTextTargetAdapter.PreflightRefusal(current, expected, checkCaretTextUnchanged: false));
+            WindowsTextTargetAdapter.PreflightRefusal(rightRedrew, expected, checkCaretTextUnchanged: false));
     }
 
     [Fact]

@@ -1520,10 +1520,15 @@ public sealed class WindowsPasteResilienceAndPolicyTests
             SupportsDirectValueWrite: false,
             DirectValueWriteAtEnd: false,
             IsScreenDerived: true);
-        var spinnerDrifted = expected with { Left = "Can you still ", Right = string.Empty };
+        var cursorMoved = expected with { Left = "Can you still ", Right = string.Empty };
+        var selectionChanged = expected with { Selection = "you" };
+        var rightRedrew = expected with { Right = "redraw ", RightReachedDocumentEnd = false };
 
-        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, spinnerDrifted, checkCaretTextUnchanged: true));
-        Assert.True(WindowsTextDeliveryPolicy.CaretUnchanged(expected, spinnerDrifted, checkCaretTextUnchanged: false));
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, cursorMoved, checkCaretTextUnchanged: true));
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, cursorMoved, checkCaretTextUnchanged: false));
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, selectionChanged, checkCaretTextUnchanged: false));
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, rightRedrew, checkCaretTextUnchanged: true));
+        Assert.True(WindowsTextDeliveryPolicy.CaretUnchanged(expected, rightRedrew, checkCaretTextUnchanged: false));
 
         // Window/focus/target-kind mismatches must still fail even when caret text check is skipped.
         var differentFocus = expected with { FocusedElementId = "other-focus" };

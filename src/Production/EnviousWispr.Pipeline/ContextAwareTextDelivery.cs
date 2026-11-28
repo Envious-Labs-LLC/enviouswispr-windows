@@ -153,9 +153,16 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 SeamCasingPolicies.PolicyFor(baseLanguage) is not null &&
                 !SeamCasingOracleRuntime.Shared.IsLanguageReady(baseLanguage))
             {
-                await SeamCasingOracleRuntime.Shared
-                    .WaitForLanguageReadyAsync(baseLanguage, _oracleColdLoadBudget, cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await SeamCasingOracleRuntime.Shared
+                        .WaitForLanguageReadyAsync(baseLanguage, _oracleColdLoadBudget, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (IsNamed(exception))
+                {
+                    return Stopped(request, DeliveryStage.ContextCapture, exception, cancellationToken);
+                }
             }
 
             effectiveOracle = SeamCasingOracleRuntime.Shared.NonBlockingOracle;

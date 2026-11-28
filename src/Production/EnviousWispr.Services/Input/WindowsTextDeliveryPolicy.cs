@@ -183,11 +183,11 @@ internal static class WindowsTextDeliveryPolicy
         expected.HasTextContext == actual.HasTextContext &&
         expected.IsScreenDerived == actual.IsScreenDerived &&
         expected.IsUrlBarField == actual.IsUrlBarField &&
+        string.Equals(expected.Left, actual.Left, StringComparison.Ordinal) &&
+        string.Equals(expected.Selection, actual.Selection, StringComparison.Ordinal) &&
         (!checkCaretTextUnchanged || (
             expected.LeftReachedDocumentStart == actual.LeftReachedDocumentStart &&
             expected.RightReachedDocumentEnd == actual.RightReachedDocumentEnd &&
-            string.Equals(expected.Left, actual.Left, StringComparison.Ordinal) &&
-            string.Equals(expected.Selection, actual.Selection, StringComparison.Ordinal) &&
             string.Equals(expected.Right, actual.Right, StringComparison.Ordinal)));
 
     internal static bool ShouldRetryColdChromiumFocus(WindowsTextTargetAdapter.FocusedElementFacts? focus) =>
