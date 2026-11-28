@@ -147,24 +147,80 @@ public sealed class ParakeetTdtRecipeTests
     [Fact]
     public void TrailingSilenceTrimsFinalChunkAtSpeechEnd()
     {
-        var backend = new ScriptedRecipeBackend();
+        var lastChunkFinalSeen = false;
+        var backend = new ScriptedRecipeBackend((window, frame, previous, _, _) =>
+        {
+            if (window == 1 && frame == 172)
+            {
+                return (2, 1); // " cat" within <1.5s of end so seam-gap repair stays idle
+            }
+
+            if (window == 1 && previous == 2 && frame >= 184)
+            {
+                lastChunkFinalSeen = true;
+                return (4, 1); // terminal punctuation only emitted when final chunk runs isLast=true
+            }
+
+            return (BlankIndex, 1);
+        });
         using var runContext = backend.CreateRunContext(CancellationToken.None);
         var recipe = CreateRecipe(backend);
 
-        // 25s of speech + 10s of trailing silence = 35s total; chunk 2 starts past speechEnd and is skipped.
+        // 25s of speech + 10s of trailing silence = 35s total; chunk 1 is last speech-bearing chunk -> backfilled & final.
         var samples = Concat(Loud(25.0), Silence(10.0));
         var result = recipe.Transcribe(samples, null, null, runContext, CancellationToken.None);
 
         Assert.Equal(2, result.WindowCount);
-        Assert.Equal([(240_000, 238_080), (240_000, 239_360)], backend.PreprocessCalls);
+        Assert.Equal([(240_000, 238_080), (240_000, 237_440)], backend.PreprocessCalls);
+        Assert.True(lastChunkFinalSeen);
+        Assert.Equal("cat.", recipe.TokensToText(result.Tokens));
 
-        // 25s speech + 2s trailing silence = 27s total; final chunk 1 trims its tail at 25s and backfills to 238,080.
+        // 25s speech + 2s trailing silence = 27s total; final chunk 1 trims its tail at 25s (400,000) and backfills cleanly.
         var tailBackend = new ScriptedRecipeBackend();
         using var tailCtx = tailBackend.CreateRunContext(CancellationToken.None);
         var tailResult = CreateRecipe(tailBackend).Transcribe(
             Concat(Loud(25.0), Silence(2.0)), null, null, tailCtx, CancellationToken.None);
         Assert.Equal(2, tailResult.WindowCount);
-        Assert.Equal((240_000, 238_080), tailBackend.PreprocessCalls[1]);
+        Assert.Equal((240_000, 237_440), tailBackend.PreprocessCalls[1]);
+    }
+
+    [Fact]
+    public async Task ChunkedCpuTakeRescuesBlankOutputViaFullPrecisionFallbackAndTrimmedRetry()
+    {
+        var vocab = CreateVocab();
+        var options = new ParakeetEngineOptions(
+            ModelDirectory: "synthetic",
+            RuntimeProviderKind.Cpu,
+            ParakeetModelPack.Quantized,
+            IntraOpThreads: 4);
+
+        // 1) Chunked quantized pass returns blanks across windows; FP32 fallback recovers tokens.
+        var fp32Backend = new ScriptedRecipeBackend(
+            (_, frame, _, _, _) => frame == 10 ? (2, 1) : (BlankIndex, 1),
+            enableFullPrecisionFallback: true);
+        using (var fp32Engine = new ParakeetTranscriptionEngine(options, fp32Backend, vocab))
+        {
+            var fp32Audio = new CapturedAudio(DictationSessionId.Create(), Loud(20.0), 16_000, Channels: 1);
+            var fp32Result = await fp32Engine.TranscribeAsync(fp32Audio);
+            Assert.Equal("cat", fp32Result.Text);
+            Assert.True(fp32Backend.FullPrecisionFallbackCalls > 0);
+        }
+
+        // 2) Without FP32 sidecar, silence-framed >15s take that blanks in chunked mode retries trimmed voiced audio.
+        var encodeCall = 0;
+        var trimBackend = new ScriptedRecipeBackend((_, frame, _, _, _) =>
+            encodeCall > 2 && frame == 5 ? (5, 1) : (BlankIndex, 1));
+        trimBackend.OnEncode += () => encodeCall++;
+        using (var trimEngine = new ParakeetTranscriptionEngine(options, trimBackend, vocab))
+        {
+            var framed = Concat(Silence(6.0), Loud(10.0), Silence(4.0));
+            var trimAudio = new CapturedAudio(DictationSessionId.Create(), framed, 16_000, Channels: 1);
+            var trimResult = await trimEngine.TranscribeAsync(trimAudio);
+            Assert.Equal("sat", trimResult.Text);
+            Assert.NotNull(trimResult.TokenTimings);
+            Assert.Single(trimResult.TokenTimings!);
+            Assert.True(trimResult.TokenTimings![0].Start > TimeSpan.FromSeconds(5.0));
+        }
     }
 
     [Fact]
@@ -512,14 +568,21 @@ public sealed class ParakeetTdtRecipeTests
     private sealed class ScriptedRecipeBackend : ParakeetTranscriptionEngine.IParakeetBackend
     {
         private readonly Func<int, int, int, bool[]?, bool[]?, (int Token, int Step)> _script;
+        private readonly bool _enableFullPrecisionFallback;
         private int _window = -1;
         private bool _stepped;
 
         public ScriptedRecipeBackend(
-            Func<int, int, int, bool[]?, bool[]?, (int Token, int Step)>? script = null)
+            Func<int, int, int, bool[]?, bool[]?, (int Token, int Step)>? script = null,
+            bool enableFullPrecisionFallback = false)
         {
             _script = script ?? ((_, _, _, _, _) => (BlankIndex, 1));
+            _enableFullPrecisionFallback = enableFullPrecisionFallback;
         }
+
+        public event Action? OnEncode;
+
+        public int FullPrecisionFallbackCalls { get; private set; }
 
         public int EncoderDimension => 4;
 
@@ -564,11 +627,12 @@ public sealed class ParakeetTdtRecipeTests
             cancellationToken.ThrowIfCancellationRequested();
             _window++;
             _stepped = false;
+            OnEncode?.Invoke();
             var frames = ParakeetTdtRecipe.CeilDiv((int)featureLength, 8);
             var encoded = new float[EncoderDimension * frames];
             for (var frame = 0; frame < frames; frame++)
             {
-                encoded[frame] = frame; // channel 0 carries local frame index
+                encoded[frame] = _enableFullPrecisionFallback ? -1f : frame; // channel 0 carries local frame index
             }
 
             return (encoded, frames);
@@ -582,9 +646,23 @@ public sealed class ParakeetTdtRecipeTests
             out float[] encodedChannelFirst,
             out int encodedLength)
         {
-            encodedChannelFirst = [];
-            encodedLength = 0;
-            return false;
+            if (!_enableFullPrecisionFallback)
+            {
+                encodedChannelFirst = [];
+                encodedLength = 0;
+                return false;
+            }
+
+            FullPrecisionFallbackCalls++;
+            var frames = ParakeetTdtRecipe.CeilDiv((int)featureLength, 8);
+            encodedChannelFirst = new float[EncoderDimension * frames];
+            for (var frame = 0; frame < frames; frame++)
+            {
+                encodedChannelFirst[frame] = frame;
+            }
+
+            encodedLength = frames;
+            return true;
         }
 
         public ParakeetTranscriptionEngine.ParakeetDecoderStepResult DecodeStep(

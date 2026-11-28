@@ -601,6 +601,20 @@ public sealed class ModelProvisioningTests
             Assert.True(ParakeetModelLocator.IsDirectoryUnderLegacyV3(donorLegacyDataDir, storeRoot));
             Assert.True(ParakeetModelLocator.IsDirectoryUnderLegacyV3(Path.Combine(donorLegacyDataDir, "versions", "1.0.0"), storeRoot));
             Assert.False(ParakeetModelLocator.IsDirectoryUnderLegacyV3(Path.Combine(storeRoot, ParakeetModelIds.Final), storeRoot));
+            // Corrupt hand-copied Ultra folder must NOT trigger legacy v3 retirement even if all filenames exist.
+            var corruptUltraDir = Path.Combine(storeRoot, ParakeetModelIds.Final);
+            WriteCompleteParakeetPack(corruptUltraDir);
+            Assert.False(await ParakeetModelLocator.IsUltraInstalledInStoreOrDataAsync(store, storeRoot));
+            var blockedRetire = await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.False(blockedRetire.Succeeded);
+            Assert.Equal(ModelDeliveryFailure.VersionNotInstalled, blockedRetire.Failure);
+            Assert.True(Directory.Exists(donorLegacyDataDir));
+            Directory.Delete(corruptUltraDir, recursive: true);
+
             Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.Final, payloadBytes))).Succeeded);
             Assert.Equal(
                 ParakeetUpgradeAction.RetireLegacyV3,

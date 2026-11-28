@@ -363,14 +363,20 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             ? array
             : audio.Samples.ToArray();
 
+        var isCpuQuantized = Provider == RuntimeProviderKind.Cpu && ModelPack == ParakeetModelPack.Quantized;
         var recipeResult = _recipe.Transcribe(
             samples,
             allowedTokenMask,
             blockedTokenMask,
             runContext,
             cancellationToken,
-            Provider == RuntimeProviderKind.Cpu && ModelPack == ParakeetModelPack.Quantized
-                ? RescueSinglePassBlankOutput
+            isCpuQuantized ? RescueSinglePassBlankOutput : null,
+            isCpuQuantized
+                ? audioSamples =>
+                {
+                    var analysis = AnalyzeVoicedSpeech(audioSamples);
+                    return (analysis.HasVoicedSpeech, analysis.TrimmedStartSample, analysis.TrimmedLength);
+                }
                 : null);
 
         var text = _recipe.TokensToText(recipeResult.Tokens);

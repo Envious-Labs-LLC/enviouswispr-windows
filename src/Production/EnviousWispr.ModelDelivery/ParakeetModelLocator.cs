@@ -200,7 +200,77 @@ public static class ParakeetModelLocator
         }
 
         var ultraLegacyData = Path.Combine(storeRoot, ParakeetModelIds.Final);
-        return Directory.Exists(ultraLegacyData) && IsModelComplete(ultraLegacyData);
+        return Directory.Exists(ultraLegacyData) &&
+            IsModelComplete(ultraLegacyData) &&
+            await VerifyBundledUltraDirectoryAsync(ultraLegacyData, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> VerifyBundledUltraDirectoryAsync(
+        string directory,
+        CancellationToken cancellationToken)
+    {
+        var manifestResult = BundledModelManifests.Load(
+            ParakeetModelIds.Final,
+            new ModelManifestVerifier(new Dictionary<string, string>(StringComparer.Ordinal)));
+        if (!manifestResult.Succeeded || manifestResult.Manifest is null)
+        {
+            return false;
+        }
+
+        var normalizedRoot = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rootPrefix = normalizedRoot + Path.DirectorySeparatorChar;
+        foreach (var artifact in manifestResult.Manifest.Payload.Files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var filePath = Path.GetFullPath(Path.Combine(normalizedRoot, artifact.RelativePath));
+            if (!filePath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(filePath))
+            {
+                return false;
+            }
+
+            try
+            {
+                var info = new FileInfo(filePath);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                    info.Length != artifact.SizeBytes)
+                {
+                    return false;
+                }
+
+                await using var stream = new FileStream(
+                    filePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 1024 * 1024,
+                    useAsync: true);
+                var digest = await System.Security.Cryptography.SHA256
+                    .HashDataAsync(stream, cancellationToken)
+                    .ConfigureAwait(false);
+                var actualHex = Convert.ToHexString(digest);
+                if (!string.Equals(actualHex, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static async Task<bool> HasAnyInstalledPackageAsync(

@@ -99,7 +99,8 @@ internal sealed class ParakeetTdtRecipe
         bool[]? blockedTokenMask,
         ParakeetTranscriptionEngine.IParakeetRunContext runContext,
         CancellationToken cancellationToken,
-        SinglePassBlankRescue? singlePassBlankRescue = null)
+        SinglePassBlankRescue? singlePassBlankRescue = null,
+        Func<float[], (bool HasVoicedSpeech, int TrimmedStartSample, int TrimmedLength)>? voicedTrimLocator = null)
     {
         ArgumentNullException.ThrowIfNull(samples);
         ArgumentNullException.ThrowIfNull(runContext);
@@ -163,17 +164,19 @@ internal sealed class ParakeetTdtRecipe
         }
 
         var speechEnd = FindSpeechEnd(samples, cancellationToken);
+        var effectiveTotal = Math.Max(FrameSamples, Math.Min(totalSamples, speechEnd));
         var outputs = new List<List<DecodedToken>>();
         var windowRanges = new List<(int StartSample, int EndSample)>();
         var start = 0;
         var windowIndex = 0;
-        while (start < totalSamples)
+        var allowFullPrecisionFallback = singlePassBlankRescue is not null;
+        while (start < effectiveTotal)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var warmup = LastChunkWarmup(start, totalSamples, speechEnd);
+            var warmup = LastChunkWarmup(start, effectiveTotal, speechEnd);
             var visible = Math.Max(FrameSamples, ChunkSamples - warmup);
-            var isLast = start + visible >= totalSamples;
-            var end = isLast ? totalSamples : start + visible;
+            var isLast = start + visible >= effectiveTotal;
+            var end = isLast ? effectiveTotal : start + visible;
             var audioEnd = isLast ? Math.Min(end, speechEnd) : end;
             if (end <= start || audioEnd <= start)
             {
@@ -197,7 +200,8 @@ internal sealed class ParakeetTdtRecipe
                     runContext,
                     cancellationToken,
                     emitAfterFrame: start / FrameSamples,
-                    startFrame: 0));
+                    startFrame: 0,
+                    allowFullPrecisionFallback: allowFullPrecisionFallback));
             }
             else
             {
@@ -210,7 +214,8 @@ internal sealed class ParakeetTdtRecipe
                     allowedTokenMask,
                     blockedTokenMask,
                     runContext,
-                    cancellationToken));
+                    cancellationToken,
+                    allowFullPrecisionFallback: allowFullPrecisionFallback));
             }
 
             windowIndex++;
@@ -222,12 +227,7 @@ internal sealed class ParakeetTdtRecipe
             start += StrideSamples;
         }
 
-        if (outputs.Count == 0)
-        {
-            return new RecipeResult([], 0, 0, 0);
-        }
-
-        var merged = outputs[0];
+        var merged = outputs.Count > 0 ? outputs[0] : [];
         var seamRanges = new List<(int StartFrame, int EndFrame)>(Math.Max(0, outputs.Count - 1));
         for (var i = 1; i < outputs.Count; i++)
         {
@@ -258,6 +258,46 @@ internal sealed class ParakeetTdtRecipe
             merged = repaired;
         }
 
+        if (merged.Count == 0 && voicedTrimLocator is not null)
+        {
+            try
+            {
+                var (hasVoicedSpeech, trimmedStart, trimmedLength) = voicedTrimLocator(samples);
+                if (hasVoicedSpeech &&
+                    trimmedLength >= ParakeetTranscriptionEngine.MinimumPreprocessorInputSamples &&
+                    trimmedLength < samples.Length)
+                {
+                    var trimmedSamples = samples.AsSpan(trimmedStart, trimmedLength).ToArray();
+                    var retried = Transcribe(
+                        trimmedSamples,
+                        allowedTokenMask,
+                        blockedTokenMask,
+                        runContext,
+                        cancellationToken,
+                        singlePassBlankRescue: null,
+                        voicedTrimLocator: null);
+                    if (retried.Tokens.Count > 0)
+                    {
+                        return new RecipeResult(
+                            retried.Tokens,
+                            retried.WindowCount,
+                            retried.RepairCount,
+                            trimmedStart + retried.StartSampleOffset);
+                    }
+                }
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
+            {
+                // Preserve empty result when trimmed chunked retry fails.
+            }
+        }
+
         return new RecipeResult(merged, outputs.Count, repairs, StartSampleOffset: 0);
     }
 
@@ -272,7 +312,8 @@ internal sealed class ParakeetTdtRecipe
         ParakeetTranscriptionEngine.IParakeetRunContext runContext,
         CancellationToken cancellationToken,
         int? emitAfterFrame = null,
-        int? startFrame = null)
+        int? startFrame = null,
+        bool allowFullPrecisionFallback = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var realSampleCount = samples.Length;
@@ -302,7 +343,7 @@ internal sealed class ParakeetTdtRecipe
             featureLength,
             runContext,
             cancellationToken);
-        return DecodeEncoded(
+        var decoded = DecodeEncoded(
             encodedRaw,
             encodedLength,
             realSampleCount,
@@ -316,6 +357,51 @@ internal sealed class ParakeetTdtRecipe
             cancellationToken,
             emitAfterFrame,
             startFrame);
+        if (decoded.Count == 0 && allowFullPrecisionFallback)
+        {
+            try
+            {
+                if (_backend.TryEncodeWithFullPrecisionFallback(
+                        features,
+                        featureLength,
+                        runContext,
+                        cancellationToken,
+                        out var fp32EncodedRaw,
+                        out var fp32EncodedLength))
+                {
+                    var fp32Decoded = DecodeEncoded(
+                        fp32EncodedRaw,
+                        fp32EncodedLength,
+                        realSampleCount,
+                        contextSamples,
+                        offsetSample,
+                        isLast,
+                        padToWindow,
+                        allowedTokenMask,
+                        blockedTokenMask,
+                        runContext,
+                        cancellationToken,
+                        emitAfterFrame,
+                        startFrame);
+                    if (fp32Decoded.Count > 0)
+                    {
+                        return fp32Decoded;
+                    }
+                }
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
+            {
+                // Rescue is best-effort: keep original empty chunk result when optional FP32 fallback fails.
+            }
+        }
+
+        return decoded;
     }
 
     internal List<DecodedToken> DecodeEncoded(
@@ -1208,8 +1294,9 @@ internal sealed class ParakeetTdtRecipe
 
     internal static int LastChunkWarmup(int start, int totalSamples, int speechEnd)
     {
-        var isLast = start + ChunkSamples >= totalSamples;
-        var remaining = Math.Min(speechEnd, totalSamples) - start;
+        var effectiveTotal = Math.Min(totalSamples, speechEnd);
+        var isLast = start + ChunkSamples >= effectiveTotal;
+        var remaining = effectiveTotal - start;
         if (!isLast || remaining <= 0 || start <= 0)
         {
             return 0;
