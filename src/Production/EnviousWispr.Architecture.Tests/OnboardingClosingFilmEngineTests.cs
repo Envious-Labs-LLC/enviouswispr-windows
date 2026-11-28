@@ -171,6 +171,7 @@ public sealed class OnboardingClosingFilmEngineTests
         var copiedCaptions = OnboardingClosingFilmEngine.GetCaptions(ClosingFilmSceneKind.Copied);
         var copiedSummary = OnboardingClosingFilmEngine.GetSpokenSummary(ClosingFilmSceneKind.Copied, SampleSummary);
         Assert.Contains(copiedCaptions, c => c.Title.Contains("Ctrl+V", StringComparison.Ordinal));
+        Assert.Contains(copiedCaptions, c => c.Subtitle.Contains("until you copy something else", StringComparison.Ordinal));
         Assert.Contains("Ctrl+V", copiedSummary, StringComparison.Ordinal);
         Assert.DoesNotContain(copiedCaptions, c => c.Subtitle.Contains("comes back after", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain("earlier clipboard", copiedSummary, StringComparison.OrdinalIgnoreCase);

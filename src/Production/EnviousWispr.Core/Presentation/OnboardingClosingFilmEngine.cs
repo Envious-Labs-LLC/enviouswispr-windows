@@ -433,7 +433,7 @@ public static class OnboardingClosingFilmEngine
         [
             new("No text box selected?", "You clicked File Explorer. Talk anyway.", Captions.Copied[0]),
             new("EnviousWispr copies your words.", "The pill says: Copied. Press Ctrl+V to paste.", Captions.Copied[1]),
-            new("Press Ctrl+V wherever you want them.", "Your words stay on the clipboard until you paste.", Captions.Copied[2]),
+            new("Press Ctrl+V wherever you want them.", "Your words stay on your clipboard until you copy something else.", Captions.Copied[2]),
         ],
         ClosingFilmSceneKind.Learn =>
         [
