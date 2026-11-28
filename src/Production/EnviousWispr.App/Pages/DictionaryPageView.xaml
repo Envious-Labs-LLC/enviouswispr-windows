@@ -231,13 +231,13 @@
                                 </StackPanel>
                             </Border>
                         </ScrollViewer>
-                        <Border x:Name="PackDetailPanel" x:FieldModifier="internal" Padding="20" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
-                            <Grid RowSpacing="{StaticResource BrandSpacingM}">
+                        <Border x:Name="PackDetailPanel" x:FieldModifier="internal" Padding="20,16,20,16" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
+                            <Grid RowSpacing="{StaticResource BrandSpacingS}">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
-                                <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingM}">
+                                <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingS}">
                                     <Grid x:Name="PackDetailHeaderGrid" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="PackDetailHeaderGrid_SizeChanged">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />

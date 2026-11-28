@@ -746,7 +746,7 @@ public sealed partial class DictionaryPageView : UserControl
         return new PackCardControls(root, toggle, editedBadge, editedBadgeText);
     }
 
-    private void RefreshOpenPackDetail()
+    private void RefreshOpenPackDetail(bool scrollToTop = false)
     {
         if (_openPackId is null || VocabularyPacks.FindById(_openPackId) is not { } pack)
         {
@@ -828,6 +828,11 @@ public sealed partial class DictionaryPageView : UserControl
                 ? $"No words match \u201C{query}\u201D."
                 : "No edited words in this pack.")
             : string.Empty;
+
+        if (scrollToTop && _packWordRows.Count > 0)
+        {
+            PackWordsList.ScrollIntoView(_packWordRows[0], ScrollIntoViewAlignment.Leading);
+        }
     }
 
     private static bool MatchesPackWordQuery(VocabularyPackWordState state, string query)
@@ -866,14 +871,14 @@ public sealed partial class DictionaryPageView : UserControl
             return;
         }
 
-        var narrow = e.NewSize.Width < 580;
+        var narrow = e.NewSize.Width < 460;
         if (narrow)
         {
             Grid.SetRow(PackDetailActionsPanel, 1);
             Grid.SetColumn(PackDetailActionsPanel, 0);
             Grid.SetColumnSpan(PackDetailActionsPanel, 3);
             PackDetailActionsPanel.HorizontalAlignment = HorizontalAlignment.Left;
-            PackDetailActionsPanel.Margin = new Thickness(0, 8, 0, 0);
+            PackDetailActionsPanel.Margin = new Thickness(0, 6, 0, 0);
         }
         else
         {
@@ -976,7 +981,7 @@ public sealed partial class DictionaryPageView : UserControl
 
         if (_openPackId is not null)
         {
-            RefreshOpenPackDetail();
+            RefreshOpenPackDetail(scrollToTop: true);
         }
     }
 
@@ -991,7 +996,7 @@ public sealed partial class DictionaryPageView : UserControl
         if (string.Equals(_packWordFilter, "edited", StringComparison.Ordinal))
         {
             _packWordFilter = "all";
-            RefreshOpenPackDetail();
+            RefreshOpenPackDetail(scrollToTop: true);
         }
     }
 
@@ -1000,7 +1005,7 @@ public sealed partial class DictionaryPageView : UserControl
         if (sender is Button { Tag: string tag })
         {
             _packWordFilter = tag;
-            RefreshOpenPackDetail();
+            RefreshOpenPackDetail(scrollToTop: true);
         }
     }
 
