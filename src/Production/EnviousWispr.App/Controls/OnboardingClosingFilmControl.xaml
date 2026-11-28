@@ -25,6 +25,7 @@
                     </StackPanel.RenderTransform>
                     <TextBlock
                         x:Name="CaptionTitleText"
+                        AutomationProperties.AutomationId="OnboardingClosingBeatTitle"
                         FontSize="20"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource BrandTextPrimaryBrush}"
@@ -534,7 +535,7 @@
                                 <Border
                                     x:Name="LearnMisheardChip"
                                     Padding="6,2,6,2"
-                                    Background="{ThemeResource BrandErrorSoftBrush}"
+                                    Background="{ThemeResource BrandOnboardingFilmMistakeBgBrush}"
                                     CornerRadius="5"
                                     VerticalAlignment="Center">
                                     <Grid>
@@ -752,7 +753,7 @@
         </Border>
 
         <!-- 7 clickable thin progress segment bars + Pause/Play + Watch again -->
-        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+        <Grid x:Name="BuiltInTransportGrid" ColumnSpacing="{StaticResource BrandSpacingM}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />

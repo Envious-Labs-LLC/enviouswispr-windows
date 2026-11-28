@@ -375,7 +375,6 @@ public sealed partial class MainWindow : Window, IDisposable
         else
         {
             EnsureOnboardingViewLoaded();
-            FinishOnboardingButton?.Focus(FocusState.Programmatic);
         }
     }
 
@@ -478,8 +477,11 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetLivePreview(string? text) =>
         _overlayWindow.SetPreview(text);
 
-    public void SetAudioLevel(AudioLevel level) =>
+    public void SetAudioLevel(AudioLevel level)
+    {
         _overlayWindow.SetAudioLevel(level.RootMeanSquare);
+        ObserveAudioLevelForOnboarding(level.RootMeanSquare);
+    }
 
     /// <summary>Answers a press on the pill's button by showing the page that fixes it.</summary>
     /// <remarks>

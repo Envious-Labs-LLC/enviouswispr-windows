@@ -79,12 +79,27 @@
          BLOCK, never the text box. -->
     <x:Double x:Key="BrandNavRowHeight">36</x:Double>
     <Thickness x:Key="BrandNavGroupHeaderMargin">0,10,0,2</Thickness>
-<x:Double x:Key="BrandOnboardingContentMaxWidth">1040</x:Double>
-    <Thickness x:Key="BrandOnboardingContentPadding">40,28,40,48</Thickness>
+    <x:Double x:Key="BrandOnboardingContentMaxWidth">1040</x:Double>
+    <x:Double x:Key="BrandOnboardingWindowWidth">580</x:Double>
+    <x:Double x:Key="BrandOnboardingWindowHeight">780</x:Double>
+    <x:Double x:Key="BrandOnboardingWindowMinWidth">480</x:Double>
+    <x:Double x:Key="BrandOnboardingStageMaxWidth">500</x:Double>
+    <x:Double x:Key="BrandOnboardingPrimaryButtonMaxWidth">360</x:Double>
+    <x:Double x:Key="BrandOnboardingPrimaryButtonHeight">48</x:Double>
+    <CornerRadius x:Key="BrandOnboardingButtonRadius">12</CornerRadius>
+    <x:Double x:Key="BrandOnboardingProgressSegmentWidth">28</x:Double>
+    <x:Double x:Key="BrandOnboardingLipsHeroSize">124</x:Double>
+    <x:Double x:Key="BrandOnboardingLipsStepSize">92</x:Double>
+    <x:Double x:Key="BrandOnboardingLipsCompactSize">72</x:Double>
+    <x:Double x:Key="BrandOnboardingCompactHeightThreshold">680</x:Double>
+    <x:Double x:Key="BrandOnboardingGreetingBubbleMaxWidth">210</x:Double>
+    <x:Double x:Key="BrandOnboardingValueIconSize">34</x:Double>
+    <CornerRadius x:Key="BrandOnboardingValueIconRadius">10</CornerRadius>
+    <Thickness x:Key="BrandOnboardingContentPadding">28,16,28,28</Thickness>
     <!-- The pinned first-run action sits in its own band below the scrolling content. It keeps the
-         content's side padding so the button lines up with the cards above it, and takes a smaller
+         content's side padding so the button lines up with the stage above it, and takes a smaller
          vertical measure because a footer that is as tall as a section reads as another section. -->
-    <Thickness x:Key="BrandOnboardingFooterPadding">40,20,40,24</Thickness>
+    <Thickness x:Key="BrandOnboardingFooterPadding">28,14,28,20</Thickness>
     <x:Double x:Key="BrandOnboardingMarkSize">88</x:Double>
     <x:Double x:Key="BrandOnboardingIconTileSize">52</x:Double>
     <x:Double x:Key="BrandOnboardingIconGlyphSize">22</x:Double>
@@ -92,9 +107,10 @@
     <x:Double x:Key="BrandOnboardingWideSpacing">24</x:Double>
     <x:Double x:Key="BrandOnboardingCardSpacing">12</x:Double>
     <x:Double x:Key="BrandOnboardingTextSpacing">4</x:Double>
-    <Thickness x:Key="BrandOnboardingCardPadding">20</Thickness>
-    <!-- The first-run column inside its side padding: the 1040 measure less the 40 each side, so a card lines up with
-         the pinned footer button, which is capped at 1040 and padded 40 a side. -->
+    <Thickness x:Key="BrandOnboardingCardPadding">18,16,18,16</Thickness>
+    <Thickness x:Key="BrandOnboardingHeroCardPadding">20,18,20,18</Thickness>
+    <Thickness x:Key="BrandOnboardingCompactCardPadding">14,12,14,12</Thickness>
+    <!-- The first-run column inside its side padding: kept for compatibility alongside BrandOnboardingStageMaxWidth. -->
     <x:Double x:Key="BrandOnboardingContentColumnMaxWidth">960</x:Double>
     <!-- The setup checklist's status mark: a number, a spinner, a tick or a cross, all in the one square so a
          row does not shift sideways as its status changes. The row-icon column's width, for the same reason. -->
@@ -104,15 +120,15 @@
     <x:Double x:Key="BrandOnboardingPracticeBoxHeight">132</x:Double>
     <!-- The Ready screen's keycap: the key's name set in the title style with room around it, as macOS draws it. -->
     <Thickness x:Key="BrandOnboardingKeycapPadding">32,14,32,14</Thickness>
-    <Thickness x:Key="BrandOnboardingChromePadding">24,14,24,0</Thickness>
+    <Thickness x:Key="BrandOnboardingChromePadding">20,10,20,0</Thickness>
     <x:Double x:Key="BrandOnboardingChromeHeight">44</x:Double>
     <Thickness x:Key="BrandOnboardingDownloadPillPadding">12,6,12,6</Thickness>
     <x:Double x:Key="BrandOnboardingProgressSegmentHeight">4</x:Double>
     <CornerRadius x:Key="BrandOnboardingProgressSegmentRadius">2</CornerRadius>
-    <x:Double x:Key="BrandOnboardingWelcomeMaxWidth">700</x:Double>
-    <x:Double x:Key="BrandOnboardingHeroMaxWidth">760</x:Double>
-    <x:Double x:Key="BrandOnboardingNarrowCardMaxWidth">720</x:Double>
-    <x:Double x:Key="BrandOnboardingLanguageListHeight">250</x:Double>
+    <x:Double x:Key="BrandOnboardingWelcomeMaxWidth">500</x:Double>
+    <x:Double x:Key="BrandOnboardingHeroMaxWidth">500</x:Double>
+    <x:Double x:Key="BrandOnboardingNarrowCardMaxWidth">500</x:Double>
+    <x:Double x:Key="BrandOnboardingLanguageListHeight">280</x:Double>
     <x:Double x:Key="BrandOnboardingKeycapMinWidth">200</x:Double>
     <x:Double x:Key="BrandOnboardingKeycapMinHeight">64</x:Double>
     <CornerRadius x:Key="BrandOnboardingKeycapRadius">12</CornerRadius>

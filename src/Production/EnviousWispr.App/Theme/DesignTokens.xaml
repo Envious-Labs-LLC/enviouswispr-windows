@@ -103,6 +103,28 @@
             <SolidColorBrush x:Key="BrandSpectrumRoyalBrush" Color="#4169E1" />
             <Color x:Key="BrandSpectrumVioletColor">#8A2BE2</Color>
             <SolidColorBrush x:Key="BrandSpectrumVioletBrush" Color="#8A2BE2" />
+
+            <!-- Onboarding solo stage surface, primary action, tactile keycap, and closing film tokens -->
+            <Color x:Key="BrandOnboardingCanvasBgColor">#FFFFFF</Color>
+            <SolidColorBrush x:Key="BrandOnboardingCanvasBgBrush" Color="#FFFFFF" />
+            <Color x:Key="BrandOnboardingSurfaceBgColor">#F8F5FF</Color>
+            <SolidColorBrush x:Key="BrandOnboardingSurfaceBgBrush" Color="#F8F5FF" />
+            <Color x:Key="BrandOnboardingPrimaryBgColor">#0F0A1A</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryBgBrush" Color="#0F0A1A" />
+            <Color x:Key="BrandOnboardingPrimaryHoverBgColor">#2B2240</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryHoverBgBrush" Color="#2B2240" />
+            <Color x:Key="BrandOnboardingPrimaryPressedBgColor">#1E1730</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryPressedBgBrush" Color="#1E1730" />
+            <Color x:Key="BrandOnboardingPrimaryDisabledBgColor">#E3DFEC</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryDisabledBgBrush" Color="#E3DFEC" />
+            <Color x:Key="BrandOnboardingPrimaryDisabledFgColor">#6F6189</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryDisabledFgBrush" Color="#6F6189" />
+            <Color x:Key="BrandOnboardingPrimaryFgColor">#FFFFFF</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryFgBrush" Color="#FFFFFF" />
+            <Color x:Key="BrandOnboardingKeycapBevelColor">#D4CBE6</Color>
+            <SolidColorBrush x:Key="BrandOnboardingKeycapBevelBrush" Color="#D4CBE6" />
+            <Color x:Key="BrandOnboardingFilmMistakeBgColor">#24C0392B</Color>
+            <SolidColorBrush x:Key="BrandOnboardingFilmMistakeBgBrush" Color="#24C0392B" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Dark">
@@ -205,6 +227,28 @@
             <SolidColorBrush x:Key="BrandSpectrumRoyalBrush" Color="#4169E1" />
             <Color x:Key="BrandSpectrumVioletColor">#8A2BE2</Color>
             <SolidColorBrush x:Key="BrandSpectrumVioletBrush" Color="#8A2BE2" />
+
+            <!-- Onboarding solo stage surface, primary action, tactile keycap, and closing film tokens -->
+            <Color x:Key="BrandOnboardingCanvasBgColor">#251F37</Color>
+            <SolidColorBrush x:Key="BrandOnboardingCanvasBgBrush" Color="#251F37" />
+            <Color x:Key="BrandOnboardingSurfaceBgColor">#201B2C</Color>
+            <SolidColorBrush x:Key="BrandOnboardingSurfaceBgBrush" Color="#201B2C" />
+            <Color x:Key="BrandOnboardingPrimaryBgColor">#6B4FD1</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryBgBrush" Color="#6B4FD1" />
+            <Color x:Key="BrandOnboardingPrimaryHoverBgColor">#7C61DE</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryHoverBgBrush" Color="#7C61DE" />
+            <Color x:Key="BrandOnboardingPrimaryPressedBgColor">#5D42BF</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryPressedBgBrush" Color="#5D42BF" />
+            <Color x:Key="BrandOnboardingPrimaryDisabledBgColor">#363047</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryDisabledBgBrush" Color="#363047" />
+            <Color x:Key="BrandOnboardingPrimaryDisabledFgColor">#9A92B0</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryDisabledFgBrush" Color="#9A92B0" />
+            <Color x:Key="BrandOnboardingPrimaryFgColor">#FFFFFF</Color>
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryFgBrush" Color="#FFFFFF" />
+            <Color x:Key="BrandOnboardingKeycapBevelColor">#141020</Color>
+            <SolidColorBrush x:Key="BrandOnboardingKeycapBevelBrush" Color="#141020" />
+            <Color x:Key="BrandOnboardingFilmMistakeBgColor">#30EF7C89</Color>
+            <SolidColorBrush x:Key="BrandOnboardingFilmMistakeBgBrush" Color="#30EF7C89" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
@@ -296,6 +340,28 @@
             <SolidColorBrush x:Key="BrandSpectrumRoyalBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <StaticResource x:Key="BrandSpectrumVioletColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumVioletBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+
+            <!-- Onboarding solo stage tokens mapped strictly to system high-contrast colors -->
+            <StaticResource x:Key="BrandOnboardingCanvasBgColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="BrandOnboardingCanvasBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="BrandOnboardingSurfaceBgColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="BrandOnboardingSurfaceBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="BrandOnboardingPrimaryBgColor" ResourceKey="SystemAccentColor" />
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryBgBrush" Color="{ThemeResource SystemAccentColor}" />
+            <StaticResource x:Key="BrandOnboardingPrimaryHoverBgColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryHoverBgBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="BrandOnboardingPrimaryPressedBgColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryPressedBgBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="BrandOnboardingPrimaryDisabledBgColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryDisabledBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="BrandOnboardingPrimaryDisabledFgColor" ResourceKey="SystemColorGrayTextColor" />
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryDisabledFgBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <StaticResource x:Key="BrandOnboardingPrimaryFgColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="BrandOnboardingPrimaryFgBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="BrandOnboardingKeycapBevelColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="BrandOnboardingKeycapBevelBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="BrandOnboardingFilmMistakeBgColor">Transparent</Color>
+            <SolidColorBrush x:Key="BrandOnboardingFilmMistakeBgBrush" Color="Transparent" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

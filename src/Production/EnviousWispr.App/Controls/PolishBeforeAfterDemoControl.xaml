@@ -26,12 +26,14 @@
                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
                         <Button
                             x:Name="SpokenToggleButton"
+                            AutomationProperties.AutomationId="PolishDemoSpokenButton"
                             AutomationProperties.Name="Show raw spoken dictation"
                             Click="SpokenToggleButton_Click"
                             Content="Spoken"
                             Style="{StaticResource BrandSegmentedButtonStyle}" />
                         <Button
                             x:Name="PolishedToggleButton"
+                            AutomationProperties.AutomationId="PolishDemoPolishedButton"
                             AutomationProperties.Name="Show AI polished writing"
                             Click="PolishedToggleButton_Click"
                             Content="Polished"

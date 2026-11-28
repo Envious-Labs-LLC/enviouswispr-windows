@@ -92,14 +92,38 @@ public partial class App
         var polishState = normalizedPolishId is null
             ? null
             : await ProbeEgOneModelAsync(normalizedPolishId).ConfigureAwait(true);
-        var polishInstalled = normalizedPolishId is null || (polishState?.IsInstalled == true &&
-            IsExpectedEgOneConfigured(normalizedPolishId));
-        var speechInstalled = speechState.IsInstalled &&
-            IsExpectedSpeechConfigured(speechEngine);
+        var speechOnDisk = speechState.IsInstalled;
+        var polishOnDisk = normalizedPolishId is null || polishState?.IsInstalled == true;
 
         if (Leaving)
         {
             return;
+        }
+
+        // Models already present on disk never trigger a network download or spurious "Downloading models" pill;
+        // activate them directly if engine configuration has not switched yet.
+        if (speechOnDisk && polishOnDisk)
+        {
+            await ActivateOnDiskOnboardingModelsAsync(speechEngine, normalizedPolishId).ConfigureAwait(true);
+            return;
+        }
+
+        if (speechOnDisk && !IsExpectedSpeechConfigured(speechEngine))
+        {
+            await ActivateOnDiskOnboardingModelsAsync(speechEngine, normalizedPolishId: null).ConfigureAwait(true);
+            if (Leaving)
+            {
+                return;
+            }
+        }
+
+        if (normalizedPolishId is not null && polishOnDisk && !IsExpectedEgOneConfigured(normalizedPolishId))
+        {
+            await ActivateOnDiskOnboardingModelsAsync(speechEngine: null, normalizedPolishId).ConfigureAwait(true);
+            if (Leaving)
+            {
+                return;
+            }
         }
 
         var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
@@ -126,10 +150,10 @@ public partial class App
             PolishModelId: normalizedPolishId,
             PolishTotalBytes: polishTotalBytes,
             ParallelDownloads: parallelDownloads,
-            SpeechAlreadyInstalled: speechInstalled,
-            PolishAlreadyInstalled: polishInstalled,
-            SpeechDiskBytes: speechState.IsInstalled ? 0L : speechDiskBytes,
-            PolishDiskBytes: normalizedPolishId is null || polishState?.IsInstalled == true ? 0L : polishDiskBytes);
+            SpeechAlreadyInstalled: speechOnDisk,
+            PolishAlreadyInstalled: polishOnDisk,
+            SpeechDiskBytes: speechOnDisk ? 0L : speechDiskBytes,
+            PolishDiskBytes: polishOnDisk ? 0L : polishDiskBytes);
 
         using var cancellation = new CancellationTokenSource();
         _onboardingDownloadCancellation = cancellation;
@@ -224,6 +248,41 @@ public partial class App
                     pending.SpeechModelId,
                     pending.PolishModelId,
                     pending.ParallelDownloads);
+            }
+        }
+    }
+
+    private async Task ActivateOnDiskOnboardingModelsAsync(
+        FinalAsrEngine? speechEngine,
+        string? normalizedPolishId)
+    {
+        if (Leaving)
+        {
+            return;
+        }
+
+        if (speechEngine is { } engine && !IsExpectedSpeechConfigured(engine))
+        {
+            if (await ApplyOnboardingSpeechChoiceAsync(engine).ConfigureAwait(true) && !Leaving)
+            {
+                await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true);
+                if (!Leaving)
+                {
+                    PresentGraphicsRuntime();
+                    await PresentModelDeliveryAsync().ConfigureAwait(true);
+                }
+            }
+        }
+
+        if (normalizedPolishId is not null && !Leaving && !IsExpectedEgOneConfigured(normalizedPolishId))
+        {
+            if (await ApplyOnboardingPolishChoiceAsync(normalizedPolishId).ConfigureAwait(true) && !Leaving)
+            {
+                await TryReconfigurePolishUnderHoldAsync().ConfigureAwait(true);
+                if (!Leaving)
+                {
+                    await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+                }
             }
         }
     }

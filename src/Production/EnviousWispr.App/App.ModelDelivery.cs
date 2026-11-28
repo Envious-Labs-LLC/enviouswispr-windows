@@ -225,7 +225,7 @@ public partial class App
         }
 
         var totalBytes = manifest.Manifest.Payload.Files.Sum(file => file.SizeBytes);
-        return $"{Megabytes(totalBytes)} MB";
+        return WindowsSetupRules.FormatDownloadLabel(totalBytes);
     }
 
     private async Task<SpeechEngineModelState> ProbeSpeechEngineModelAsync(FinalAsrEngine engine)
@@ -325,7 +325,7 @@ public partial class App
         }
 
         var totalBytes = manifest.Manifest.Payload.Files.Sum(file => file.SizeBytes);
-        return $"{Megabytes(totalBytes)} MB";
+        return WindowsSetupRules.FormatDownloadLabel(totalBytes);
     }
 
     private async Task<EgOneModelState> ProbeEgOneModelAsync(string modelId)

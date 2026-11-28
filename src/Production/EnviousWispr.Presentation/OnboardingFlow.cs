@@ -886,6 +886,71 @@ public sealed class OnboardingFlow
         Touch();
     }
 
+    /// <summary>
+    /// Pins onboarding directly to a specific step for isolated UAT inspection (honored only when an
+    /// isolated data directory is active), populating a realistic back stack so Back chrome matches
+    /// the normal user journey without normalizing sub-steps like SpeechCompare or PolishSeeAll.
+    /// </summary>
+    public void ForceStepForUat(OnboardingStep targetStep)
+    {
+        if (targetStep == OnboardingStep.Done)
+        {
+            return;
+        }
+
+        _backStack.Clear();
+        switch (targetStep)
+        {
+            case OnboardingStep.Welcome:
+                break;
+            case OnboardingStep.Language:
+                _backStack.Add(OnboardingStep.Welcome);
+                break;
+            case OnboardingStep.SpeechPick:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language]);
+                break;
+            case OnboardingStep.SpeechCompare:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick]);
+                break;
+            case OnboardingStep.PolishIntro:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick]);
+                break;
+            case OnboardingStep.PolishPick:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro]);
+                break;
+            case OnboardingStep.PolishSeeAll:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick]);
+                break;
+            case OnboardingStep.Downloads:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick]);
+                break;
+            case OnboardingStep.Permissions:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick]);
+                break;
+            case OnboardingStep.Key:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions]);
+                break;
+            case OnboardingStep.GettingReady:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions, OnboardingStep.Key]);
+                break;
+            case OnboardingStep.Practice:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions, OnboardingStep.Key]);
+                break;
+            case OnboardingStep.Closing:
+                _backStack.AddRange([OnboardingStep.Welcome, OnboardingStep.Language, OnboardingStep.SpeechPick, OnboardingStep.PolishIntro, OnboardingStep.PolishPick, OnboardingStep.Permissions, OnboardingStep.Key, OnboardingStep.Practice]);
+                break;
+        }
+
+        Step = targetStep;
+        ClosingBeatIndex = 0;
+        if (targetStep == OnboardingStep.Practice)
+        {
+            ResetPractice();
+        }
+
+        Touch();
+    }
+
     public void DownloadStarted() => _startedDownloadThisVisit = true;
 
     public void RetrySetup()

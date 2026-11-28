@@ -93,6 +93,16 @@ public sealed partial class DesignSystemTokenTests
         ["BrandSpectrumBlue"] = new("#1E90FF", "#1E90FF"),
         ["BrandSpectrumRoyal"] = new("#4169E1", "#4169E1"),
         ["BrandSpectrumViolet"] = new("#8A2BE2", "#8A2BE2"),
+        ["BrandOnboardingCanvasBg"] = new("#FFFFFF", "#251F37"),
+        ["BrandOnboardingSurfaceBg"] = new("#F8F5FF", "#201B2C"),
+        ["BrandOnboardingPrimaryBg"] = new("#0F0A1A", "#6B4FD1"),
+        ["BrandOnboardingPrimaryHoverBg"] = new("#2B2240", "#7C61DE"),
+        ["BrandOnboardingPrimaryPressedBg"] = new("#1E1730", "#5D42BF"),
+        ["BrandOnboardingPrimaryDisabledBg"] = new("#E3DFEC", "#363047"),
+        ["BrandOnboardingPrimaryDisabledFg"] = new("#6F6189", "#9A92B0"),
+        ["BrandOnboardingPrimaryFg"] = new("#FFFFFF", "#FFFFFF"),
+        ["BrandOnboardingKeycapBevel"] = new("#D4CBE6", "#141020"),
+        ["BrandOnboardingFilmMistakeBg"] = new("#24C0392B", "#30EF7C89"),
     };
 
     private static readonly Dictionary<string, ThemePair> ExpectedPillTokenColors = new(StringComparer.Ordinal)
@@ -3894,6 +3904,90 @@ public sealed partial class DesignSystemTokenTests
         Assert.DoesNotContain("BrandPageBgBrush", applyBody, StringComparison.Ordinal);
         Assert.Contains("BrandNeutralChipStyle", applyBody, StringComparison.Ordinal);
         Assert.Contains("BrandSuccessChipStyle", applyBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnboardingCodeBehindUsesWindowThemeBrushLookupInsteadOfApplicationCurrentResources()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var appDir = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var onboardingFiles = Directory.EnumerateFiles(appDir, "MainWindow.Onboarding*.cs")
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(4, onboardingFiles.Length);
+
+        var violations = new List<string>();
+        foreach (var file in onboardingFiles)
+        {
+            var text = File.ReadAllText(file);
+            if (text.Contains("Application.Current.Resources[", StringComparison.Ordinal))
+            {
+                violations.Add(Path.GetFileName(file));
+            }
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            "Onboarding code-behind must resolve theme brushes through ResolveWindowThemeBrush / ThemeResourceLookup "
+                + "instead of Application.Current.Resources[...] (which leaks Dark brushes in Light theme): "
+                + string.Join(", ", violations));
+    }
+
+    [Fact]
+    public void ShowOnboardingHidesMainShellToolbarActionsAndVersionBadgeAndUsesSoloGeometry()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var appDir = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var navigation = File.ReadAllText(Path.Combine(appDir, "MainWindow.Navigation.cs"));
+        var pages = File.ReadAllText(Path.Combine(appDir, "MainWindow.Pages.cs"));
+
+        Assert.DoesNotContain("FitWindowToOnboardingOnce", navigation, StringComparison.Ordinal);
+        Assert.DoesNotContain("FitWindowToOnboardingOnce", pages, StringComparison.Ordinal);
+
+        var showStart = navigation.IndexOf("private void ShowOnboarding(bool show)", StringComparison.Ordinal);
+        Assert.True(showStart >= 0, "ShowOnboarding(bool show) not found in MainWindow.Navigation.cs.");
+        var showBody = navigation[showStart..Math.Min(navigation.Length, showStart + 2_200)];
+
+        Assert.Contains("AppTitleBarRightActions.Visibility = Visibility.Collapsed", showBody, StringComparison.Ordinal);
+        Assert.Contains("TitleBarVersionBadge.Visibility = Visibility.Collapsed", showBody, StringComparison.Ordinal);
+        Assert.Contains("AppTitleBarTitleText.Text = \"EnviousWispr Setup\"", showBody, StringComparison.Ordinal);
+        Assert.Contains("ApplyOnboardingWindowGeometry(onboarding: true)", showBody, StringComparison.Ordinal);
+        Assert.Contains("ApplyOnboardingWindowGeometry(onboarding: false)", showBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("FinishOnboardingButton?.Focus(FocusState.Programmatic)", showBody, StringComparison.Ordinal);
+        Assert.Contains("onThemeChanged: RefreshOnboardingThemeBrushes", pages, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnboardingMarkupAndModelDeliveryAvoidRawFourDigitMbSizesAndLiteralColors()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var appDir = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var onboardingXamlFiles = new[]
+        {
+            Path.Combine(appDir, "Pages", "OnboardingPageView.xaml"),
+            Path.Combine(appDir, "Controls", "RainbowLipsControl.xaml"),
+            Path.Combine(appDir, "Controls", "PolishBeforeAfterDemoControl.xaml"),
+            Path.Combine(appDir, "Controls", "OnboardingKeyboardVisualControl.xaml"),
+            Path.Combine(appDir, "Controls", "OnboardingClosingFilmControl.xaml"),
+        };
+
+        var hexColorPattern = new Regex(@"#[0-9A-Fa-f]{6,8}", RegexOptions.CultureInvariant);
+        foreach (var file in onboardingXamlFiles)
+        {
+            Assert.True(File.Exists(file), $"Expected onboarding XAML file '{file}'.");
+            var content = File.ReadAllText(file);
+            Assert.False(
+                hexColorPattern.IsMatch(content),
+                $"Literal hex color found in '{Path.GetFileName(file)}'; use ThemeResource Brand* tokens.");
+            Assert.DoesNotContain("3015 MB", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("1388 MB", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("~470 MB", content, StringComparison.Ordinal);
+        }
+
+        var modelDelivery = File.ReadAllText(Path.Combine(appDir, "App.ModelDelivery.cs"));
+        Assert.DoesNotContain("return $\"{Megabytes(totalBytes)} MB\";", modelDelivery, StringComparison.Ordinal);
+        Assert.Contains("WindowsSetupRules.FormatDownloadLabel(totalBytes)", modelDelivery, StringComparison.Ordinal);
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);

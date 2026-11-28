@@ -45,6 +45,12 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
         typeof(OnboardingClosingFilmControl),
         new PropertyMetadata(false, OnReduceMotionChanged));
 
+    public static readonly DependencyProperty ShowBuiltInControlsProperty = DependencyProperty.Register(
+        nameof(ShowBuiltInControls),
+        typeof(bool),
+        typeof(OnboardingClosingFilmControl),
+        new PropertyMetadata(true, OnShowBuiltInControlsChanged));
+
     private readonly ScaleTransform[] _segmentScales;
     private readonly Border[] _segmentFills;
     private readonly UIElement[] _scenePanels;
@@ -93,6 +99,10 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
 
     public event EventHandler<int>? SceneChanged;
 
+    public event EventHandler<ClosingFilmEvaluation>? FrameEvaluated;
+
+    public event EventHandler? PlaybackStateChanged;
+
     /// <summary>Optional accessibility callback invoked once each time the active scene changes.</summary>
     public Action<string>? SceneAnnounced { get; set; }
 
@@ -126,7 +136,25 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
         set => SetValue(ReduceMotionProperty, value);
     }
 
+    public bool ShowBuiltInControls
+    {
+        get => (bool)GetValue(ShowBuiltInControlsProperty);
+        set => SetValue(ShowBuiltInControlsProperty, value);
+    }
+
     public bool IsPaused => _isPaused;
+
+    public void AdvanceOrTogglePause()
+    {
+        if (ReduceMotion)
+        {
+            var next = (CurrentSceneIndex + 1) % OnboardingClosingFilmEngine.SceneCount;
+            SeekToScene(next);
+            return;
+        }
+
+        TogglePause();
+    }
 
     public int CurrentSceneIndex { get; private set; }
 
@@ -205,6 +233,16 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
         }
     }
 
+    private static void OnShowBuiltInControlsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is OnboardingClosingFilmControl control && control.BuiltInTransportGrid is not null)
+        {
+            control.BuiltInTransportGrid.Visibility = control.ShowBuiltInControls
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+    }
+
     private static void OnReduceMotionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is OnboardingClosingFilmControl control)
@@ -242,6 +280,10 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
         }
 
         FilmLips.ReduceMotion = ReduceMotion;
+        if (BuiltInTransportGrid is not null)
+        {
+            BuiltInTransportGrid.Visibility = ShowBuiltInControls ? Visibility.Visible : Visibility.Collapsed;
+        }
         SyncSummaryText();
         RefreshThemeBrushes();
         UpdatePausePlayButton();
@@ -369,11 +411,13 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
         {
             PausePlayButton.Content = "Next tip";
             AutomationProperties.SetName(PausePlayButton, "Next closing film tip");
+            PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
 
         PausePlayButton.Content = _isPaused ? "Play" : "Pause";
         AutomationProperties.SetName(PausePlayButton, _isPaused ? "Play closing film" : "Pause closing film");
+        PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void RenderAt(double filmSeconds)
@@ -438,6 +482,8 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
                 RenderYoursScene(frame);
                 break;
         }
+
+        FrameEvaluated?.Invoke(this, frame);
 
         if (_lastAnnouncedScene != frame.SceneIndex)
         {
