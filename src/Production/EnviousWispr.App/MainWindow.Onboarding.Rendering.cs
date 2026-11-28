@@ -13,11 +13,10 @@ using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 
 namespace EnviousWispr.App;
 
-/// <summary>13-screen Fluent 2 onboarding walkthrough, checkpoint resume, key rehearsal, and dual model delivery.</summary>
+/// <summary>13-screen Fluent 2 onboarding walkthrough rendering and theme-aware styling.</summary>
 public sealed partial class MainWindow
 {
     private void RenderOnboarding()
@@ -31,12 +30,25 @@ public sealed partial class MainWindow
 
         EnsureOnboardingChromeBuilt();
         var step = _onboarding.Step;
-        var screenChanged = _drawnStep != step;
-        if (screenChanged && _drawnStep == OnboardingStep.Key)
+        var previousStep = _drawnStep;
+        var screenChanged = previousStep != step;
+
+        if (screenChanged && previousStep == OnboardingStep.Key)
         {
             CancelOnboardingKeyCapture();
             _onboardingRehearsalKeyDown = false;
             _onboardingKeyHoldTimer.Stop();
+        }
+
+        if (screenChanged && previousStep == OnboardingStep.Language)
+        {
+            _onboardingLanguageSpeakingActive = false;
+        }
+
+        if (screenChanged && step != OnboardingStep.GettingReady)
+        {
+            _onboardingSlowPolishTimer.Stop();
+            _onboardingSlowPolishCardVisible = false;
         }
 
         OnboardingKeyRehearsalActiveChanged?.Invoke(
@@ -47,17 +59,11 @@ public sealed partial class MainWindow
             _onboarding.TakeStarted(OnboardingPracticeBox.Text);
         }
 
-        if (screenChanged && step == OnboardingStep.Closing)
-        {
-            ArmClosingBeatTimer();
-        }
-        else if (step != OnboardingStep.Closing)
-        {
-            _onboardingBeat.Stop();
-        }
-
         ArmMicrophonePoll();
+        ArmSlowPolishGateTimer(step);
+        ArmSlowDownloadBannerTimer(step);
         DrawOnboardingChrome(step);
+        DrawOnboardingRainbowLips(step, screenChanged);
         DrawOnboardingStepHeader(step);
         SetVisibleOnboardingPanels(step);
 
@@ -65,7 +71,6 @@ public sealed partial class MainWindow
         switch (step)
         {
             case OnboardingStep.Welcome:
-                UpdateOnboardingLipsMotion();
                 break;
             case OnboardingStep.Language:
                 DrawOnboardingLanguage();
@@ -75,6 +80,9 @@ public sealed partial class MainWindow
                 break;
             case OnboardingStep.SpeechCompare:
                 DrawOnboardingSpeechCompare();
+                break;
+            case OnboardingStep.PolishIntro:
+                DrawOnboardingPolishIntro();
                 break;
             case OnboardingStep.PolishPick:
                 DrawOnboardingPolishPick();
@@ -98,7 +106,7 @@ public sealed partial class MainWindow
                 DrawOnboardingPractice();
                 break;
             case OnboardingStep.Closing:
-                DrawOnboardingClosing();
+                DrawOnboardingClosing(restartFilm: screenChanged);
                 break;
         }
 
@@ -115,6 +123,7 @@ public sealed partial class MainWindow
             _drawnPractice = _onboarding.PracticeState;
             _drawnGate = _onboarding.EvaluateGate();
             OnboardingScroll.ChangeView(null, 0, null, disableAnimation: true);
+            PlayOnboardingStageEntrance(previousStep, step);
             FocusOnboardingScreen(step);
         }
         else if (step == OnboardingStep.Practice && _drawnPractice != _onboarding.PracticeState)
@@ -130,13 +139,13 @@ public sealed partial class MainWindow
 
     private void DrawOnboardingChrome(OnboardingStep step)
     {
-        var showBack = _onboarding.CanGoBack;
-        var showProgress = step is not (OnboardingStep.Welcome or OnboardingStep.Closing or OnboardingStep.Done);
+        var showBack = _onboarding.CanGoBack && step != OnboardingStep.Closing;
+        var showProgress = OnboardingFlow.ShowsProgressStrip(step);
         var pillSummary = _onboardingDownloadSnapshot is null
             ? null
             : OnboardingDownloadCoordinator.FormatBackgroundPillSummary(_onboardingDownloadSnapshot);
         var showDownloadPill = !string.IsNullOrWhiteSpace(pillSummary) &&
-            step is not (OnboardingStep.Welcome or OnboardingStep.Downloads);
+            step is not (OnboardingStep.Welcome or OnboardingStep.Downloads or OnboardingStep.Closing);
 
         OnboardingBackButton.Visibility = showBack ? Visibility.Visible : Visibility.Collapsed;
         OnboardingProgressGrid.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
@@ -148,8 +157,8 @@ public sealed partial class MainWindow
         if (showProgress)
         {
             var currentNum = OnboardingFlow.PrimaryStepNumberFor(step);
-            var activeBrush = Application.Current.Resources["BrandAccentSolidBrush"] as Brush;
-            var idleBrush = Application.Current.Resources["BrandDividerBrush"] as Brush;
+            var activeBrush = ResolveWindowThemeBrush("BrandAccentSolidBrush");
+            var idleBrush = ResolveWindowThemeBrush("BrandDividerBrush");
             for (var i = 0; i < _onboardingProgressSegments.Length; i++)
             {
                 _onboardingProgressSegments[i].Background = i < currentNum ? activeBrush : idleBrush;
@@ -158,12 +167,15 @@ public sealed partial class MainWindow
 
         if (showDownloadPill && pillSummary is not null)
         {
-            OnboardingDownloadPillText.Text = pillSummary;
+            OnboardingDownloadPillText.Text = pillSummary.Replace(
+                "Downloading models",
+                "Models",
+                StringComparison.Ordinal);
             ToolTipService.SetToolTip(OnboardingDownloadPillButton, pillSummary);
             var isDone = _onboardingDownloadSnapshot is { IsSpeechReady: true, IsPolishReady: true } snap &&
                 string.IsNullOrWhiteSpace(snap.FailureMessage);
-            OnboardingDownloadPillDot.Fill = Application.Current.Resources[
-                isDone ? "BrandSuccessBrush" : "BrandAccentBrush"] as Brush;
+            OnboardingDownloadPillDot.Fill = ResolveWindowThemeBrush(
+                isDone ? "BrandSuccessBrush" : "BrandAccentBrush");
         }
     }
 
@@ -176,21 +188,25 @@ public sealed partial class MainWindow
         }
 
         OnboardingStepHeader.Visibility = Visibility.Visible;
-        OnboardingStepText.Text = OnboardingCopy.StepOf(step).ToUpperInvariant();
+        OnboardingStepText.Text = OnboardingCopy.MilestoneLabel(step).ToUpperInvariant();
+        var micAllowed = _onboarding.MicrophoneAllowed;
+        var polishDeferred = _onboardingPolishDeferredInPractice &&
+            _onboarding.PolishModel != SpeechModelDelivery.Installed;
+
         var (title, subtitle) = step switch
         {
             OnboardingStep.Language => (
                 "Which language do you dictate in?",
                 "Pick automatic detection or lock a language for higher recognition accuracy."),
             OnboardingStep.SpeechPick => (
-                "Choose your speech engine",
-                "EnviousWispr tuned this recommendation to your language and PC hardware."),
+                "Meet your speech model",
+                "Tuned to your language and PC hardware, running privately offline."),
             OnboardingStep.SpeechCompare => (
                 "Compare speech models",
                 "Both models run privately on your PC with zero audio leaving this device."),
             OnboardingStep.PolishIntro => (
                 "Cleaner writing that still sounds like you",
-                "Optional AI polish cleans grammar, filler words, and formatting automatically."),
+                "Optional AI polish strips filler words, fixes grammar, and formats cleanly."),
             OnboardingStep.PolishPick => (
                 "Meet EG-1",
                 "Our local AI polish model, picked to match your PC memory and graphics."),
@@ -199,24 +215,25 @@ public sealed partial class MainWindow
                 "Pick any local EG-1 size or connect your own OpenAI, Gemini, or Claude key."),
             OnboardingStep.Downloads => (
                 "Downloading your models",
-                "Your downloads run in the background so you can keep moving through setup."),
+                "Downloads keep running in the background while you finish setup."),
             OnboardingStep.Permissions => (
-                "Allow microphone access",
-                "Windows only asks for your microphone so dictation stays private and ready."),
+                OnboardingCopy.PermissionsHeadline(micAllowed),
+                OnboardingCopy.PermissionsSubtitle),
             OnboardingStep.Key => (
                 "Meet your dictation key",
-                "Pick the shortcut you will use anywhere on Windows and test it below."),
+                "Pick the shortcut you will use anywhere on Windows and try it below."),
             OnboardingStep.GettingReady => (
                 OnboardingCopy.GateTitle,
                 "Waiting for your chosen downloads or microphone check to finish."),
             OnboardingStep.Practice => (
-                OnboardingCopy.PracticeHeadline(_onboarding.PracticeState, _onboarding.PracticeSucceeded),
+                OnboardingCopy.PracticeHeadline(_onboarding.PracticeState, _onboarding.PracticeSucceeded, polishDeferred),
                 OnboardingCopy.PracticeSubhead(
                     _onboarding.PracticeState,
                     _onboarding.PracticeSucceeded,
                     _onboarding.Choices.HotkeyGestureText ?? _onboarding.RecordingKey ?? "Ctrl+Win",
                     _onboarding.Choices.RecordingMode,
-                    _onboarding.MissedTo)),
+                    _onboarding.MissedTo,
+                    polishDeferred)),
             _ => ("Setup", string.Empty),
         };
         OnboardingTitle.Text = title;
@@ -230,6 +247,10 @@ public sealed partial class MainWindow
         OnboardingSpeechPickPanel.Visibility = step == OnboardingStep.SpeechPick ? Visibility.Visible : Visibility.Collapsed;
         OnboardingSpeechComparePanel.Visibility = step == OnboardingStep.SpeechCompare ? Visibility.Visible : Visibility.Collapsed;
         OnboardingPolishIntroPanel.Visibility = step == OnboardingStep.PolishIntro ? Visibility.Visible : Visibility.Collapsed;
+        if (OnboardingPolishDemo is not null)
+        {
+            OnboardingPolishDemo.Visibility = step == OnboardingStep.PolishIntro ? Visibility.Visible : Visibility.Collapsed;
+        }
         OnboardingPolishPickPanel.Visibility = step == OnboardingStep.PolishPick ? Visibility.Visible : Visibility.Collapsed;
         OnboardingPolishSeeAllPanel.Visibility = step == OnboardingStep.PolishSeeAll ? Visibility.Visible : Visibility.Collapsed;
         OnboardingDownloadsPanel.Visibility = step == OnboardingStep.Downloads ? Visibility.Visible : Visibility.Collapsed;
@@ -238,21 +259,13 @@ public sealed partial class MainWindow
         OnboardingGettingReadyPanel.Visibility = step == OnboardingStep.GettingReady ? Visibility.Visible : Visibility.Collapsed;
         OnboardingPracticePanel.Visibility = step == OnboardingStep.Practice ? Visibility.Visible : Visibility.Collapsed;
         OnboardingClosingPanel.Visibility = step == OnboardingStep.Closing ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void UpdateOnboardingLipsMotion()
-    {
-        var animate = ShouldAnimateMotion();
-        if (animate && !_onboardingLipsAnimating)
+        if (OnboardingClosingFilm is not null)
         {
-            _onboardingLipsAnimating = true;
-            OnboardingLipsBreathStoryboard.Begin();
-        }
-        else if (!animate && _onboardingLipsAnimating)
-        {
-            _onboardingLipsAnimating = false;
-            OnboardingLipsBreathStoryboard.Stop();
-            OnboardingRainbowLipsContainer.Opacity = 1.0;
+            OnboardingClosingFilm.Visibility = step == OnboardingStep.Closing ? Visibility.Visible : Visibility.Collapsed;
+            if (step != OnboardingStep.Closing)
+            {
+                OnboardingClosingFilm.Pause();
+            }
         }
     }
 
@@ -272,29 +285,26 @@ public sealed partial class MainWindow
             _onboardingIsUpdatingLanguageUi = false;
         }
 
-        OnboardingLanguageGreetingText.Text = SetupLanguageMetadata.GetGreeting(code, CultureInfo.CurrentUICulture);
-        var displayName = isAuto
-            ? LanguageCatalog.AutomaticTitle
-            : LanguageCatalog.TryGetEntry(code, out var selectedEntry)
-                ? selectedEntry.DisplayName
-                : code;
-        OnboardingLanguageSelectedTitleText.Text = displayName;
-
-        var parakeetSupports = isAuto || LanguageCatalog.IsSupported(FinalAsrEngine.Parakeet, code);
-        OnboardingLanguageEngineBadgeText.Text = parakeetSupports
+        var rec = _onboardingRecommendation ?? ComputeOnboardingRecommendation(code);
+        _onboardingRecommendation = rec;
+        var parakeetRecommended = isAuto || rec.Speech.PrimaryEngine == FinalAsrEngine.Parakeet;
+        OnboardingLanguageEngineBadgeText.Text = parakeetRecommended
             ? "Parakeet \u00B7 25 languages"
             : "Whisper \u00B7 99+ languages";
-        if (Application.Current.Resources[parakeetSupports ? "BrandAccentChipStyle" : "BrandNeutralChipStyle"] is Style chipStyle)
-        {
-            OnboardingLanguageEngineBadge.Style = chipStyle;
-        }
-        if (Application.Current.Resources[parakeetSupports ? "BrandAccentChipTextStyle" : "BrandNeutralChipTextStyle"] is Style chipTextStyle)
-        {
-            OnboardingLanguageEngineBadgeText.Style = chipTextStyle;
-        }
+        ApplyOnboardingStyle(OnboardingLanguageEngineBadge, parakeetRecommended ? "BrandAccentChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(OnboardingLanguageEngineBadgeText, parakeetRecommended ? "BrandAccentChipTextStyle" : "BrandNeutralChipTextStyle");
+        OnboardingLanguageEngineDot.Fill = ResolveWindowThemeBrush(
+            parakeetRecommended ? "BrandAccentBrush" : "BrandTextSecondaryBrush");
 
-        OnboardingLanguageEngineDot.Fill = Application.Current.Resources[
-            parakeetSupports ? "BrandAccentBrush" : "BrandTextSecondaryBrush"] as Brush;
+        if (!isAuto && rec.Speech.PrimaryEngine == FinalAsrEngine.Whisper && !string.IsNullOrWhiteSpace(rec.Speech.ParakeetUnavailableReason))
+        {
+            OnboardingLanguageAdviceCard.Visibility = Visibility.Visible;
+            OnboardingLanguageAdviceText.Text = $"{rec.Speech.ParakeetUnavailableReason}. EnviousWispr will recommend Whisper on the next step.";
+        }
+        else
+        {
+            OnboardingLanguageAdviceCard.Visibility = Visibility.Collapsed;
+        }
 
         if (!string.IsNullOrWhiteSpace(_suggestedSystemLanguageCode) &&
             LanguageCatalog.TryGetEntry(_suggestedSystemLanguageCode, out var suggestedEntry) &&
@@ -308,6 +318,7 @@ public sealed partial class MainWindow
             OnboardingSuggestedLanguageButton.Visibility = Visibility.Collapsed;
         }
 
+        UpdateOnboardingLanguageChipsLayout(OnboardingLanguageChipsHost?.ActualWidth ?? 0);
         RefreshOnboardingLanguageList();
     }
 
@@ -355,32 +366,34 @@ public sealed partial class MainWindow
         _onboardingRecommendation = rec;
         var selectedEngine = _onboarding.Choices.SpeechEngine;
         var isWhisper = selectedEngine == FinalAsrEngine.Whisper;
-        var isInstalled = (isWhisper ? _whisperModelState : _parakeetModelState).IsInstalled;
+        var modelState = isWhisper ? _whisperModelState : _parakeetModelState;
+        var isInstalled = modelState.IsInstalled;
+
+        OnboardingSpeechHeroTimeText.Text = isWhisper
+            ? rec.Speech.WhisperHeroTimeText
+            : rec.Speech.ParakeetHeroTimeText;
+        OnboardingSpeechHeroSubtext.Text = rec.Speech.HeroSubtext;
+        OnboardingSpeechHardwareBadgeText.Text = isWhisper
+            ? rec.Speech.WhisperHardwareBadgeText
+            : rec.Speech.ParakeetHardwareBadgeText;
 
         OnboardingSpeechPickTitle.Text = isWhisper ? "Meet Whisper" : "Meet Parakeet";
         OnboardingSpeechPickDescription.Text = isWhisper
             ? "Multilingual accuracy covering 99+ languages and mixed-script dictation."
             : "Ultra-fast local speech recognition tuned for 25 European languages.";
-        var sizeLabel = isWhisper
-            ? EnginePolishPresentation.WhisperBundleSizeLabel
-            : EnginePolishPresentation.ParakeetBundleSizeLabel;
+
+        var sizeLabel = FormatSpeechBundleSize(selectedEngine, modelState.BundleSizeText);
         OnboardingSpeechInstallBadgeText.Text = isInstalled ? "Already installed" : $"{sizeLabel} download";
-        if (Application.Current.Resources[isInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle"] is Style chipStyle)
-        {
-            OnboardingSpeechInstallBadge.Style = chipStyle;
-        }
-        if (Application.Current.Resources[isInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle"] is Style chipTextStyle)
-        {
-            OnboardingSpeechInstallBadgeText.Style = chipTextStyle;
-        }
+        ApplyOnboardingStyle(OnboardingSpeechInstallBadge, isInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(OnboardingSpeechInstallBadgeText, isInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
 
         OnboardingSpeechPickSizeText.Text = isInstalled
-            ? "Already downloaded on this PC (0 MB extra needed)."
+            ? "Ready on this PC (0 MB extra needed)."
             : $"One-time download: {sizeLabel}.";
         OnboardingSpeechPickSpeedText.Text = isWhisper ? rec.Speech.WhisperSpeedNote : rec.Speech.ParakeetSpeedNote;
         OnboardingSpeechPickLanguageNoteText.Text = rec.EffectiveLanguageEntry is { } entry
             ? $"Tailored for {entry.DisplayName}."
-            : "Configured for Automatic language detection.";
+            : "Automatic language detection.";
     }
 
     private void DrawOnboardingSpeechCompare()
@@ -410,54 +423,52 @@ public sealed partial class MainWindow
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        var parakeetStatusText = !parakeetAllowed
+        OnboardingParakeetCompareTimeText.Text = rec.Speech.ParakeetHeroTimeText;
+        OnboardingWhisperCompareTimeText.Text = rec.Speech.WhisperHeroTimeText;
+
+        var hasParakeetAdvisory = !parakeetAllowed || !string.IsNullOrWhiteSpace(rec.Speech.ParakeetUnavailableReason);
+        var parakeetStatusText = hasParakeetAdvisory
             ? (rec.Speech.ParakeetUnavailableReason ?? $"Doesn't support {rec.EffectiveLanguageEntry?.DisplayName ?? "this language"}")
             : _parakeetModelState.IsInstalled
-                ? "Installed · 25 European languages"
+                ? "Installed \u00B7 25 languages"
                 : "25 European languages";
         OnboardingParakeetCompareStatusBadgeText.Text = parakeetStatusText;
-        if (Application.Current.Resources[!parakeetAllowed
-            ? "BrandWarningChipStyle"
-            : _parakeetModelState.IsInstalled
-                ? "BrandSuccessChipStyle"
-                : "BrandNeutralChipStyle"] is Style parakeetBadgeStyle)
-        {
-            OnboardingParakeetCompareStatusBadge.Style = parakeetBadgeStyle;
-        }
-        if (Application.Current.Resources[!parakeetAllowed
-            ? "BrandWarningChipTextStyle"
-            : _parakeetModelState.IsInstalled
-                ? "BrandSuccessChipTextStyle"
-                : "BrandNeutralChipTextStyle"] is Style parakeetTextStyle)
-        {
-            OnboardingParakeetCompareStatusBadgeText.Style = parakeetTextStyle;
-        }
+        ApplyOnboardingStyle(
+            OnboardingParakeetCompareStatusBadge,
+            hasParakeetAdvisory ? "BrandWarningChipStyle" : _parakeetModelState.IsInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(
+            OnboardingParakeetCompareStatusBadgeText,
+            hasParakeetAdvisory ? "BrandWarningChipTextStyle" : _parakeetModelState.IsInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
 
+        var parakeetSize = FormatSpeechBundleSize(FinalAsrEngine.Parakeet, _parakeetModelState.BundleSizeText);
         OnboardingParakeetCompareSizeText.Text = _parakeetModelState.IsInstalled
             ? "Ready on this PC"
-            : $"Download: {EnginePolishPresentation.ParakeetBundleSizeLabel}";
+            : $"Download: {parakeetSize}";
         OnboardingParakeetCompareDetailText.Text = rec.Speech.ParakeetSpeedNote;
 
         OnboardingWhisperCompareStatusBadgeText.Text = _whisperModelState.IsInstalled
-            ? "Installed · 99+ languages"
+            ? "Installed \u00B7 99+ languages"
             : "99+ languages";
-        if (Application.Current.Resources[_whisperModelState.IsInstalled
-            ? "BrandSuccessChipStyle"
-            : "BrandAccentChipStyle"] is Style whisperBadgeStyle)
-        {
-            OnboardingWhisperCompareStatusBadge.Style = whisperBadgeStyle;
-        }
-        if (Application.Current.Resources[_whisperModelState.IsInstalled
-            ? "BrandSuccessChipTextStyle"
-            : "BrandAccentChipTextStyle"] is Style whisperTextStyle)
-        {
-            OnboardingWhisperCompareStatusBadgeText.Style = whisperTextStyle;
-        }
+        ApplyOnboardingStyle(
+            OnboardingWhisperCompareStatusBadge,
+            _whisperModelState.IsInstalled ? "BrandSuccessChipStyle" : "BrandAccentChipStyle");
+        ApplyOnboardingStyle(
+            OnboardingWhisperCompareStatusBadgeText,
+            _whisperModelState.IsInstalled ? "BrandSuccessChipTextStyle" : "BrandAccentChipTextStyle");
 
+        var whisperSize = FormatSpeechBundleSize(FinalAsrEngine.Whisper, _whisperModelState.BundleSizeText);
         OnboardingWhisperCompareSizeText.Text = _whisperModelState.IsInstalled
             ? "Ready on this PC"
-            : $"Download: {EnginePolishPresentation.WhisperBundleSizeLabel}";
+            : $"Download: {whisperSize}";
         OnboardingWhisperCompareDetailText.Text = rec.Speech.WhisperSpeedNote;
+    }
+
+    private void DrawOnboardingPolishIntro()
+    {
+        if (OnboardingPolishDemo is not null)
+        {
+            OnboardingPolishDemo.ReduceMotion = !ShouldAnimateMotion();
+        }
     }
 
     private void DrawOnboardingPolishPick()
@@ -541,30 +552,16 @@ public sealed partial class MainWindow
         var facts = EnginePolishPresentation.DescribeEgOneTier(modelId);
         var state = ResolveEgOneDisplayState(modelId);
         var installed = state.IsInstalled;
-        var diskLabel = string.IsNullOrWhiteSpace(state.BundleSizeText)
-            ? facts.DefaultDiskSizeText
-            : state.BundleSizeText;
+        var diskLabel = FormatEgOneBundleSize(modelId, state.BundleSizeText, facts.DefaultDiskSizeText);
 
         titleText.Text = facts.Title;
         tagText.Text = tagLabel;
-        if (Application.Current.Resources[isAccentTag ? "BrandAccentChipStyle" : "BrandNeutralChipStyle"] is Style tagStyle)
-        {
-            tagBadge.Style = tagStyle;
-        }
-        if (Application.Current.Resources[isAccentTag ? "BrandAccentChipTextStyle" : "BrandNeutralChipTextStyle"] is Style tagTextStyle)
-        {
-            tagText.Style = tagTextStyle;
-        }
+        ApplyOnboardingStyle(tagBadge, isAccentTag ? "BrandAccentChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(tagText, isAccentTag ? "BrandAccentChipTextStyle" : "BrandNeutralChipTextStyle");
 
         statusText.Text = installed ? "Installed" : $"{diskLabel} download";
-        if (Application.Current.Resources[installed ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle"] is Style statusStyle)
-        {
-            statusBadge.Style = statusStyle;
-        }
-        if (Application.Current.Resources[installed ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle"] is Style statusTextStyle)
-        {
-            statusText.Style = statusTextStyle;
-        }
+        ApplyOnboardingStyle(statusBadge, installed ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(statusText, installed ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
 
         descText.Text = facts.Description;
         specsText.Text = $"{facts.QualityText} \u00B7 {facts.SpeedText} \u00B7 {facts.MemoryText}";
@@ -644,21 +641,13 @@ public sealed partial class MainWindow
     {
         var facts = EnginePolishPresentation.DescribeEgOneTier(modelId);
         var state = ResolveEgOneDisplayState(modelId);
-        var diskLabel = string.IsNullOrWhiteSpace(state.BundleSizeText)
-            ? facts.DefaultDiskSizeText
-            : state.BundleSizeText;
+        var diskLabel = FormatEgOneBundleSize(modelId, state.BundleSizeText, facts.DefaultDiskSizeText);
         recBadge.Visibility = string.Equals(modelId, recommendedId, StringComparison.Ordinal)
             ? Visibility.Visible
             : Visibility.Collapsed;
         statusText.Text = state.IsInstalled ? "Installed" : diskLabel;
-        if (Application.Current.Resources[state.IsInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle"] is Style badgeStyle)
-        {
-            statusBadge.Style = badgeStyle;
-        }
-        if (Application.Current.Resources[state.IsInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle"] is Style textStyle)
-        {
-            statusText.Style = textStyle;
-        }
+        ApplyOnboardingStyle(statusBadge, state.IsInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(statusText, state.IsInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
     }
 
     private void DrawOnboardingDownloads()
@@ -678,9 +667,7 @@ public sealed partial class MainWindow
         OnboardingSpeechDownloadBadgeText.Text = FormatDownloadStageBadge(speechStage, speechPercent);
         SetLiveText(
             OnboardingSpeechDownloadDetailText,
-            snapshot?.Speech.StatusDetail ?? (speechStage == OnboardingDownloadStage.Installed
-                ? "Verified and ready on this PC."
-                : "Preparing speech model download..."));
+            FormatDownloadDetailText(snapshot?.Speech, speechStage, isPolish: false));
 
         var showPolishCard = _onboarding.RequiresLocalEgOne;
         OnboardingPolishDownloadCard.Visibility = showPolishCard ? Visibility.Visible : Visibility.Collapsed;
@@ -700,10 +687,13 @@ public sealed partial class MainWindow
             OnboardingPolishDownloadBadgeText.Text = FormatDownloadStageBadge(polishStage, polishPercent);
             SetLiveText(
                 OnboardingPolishDownloadDetailText,
-                polishSnapshot?.StatusDetail ?? (polishStage == OnboardingDownloadStage.Installed
-                    ? "Verified and ready on this PC."
-                    : "Waiting to download local AI polish..."));
+                FormatDownloadDetailText(polishSnapshot, polishStage, isPolish: true));
         }
+
+        OnboardingSlowNetworkBanner.Visibility = _onboardingSlowDownloadBannerVisible &&
+            snapshot?.IsRunning == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         var canCancel = snapshot?.Speech.CanCancel == true || snapshot?.Polish?.CanCancel == true;
         var canRetry = snapshot?.Speech.CanRetry == true || snapshot?.Polish?.CanRetry == true;
@@ -713,6 +703,30 @@ public sealed partial class MainWindow
         OnboardingDownloadSkipPolishButton.Visibility = showPolishCard && polishFailed
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    private static string FormatDownloadDetailText(
+        OnboardingModelDownloadState? state,
+        OnboardingDownloadStage stage,
+        bool isPolish)
+    {
+        if (state is not null && state.Stage == OnboardingDownloadStage.Downloading && state.TotalBytes > 0)
+        {
+            var doneLabel = WindowsSetupRules.FormatDownloadLabel(state.CompletedBytes);
+            var totalLabel = WindowsSetupRules.FormatDownloadLabel(state.TotalBytes);
+            return $"{doneLabel} of {totalLabel} downloaded";
+        }
+
+        if (!string.IsNullOrWhiteSpace(state?.StatusDetail))
+        {
+            return state.StatusDetail!;
+        }
+
+        return stage == OnboardingDownloadStage.Installed
+            ? "Verified and ready on this PC."
+            : isPolish
+                ? "Waiting to download local AI polish..."
+                : "Preparing speech model download...";
     }
 
     private static string FormatDownloadStageBadge(OnboardingDownloadStage stage, double percent) => stage switch
@@ -731,6 +745,12 @@ public sealed partial class MainWindow
         var consent = WindowsMicrophoneConsent.Read();
         _onboardingMicConsent = consent;
         var allowed = consent != MicrophoneConsent.Blocked;
+        if (allowed && !_drawnMicAllowed)
+        {
+            OnboardingRainbowLips?.TriggerBurst();
+        }
+
+        _drawnMicAllowed = allowed;
         OnboardingMicAllowedBadge.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
         OnboardingMicNeedsAttentionBadge.Visibility = allowed ? Visibility.Collapsed : Visibility.Visible;
         var detail = _onboardingMicrophone?.Sentence ?? (allowed
@@ -741,48 +761,52 @@ public sealed partial class MainWindow
 
     private void DrawOnboardingKey()
     {
-        var currentKey = _onboardingKeyCaptureSession is not null
-            ? "Press key..."
-            : (_onboarding.Choices.HotkeyGestureText ?? _onboarding.RecordingKey ?? DictationPreferences.Default.PushToTalkGesture);
-        OnboardingKeycapText.Text = currentKey;
-        OnboardingKeycapHintText.Text = _onboardingKeyCaptureSession is not null
+        var savedKey = _onboarding.Choices.HotkeyGestureText ?? _onboarding.RecordingKey ?? DictationPreferences.Default.PushToTalkGesture;
+        var isCapturing = _onboardingKeyCaptureSession is not null;
+        OnboardingKeycapText.Text = isCapturing ? "Press key..." : savedKey;
+        OnboardingKeycapHintText.Text = isCapturing
             ? "Listening for your shortcut. Press Escape to cancel."
             : "Click the keycap to capture a custom key, or pick a preset below.";
 
-        ApplyPresetButtonStyle(OnboardingPresetCtrlWinButton, currentKey);
-        ApplyPresetButtonStyle(OnboardingPresetRightCtrlButton, currentKey);
-        ApplyPresetButtonStyle(OnboardingPresetF8Button, currentKey);
-        ApplyPresetButtonStyle(OnboardingPresetAltSpaceButton, currentKey);
+        OnboardingKeycapButton.BorderBrush = ResolveWindowThemeBrush(
+            isCapturing || _onboardingRehearsalKeyDown
+                ? "BrandAccentBrush"
+                : "BrandOnboardingKeycapBevelBrush");
 
-        var activeBrush = Application.Current.Resources["BrandAccentBrush"] as Brush;
-        var dividerBrush = Application.Current.Resources["BrandDividerBrush"] as Brush;
-        var successStyle = Application.Current.Resources["BrandSuccessChipStyle"] as Style;
-        var successTextStyle = Application.Current.Resources["BrandSuccessChipTextStyle"] as Style;
-        var neutralStyle = Application.Current.Resources["BrandNeutralChipStyle"] as Style;
-        var neutralTextStyle = Application.Current.Resources["BrandNeutralChipTextStyle"] as Style;
+        if (OnboardingKeyboardVisual is not null)
+        {
+            OnboardingKeyboardVisual.HotkeyGestureText = savedKey;
+            OnboardingKeyboardVisual.IsPressed = _onboardingRehearsalKeyDown;
+            OnboardingKeyboardVisual.IsCapturing = isCapturing;
+            OnboardingKeyboardVisual.ReduceMotion = !ShouldAnimateMotion();
+        }
 
+        ApplyPresetButtonStyle(OnboardingPresetCtrlWinButton, savedKey);
+        ApplyPresetButtonStyle(OnboardingPresetRightCtrlButton, savedKey);
+        ApplyPresetButtonStyle(OnboardingPresetF8Button, savedKey);
+        ApplyPresetButtonStyle(OnboardingPresetAltSpaceButton, savedKey);
+
+        var activeBrush = ResolveWindowThemeBrush("BrandAccentBrush");
+        var dividerBrush = ResolveWindowThemeBrush("BrandDividerBrush");
         OnboardingRehearsalHoldCard.BorderBrush = _onboardingRehearsalKeyDown || _onboardingHoldRehearsed
             ? activeBrush
             : dividerBrush;
-        OnboardingRehearsalHoldBadge.Style = _onboardingHoldRehearsed ? successStyle : neutralStyle;
-        OnboardingRehearsalHoldBadgeText.Style = _onboardingHoldRehearsed ? successTextStyle : neutralTextStyle;
+        ApplyOnboardingStyle(OnboardingRehearsalHoldBadge, _onboardingHoldRehearsed ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(OnboardingRehearsalHoldBadgeText, _onboardingHoldRehearsed ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
         OnboardingRehearsalHoldBadgeText.Text = _onboardingHoldRehearsed ? "Tried" : "Try holding";
 
         OnboardingRehearsalDoubleTapCard.BorderBrush = _onboardingDoubleTapRehearsed
             ? activeBrush
             : dividerBrush;
-        OnboardingRehearsalDoubleTapBadge.Style = _onboardingDoubleTapRehearsed ? successStyle : neutralStyle;
-        OnboardingRehearsalDoubleTapBadgeText.Style = _onboardingDoubleTapRehearsed ? successTextStyle : neutralTextStyle;
+        ApplyOnboardingStyle(OnboardingRehearsalDoubleTapBadge, _onboardingDoubleTapRehearsed ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+        ApplyOnboardingStyle(OnboardingRehearsalDoubleTapBadgeText, _onboardingDoubleTapRehearsed ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
         OnboardingRehearsalDoubleTapBadgeText.Text = _onboardingDoubleTapRehearsed ? "Tried" : "Tap twice";
     }
 
-    private static void ApplyPresetButtonStyle(Button button, string activeKey)
+    private void ApplyPresetButtonStyle(Button button, string activeKey)
     {
         var isMatch = button.Tag is string tag && string.Equals(tag, activeKey, StringComparison.OrdinalIgnoreCase);
-        if (Application.Current.Resources[isMatch ? "BrandQuietActiveButtonStyle" : "BrandQuietButtonStyle"] is Style style)
-        {
-            button.Style = style;
-        }
+        ApplyOnboardingStyle(button, isMatch ? "BrandQuietActiveButtonStyle" : "BrandQuietButtonStyle");
     }
 
     private void DrawOnboardingGettingReady()
@@ -818,7 +842,7 @@ public sealed partial class MainWindow
                 polishReady ? "BrandSuccessChipTextStyle" : polishStage is OnboardingDownloadStage.Failed or OnboardingDownloadStage.Cancelled ? "BrandWarningChipTextStyle" : "BrandAccentChipTextStyle");
             OnboardingGatePolishDetailText.Text = polishReady
                 ? "Local AI polish is ready."
-                : (_onboardingDownloadSnapshot?.Polish?.StatusDetail ?? "Finishing EG-1 download...");
+                : (_onboardingDownloadSnapshot?.Polish?.StatusDetail ?? OnboardingCopy.GatePolishDownloadingNotice);
             OnboardingGatePolishProgress.Visibility = !polishReady && polishStage == OnboardingDownloadStage.Downloading
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -829,7 +853,7 @@ public sealed partial class MainWindow
         ApplyGateRowStyle(
             OnboardingGateMicBadge,
             OnboardingGateMicBadgeText,
-            micAllowed ? "Allowed" : "Needs attention",
+            micAllowed ? "Ready" : "Needs attention",
             micAllowed ? "BrandSuccessChipStyle" : "BrandWarningChipStyle",
             micAllowed ? "BrandSuccessChipTextStyle" : "BrandWarningChipTextStyle");
         OnboardingGateMicDetailText.Text = micAllowed
@@ -838,17 +862,25 @@ public sealed partial class MainWindow
         OnboardingGateMicSettingsButton.Visibility = micAllowed ? Visibility.Collapsed : Visibility.Visible;
 
         var decision = _onboarding.EvaluateGate();
+        var showSlowCard = _onboardingSlowPolishCardVisible && decision == OnboardingGateDecision.WaitingWithPolishDownloading;
+        OnboardingGateSlowPolishCard.Visibility = showSlowCard ? Visibility.Visible : Visibility.Collapsed;
+        if (showSlowCard)
+        {
+            OnboardingGateSlowPolishTitleText.Text = OnboardingCopy.GateSlowPolishTitle;
+            OnboardingGateSlowPolishBodyText.Text = OnboardingCopy.GateSlowPolishBody;
+        }
+
         OnboardingGateRetryButton.Visibility = decision == OnboardingGateDecision.PolishFailedContinueWithout ||
             _onboarding.Model is SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-        OnboardingGateSkipPolishButton.Visibility = decision is OnboardingGateDecision.WaitingWithPolishDownloading
-            or OnboardingGateDecision.PolishFailedContinueWithout
+        OnboardingGateSkipPolishButton.Visibility = !showSlowCard &&
+            decision is OnboardingGateDecision.WaitingWithPolishDownloading or OnboardingGateDecision.PolishFailedContinueWithout
                 ? Visibility.Visible
                 : Visibility.Collapsed;
     }
 
-    private static void ApplyGateRowStyle(
+    private void ApplyGateRowStyle(
         Border badge,
         TextBlock text,
         string label,
@@ -856,22 +888,53 @@ public sealed partial class MainWindow
         string textStyleKey)
     {
         text.Text = label;
-        if (Application.Current.Resources[badgeStyleKey] is Style badgeStyle)
-        {
-            badge.Style = badgeStyle;
-        }
-        if (Application.Current.Resources[textStyleKey] is Style textStyle)
-        {
-            text.Style = textStyle;
-        }
+        ApplyOnboardingStyle(badge, badgeStyleKey);
+        ApplyOnboardingStyle(text, textStyleKey);
     }
 
     private void DrawOnboardingPractice()
     {
         var activeKey = _onboarding.Choices.HotkeyGestureText ?? _onboarding.RecordingKey ?? "Ctrl+Win";
         OnboardingPracticeKeyChipText.Text = _onboarding.Choices.RecordingMode == DictationRecordingMode.Toggle
-            ? $"Toggle: {activeKey}"
-            : $"Hold: {activeKey} (or double-press for hands-free)";
+            ? $"Press: {activeKey}"
+            : $"Hold: {activeKey}";
+        OnboardingPracticePromptText.Text = OnboardingCopy.PracticePrompt;
+
+        OnboardingPracticeBoxFrame.BorderBrush = ResolveWindowThemeBrush(
+            _onboarding.PracticeSucceeded
+                ? "BrandSuccessBrush"
+                : _onboarding.PracticeState == OnboardingPracticeState.Listening
+                    ? "BrandAccentBrush"
+                    : "BrandDividerBrush");
+
+        var showDeferredPolish = _onboardingPolishDeferredInPractice &&
+            _onboarding.PolishModel != SpeechModelDelivery.Installed;
+        OnboardingPracticeDeferredPolishCard.Visibility = showDeferredPolish ? Visibility.Visible : Visibility.Collapsed;
+
+        var showMicPicker = !_onboarding.PracticeSucceeded && _microphones.Length > 0;
+        OnboardingPracticeMicRow.Visibility = showMicPicker ? Visibility.Visible : Visibility.Collapsed;
+        if (showMicPicker && OnboardingPracticeMicComboBox is not null)
+        {
+            _onboardingIsUpdatingPracticeMic = true;
+            try
+            {
+                if (!ReferenceEquals(OnboardingPracticeMicComboBox.ItemsSource, _microphones))
+                {
+                    OnboardingPracticeMicComboBox.ItemsSource = _microphones;
+                }
+
+                if (_selectedMicrophoneChoice is not null &&
+                    !ReferenceEquals(OnboardingPracticeMicComboBox.SelectedItem, _selectedMicrophoneChoice))
+                {
+                    OnboardingPracticeMicComboBox.SelectedItem = _selectedMicrophoneChoice;
+                }
+            }
+            finally
+            {
+                _onboardingIsUpdatingPracticeMic = false;
+            }
+        }
+
         OnboardingPracticeFootnote.Text = _onboarding.TakeInFlight
             ? OnboardingCopy.PracticeBusy
             : OnboardingCopy.PracticeFootnote;
@@ -880,22 +943,12 @@ public sealed partial class MainWindow
             : Visibility.Collapsed;
     }
 
-    private void DrawOnboardingClosing()
+    private void DrawOnboardingClosing(bool restartFilm)
     {
-        var beat = _onboarding.CurrentClosingBeat;
-        OnboardingClosingBeatStepText.Text = $"{beat.Index + 1} OF {OnboardingFlow.ClosingBeatCount}";
-        OnboardingClosingBeatTitle.Text = beat.Title;
-        OnboardingClosingBeatSubtitle.Text = beat.Subtitle;
-        OnboardingClosingBeatIcon.Glyph = beat.Kind switch
+        if (OnboardingClosingFilm is null)
         {
-            OnboardingClosingBeatKind.Apps => "\uE71D",
-            OnboardingClosingBeatKind.Land => "\uE8A7",
-            OnboardingClosingBeatKind.Copied => "\uE8C8",
-            OnboardingClosingBeatKind.Learn => "\uE82D",
-            OnboardingClosingBeatKind.More => "\uE713",
-            OnboardingClosingBeatKind.Yours => "\uE720",
-            _ => "\uE73E",
-        };
+            return;
+        }
 
         var speechName = _onboarding.Choices.SpeechEngine == FinalAsrEngine.Whisper ? "Whisper" : "Parakeet";
         var polishName = _onboarding.Choices.PolishChoice switch
@@ -906,44 +959,35 @@ public sealed partial class MainWindow
             OnboardingPolishChoiceKind.Claude => "Claude",
             OnboardingPolishChoiceKind.Gemini => "Gemini",
             OnboardingPolishChoiceKind.Ollama => "Ollama",
-            _ => "Off",
+            _ => "Off for now",
         };
         var keyName = _onboarding.Choices.HotkeyGestureText ?? _onboarding.RecordingKey ?? "Ctrl+Win";
 
-        OnboardingClosingSummaryText.Text = OnboardingCopy.FormatClosingSummary(beat, speechName, polishName, keyName);
+        OnboardingClosingFilm.SpeechModelName = speechName;
+        OnboardingClosingFilm.PolishName = polishName;
+        OnboardingClosingFilm.KeyLabel = keyName;
+        OnboardingClosingFilm.KeyCap = keyName;
+        OnboardingClosingFilm.ReduceMotion = !ShouldAnimateMotion();
 
-        var languageLabel = string.Equals(_onboarding.Choices.LanguageCode, LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase)
-            ? LanguageCatalog.AutomaticTitle
-            : LanguageCatalog.TryGetEntry(_onboarding.Choices.LanguageCode, out var entry)
-                ? entry.DisplayName
-                : _onboarding.Choices.LanguageCode;
-        OnboardingClosingLanguageSummaryText.Text = languageLabel;
-        OnboardingClosingSpeechSummaryText.Text = speechName;
-        OnboardingClosingPolishSummaryText.Text = polishName;
-        OnboardingClosingKeySummaryText.Text = keyName;
-
-        var activeBrush = Application.Current.Resources["BrandAccentSolidBrush"] as Brush;
-        var idleBrush = Application.Current.Resources["BrandDividerBrush"] as Brush;
-        for (var i = 0; i < _onboardingClosingDotButtons.Length; i++)
+        if (restartFilm)
         {
-            if (_onboardingClosingDotButtons[i].Content is Border dot)
-            {
-                dot.Background = i == beat.Index ? activeBrush : idleBrush;
-            }
+            OnboardingClosingFilm.Restart();
         }
+
+        UpdateOnboardingClosingPausePlayButton();
     }
 
     private void DrawOnboardingFooter(OnboardingStep step)
     {
         var (ctaText, ctaEnabled, skipText, showSkip) = step switch
         {
-            OnboardingStep.Welcome => ("Set up dictation", true, string.Empty, false),
+            OnboardingStep.Welcome => (OnboardingCopy.WelcomePrimaryCta, true, string.Empty, false),
             OnboardingStep.PolishIntro => ("Set up AI polish", true, "Skip AI polish", true),
             OnboardingStep.Permissions => ("Continue", _onboarding.MicrophoneAllowed, string.Empty, false),
-            OnboardingStep.GettingReady when _onboarding.CanSkipAheadDuringGate => ("Skip ahead", true, "Continue without AI polish", true),
-            OnboardingStep.GettingReady when _onboarding.CanContinueWithoutAiPolishOnGate => ("Continue without AI polish", true, string.Empty, false),
+            OnboardingStep.GettingReady when _onboarding.CanSkipAheadDuringGate => (OnboardingCopy.GateSkipAhead, true, OnboardingCopy.GateContinueWithoutPolish, true),
+            OnboardingStep.GettingReady when _onboarding.CanContinueWithoutAiPolishOnGate => (OnboardingCopy.GateContinueWithoutPolish, true, string.Empty, false),
             OnboardingStep.GettingReady => ("Continue", _onboarding.EvaluateGate() == OnboardingGateDecision.ReadyAutoSkip, string.Empty, false),
-            OnboardingStep.Practice => ("Continue", _onboarding.CanFinishPractice, "Skip practice", _onboarding.CanSkipPractice),
+            OnboardingStep.Practice => ("Continue", _onboarding.CanFinishPractice, OnboardingCopy.PracticeSkip, _onboarding.CanSkipPractice),
             OnboardingStep.Closing => ("Start using EnviousWispr", true, string.Empty, false),
             _ => ("Continue", true, string.Empty, false),
         };
@@ -952,9 +996,31 @@ public sealed partial class MainWindow
         FinishOnboardingButton.IsEnabled = ctaEnabled;
         OnboardingSkipButton.Content = skipText;
         OnboardingSkipButton.Visibility = showSkip ? Visibility.Visible : Visibility.Collapsed;
-        OnboardingFooterText.Visibility = step is OnboardingStep.Welcome or OnboardingStep.Closing
+        OnboardingFooterText.Text = OnboardingCopy.WelcomeFooterNote;
+        OnboardingFooterText.Visibility = step == OnboardingStep.Welcome
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    private static string FormatSpeechBundleSize(FinalAsrEngine engine, string? probedLabel)
+    {
+        var rules = WindowsSetupRules.Current;
+        var modelId = engine == FinalAsrEngine.Whisper ? WhisperModelIds.Final : ParakeetModelIds.Final;
+        var fallbackBytes = rules.SpeechCatalog.TryGetValue(modelId, out var entry) ? entry.SizeBytes : 0L;
+        var fallbackLabel = entry?.SizeLabel ?? EnginePolishPresentation.DefaultBundleSizeLabel(engine);
+        return WindowsSetupRules.FormatDownloadLabel(
+            string.IsNullOrWhiteSpace(probedLabel) ? fallbackLabel : probedLabel,
+            fallbackBytes);
+    }
+
+    private static string FormatEgOneBundleSize(string modelId, string? probedLabel, string defaultLabel)
+    {
+        var rules = WindowsSetupRules.Current;
+        var fallbackBytes = rules.PolishCatalog.TryGetValue(modelId, out var entry) ? entry.SizeBytes : 0L;
+        var raw = !string.IsNullOrWhiteSpace(probedLabel)
+            ? probedLabel
+            : entry?.SizeLabel ?? defaultLabel;
+        return WindowsSetupRules.FormatDownloadLabel(raw, fallbackBytes);
     }
 
     public sealed record OnboardingLanguageRow(

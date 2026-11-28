@@ -145,12 +145,12 @@ public sealed partial class MainWindow
             isLoaded: () => _onboardingLoaded,
             ensureLoaded: EnsureOnboardingViewLoaded,
             getElement: () => OnboardingView,
+            onThemeChanged: RefreshOnboardingThemeBrushes,
             onShutdown: () =>
             {
                 StopOnboardingTimers();
                 if (_onboardingPageView is { } view)
                 {
-                    view.OnboardingView.LayoutUpdated -= FitWindowToOnboardingOnce;
                     view.Detach();
                     ShellContentGrid.Children.Remove(view);
                     _onboardingPageView = null;

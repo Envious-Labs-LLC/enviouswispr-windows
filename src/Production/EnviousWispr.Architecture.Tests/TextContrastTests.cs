@@ -52,6 +52,8 @@ public sealed partial class TextContrastTests
         "BrandCardBgColor",
         "BrandPageBgColor",
         "BrandSidebarBgColor",
+        "BrandOnboardingCanvasBgColor",
+        "BrandOnboardingSurfaceBgColor",
     ];
 
     [Theory]
@@ -126,6 +128,56 @@ public sealed partial class TextContrastTests
                         + $"{ratio.ToString("0.00", CultureInfo.InvariantCulture)}:1, "
                         + $"below {ControlBoundaryFloor}:1.");
             }
+        }
+
+        Assert.True(failures.Count == 0, string.Join("\n", failures));
+    }
+
+    [Theory]
+    [InlineData("Light")]
+    [InlineData("Dark")]
+    public void OnboardingPrimaryButtonForegroundClearsContrastFloorOnEveryState(string theme)
+    {
+        var colors = ReadTheme(theme);
+
+        Assert.True(colors.TryGetValue("BrandOnboardingPrimaryFgColor", out var fg), $"{theme} missing BrandOnboardingPrimaryFgColor.");
+        var failures = new List<string>();
+        foreach (var bgKey in new[]
+                 {
+                     "BrandOnboardingPrimaryBgColor",
+                     "BrandOnboardingPrimaryHoverBgColor",
+                     "BrandOnboardingPrimaryPressedBgColor",
+                 })
+        {
+            if (!colors.TryGetValue(bgKey, out var bg))
+            {
+                failures.Add($"{theme}: missing {bgKey}.");
+                continue;
+            }
+
+            var ratio = Contrast(fg!, bg);
+            if (ratio < NormalTextFloor)
+            {
+                failures.Add(
+                    $"{theme}: BrandOnboardingPrimaryFgColor {fg} on {bgKey} {bg} is "
+                        + $"{ratio.ToString("0.00", CultureInfo.InvariantCulture)}:1, below {NormalTextFloor}:1.");
+            }
+        }
+
+        if (colors.TryGetValue("BrandOnboardingPrimaryDisabledFgColor", out var disabledFg) &&
+            colors.TryGetValue("BrandOnboardingPrimaryDisabledBgColor", out var disabledBg))
+        {
+            var disabledRatio = Contrast(disabledFg, disabledBg);
+            if (disabledRatio < ControlBoundaryFloor)
+            {
+                failures.Add(
+                    $"{theme}: disabled onboarding CTA {disabledFg} on {disabledBg} is "
+                        + $"{disabledRatio.ToString("0.00", CultureInfo.InvariantCulture)}:1, below {ControlBoundaryFloor}:1.");
+            }
+        }
+        else
+        {
+            failures.Add($"{theme}: missing BrandOnboardingPrimaryDisabledFgColor or BrandOnboardingPrimaryDisabledBgColor.");
         }
 
         Assert.True(failures.Count == 0, string.Join("\n", failures));

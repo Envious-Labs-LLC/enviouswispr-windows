@@ -17,6 +17,8 @@ using EnviousWispr.Services.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 
 namespace EnviousWispr.App;
 
@@ -26,16 +28,20 @@ public sealed partial class MainWindow
     private static readonly TimeSpan MicrophonePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan RehearsalHoldThreshold = TimeSpan.FromMilliseconds(260);
     private static readonly TimeSpan RehearsalDoubleTapWindow = TimeSpan.FromMilliseconds(480);
+    private static readonly TimeSpan SlowPolishGateDelay = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SlowDownloadBannerDelay = TimeSpan.FromSeconds(30);
 
     private readonly OnboardingFlow _onboarding = new();
-    private readonly DispatcherTimer _onboardingBeat = new();
     private readonly DispatcherTimer _onboardingMicrophonePoll = new() { Interval = MicrophonePollInterval };
     private readonly DispatcherTimer _onboardingKeyHoldTimer = new() { Interval = RehearsalHoldThreshold };
+    private readonly DispatcherTimer _onboardingSlowPolishTimer = new() { Interval = SlowPolishGateDelay };
+    private readonly DispatcherTimer _onboardingSlowDownloadTimer = new() { Interval = SlowDownloadBannerDelay };
 
     private OnboardingCheckpointStore? _onboardingCheckpointStore;
     private Task _checkpointWriteQueue = Task.CompletedTask;
     private bool _onboardingStateLoaded;
     private bool _onboardingCheckpointSuppress;
+    private OnboardingStep? _onboardingUatPinnedStep;
 
     private string _onboardingEngineSentence = OnboardingCopy.StartingEngine;
     private SpeechEngineReadiness _latestEngineReadiness = SpeechEngineReadiness.Preparing;
@@ -51,11 +57,16 @@ public sealed partial class MainWindow
     private OnboardingLanguageRow[] _onboardingAllLanguageRows = [];
     private Border[] _onboardingProgressSegments = [];
     private Button[] _onboardingClosingDotButtons = [];
+    private Border[] _onboardingClosingSegmentTracks = [];
+    private Border[] _onboardingClosingSegmentFills = [];
+    private ScaleTransform[] _onboardingClosingSegmentScales = [];
+    private bool _onboardingClosingFilmWired;
     private string? _suggestedSystemLanguageCode;
 
     private OnboardingStep? _drawnStep;
     private OnboardingPracticeState? _drawnPractice;
     private OnboardingGateDecision? _drawnGate;
+    private bool _drawnMicAllowed;
     private bool _onboardingFocusOrphaned;
 
     private PolishProvider _onboardingCloudProvider = PolishProvider.OpenAI;
@@ -65,14 +76,18 @@ public sealed partial class MainWindow
     private bool _onboardingIsUpdatingLanguageUi;
     private bool _onboardingIsUpdatingCards;
     private bool _onboardingIsUpdatingCloudModels;
+    private bool _onboardingIsUpdatingPracticeMic;
 
     private WindowsKeybindCaptureSession? _onboardingKeyCaptureSession;
     private bool _onboardingRehearsalKeyDown;
     private bool _onboardingHoldRehearsed;
     private bool _onboardingDoubleTapRehearsed;
     private DateTimeOffset? _onboardingLastTapUpUtc;
-    private bool _onboardingClosingPaused;
-    private bool _onboardingLipsAnimating;
+    private bool _onboardingSlowPolishCardVisible;
+    private bool _onboardingSlowDownloadBannerVisible;
+    private bool _onboardingPolishDeferredInPractice;
+    private bool _onboardingLanguageSpeakingActive;
+    private double _onboardingAudioRms;
     private bool _dictationActive;
     private string? _lastLanguageQuery;
     private string? _lastSelectedLanguageCode;
@@ -95,7 +110,7 @@ public sealed partial class MainWindow
     /// <summary>Raised when onboarding retries failed/cancelled dual downloads.</summary>
     public event Action? OnboardingDualDownloadRetryRequested;
 
-    /// <summary>Raised true while onboarding Screen 9 is actively listening for key rehearsal gestures.</summary>
+    /// <summary>Raised true while onboarding Screen 10 is actively listening for key rehearsal gestures.</summary>
     public event Action<bool>? OnboardingKeyRehearsalActiveChanged;
 
     /// <summary>Validates, persists, and rebinds the global recording key immediately during setup.</summary>
@@ -119,12 +134,19 @@ public sealed partial class MainWindow
         _ => SpeechModelDelivery.Unknown,
     };
 
+    internal void ObserveAudioLevelForOnboarding(double rootMeanSquare)
+    {
+        _onboardingAudioRms = Math.Clamp(rootMeanSquare, 0d, 1d);
+    }
+
     internal void RequestOnboardingDualDownload(string speechModelId, string? polishModelId, bool parallelDownloads) =>
         OnboardingDualDownloadRequested?.Invoke(speechModelId, polishModelId, parallelDownloads);
 
     internal void CancelOnboardingDualDownload()
     {
         _activeRequestedDownloadPair = null;
+        _onboardingSlowDownloadTimer.Stop();
+        _onboardingSlowDownloadBannerVisible = false;
         OnboardingDualDownloadCancelRequested?.Invoke();
     }
 
@@ -166,6 +188,7 @@ public sealed partial class MainWindow
             };
         }
 
+        _onboardingPolishDeferredInPractice = false;
         OnboardingDualDownloadSkipPolishRequested?.Invoke();
     }
 
@@ -180,9 +203,21 @@ public sealed partial class MainWindow
         if (snapshot.Polish is { } polish)
         {
             _onboarding.ReportPolishModel(ToSpeechModelDelivery(polish.Stage));
+            if (polish.Stage == OnboardingDownloadStage.Installed)
+            {
+                _onboardingPolishDeferredInPractice = false;
+            }
         }
 
-        if (_onboarding.Step == OnboardingStep.GettingReady && _onboarding.TryAdvanceFromGate())
+        if (!snapshot.IsRunning)
+        {
+            _onboardingSlowDownloadTimer.Stop();
+            _onboardingSlowDownloadBannerVisible = false;
+        }
+
+        if (_onboarding.Step == OnboardingStep.GettingReady &&
+            _onboardingUatPinnedStep != OnboardingStep.GettingReady &&
+            _onboarding.TryAdvanceFromGate())
         {
             QueueOnboardingCheckpointSave();
         }
@@ -199,7 +234,9 @@ public sealed partial class MainWindow
         }
 
         SyncLiveInventoryToOnboarding();
-        if (_onboarding.Step == OnboardingStep.GettingReady && _onboarding.TryAdvanceFromGate())
+        if (_onboarding.Step == OnboardingStep.GettingReady &&
+            _onboardingUatPinnedStep != OnboardingStep.GettingReady &&
+            _onboarding.TryAdvanceFromGate())
         {
             QueueOnboardingCheckpointSave();
         }
@@ -225,7 +262,13 @@ public sealed partial class MainWindow
         if (ended)
         {
             DictationEnded?.Invoke();
+            var hadSucceeded = _onboarding.PracticeSucceeded;
             _onboarding.TakeEnded(practiceText);
+            if (!hadSucceeded && _onboarding.PracticeSucceeded)
+            {
+                OnboardingRainbowLips?.TriggerBurst();
+            }
+
             if (_onboarding.PracticeState == OnboardingPracticeState.MissedTheBox
                 && OnboardingView is { Visibility: Visibility.Visible }
                 && OnboardingPracticeBox is not null)
@@ -280,7 +323,9 @@ public sealed partial class MainWindow
 
         _onboardingModel = presentation;
         SyncLiveInventoryToOnboarding();
-        if (_onboarding.Step == OnboardingStep.GettingReady && _onboarding.TryAdvanceFromGate())
+        if (_onboarding.Step == OnboardingStep.GettingReady &&
+            _onboardingUatPinnedStep != OnboardingStep.GettingReady &&
+            _onboarding.TryAdvanceFromGate())
         {
             QueueOnboardingCheckpointSave();
         }
@@ -293,7 +338,9 @@ public sealed partial class MainWindow
         _onboardingMicrophone = readiness;
         _onboardingMicConsent = consent;
         _onboarding.ReportMicrophone(consent);
-        if (_onboarding.Step == OnboardingStep.GettingReady && _onboarding.TryAdvanceFromGate())
+        if (_onboarding.Step == OnboardingStep.GettingReady &&
+            _onboardingUatPinnedStep != OnboardingStep.GettingReady &&
+            _onboarding.TryAdvanceFromGate())
         {
             QueueOnboardingCheckpointSave();
         }
@@ -309,8 +356,6 @@ public sealed partial class MainWindow
 
     private void ObserveRecordingKeyProblemForOnboarding(string problem)
     {
-        // Secondary isolated UAT windows hold no global hook when a daily-driver owns it.
-        // Keep the saved shortcut visible so onboarding key selection and focused rehearsal work cleanly.
         if (string.IsNullOrWhiteSpace(_onboarding.RecordingKey))
         {
             _onboarding.ReportRecordingKey(
@@ -330,18 +375,21 @@ public sealed partial class MainWindow
             return;
         }
 
+        var newlyRehearsed = false;
         if (args.Signal == PushToTalkSignal.Pressed)
         {
             if (args.IsHandsFree)
             {
                 _onboardingRehearsalKeyDown = false;
                 _onboardingKeyHoldTimer.Stop();
+                newlyRehearsed = !_onboardingDoubleTapRehearsed;
                 _onboardingDoubleTapRehearsed = true;
                 _onboarding.MarkKeyRehearsalCompleted();
             }
             else
             {
                 _onboardingRehearsalKeyDown = true;
+                newlyRehearsed = !_onboardingHoldRehearsed;
                 _onboardingHoldRehearsed = true;
                 _onboarding.MarkKeyRehearsalCompleted();
             }
@@ -350,8 +398,14 @@ public sealed partial class MainWindow
         {
             _onboardingRehearsalKeyDown = false;
             _onboardingKeyHoldTimer.Stop();
+            newlyRehearsed = !_onboardingHoldRehearsed;
             _onboardingHoldRehearsed = true;
             _onboarding.MarkKeyRehearsalCompleted();
+        }
+
+        if (newlyRehearsed)
+        {
+            OnboardingRainbowLips?.TriggerBurst();
         }
 
         RenderOnboarding();
@@ -371,6 +425,7 @@ public sealed partial class MainWindow
             : _settings.Preferences.Dictation.PushToTalkGesture;
         _onboarding.ReportRecordingKey(initialKey, _settings.Preferences.Dictation.RecordingMode);
 
+        var pinnedUatStep = TryGetUatPinnedOnboardingStep();
         if (!_settings.HasCompletedOnboarding)
         {
             _onboardingCheckpointSuppress = true;
@@ -387,6 +442,12 @@ public sealed partial class MainWindow
                     _onboardingCloudProvider = savedCloud;
                     _onboardingSeeAllCloudTab = true;
                 }
+
+                if (pinnedUatStep is { } uatStep)
+                {
+                    _onboardingUatPinnedStep = uatStep;
+                    _onboarding.ForceStepForUat(uatStep);
+                }
             }
             finally
             {
@@ -396,7 +457,9 @@ public sealed partial class MainWindow
 
         _onboardingStateLoaded = true;
         SyncLiveInventoryToOnboarding();
-        if (_onboarding.Step >= OnboardingStep.Downloads && _onboarding.Step < OnboardingStep.Closing)
+        if (_onboardingUatPinnedStep is null &&
+            _onboarding.Step >= OnboardingStep.Downloads &&
+            _onboarding.Step < OnboardingStep.Closing)
         {
             StartOnboardingDownloadsIfNeeded();
             if (_onboarding.Model == SpeechModelDelivery.Installed &&
@@ -432,11 +495,16 @@ public sealed partial class MainWindow
         _onboardingDoubleTapRehearsed = false;
         _onboardingRehearsalKeyDown = false;
         _onboardingLastTapUpUtc = null;
-        _onboardingClosingPaused = false;
         _onboardingSeeAllCloudTab = false;
+        _onboardingSlowPolishCardVisible = false;
+        _onboardingSlowDownloadBannerVisible = false;
+        _onboardingPolishDeferredInPractice = false;
+        _onboardingLanguageSpeakingActive = false;
+        _onboardingAudioRms = 0d;
         _drawnStep = null;
         _drawnPractice = null;
         _drawnGate = null;
+        _drawnMicAllowed = _onboardingMicConsent != MicrophoneConsent.Blocked;
 
         _onboarding.Begin();
         _onboarding.ReportMicrophone(_onboardingMicConsent);
@@ -448,6 +516,17 @@ public sealed partial class MainWindow
         var rec = ComputeOnboardingRecommendation(LanguageCatalog.AutomaticCode);
         _onboardingRecommendation = rec;
         _onboarding.ApplyRecommendation(rec, applyPrimaryChoices: true);
+
+        if (TryGetUatPinnedOnboardingStep() is { } uatStep)
+        {
+            _onboardingUatPinnedStep = uatStep;
+            _onboarding.ForceStepForUat(uatStep);
+        }
+        else
+        {
+            _onboardingUatPinnedStep = null;
+        }
+
         SyncLiveInventoryToOnboarding();
 
         if (OnboardingPracticeBox is not null)
@@ -459,6 +538,7 @@ public sealed partial class MainWindow
         {
             OnboardingLanguageSearchBox.Text = string.Empty;
         }
+
         _lastLanguageQuery = null;
         _lastSelectedLanguageCode = null;
         RenderOnboarding();
@@ -466,18 +546,25 @@ public sealed partial class MainWindow
 
     private void EnsureOnboardingChromeBuilt()
     {
+        if (OnboardingRainbowLips is not null && OnboardingRainbowLips.VoiceLevelSource is null)
+        {
+            OnboardingRainbowLips.VoiceLevelSource = SampleOnboardingVoiceLevel;
+        }
+
         if (_onboardingProgressSegments.Length == 0 && OnboardingProgressGrid is not null)
         {
             OnboardingProgressGrid.ColumnDefinitions.Clear();
             OnboardingProgressGrid.Children.Clear();
-            var height = (double)Application.Current.Resources["BrandOnboardingProgressSegmentHeight"];
-            var radius = (CornerRadius)Application.Current.Resources["BrandOnboardingProgressSegmentRadius"];
+            var width = LayoutDouble("BrandOnboardingProgressSegmentWidth");
+            var height = LayoutDouble("BrandOnboardingProgressSegmentHeight");
+            var radius = new CornerRadius(height / 2.0);
             var segments = new Border[OnboardingFlow.PrimaryStepCount];
             for (var i = 0; i < OnboardingFlow.PrimaryStepCount; i++)
             {
-                OnboardingProgressGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                OnboardingProgressGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 var segment = new Border
                 {
+                    Width = width,
                     Height = height,
                     CornerRadius = radius,
                 };
@@ -491,38 +578,76 @@ public sealed partial class MainWindow
 
         if (_onboardingClosingDotButtons.Length == 0 && OnboardingClosingDotsPanel is not null)
         {
+            OnboardingClosingDotsPanel.ColumnDefinitions.Clear();
             OnboardingClosingDotsPanel.Children.Clear();
-            var dotSize = (double)Application.Current.Resources["BrandOnboardingClosingDotSize"];
-            var dotRadius = (CornerRadius)Application.Current.Resources["BrandOnboardingClosingDotRadius"];
-            var quietStyle = Application.Current.Resources["BrandQuietButtonStyle"] as Style;
-            var dots = new Button[OnboardingCopy.ClosingBeats.Count];
-            for (var i = 0; i < OnboardingCopy.ClosingBeats.Count; i++)
+            var count = OnboardingClosingFilmEngine.SceneCount;
+            var hitTestBrush = ResolveWindowThemeBrush("BrandHitTestBrush");
+            var trackBrush = ResolveWindowThemeBrush("BrandDividerBrush");
+            var fillBrush = ResolveWindowThemeBrush("BrandAccentSolidBrush");
+            var dots = new Button[count];
+            var tracks = new Border[count];
+            var fills = new Border[count];
+            var scales = new ScaleTransform[count];
+
+            for (var i = 0; i < count; i++)
             {
-                var beatIndex = i;
+                var sceneIndex = i;
+                OnboardingClosingDotsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                var scale = new ScaleTransform { ScaleX = 0d };
+                var fill = new Border
+                {
+                    Height = 4,
+                    CornerRadius = new CornerRadius(2),
+                    Background = fillBrush,
+                    RenderTransformOrigin = new Point(0, 0.5),
+                    RenderTransform = scale,
+                };
+                var track = new Border
+                {
+                    Height = 4,
+                    CornerRadius = new CornerRadius(2),
+                    Background = trackBrush,
+                    Child = fill,
+                };
                 var button = new Button
                 {
-                    Tag = beatIndex,
-                    Width = dotSize + 14,
-                    Height = dotSize + 10,
+                    Tag = sceneIndex,
+                    Background = hitTestBrush,
+                    BorderThickness = new Thickness(0),
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
                     MinWidth = 0,
-                    MinHeight = 0,
-                    Padding = new Thickness(0),
-                    CornerRadius = dotRadius,
-                    Style = quietStyle,
-                    Content = new Border
-                    {
-                        Width = dotSize,
-                        Height = dotSize,
-                        CornerRadius = dotRadius,
-                    },
+                    MinHeight = 20,
+                    Padding = new Thickness(0, 8, 0, 8),
+                    Content = track,
                 };
-                AutomationProperties.SetName(button, $"Step {beatIndex + 1} of {OnboardingCopy.ClosingBeats.Count}");
+                var beatTitle = sceneIndex < OnboardingCopy.ClosingBeats.Count
+                    ? OnboardingCopy.ClosingBeats[sceneIndex].Title
+                    : $"Scene {sceneIndex + 1}";
+                AutomationProperties.SetName(button, $"Scene {sceneIndex + 1} of {count}: {beatTitle}");
                 button.Click += OnboardingClosingDot_Click;
+                Grid.SetColumn(button, sceneIndex);
                 OnboardingClosingDotsPanel.Children.Add(button);
-                dots[i] = button;
+
+                dots[sceneIndex] = button;
+                tracks[sceneIndex] = track;
+                fills[sceneIndex] = fill;
+                scales[sceneIndex] = scale;
             }
 
             _onboardingClosingDotButtons = dots;
+            _onboardingClosingSegmentTracks = tracks;
+            _onboardingClosingSegmentFills = fills;
+            _onboardingClosingSegmentScales = scales;
+        }
+
+        if (!_onboardingClosingFilmWired && OnboardingClosingFilm is not null)
+        {
+            _onboardingClosingFilmWired = true;
+            OnboardingClosingFilm.FrameEvaluated += OnOnboardingClosingFilmFrameEvaluated;
+            OnboardingClosingFilm.SceneChanged += OnOnboardingClosingFilmSceneChanged;
+            OnboardingClosingFilm.PlaybackStateChanged += OnOnboardingClosingFilmPlaybackStateChanged;
+            OnboardingClosingFilm.SceneAnnounced = Announce;
         }
 
         if (_onboardingAllLanguageRows.Length == 0)
@@ -538,6 +663,11 @@ public sealed partial class MainWindow
                 .ToArray();
         }
     }
+
+    private double SampleOnboardingVoiceLevel() =>
+        _onboarding.Step == OnboardingStep.Practice && _onboarding.PracticeState == OnboardingPracticeState.Listening
+            ? _onboardingAudioRms
+            : 0d;
 
     private WindowsSetupRecommendation ComputeOnboardingRecommendation(string? selectedLanguageCode) =>
         WindowsSetupRecommender.Recommend(BuildSetupHardwareSnapshot(selectedLanguageCode));
@@ -581,6 +711,7 @@ public sealed partial class MainWindow
             if (egState.IsInstalled)
             {
                 _onboarding.ReportPolishModel(SpeechModelDelivery.Installed);
+                _onboardingPolishDeferredInPractice = false;
             }
             else if (egState.DeliveryStage != SpeechModelDelivery.Unknown)
             {
@@ -599,6 +730,7 @@ public sealed partial class MainWindow
 
     internal void OnboardingBackButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         CancelOnboardingKeyCapture();
         if (_onboarding.GoBack())
         {
@@ -621,6 +753,7 @@ public sealed partial class MainWindow
 
     internal async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         CancelOnboardingKeyCapture();
         switch (_onboarding.Step)
         {
@@ -683,7 +816,11 @@ public sealed partial class MainWindow
                 {
                     QueueOnboardingCheckpointSave();
                 }
-                else if (TrySkipPolishFromGettingReady())
+                else if (TrySkipAheadWithDeferredPolish())
+                {
+                    QueueOnboardingCheckpointSave();
+                }
+                else if (TryContinueWithoutFailedPolishFromGate())
                 {
                     QueueOnboardingCheckpointSave();
                 }
@@ -731,6 +868,7 @@ public sealed partial class MainWindow
 
     internal async void OnboardingSkipButton_Click(object sender, RoutedEventArgs e)
     {
+        _onboardingUatPinnedStep = null;
         CancelOnboardingKeyCapture();
         switch (_onboarding.Step)
         {
@@ -750,7 +888,7 @@ public sealed partial class MainWindow
                 break;
 
             case OnboardingStep.GettingReady:
-                _ = TrySkipPolishFromGettingReady();
+                _ = TryContinueWithoutFailedPolishFromGate() || TryDropPolishAndAdvanceFromGate();
                 QueueOnboardingCheckpointSave();
                 RenderOnboarding();
                 break;
@@ -853,7 +991,6 @@ public sealed partial class MainWindow
                 "Your choices were saved on this PC.").ConfigureAwait(true);
             if (!saved)
             {
-                ArmClosingBeatTimer();
                 return;
             }
 
@@ -882,6 +1019,7 @@ public sealed partial class MainWindow
     {
         if (!_onboardingStateLoaded ||
             _onboardingCheckpointSuppress ||
+            _onboardingUatPinnedStep.HasValue ||
             _settings.HasCompletedOnboarding ||
             _onboarding.Step is OnboardingStep.Done)
         {

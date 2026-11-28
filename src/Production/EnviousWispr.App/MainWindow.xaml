@@ -32,14 +32,14 @@
             <TitleBar.LeftHeader>
                 <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center" Margin="16,0,0,0">
                     <Image Width="{StaticResource BrandTitleBarLogoSize}" Height="{StaticResource BrandTitleBarLogoSize}" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
-                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="EnviousWispr" VerticalAlignment="Center" />
+                    <TextBlock x:Name="AppTitleBarTitleText" Style="{StaticResource BrandRowTitleStyle}" Text="EnviousWispr" VerticalAlignment="Center" />
                     <Border x:Name="TitleBarVersionBadge" Style="{StaticResource BrandAccentChipStyle}" Padding="6,2" VerticalAlignment="Center">
                         <TextBlock x:Name="TitleBarVersionText" Text="" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" />
                     </Border>
                 </StackPanel>
             </TitleBar.LeftHeader>
             <TitleBar.RightHeader>
-                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center" Margin="0,0,12,0">
+                <StackPanel x:Name="AppTitleBarRightActions" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center" Margin="0,0,12,0">
                     <Button x:Name="WhatsNewToolbarButton" AutomationProperties.Name="What’s New" ToolTipService.ToolTip="What’s New" Click="WhatsNewToolbarButton_Click" Style="{StaticResource BrandToolbarIconButtonStyle}">
                         <Grid Width="22" Height="22">
                             <Border x:Name="WhatsNewBadge" Canvas.ZIndex="1" Width="7" Height="7" CornerRadius="4" Background="{ThemeResource BrandAccentBrush}" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="0,-1,-1,0" Visibility="Collapsed" />

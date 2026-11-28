@@ -1759,4 +1759,78 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <Style x:Key="BrandOnboardingSurfaceCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandOnboardingSurfaceBgBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource BrandSectionRadius}" />
+        <Setter Property="Padding" Value="{StaticResource BrandOnboardingCardPadding}" />
+    </Style>
+    <Style x:Key="BrandOnboardingPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="MinHeight" Value="{StaticResource BrandOnboardingPrimaryButtonHeight}" />
+        <Setter Property="MaxWidth" Value="{StaticResource BrandOnboardingPrimaryButtonMaxWidth}" />
+        <Setter Property="CornerRadius" Value="{StaticResource BrandOnboardingButtonRadius}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Padding" Value="24,10,24,10" />
+        <Setter Property="Background" Value="{ThemeResource BrandOnboardingPrimaryBgBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandOnboardingPrimaryFgBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandOnboardingPrimaryBgBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandOnboardingCanvasBgBrush}" />
+        <Setter Property="FocusVisualMargin" Value="-3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter
+                        x:Name="ContentPresenter"
+                        Padding="{TemplateBinding Padding}"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                        AutomationProperties.AccessibilityView="Raw"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        Content="{TemplateBinding Content}"
+                        ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        Foreground="{TemplateBinding Foreground}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandOnboardingPrimaryHoverBgBrush}" />
+                                        <Setter Target="ContentPresenter.BorderBrush" Value="{ThemeResource BrandOnboardingPrimaryHoverBgBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandOnboardingPrimaryFgBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandOnboardingPrimaryPressedBgBrush}" />
+                                        <Setter Target="ContentPresenter.BorderBrush" Value="{ThemeResource BrandOnboardingPrimaryPressedBgBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandOnboardingPrimaryFgBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandOnboardingPrimaryDisabledBgBrush}" />
+                                        <Setter Target="ContentPresenter.BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandOnboardingPrimaryDisabledFgBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </ContentPresenter>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>

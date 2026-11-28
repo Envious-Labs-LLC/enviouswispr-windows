@@ -211,7 +211,7 @@ public sealed partial class MainWindow
         }).ConfigureAwait(true);
     }
 
-    private bool _windowFitsOnboarding;
+    private bool _isOnboardingWindowGeometryActive;
 
     private void ShowOnboarding(bool show)
     {
@@ -219,82 +219,109 @@ public sealed partial class MainWindow
         {
             EnsureOnboardingViewLoaded();
             ProductNavigation.Visibility = Visibility.Collapsed;
+            if (AppTitleBarRightActions is not null)
+            {
+                AppTitleBarRightActions.Visibility = Visibility.Collapsed;
+            }
+            if (TitleBarVersionBadge is not null)
+            {
+                TitleBarVersionBadge.Visibility = Visibility.Collapsed;
+            }
+            if (AppTitleBarTitleText is not null)
+            {
+                AppTitleBarTitleText.Text = "EnviousWispr Setup";
+            }
+
             if (OnboardingView is not null)
             {
                 OnboardingView.Visibility = Visibility.Visible;
-                OnboardingView.LayoutUpdated += FitWindowToOnboardingOnce;
+                ApplyOnboardingWindowGeometry(onboarding: true);
                 // EVERY SHOWING IS A NEW VISIT FROM THE WELCOME: a first run, or "Run setup again" on Diagnostics.
                 BeginOnboardingVisit();
-                FinishOnboardingButton?.Focus(FocusState.Programmatic);
             }
         }
         else
         {
             if (OnboardingView is not null)
             {
-                OnboardingView.LayoutUpdated -= FitWindowToOnboardingOnce;
                 OnboardingView.Visibility = Visibility.Collapsed;
             }
 
             ProductNavigation.Visibility = Visibility.Visible;
+            if (AppTitleBarRightActions is not null)
+            {
+                AppTitleBarRightActions.Visibility = Visibility.Visible;
+            }
+            if (TitleBarVersionBadge is not null)
+            {
+                TitleBarVersionBadge.Visibility = Visibility.Visible;
+            }
+            if (AppTitleBarTitleText is not null)
+            {
+                AppTitleBarTitleText.Text = "EnviousWispr";
+            }
+
             StopOnboardingTimers();
+            ApplyOnboardingWindowGeometry(onboarding: false);
         }
 
         UpdateEgOneMemoryTimer(tickImmediately: !show);
-
-        if (!show && _windowFitsOnboarding)
-        {
-            // THE RESIZE IS DELIBERATE AND HAPPENS ONCE, when setup finishes and the navigation
-            // list the default height was measured for comes on screen. Leaving the window at
-            // the onboarding height would put that list back behind a scrollbar.
-            _windowFitsOnboarding = false;
-            ResizeToDefault();
-        }
     }
 
     /// <summary>
-    /// Fits the first-run window to the onboarding content, measured on the live layout.
+    /// Switches between the focused solo setup window geometry (580x780 DIP, 480 DIP minimum)
+    /// and the full two-pane shell geometry, clamped strictly to 94% of the active WorkArea and centered.
     /// </summary>
-    /// <remarks>
-    /// The default height is measured for the navigation list, and on first run that list is not
-    /// on screen - so the window opened 171 layout pixels taller than the only thing it showed,
-    /// ending in a blank band below the last card. Ref: #83.
-    ///
-    /// NOTHING HERE IS DERIVED. The chrome is whatever the client area holds that is not the
-    /// onboarding view, read from the live window; the content is the scroll content's own laid-out
-    /// height, which a ScrollViewer measures unconstrained, so it is the natural height whatever the
-    /// viewport; the footer is its own laid-out height. Every previous number in this file that was
-    /// derived from arithmetic was wrong, which is why this one reads the layout instead. It runs
-    /// once, on the first layout pass where both parts have a height, and clamps to the work area
-    /// the way the default does, so a short display still opens to fit and scrolls.
-    /// </remarks>
-    private void FitWindowToOnboardingOnce(object? sender, object e)
+    private void ApplyOnboardingWindowGeometry(bool onboarding)
     {
-        if (OnboardingView is null
-            || OnboardingContent is null
-            || OnboardingFooter is null
-            || OnboardingContent.DesiredSize.Height <= 0
-            || OnboardingFooter.DesiredSize.Height <= 0
-            || OnboardingView.ActualHeight <= 0)
+        var scale = DisplayScale();
+        var workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest)?.WorkArea;
+
+        if (onboarding)
+        {
+            if (AppWindow.Presenter is OverlappedPresenter presenter)
+            {
+                presenter.PreferredMinimumWidth = (int)Math.Ceiling(
+                    LayoutDouble("BrandOnboardingWindowMinWidth") * scale);
+            }
+
+            var width = LayoutDouble("BrandOnboardingWindowWidth") * scale;
+            var height = LayoutDouble("BrandOnboardingWindowHeight") * scale;
+            if (workArea is { } area && area.Width > 0 && area.Height > 0)
+            {
+                const double screenMargin = 0.94;
+                width = Math.Min(width, area.Width * screenMargin);
+                height = Math.Min(height, area.Height * screenMargin);
+                var targetWidth = (int)Math.Round(width);
+                var targetHeight = (int)Math.Round(height);
+                var x = area.X + Math.Max(0, (area.Width - targetWidth) / 2);
+                var y = area.Y + Math.Max(0, (area.Height - targetHeight) / 2);
+                AppWindow.MoveAndResize(new RectInt32(x, y, targetWidth, targetHeight));
+            }
+            else
+            {
+                AppWindow.Resize(new SizeInt32((int)Math.Round(width), (int)Math.Round(height)));
+            }
+
+            _isOnboardingWindowGeometryActive = true;
+            return;
+        }
+
+        ConfigureMinimumWindowWidth();
+        if (!_isOnboardingWindowGeometryActive)
         {
             return;
         }
 
-        OnboardingView.LayoutUpdated -= FitWindowToOnboardingOnce;
-        var scale = DisplayScale();
-        var clientDips = AppWindow.ClientSize.Height / scale;
-        var chromeDips = Math.Max(0, clientDips - OnboardingView.ActualHeight);
-        var wantedClientDips = chromeDips + OnboardingContent.DesiredSize.Height + OnboardingFooter.DesiredSize.Height;
-        var nonClientPixels = AppWindow.Size.Height - AppWindow.ClientSize.Height;
-        var height = wantedClientDips * scale + nonClientPixels;
-        var workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest)?.WorkArea;
-        if (workArea is { } area && area.Height > 0)
+        _isOnboardingWindowGeometryActive = false;
+        ResizeToDefault();
+        if (workArea is { } restoredArea && restoredArea.Width > 0 && restoredArea.Height > 0)
         {
-            height = Math.Min(height, area.Height * 0.94);
+            var currentSize = AppWindow.Size;
+            var x = restoredArea.X + Math.Max(0, (restoredArea.Width - currentSize.Width) / 2);
+            var y = restoredArea.Y + Math.Max(0, (restoredArea.Height - currentSize.Height) / 2);
+            AppWindow.Move(new PointInt32(x, y));
         }
-
-        _windowFitsOnboarding = true;
-        AppWindow.Resize(new SizeInt32(AppWindow.Size.Width, (int)Math.Round(height)));
     }
 
     private void ShowPage(string tag) => ShowPage(tag, null);
