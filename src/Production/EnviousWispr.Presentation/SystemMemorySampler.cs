@@ -22,7 +22,7 @@ public sealed class SystemMemorySampler
 
     public SystemMemoryReading? LatestReading { get; private set; }
 
-    /// <summary>Reads system memory if visible and returns true only when tenths-of-GiB, total GiB, or availability changed.</summary>
+    /// <summary>Reads system memory if visible and returns true when tenths-of-GiB, total GiB, availability, or any 90% threshold state changes.</summary>
     public bool Tick()
     {
         if (!_isVisible())
@@ -36,7 +36,10 @@ public sealed class SystemMemorySampler
             : (SystemMemoryReading?)null;
 
         var nextKey = normalized is { } valid
-            ? new SampleKey(ComputeTotalWholeGiB(valid.TotalPhysicalBytes), ComputeUsedTenthsGiB(valid.UsedBytes))
+            ? new SampleKey(
+                ComputeTotalWholeGiB(valid.TotalPhysicalBytes),
+                ComputeUsedTenthsGiB(valid.UsedBytes),
+                ComputeWarningMask(valid))
             : (SampleKey?)null;
 
         if (nextKey == _lastKey)
@@ -61,5 +64,23 @@ public sealed class SystemMemorySampler
     private static long ComputeUsedTenthsGiB(ulong usedBytes) =>
         (long)Math.Round(usedBytes / (double)EgOneMemoryFacts.BytesPerGiB * 10.0, MidpointRounding.AwayFromZero);
 
-    private readonly record struct SampleKey(long TotalWholeGiB, long UsedTenthsGiB);
+    private static int ComputeWarningMask(SystemMemoryReading reading)
+    {
+        var mask = 0;
+        var bit = 1;
+        foreach (var modelId in EgOneModelCatalog.AllIds)
+        {
+            var peak = (ulong)Math.Max(0L, EgOneMemoryFacts.PeakMemoryBytes(modelId));
+            if (((UInt128)reading.UsedBytes + peak) * 10 > (UInt128)reading.TotalPhysicalBytes * 9)
+            {
+                mask |= bit;
+            }
+
+            bit <<= 1;
+        }
+
+        return mask;
+    }
+
+    private readonly record struct SampleKey(long TotalWholeGiB, long UsedTenthsGiB, int WarningMask);
 }

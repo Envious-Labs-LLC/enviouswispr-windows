@@ -129,6 +129,7 @@ public sealed partial class MainWindow
     private HardwareProfile? _hardwareProfile;
     private SystemMemorySampler? _egOneMemorySampler;
     private DispatcherQueueTimer? _egOneMemoryTimer;
+    private bool _wasEgOneMemorySamplingVisible;
     private readonly Dictionary<string, EgOneMemoryPresentation> _latestEgOneMemoryPresentations = new(StringComparer.Ordinal);
 
     /// <summary>Queries the live EG-1 helper server lifecycle state keyed by normalized model ID.</summary>
@@ -137,11 +138,7 @@ public sealed partial class MainWindow
     /// <summary>Refreshes EG-1 card memory attribution immediately when the local helper starts, reaches ready, or stops.</summary>
     public void NotifyEgOneActivityChanged()
     {
-        if (_shuttingDownProductWindows ||
-            _session.Closing ||
-            !IsSettingsPageLoaded ||
-            AiPolishSection is not { Visibility: Visibility.Visible } ||
-            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != PolishProvider.EgOne)
+        if (!IsEgOneMemorySamplingVisible())
         {
             return;
         }
@@ -547,14 +544,19 @@ public sealed partial class MainWindow
 
     internal void UpdateEgOneMemoryTimer(bool tickImmediately, bool renderOnChange = true)
     {
-        if (!IsEgOneMemorySamplingVisible())
+        var isVisible = IsEgOneMemorySamplingVisible();
+        if (!isVisible)
         {
+            _wasEgOneMemorySamplingVisible = false;
             _egOneMemoryTimer?.Stop();
             return;
         }
 
+        var becameVisible = !_wasEgOneMemorySamplingVisible;
+        _wasEgOneMemorySamplingVisible = true;
         var sampler = EnsureEgOneMemorySampler();
-        if (tickImmediately && sampler.Tick() && renderOnChange)
+        var sampled = tickImmediately && sampler.Tick();
+        if (renderOnChange && (sampled || becameVisible))
         {
             UpdateEgOneCards();
         }
@@ -575,6 +577,7 @@ public sealed partial class MainWindow
 
     private void StopEgOneMemoryTimer()
     {
+        _wasEgOneMemorySamplingVisible = false;
         if (_egOneMemoryTimer is not null)
         {
             _egOneMemoryTimer.Stop();

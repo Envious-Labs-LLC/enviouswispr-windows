@@ -368,9 +368,112 @@ public sealed class LiveMemoryBudgetTests
         Assert.Contains("StopEgOneMemoryTimer()", pagesCode, StringComparison.Ordinal);
         Assert.Contains("StopEgOneMemoryTimer()", windowCode, StringComparison.Ordinal);
         Assert.Contains("OverlappedPresenterState.Minimized", aiPolishCode, StringComparison.Ordinal);
+        Assert.Contains("_wasEgOneMemorySamplingVisible", aiPolishCode, StringComparison.Ordinal);
+        Assert.Contains("if (!IsEgOneMemorySamplingVisible())", aiPolishCode, StringComparison.Ordinal);
         Assert.Contains("AppWindow.Changed += OnMainAppWindowChanged", windowCode, StringComparison.Ordinal);
         Assert.Contains("UpdateEgOneMemoryTimer(", navigationCode, StringComparison.Ordinal);
         Assert.Contains("QueryEgOneServerActivities", appPolishCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SystemMemorySamplerDetectsNinetyPercentWarningCrossingWithinSameTenthGiB()
+    {
+        var gib = EgOneMemoryFacts.BytesPerGiB;
+        var total = 16UL * gib;
+        SystemMemoryReading current = new(total, (ulong)Math.Round(12.77 * gib));
+        var sampler = new SystemMemorySampler(() => current, () => true);
+
+        Assert.True(sampler.Tick());
+        var before = EgOneMemoryBarPresentation.Describe(
+            EgOneModelCatalog.MiniId,
+            "EG-1 Mini",
+            total,
+            sampler.LatestReading!.Value.UsedBytes,
+            EgOneServerActivity.Inactive,
+            isLightest: false);
+        Assert.Equal(EgOneMemoryWarning.None, before.Warning);
+
+        // Both 12.77 GiB and 12.82 GiB round to 12.8 GB (128 tenths), yet 12.82 + 1.6 > 14.4 (90%).
+        current = new(total, (ulong)Math.Round(12.82 * gib));
+        Assert.True(sampler.Tick());
+        var crossed = EgOneMemoryBarPresentation.Describe(
+            EgOneModelCatalog.MiniId,
+            "EG-1 Mini",
+            total,
+            sampler.LatestReading!.Value.UsedBytes,
+            EgOneServerActivity.Inactive,
+            isLightest: false);
+        Assert.Equal(EgOneMemoryWarning.WontFitNow, crossed.Warning);
+
+        current = new(total, (ulong)Math.Round(12.77 * gib));
+        Assert.True(sampler.Tick());
+        var cleared = EgOneMemoryBarPresentation.Describe(
+            EgOneModelCatalog.MiniId,
+            "EG-1 Mini",
+            total,
+            sampler.LatestReading!.Value.UsedBytes,
+            EgOneServerActivity.Inactive,
+            isLightest: false);
+        Assert.Equal(EgOneMemoryWarning.None, cleared.Warning);
+    }
+
+    [Fact]
+    public async Task EgOneServerManagerSleepIdleTransitionsReadyInactiveWakeAndDisposeSafely()
+    {
+        var timeProvider = new ManualTimeProvider();
+        using var handler = new PreWakeOkHandler();
+        var options = new EgOneServerOptions(
+            "C:\\fake\\server.exe",
+            "C:\\fake\\model.gguf",
+            SleepIdleSeconds: 10);
+        var manager = new EgOneServerManager(options, handler, timeProvider);
+        var events = new List<EgOneServerActivity>();
+        manager.ServerActivityChanged += (_, _) => events.Add(manager.ServerActivity);
+
+        var endpoint = new EgOneEndpoint(18_090, "token", 8_192);
+        manager.MarkEndpointReadyForTesting(endpoint);
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+        Assert.Equal([EgOneServerActivity.Ready], events);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(9));
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(EgOneServerActivity.Inactive, manager.ServerActivity);
+        Assert.Equal([EgOneServerActivity.Ready, EgOneServerActivity.Inactive], events);
+
+        manager.BeginModelRequest();
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+        Assert.Equal(EgOneServerActivity.Ready, events[^1]);
+
+        // Stays Ready past SleepIdleSeconds while a request holds the active count > 0.
+        timeProvider.Advance(TimeSpan.FromSeconds(15));
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+
+        manager.EndModelRequest();
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(EgOneServerActivity.Inactive, manager.ServerActivity);
+        Assert.Equal(EgOneServerActivity.Inactive, events[^1]);
+
+        Assert.True(await manager.TryPreWakeAsync(CancellationToken.None));
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+        Assert.Equal(EgOneServerActivity.Ready, events[^1]);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(EgOneServerActivity.Inactive, manager.ServerActivity);
+
+        manager.MarkEndpointReadyForTesting(endpoint);
+        Assert.Equal(EgOneServerActivity.Ready, manager.ServerActivity);
+
+        await manager.DisposeAsync();
+        Assert.Equal(EgOneServerActivity.Inactive, manager.ServerActivity);
+        var countAtDispose = events.Count;
+
+        timeProvider.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(countAtDispose, events.Count);
+        Assert.Equal(EgOneServerActivity.Inactive, manager.ServerActivity);
     }
 
     private static XElement FindNamedElement(XDocument document, string name)
@@ -423,5 +526,139 @@ public sealed class LiveMemoryBudgetTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PreWakeOkHandler : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK));
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private readonly Lock _lock = new();
+        private readonly List<ManualTimer> _timers = [];
+        private DateTimeOffset _utcNow = new(2026, 11, 27, 0, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (_lock)
+            {
+                return _utcNow;
+            }
+        }
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp()
+        {
+            lock (_lock)
+            {
+                return _utcNow.Ticks;
+            }
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ManualTimer(this, callback, state, dueTime, period);
+            lock (_lock)
+            {
+                _timers.Add(timer);
+            }
+
+            return timer;
+        }
+
+        public void Advance(TimeSpan delta)
+        {
+            List<(TimerCallback Callback, object? State)> due = [];
+            lock (_lock)
+            {
+                _utcNow += delta;
+                foreach (var timer in _timers)
+                {
+                    timer.CollectIfDue(_utcNow, due);
+                }
+            }
+
+            foreach (var (callback, state) in due)
+            {
+                callback(state);
+            }
+        }
+
+        private DateTimeOffset? ResolveNextDue(TimeSpan dueTime) =>
+            dueTime == Timeout.InfiniteTimeSpan
+                ? null
+                : GetUtcNow() + (dueTime < TimeSpan.Zero ? TimeSpan.Zero : dueTime);
+
+        private void RemoveTimer(ManualTimer timer)
+        {
+            lock (_lock)
+            {
+                _timers.Remove(timer);
+            }
+        }
+
+        private sealed class ManualTimer(
+            ManualTimeProvider owner,
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period) : ITimer
+        {
+            private DateTimeOffset? _nextDue = owner.ResolveNextDue(dueTime);
+            private TimeSpan _period = period;
+            private bool _disposed;
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                lock (owner._lock)
+                {
+                    if (_disposed)
+                    {
+                        return false;
+                    }
+
+                    _period = period;
+                    _nextDue = dueTime == Timeout.InfiniteTimeSpan
+                        ? null
+                        : owner._utcNow + (dueTime < TimeSpan.Zero ? TimeSpan.Zero : dueTime);
+                    return true;
+                }
+            }
+
+            public void CollectIfDue(DateTimeOffset now, List<(TimerCallback Callback, object? State)> due)
+            {
+                if (_disposed || _nextDue is not { } target || target > now)
+                {
+                    return;
+                }
+
+                due.Add((callback, state));
+                _nextDue = _period == Timeout.InfiniteTimeSpan || _period <= TimeSpan.Zero
+                    ? null
+                    : target + _period;
+            }
+
+            public void Dispose()
+            {
+                lock (owner._lock)
+                {
+                    _disposed = true;
+                    _nextDue = null;
+                }
+
+                owner.RemoveTimer(this);
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 }
