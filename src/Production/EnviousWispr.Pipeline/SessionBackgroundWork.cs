@@ -15,7 +15,8 @@ namespace EnviousWispr.Pipeline;
 public sealed record RecordingBackgroundSettings(
     TimeSpan WatchdogDuration,
     Func<DictationPreferences> Dictation,
-    bool IsHandsFree = false);
+    bool IsHandsFree = false,
+    TimeSpan? WatchdogWarningLead = null);
 
 /// <summary>The four things that run beside a recording, started and stopped in one order.</summary>
 /// <remarks>
@@ -115,7 +116,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     {
         ArgumentNullException.ThrowIfNull(settings);
         using var dictation = DictationScope.Begin(sessionId.Value);
-        _watchdog.Start(sessionId, settings.WatchdogDuration);
+        _watchdog.Start(sessionId, settings.WatchdogDuration, settings.WatchdogWarningLead);
         await _preview.StartAsync(sessionId).ConfigureAwait(false);
         _autoStop.Start(sessionId, settings.Dictation(), settings.IsHandsFree);
         _streaming.Start(sessionId);

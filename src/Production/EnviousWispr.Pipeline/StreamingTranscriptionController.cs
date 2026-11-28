@@ -196,37 +196,69 @@ public sealed class StreamingTranscriptionController
                     }
                 }
 
-                // The WHOLE recording so far, not a window: a commit is a range measured from the
-                // start, and a rolling window would make those indices mean something different on
-                // every poll.
-                var snapshot = snapshots.GetSnapshot(TimeSpan.MaxValue);
-                if (snapshot is null || snapshot.SessionId != sessionId)
+                int snapshotStartSample;
+                int totalCapturedSamples;
+                ReadOnlyMemory<float> snapshotSamples;
+                int snapshotSampleRate;
+                int snapshotChannels;
+                if (snapshots is IAudioIncrementalSnapshotSource incremental)
                 {
-                    continue;
+                    var incrementalSnapshot = incremental.GetSnapshotFrom(_streamedThroughSample);
+                    if (incrementalSnapshot is null ||
+                        incrementalSnapshot.SessionId != sessionId ||
+                        incrementalSnapshot.Samples.IsEmpty)
+                    {
+                        continue;
+                    }
+
+                    snapshotStartSample = incrementalSnapshot.StartSample;
+                    totalCapturedSamples = incrementalSnapshot.TotalCapturedSamples;
+                    snapshotSamples = incrementalSnapshot.Samples;
+                    snapshotSampleRate = incrementalSnapshot.SampleRate;
+                    snapshotChannels = 1;
+                }
+                else
+                {
+                    // Legacy fallback for snapshot-only sources: request the whole buffer.
+                    var snapshot = snapshots.GetSnapshot(TimeSpan.MaxValue);
+                    if (snapshot is null || snapshot.SessionId != sessionId)
+                    {
+                        continue;
+                    }
+
+                    snapshotStartSample = 0;
+                    totalCapturedSamples = snapshot.Samples.Length;
+                    snapshotSamples = snapshot.Samples;
+                    snapshotSampleRate = snapshot.SampleRate;
+                    snapshotChannels = snapshot.Channels;
                 }
 
                 // THE SEGMENTER LEARNS THE RATE FROM THE AUDIO IT SEGMENTS, at the first snapshot,
                 // rather than assuming the capture's target rate from a project this one does not
                 // reference. The rate does not change within a take.
-                segmenter ??= new SpeechSegmenter(snapshot.SampleRate, SegmentPause);
-                var commit = StreamingCommitPlanner.NextCommit(
-                    snapshot.Samples.Span,
-                    snapshot.SampleRate,
-                    _streamedThroughSample,
+                segmenter ??= new SpeechSegmenter(snapshotSampleRate, SegmentPause);
+                var localCommitted = Math.Max(0, _streamedThroughSample - snapshotStartSample);
+                var localCommit = StreamingCommitPlanner.NextCommit(
+                    snapshotSamples.Span,
+                    snapshotSampleRate,
+                    localCommitted,
                     segmenter);
-                if (commit is not { } range)
+                if (localCommit is not { } localRange)
                 {
                     continue;
                 }
 
-                var slice = snapshot.Samples.Slice(
-                    range.StartSample,
-                    range.EndSample - range.StartSample);
+                var range = new StreamingCommit(
+                    snapshotStartSample + localRange.StartSample,
+                    snapshotStartSample + localRange.EndSample);
+                var slice = snapshotSamples.Slice(
+                    localRange.StartSample,
+                    localRange.LengthSamples);
                 var coverage = _phaseJournal is not null
-                    ? segmenter.MeasureCoverage(snapshot.Samples.Span, range.StartSample, range.EndSample)
+                    ? segmenter.MeasureCoverage(snapshotSamples.Span, localRange.StartSample, localRange.EndSample)
                     : default;
-                var remainingInSnapshot = Math.Max(0, snapshot.Samples.Length - range.EndSample);
-                var sampleRate = snapshot.SampleRate > 0 ? (int?)snapshot.SampleRate : null;
+                var remainingInSnapshot = Math.Max(0, totalCapturedSamples - range.EndSample);
+                var sampleRate = snapshotSampleRate > 0 ? (int?)snapshotSampleRate : null;
                 var segmentStarted = _clock.GetTimestamp();
                 using var correlation = UatRuntimePhaseJournal.BeginRequestCorrelation(out var requestId);
                 Task<Transcript> request;
@@ -250,7 +282,7 @@ public sealed class StreamingTranscriptionController
                         silenceSamples: coverage.SilenceSamples,
                         sampleRate: sampleRate);
                     request = engine.TranscribeAsync(
-                        new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
+                        new CapturedAudio(sessionId, slice, snapshotSampleRate, snapshotChannels),
                         work.Request.Token);
                 }
 
@@ -307,7 +339,7 @@ public sealed class StreamingTranscriptionController
                 }
 
                 _streamedThroughSample = range.EndSample;
-                _lastSnapshotSamples = snapshot.Samples.Length;
+                _lastSnapshotSamples = totalCapturedSamples;
                 _phaseJournal?.Record(
                     UatRuntimePhase.StreamingSegmentReturned,
                     sessionId.Value,
@@ -734,7 +766,8 @@ public sealed class StreamingTranscriptionController
                 speechSamples: tailCoverage.SpeechSamples,
                 silenceSamples: tailCoverage.SilenceSamples,
                 sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
-            tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
+            tail = await TranscribePossiblyLongAudioAsync(engine, tailAudio, cancellationToken)
+                .ConfigureAwait(false);
             _phaseJournal?.Record(
                 UatRuntimePhase.FinalTailReturned,
                 audio.SessionId.Value,
@@ -841,7 +874,8 @@ public sealed class StreamingTranscriptionController
             speechSamples: wholeCoverage.SpeechSamples,
             silenceSamples: wholeCoverage.SilenceSamples,
             sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
-        var transcript = await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        var transcript = await TranscribePossiblyLongAudioAsync(engine, audio, cancellationToken)
+            .ConfigureAwait(false);
         _phaseJournal?.Record(
             UatRuntimePhase.FinalWholeAudioReturned,
             audio.SessionId.Value,
@@ -854,6 +888,91 @@ public sealed class StreamingTranscriptionController
             silenceSamples: wholeCoverage.SilenceSamples,
             sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
         return transcript;
+    }
+
+    private static async Task<Transcript> TranscribePossiblyLongAudioAsync(
+        ITranscriptionEngine engine,
+        CapturedAudio audio,
+        CancellationToken cancellationToken)
+    {
+        using var dictation = DictationScope.Begin(audio.SessionId.Value);
+        var sampleRate = audio.SampleRate > 0 ? audio.SampleRate : AudioQuietCut.DefaultSampleRate;
+        var maxPieceSamples = checked(sampleRate * AudioQuietCut.MaximumPieceSeconds);
+        if (audio.Samples.Length <= maxPieceSamples)
+        {
+            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        }
+
+        var assembled = new StreamingTranscriptAccumulator();
+        Transcript? firstTranscript = null;
+        var usedFallback = false;
+        AppError? degradedError = null;
+        var offset = 0;
+
+        while (offset < audio.Samples.Length)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remaining = audio.Samples.Span[offset..];
+            var pieceLength = AudioQuietCut.NextPieceLength(remaining, atEnd: true, sampleRate);
+            if (pieceLength <= 0)
+            {
+                break;
+            }
+
+            var piece = audio.Samples.Slice(offset, pieceLength);
+            offset += pieceLength;
+            if (AudioQuietCut.IsBelowVoicedFloor(piece.Span))
+            {
+                continue;
+            }
+
+            Transcript pieceTranscript;
+            try
+            {
+                pieceTranscript = await engine.TranscribeAsync(
+                    audio with { Samples = piece },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (TranscriptionEngineException exception) when (
+                !cancellationToken.IsCancellationRequested &&
+                firstTranscript is not null &&
+                !assembled.IsEmpty)
+            {
+                // Preserve all earlier transcribed pieces rather than losing up to an hour of dictation.
+                return new Transcript(
+                    audio.SessionId,
+                    assembled.ToString(),
+                    firstTranscript.EngineId,
+                    TokenTimings: firstTranscript.TokenTimings,
+                    UsedFallback: true,
+                    DegradedError: exception.Error,
+                    DetectedLanguage: firstTranscript.DetectedLanguage,
+                    RecognitionLanguage: firstTranscript.RecognitionLanguage);
+            }
+
+            firstTranscript ??= pieceTranscript;
+            usedFallback |= pieceTranscript.UsedFallback;
+            degradedError ??= pieceTranscript.DegradedError;
+            if (!string.IsNullOrWhiteSpace(pieceTranscript.Text))
+            {
+                assembled.Append(pieceTranscript.Text);
+            }
+        }
+
+        if (firstTranscript is null)
+        {
+            return new Transcript(audio.SessionId, string.Empty, engine.EngineId);
+        }
+
+        return new Transcript(
+            audio.SessionId,
+            assembled.ToString(),
+            firstTranscript.EngineId,
+            TokenTimings: firstTranscript.TokenTimings,
+            UsedFallback: usedFallback,
+            DegradedError: degradedError,
+            DetectedLanguage: firstTranscript.DetectedLanguage,
+            RecognitionLanguage: firstTranscript.RecognitionLanguage);
     }
 
     private bool CanPreserveCommittedHeadStart(

@@ -255,6 +255,121 @@ public sealed class CloudPolishProviderTests
         Assert.Equal(AppErrorCode.PolishTimedOut, result.Error?.Code);
     }
 
+    [Fact]
+    public void ResolveTimeoutScalesLongTranscriptsUpToTransportCapWithoutInflatingShortTestTimeouts()
+    {
+        Assert.Equal(TimeSpan.FromMilliseconds(50), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromMilliseconds(50), 50_000));
+        Assert.Equal(TimeSpan.FromSeconds(20), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromSeconds(20), 0));
+        Assert.Equal(TimeSpan.FromSeconds(120), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromSeconds(20), 50_000));
+        Assert.Equal(TimeSpan.FromSeconds(180), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromSeconds(20), 200_000));
+        Assert.Equal(TimeSpan.FromMinutes(5), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromMinutes(5), 50_000));
+    }
+
+    [Fact]
+    public async Task LongTranscriptOverThresholdIsPolishedInChunksAndAssembledCleanly()
+    {
+        var paragraph = new string('a', 600) + ". " + string.Join(' ', Enumerable.Repeat("word", 1_000));
+        var longText = $"{paragraph}\n\n{paragraph}\n\n{paragraph}";
+        Assert.True(longText.Length > CloudPolishProviderBase.ChunkedPolishThresholdCharacters);
+        var input = new ProcessedText(DictationSessionId.Create(), longText);
+
+        var handler = new ScriptedHandler(request =>
+        {
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            using var doc = JsonDocument.Parse(body);
+            var userContent = doc.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+            const string prefixHeader = "Transcript to clean:\n\n";
+            var inner = userContent.StartsWith(prefixHeader, StringComparison.Ordinal)
+                ? userContent[prefixHeader.Length..]
+                : userContent;
+            var polished = inner.Replace("word", "Word", StringComparison.Ordinal);
+            return JsonResponse(JsonSerializer.Serialize(new
+            {
+                choices = new[]
+                {
+                    new { finish_reason = "stop", message = new { content = polished } },
+                },
+            }));
+        });
+        await using var provider = new OpenAiPolishProvider(
+            new FakeApiKeyStore(PolishProvider.OpenAI, "secret"),
+            messageHandler: handler);
+
+        var result = await provider.TryPolishAsync(new PolishRequest(input, "en"));
+
+        Assert.Equal(PolishAttemptStatus.Polished, result.Status);
+        Assert.True(handler.Exchanges.Count >= 2);
+        Assert.DoesNotContain("word", result.Output.Text, StringComparison.Ordinal);
+        Assert.Contains("Word", result.Output.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LongTranscriptRevertsCompletelyToOriginalIfAnyChunkTruncatesOrFails()
+    {
+        var paragraph = string.Join(' ', Enumerable.Repeat("hello", 1_500));
+        var longText = $"{paragraph}\n\n{paragraph}";
+        Assert.True(longText.Length > CloudPolishProviderBase.ChunkedPolishThresholdCharacters);
+        var input = new ProcessedText(DictationSessionId.Create(), longText);
+
+        var call = 0;
+        var handler = new ScriptedHandler(_ =>
+        {
+            call++;
+            return call == 1
+                ? JsonResponse(JsonSerializer.Serialize(new
+                {
+                    stop_reason = "end_turn",
+                    content = new[] { new { type = "text", text = paragraph } },
+                }))
+                : JsonResponse("""{"stop_reason":"max_tokens","content":[{"type":"text","text":"truncated"}]}""");
+        });
+        await using var provider = new AnthropicPolishProvider(
+            new FakeApiKeyStore(PolishProvider.Anthropic, "secret"),
+            messageHandler: handler);
+
+        var result = await provider.TryPolishAsync(new PolishRequest(input, "en"));
+
+        Assert.Equal(input, result.Output);
+        Assert.True(result.UsedFallback);
+        Assert.Equal(AppErrorCode.PolishOutputTruncated, result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task LongTranscriptUnchangedAcrossWhitespaceChunkBoundariesPreservesExactSeparatorsAndUnchangedStatus()
+    {
+        var prefix = string.Join(' ', Enumerable.Repeat("alpha", 1_666));
+        var suffix = string.Join(' ', Enumerable.Repeat("beta", 1_000));
+        var longText = $"{prefix}   \t  {suffix}";
+        Assert.True(longText.Length > CloudPolishProviderBase.ChunkedPolishThresholdCharacters);
+        var input = new ProcessedText(DictationSessionId.Create(), longText);
+
+        var handler = new ScriptedHandler(request =>
+        {
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            using var doc = JsonDocument.Parse(body);
+            var userContent = doc.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+            const string prefixHeader = "Transcript to clean:\n\n";
+            var inner = userContent.StartsWith(prefixHeader, StringComparison.Ordinal)
+                ? userContent[prefixHeader.Length..]
+                : userContent;
+            return JsonResponse(JsonSerializer.Serialize(new
+            {
+                choices = new[]
+                {
+                    new { finish_reason = "stop", message = new { content = inner } },
+                },
+            }));
+        });
+        await using var provider = new OpenAiPolishProvider(
+            new FakeApiKeyStore(PolishProvider.OpenAI, "secret"),
+            messageHandler: handler);
+
+        var result = await provider.TryPolishAsync(new PolishRequest(input, "en"));
+
+        Assert.Equal(PolishAttemptStatus.Unchanged, result.Status);
+        Assert.Equal(longText, result.Output.Text);
+    }
+
     private static void AssertRequestContainsTextButNoAudio(JsonElement root, Uri uri)
     {
         var body = root.GetRawText();

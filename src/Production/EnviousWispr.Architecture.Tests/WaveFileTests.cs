@@ -102,4 +102,18 @@ public sealed class WaveFileTests
         Assert.Throws<ArgumentOutOfRangeException>(() => WaveFile.EncodeMono([0f], 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => WaveFile.EncodeMono([0f], -1));
     }
+
+    [Fact]
+    public void WriteMonoMatchesEncodeMonoByteForByteAcrossChunkBoundaries()
+    {
+        var samples = Enumerable.Range(0, 70_000)
+            .Select(index => (float)Math.Sin(index * 0.05) * 1.2f)
+            .ToArray();
+        var expected = WaveFile.EncodeMono(samples, 16_000);
+
+        using var stream = new MemoryStream();
+        WaveFile.WriteMono(stream, samples, 16_000);
+
+        Assert.Equal(expected, stream.ToArray());
+    }
 }

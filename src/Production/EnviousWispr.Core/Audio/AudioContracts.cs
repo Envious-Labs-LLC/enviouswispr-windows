@@ -55,6 +55,18 @@ public sealed record AudioSnapshot(
     int SampleRate,
     int Channels);
 
+public sealed record IncrementalAudioSnapshot(
+    DictationSessionId SessionId,
+    int SampleRate,
+    int StartSample,
+    int TotalCapturedSamples,
+    ReadOnlyMemory<float> Samples);
+
+public interface IAudioIncrementalSnapshotSource : IAudioSnapshotSource
+{
+    IncrementalAudioSnapshot? GetSnapshotFrom(int startSample);
+}
+
 /// <summary>
 /// Reports how long the last start spent opening the device versus starting the stream.
 /// </summary>

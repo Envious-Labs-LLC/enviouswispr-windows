@@ -96,6 +96,57 @@ public sealed class RecordingTimersTests
     }
 
     [Fact]
+    public async Task TheWatchdogPostsApproachingCapBeforeTheTimeoutAndThenTimesOut()
+    {
+        var world = World.Build();
+
+        world.Watchdog.Start(world.Session, TimeSpan.FromMinutes(60), TimeSpan.FromMinutes(1));
+
+        Assert.Equal(TimeSpan.FromMinutes(59), world.Clock.NextDue);
+        world.Clock.Advance(TimeSpan.FromMinutes(59));
+        await world.Effects.WhenApproachingCap(1).WaitAsync(Patience);
+        Assert.Equal([world.Session], world.Effects.ApproachingCap);
+        Assert.Empty(world.Effects.TimedOut);
+        Assert.Equal(TimeSpan.FromMinutes(1), world.Clock.NextDue);
+
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.Effects.WhenTimedOut(1).WaitAsync(Patience);
+        Assert.Equal([world.Session], world.Effects.TimedOut);
+        await world.Watchdog.StopAsync();
+    }
+
+    [Fact]
+    public async Task AnApproachingCapCallbackFailureStillFiresTheTimeout()
+    {
+        var world = World.Build();
+        world.Effects.ThrowOnApproachingCap = true;
+
+        world.Watchdog.Start(world.Session, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1));
+        world.Clock.Advance(TimeSpan.FromMinutes(4));
+        await world.Effects.WhenApproachingCap(1).WaitAsync(Patience);
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.Effects.WhenTimedOut(1).WaitAsync(Patience);
+
+        Assert.Equal([world.Session], world.Effects.TimedOut);
+        await world.Watchdog.StopAsync();
+    }
+
+    [Fact]
+    public async Task AStopBetweenApproachingCapAndTimeoutDisarmsTheTimeout()
+    {
+        var world = World.Build();
+
+        world.Watchdog.Start(world.Session, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1));
+        world.Clock.Advance(TimeSpan.FromMinutes(4));
+        await world.Effects.WhenApproachingCap(1).WaitAsync(Patience);
+
+        await world.Watchdog.StopAsync().WaitAsync(Patience);
+        world.Clock.Advance(TimeSpan.FromMinutes(5));
+
+        Assert.Empty(world.Effects.TimedOut);
+    }
+
+    [Fact]
     public async Task AutoStopReleasesTheKeyOnceTheSpeakerHasStoppedForTheThreshold()
     {
         var world = World.Build();
@@ -373,6 +424,8 @@ public sealed class RecordingTimersTests
         private readonly List<PushToTalkSignal> _posted = [];
         private readonly List<(DictationSessionId Session, Guid? Dictation)> _timedOut = [];
         private readonly Deterministic.Milestone _timedOutMilestone = new();
+        private readonly List<(DictationSessionId Session, Guid? Dictation)> _approachingCap = [];
+        private readonly Deterministic.Milestone _approachingCapMilestone = new();
 
         private readonly List<SessionCommandDisposition> _submitted = [];
         private readonly Deterministic.Milestone _submittedMilestone = new();
@@ -428,7 +481,36 @@ public sealed class RecordingTimersTests
             }
         }
 
+        public bool ThrowOnApproachingCap { get; set; }
+
+        public DictationSessionId[] ApproachingCap
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _approachingCap.Select(entry => entry.Session).ToArray();
+                }
+            }
+        }
+
+        public Task WhenApproachingCap(int count) => _approachingCapMilestone.WhenAtLeast(count);
+
         public Task WhenTimedOut(int count) => _timedOutMilestone.WhenAtLeast(count);
+
+        public void RecordingApproachingCap(DictationSessionId sessionId)
+        {
+            lock (_lock)
+            {
+                _approachingCap.Add((sessionId, DictationScope.Current));
+            }
+
+            _approachingCapMilestone.Increment();
+            if (ThrowOnApproachingCap)
+            {
+                throw new InvalidOperationException("synthetic warning error");
+            }
+        }
 
         public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {

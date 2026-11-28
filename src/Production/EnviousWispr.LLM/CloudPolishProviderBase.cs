@@ -11,6 +11,10 @@ namespace EnviousWispr.LLM;
 
 public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvisor
 {
+    internal const int ChunkedPolishThresholdCharacters = 12_000;
+    internal const int MaximumChunkCharacters = 10_000;
+    internal static readonly TimeSpan MaximumScaledTimeout = TimeSpan.FromSeconds(180);
+
     private static readonly TimeSpan[] RetryDelays =
         [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
 
@@ -49,6 +53,29 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
     public abstract string ProviderId { get; }
 
     public string ModelId => Options.ModelId;
+
+    internal static TimeSpan ResolveTimeout(TimeSpan configuredTimeout, int characterCount)
+    {
+        if (configuredTimeout < TimeSpan.FromSeconds(20) || characterCount <= 0)
+        {
+            return configuredTimeout;
+        }
+
+        var baseSeconds = configuredTimeout.TotalSeconds;
+        var effectiveCap = Math.Max(baseSeconds, MaximumScaledTimeout.TotalSeconds);
+        var scaledSeconds = Math.Clamp(
+            baseSeconds + (characterCount / 500.0),
+            baseSeconds,
+            effectiveCap);
+        return TimeSpan.FromSeconds(scaledSeconds);
+    }
+
+    internal static IReadOnlyList<(string Text, string SeparatorAfter)> SplitForPolish(
+        string text,
+        int maxChunkCharacters = MaximumChunkCharacters) =>
+        PolishChunker.Split(text, maxChunkCharacters)
+            .Select(piece => (piece.Text, piece.SeparatorAfter))
+            .ToArray();
 
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
@@ -91,17 +118,80 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
                 canRetry: false);
         }
 
+        if (request.Input.Text.Length <= ChunkedPolishThresholdCharacters)
+        {
+            var singleResult = await PolishSegmentAsync(
+                keyResult.Value,
+                request.Input,
+                request.RecognitionLanguage,
+                request.TargetAppName,
+                timer,
+                cancellationToken).ConfigureAwait(false);
+            timer.Stop();
+            return singleResult;
+        }
+
+        var pieces = SplitForPolish(request.Input.Text, MaximumChunkCharacters);
+        var builder = new System.Text.StringBuilder(request.Input.Text.Length);
+        foreach (var (chunkText, separatorAfter) in pieces)
+        {
+            if (string.IsNullOrWhiteSpace(chunkText))
+            {
+                builder.Append(chunkText).Append(separatorAfter);
+                continue;
+            }
+
+            var chunkInput = new ProcessedText(request.Input.SessionId, chunkText);
+            var chunkResult = await PolishSegmentAsync(
+                keyResult.Value,
+                chunkInput,
+                request.RecognitionLanguage,
+                request.TargetAppName,
+                timer,
+                cancellationToken).ConfigureAwait(false);
+            if (chunkResult.UsedFallback)
+            {
+                // Any failed/truncated chunk reverts cleanly to the full original input.
+                return Fallback(
+                    request.Input,
+                    chunkResult.Status,
+                    chunkResult.Error?.Code ?? AppErrorCode.PolishFailed,
+                    timer,
+                    chunkResult.Error?.CanRetry ?? true);
+            }
+
+            builder.Append(chunkResult.Output.Text).Append(separatorAfter);
+        }
+
+        timer.Stop();
+        var assembled = builder.ToString();
+        return new PolishResult(
+            new ProcessedText(request.Input.SessionId, assembled),
+            string.Equals(request.Input.Text, assembled, StringComparison.Ordinal)
+                ? PolishAttemptStatus.Unchanged
+                : PolishAttemptStatus.Polished,
+            ElapsedMilliseconds: timer.ElapsedMilliseconds);
+    }
+
+    private async Task<PolishResult> PolishSegmentAsync(
+        string apiKey,
+        ProcessedText segmentInput,
+        string? recognitionLanguage,
+        string? targetAppName,
+        Stopwatch timer,
+        CancellationToken cancellationToken)
+    {
         using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
-        timeoutCancellation.CancelAfter(_requestTimeout);
-        var wordCount = request.Input.Text.Split(
+        timeoutCancellation.CancelAfter(ResolveTimeout(_requestTimeout, segmentInput.Text.Length));
+        var wordCount = segmentInput.Text.Split(
             (char[]?)null,
             StringSplitOptions.RemoveEmptyEntries).Length;
         var systemPrompt = CloudPolishPrompt.BuildSystemPrompt(
-            request.RecognitionLanguage,
+            recognitionLanguage,
             wordCount,
-            request.TargetAppName);
-        var userMessage = CloudPolishPrompt.BuildUserMessage(request.Input.Text);
+            targetAppName);
+        var userMessage = CloudPolishPrompt.BuildUserMessage(segmentInput.Text);
 
         try
         {
@@ -110,25 +200,24 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
                 try
                 {
                     var output = await SendOnceAsync(
-                        keyResult.Value,
+                        apiKey,
                         systemPrompt,
                         userMessage,
                         timeoutCancellation.Token).ConfigureAwait(false);
                     output = CleanOutput(output);
-                    if (output is null || !EgOnePolishProvider.IsSafeOutput(request.Input.Text, output))
+                    if (output is null || !EgOnePolishProvider.IsSafeOutput(segmentInput.Text, output))
                     {
                         return Fallback(
-                            request.Input,
+                            segmentInput,
                             PolishAttemptStatus.Failed,
                             AppErrorCode.PolishEmptyResponse,
                             timer,
                             canRetry: false);
                     }
 
-                    timer.Stop();
                     return new PolishResult(
-                        new ProcessedText(request.Input.SessionId, output),
-                        string.Equals(request.Input.Text, output, StringComparison.Ordinal)
+                        new ProcessedText(segmentInput.SessionId, output),
+                        string.Equals(segmentInput.Text, output, StringComparison.Ordinal)
                             ? PolishAttemptStatus.Unchanged
                             : PolishAttemptStatus.Polished,
                         ElapsedMilliseconds: timer.ElapsedMilliseconds);
@@ -147,7 +236,7 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
                 catch (CloudPolishException exception)
                 {
                     return Fallback(
-                        request.Input,
+                        segmentInput,
                         StatusFor(exception.ErrorCode),
                         exception.ErrorCode,
                         timer,
@@ -156,7 +245,7 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
                 catch (HttpRequestException)
                 {
                     return Fallback(
-                        request.Input,
+                        segmentInput,
                         PolishAttemptStatus.Unavailable,
                         AppErrorCode.PolishProviderUnavailable,
                         timer);
@@ -166,7 +255,7 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return Fallback(
-                request.Input,
+                segmentInput,
                 PolishAttemptStatus.TimedOut,
                 AppErrorCode.PolishTimedOut,
                 timer);
@@ -178,7 +267,7 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
         catch (Exception exception) when (exception is JsonException or IOException or InvalidOperationException)
         {
             return Fallback(
-                request.Input,
+                segmentInput,
                 PolishAttemptStatus.Failed,
                 AppErrorCode.PolishBadRequest,
                 timer,

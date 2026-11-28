@@ -368,6 +368,11 @@ public partial class App
                 : new WasapiAudioCapture();
         var audioCapture = _audioCapture;
         audioCapture.LevelChanged += OnAudioLevelChanged;
+        if (audioCapture is WasapiAudioCapture wasapiCapture)
+        {
+            wasapiCapture.MaxDurationBackstopReached += OnCaptureMaxDurationBackstopReached;
+        }
+
         _elsLanguageDetector?.Dispose();
         _elsLanguageDetector = new WindowsElsLanguageDetector();
         _textTargetAdapter = new WindowsTextTargetAdapter();
@@ -570,6 +575,11 @@ public partial class App
         // to the UI thread did that scheduling work for a value the meter's own timer would ask for
         // when it was ready. Every UI touch stays inside that tick.
         _window?.SetAudioLevel(level);
+    }
+
+    private void OnCaptureMaxDurationBackstopReached(object? sender, DictationSessionId sessionId)
+    {
+        _runtime?.Queue.TimeOut(sessionId);
     }
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)

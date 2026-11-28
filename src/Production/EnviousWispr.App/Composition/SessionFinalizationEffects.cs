@@ -46,6 +46,17 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     public void ShowTranscribing() =>
         _view.ShowStatus(DictationStatus.Processing("Transcribing locally..."));
 
+    public void ShowTranscribing(bool maxDurationReached)
+    {
+        if (maxDurationReached)
+        {
+            _view.ShowStatus(DictationStatus.Processing(OverlayPillCatalog.MaxDurationTranscribingText));
+            return;
+        }
+
+        _view.ShowStatus(DictationStatus.Processing("Transcribing locally..."));
+    }
+
     public void RecordTranscriptionStarted() =>
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,

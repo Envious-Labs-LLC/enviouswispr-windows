@@ -254,7 +254,8 @@ public sealed class SessionCompositionTests
 
         await Eventually(() => world.Controller.CurrentSession is null, "the watchdog's timeout to reset the session");
         await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
-        Assert.Contains(world.View.Statuses, status => status.Text == "Recording timed out and was cancelled safely");
+        Assert.Contains(world.View.Statuses, status => status.Text == OverlayPillCatalog.MaxDurationTranscribingText);
+        Assert.Equal("hello world", Assert.Single(world.Delivery.Requests).Text.Text);
         Assert.Equal([true, false], world.RecordingActive);
     }
 
@@ -317,7 +318,7 @@ public sealed class SessionCompositionTests
         await world.PreviewEngine.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(1, world.Coordinator.PendingCount);
-        Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        Assert.Equal(DictationSessionState.Finalizing, world.Controller.CurrentSession?.State);
         competingRelease = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
         competingTimeout = await world.Coordinator.TimeOutAsync(timedOut);
         Assert.Equal(SessionCommandDisposition.Ignored, competingRelease.Disposition);
@@ -327,8 +328,8 @@ public sealed class SessionCompositionTests
         await Eventually(() => world.Controller.CurrentSession is null, "the watchdog's timeout to reset the session");
         await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
         Assert.False(world.Runtime.Watchdog.IsArmed, "the timeout the watchdog queued disarmed the watchdog");
-        Assert.Contains(world.View.Statuses, status => status.Text == "Recording timed out and was cancelled safely");
-        Assert.Single(world.Delivery.Requests);
+        Assert.Contains(world.View.Statuses, status => status.Text == OverlayPillCatalog.MaxDurationTranscribingText);
+        Assert.Equal(2, world.Delivery.Requests.Count);
         Assert.Equal([true, false, true, false], world.RunState.Edges);
     }
 

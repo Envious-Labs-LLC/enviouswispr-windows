@@ -731,6 +731,9 @@ public partial class App : Application, IAsyncDisposable
         public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
 
         public void ShowSessionBusy(SessionHolder holder) => app.ShowSessionBusy(holder);
+
+        public void ShowApproachingCapNotice() =>
+            app.PostToLiveWindow(window => window.ShowApproachingCapNotice());
     }
 
     /// <summary>The window as the session sees it: each sink one dispatch to the window, and nothing decided here.</summary>
@@ -766,6 +769,10 @@ public partial class App : Application, IAsyncDisposable
         if (_audioCapture is { } capture)
         {
             capture.LevelChanged -= OnAudioLevelChanged;
+            if (capture is WasapiAudioCapture wasapiCapture)
+            {
+                wasapiCapture.MaxDurationBackstopReached -= OnCaptureMaxDurationBackstopReached;
+            }
         }
     }
 

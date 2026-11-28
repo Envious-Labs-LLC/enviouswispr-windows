@@ -49,8 +49,9 @@ public sealed class LocalDictationAudioArchive : IDictationAudioArchive
 
         try
         {
-            var bytes = WaveFile.EncodeMono(audio.Samples.Span, audio.SampleRate);
-            AtomicFileWriter.WriteBytes(targetPath, bytes);
+            AtomicFileWriter.WriteWithStream(
+                targetPath,
+                stream => WaveFile.WriteMono(stream, audio.Samples.Span, audio.SampleRate));
 
             var durationMs = WaveFile.ComputeDurationMs(audio.Samples.Length, audio.SampleRate);
             return new ArchivedDictationAudio(fileName, durationMs);

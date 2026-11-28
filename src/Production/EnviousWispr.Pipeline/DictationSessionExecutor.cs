@@ -57,6 +57,9 @@ public interface IDictationSessionEffects
     /// <summary>Signals immediate transition to processing UI before capture teardown completes.</summary>
     void ShowProcessing() { }
 
+    /// <summary>Signals that the 60-minute cap ended capture and transcription has begun.</summary>
+    void ShowMaxDurationTranscribing() => ShowProcessing();
+
     /// <summary>Clears any optimistic recording sound cue state without firing a stop cue.</summary>
     void CancelRecordingCue() { }
 
@@ -741,34 +744,111 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
     /// <summary>
     /// The recording armed as the command's session has run for as long as it is allowed. If it is
-    /// still the one recording, every loop is stopped and it is aborted and reset; if the recording
-    /// has moved on, nothing. Runs under the session gate as a command of its own.
+    /// still the one recording, capture stops gracefully and the take is transcribed and delivered;
+    /// if capture release fails or the recording has moved on, the session recovers safely.
     /// </summary>
     private async Task<SessionCommandResult> TimeOutAsync(SessionCommand command)
     {
         var sessionId = command.TimedOutSession ?? throw new InvalidOperationException("A timeout names the recording it was armed for.");
         using var dictation = DictationScope.Begin(sessionId.Value);
+        SessionTransitionResult? transition = null;
         try
         {
-            if (_controller.CurrentSession is
+            if (_controller.CurrentSession is not
                 {
                     Id: var currentId,
                     State: DictationSessionState.Recording,
-                } && currentId == sessionId)
+                } || currentId != sessionId)
             {
-                await _background.StopAsync().ConfigureAwait(false);
-                var error = new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true);
-                await _controller.AbortAsync(error, CancellationToken.None).ConfigureAwait(false);
-                await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
-                _effects.RecordRecordingTimedOut(error);
-                _effects.ShowRecordingTimedOut();
-                return new SessionCommandResult(SessionCommandDisposition.Applied);
+                return new SessionCommandResult(SessionCommandDisposition.Ignored);
             }
 
-            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+            var timeoutError = new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true);
+            _effects.RecordRecordingTimedOut(timeoutError);
+            if (!Volatile.Read(ref _closed))
+            {
+                _effects.ShowMaxDurationTranscribing();
+            }
+
+            _background.CloseStreamingAdmission();
+            _finalization.ResetTranscriptionComplete();
+            var escapeCancel = new CancellationTokenSource();
+            Volatile.Write(ref _escapeCancel, escapeCancel);
+            _ = CleanupRemaining;
+            await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
+
+            var releaseToken = Volatile.Read(ref _escapeCancel)?.Token ?? CancellationToken.None;
+            var result = command.ReleaseTarget is { } releaseTarget
+                ? await _controller.ReleaseAsync(releaseTarget, releaseToken).ConfigureAwait(false)
+                : await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false);
+            transition = result;
+            RecordTransition(result);
+
+            if (result.Kind == SessionTransitionKind.FinalizeReady &&
+                result.Session is not null &&
+                result.Audio is not null)
+            {
+                await FinalizeAsync(
+                        result.Session.Id,
+                        result.Audio,
+                        recoveryOnly: false,
+                        preserving: null,
+                        maxDurationReached: true)
+                    .ConfigureAwait(false);
+                return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+            }
+
+            await _background.StopAsync().ConfigureAwait(false);
+            if (_controller.CurrentSession is not null)
+            {
+                await _controller.AbortAsync(timeoutError, CancellationToken.None).ConfigureAwait(false);
+                await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            _effects.ShowRecordingTimedOut();
+            return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+        }
+        catch (RetainedStopException)
+        {
+            RetainCleanup(
+                new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                SessionFailureKind.Failed);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+        }
+        catch (OperationCanceledException)
+        {
+            if (await TryHandleEscapeCancellationAsync(sessionId.Value).ConfigureAwait(false) is { } escaped)
+            {
+                return escaped;
+            }
+
+            await RecoverFailedSessionAsync(
+                    new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true),
+                    SessionFailureKind.TimedOut)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+        }
+        catch (PreviewNotRetiredException)
+        {
+            await RecoverFailedSessionAsync(
+                    new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                    SessionFailureKind.Failed)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            _effects.RecordSessionFailure();
+            await RecoverFailedSessionAsync(
+                    new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true),
+                    SessionFailureKind.TimedOut)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
         }
         finally
         {
+            _finalization.ResetTranscriptionComplete();
+            ReleaseProcessingDeadline();
             if (!HasRetainedCleanup)
             {
                 await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
@@ -983,61 +1063,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             using var failed = interrupted is { } timedOut
                 ? DictationScope.Begin(timedOut)
                 : NoScope.Instance;
-            if (_finalization.IsEscapeClaimed &&
-                _controller.CurrentSession?.State is DictationSessionState.Recording or DictationSessionState.Finalizing)
+            if (await TryHandleEscapeCancellationAsync(interrupted).ConfigureAwait(false) is { } escaped)
             {
-                _finalization.ResetTranscriptionComplete();
-                if (_ownedStops.Count > 0 || HasRetainedCleanup)
-                {
-                    RetainCleanup(
-                        new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
-                        SessionFailureKind.Failed);
-                    return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
-                }
-
-                try
-                {
-                    await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
-                    var stopped = await ObserveBackgroundStopAsync(
-                            () => _background.StopAsync(CleanupRemaining),
-                            processingToken: none)
-                        .ConfigureAwait(false);
-                    var previewStillRunning = stopped.Preview == StopOutcome.StillRunning &&
-                        await ObservePreviewAbortAsync().ConfigureAwait(false) == StopOutcome.StillRunning &&
-                        await ObservePreviewAbortAsync().ConfigureAwait(false) == StopOutcome.StillRunning;
-                    if (previewStillRunning)
-                    {
-                        _effects.RecordPreviewStillRunning();
-                    }
-
-                    if (previewStillRunning ||
-                        stopped.Streaming == StopOutcome.StillRunning ||
-                        stopped.AutoStop == StopOutcome.StillRunning)
-                    {
-                        RetainCleanup(
-                            new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
-                            SessionFailureKind.Failed);
-                        return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
-                    }
-                }
-                catch (RetainedStopException)
-                {
-                    RetainCleanup(
-                        new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
-                        SessionFailureKind.Failed);
-                    return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
-                }
-
-                if (_persistence.HasPendingRecovery)
-                {
-                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
-                }
-
-                var cancelledResult = await _controller.CancelAsync(none).ConfigureAwait(false);
-                RecordTransition(cancelledResult);
-                await _controller.ResetAsync(none).ConfigureAwait(false);
-                _effects.ShowTransitionStatus(cancelledResult);
-                return new SessionCommandResult(SessionCommandDisposition.Applied, cancelledResult.Session);
+                return escaped;
             }
 
             await RecoverFailedSessionAsync(
@@ -1106,11 +1134,89 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// safely, recorded as the runtime's failure. A preview that fails to start or to answer never
     /// fails a recording; a worker that cannot be killed is not a preview failure but the machine's.
     /// </remarks>
+    private async Task<SessionCommandResult?> TryHandleEscapeCancellationAsync(Guid? interrupted)
+    {
+        if (!_finalization.IsEscapeClaimed ||
+            _controller.CurrentSession?.State is not (DictationSessionState.Recording or DictationSessionState.Finalizing))
+        {
+            return null;
+        }
+
+        _finalization.ResetTranscriptionComplete();
+        if (_ownedStops.Count > 0 || HasRetainedCleanup)
+        {
+            RetainCleanup(
+                new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                SessionFailureKind.Failed);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+
+        var none = CancellationToken.None;
+        try
+        {
+            await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
+            var stopped = await ObserveBackgroundStopAsync(
+                    () => _background.StopAsync(CleanupRemaining),
+                    processingToken: none)
+                .ConfigureAwait(false);
+            var previewStillRunning = stopped.Preview == StopOutcome.StillRunning &&
+                await ObservePreviewAbortAsync().ConfigureAwait(false) == StopOutcome.StillRunning &&
+                await ObservePreviewAbortAsync().ConfigureAwait(false) == StopOutcome.StillRunning;
+            if (previewStillRunning)
+            {
+                _effects.RecordPreviewStillRunning();
+            }
+
+            if (previewStillRunning ||
+                stopped.Streaming == StopOutcome.StillRunning ||
+                stopped.AutoStop == StopOutcome.StillRunning)
+            {
+                RetainCleanup(
+                    new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                    SessionFailureKind.Failed);
+                return new SessionCommandResult(SessionCommandDisposition.Failed);
+            }
+        }
+        catch (RetainedStopException)
+        {
+            RetainCleanup(
+                new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                SessionFailureKind.Failed);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+
+        if (_persistence.HasPendingRecovery)
+        {
+            await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
+        }
+
+        var cancelledResult = await _controller.CancelAsync(none).ConfigureAwait(false);
+        RecordTransition(cancelledResult);
+        await _controller.ResetAsync(none).ConfigureAwait(false);
+        _effects.ShowTransitionStatus(cancelledResult);
+        return new SessionCommandResult(SessionCommandDisposition.Applied, cancelledResult.Session);
+    }
+
+    internal TimeSpan ComputeFinalizationDeadline(int sampleCount, int sampleRate)
+    {
+        if (_processingDeadline != MaximumFinalProcessingDuration)
+        {
+            return _processingDeadline;
+        }
+
+        var audioSeconds = sampleRate > 0
+            ? sampleCount / (double)sampleRate
+            : 0.0;
+        var scaledSeconds = Math.Clamp(120.0 + (audioSeconds * 0.5), 180.0, 2100.0);
+        return TimeSpan.FromSeconds(scaledSeconds);
+    }
+
     private async Task FinalizeAsync(
         DictationSessionId sessionId,
         CapturedAudio audio,
         bool recoveryOnly,
-        SystemLifecycleTransition? preserving)
+        SystemLifecycleTransition? preserving,
+        bool maxDurationReached = false)
     {
         using var dictation = DictationScope.Begin(sessionId.Value);
         _ownedAudio = audio;
@@ -1128,7 +1234,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 _ = CleanupRemaining;
             }
 
-            var processing = new CancellationTokenSource(_processingDeadline, _clock);
+            var processing = new CancellationTokenSource(
+                ComputeFinalizationDeadline(audio.Samples.Length, audio.SampleRate),
+                _clock);
             Volatile.Write(ref _processing, processing);
             if (_finalization.IsEscapeClaimed)
             {
@@ -1181,6 +1289,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     sessionId,
                     audio,
                     recoveryOnly || _finalization.IsPromotedToEscapeRecovery || Volatile.Read(ref _closed),
+                    maxDurationReached,
                     processing.Token)
                 .ConfigureAwait(false);
         }

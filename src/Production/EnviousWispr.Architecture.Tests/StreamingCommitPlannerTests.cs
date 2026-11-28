@@ -152,4 +152,47 @@ public sealed class StreamingCommitPlannerTests
         Assert.Null(Plan(audio, audio.Length));
         Assert.Null(Plan(audio, audio.Length + 1_000));
     }
+
+    [Fact]
+    public void ContinuousSpeechPastSixtySecondsForcesQuietestValleyCommit()
+    {
+        // 62s continuous speech with no 400ms pause, but a quiet 100ms breath valley at 55s.
+        var audio = Build((true, 62_000));
+        var valleyStart = 55 * SampleRate;
+        Array.Clear(audio, valleyStart, SampleRate / 10);
+
+        var commit = Plan(audio);
+
+        Assert.NotNull(commit);
+        Assert.Equal(0, commit!.Value.StartSample);
+        Assert.InRange(commit.Value.EndSample, valleyStart, valleyStart + (SampleRate / 10));
+    }
+
+    [Fact]
+    public void PureSilencePastSixtySecondsDoesNotForceACommit()
+    {
+        var audio = Build((false, 65_000));
+
+        Assert.Null(Plan(audio));
+    }
+
+    [Fact]
+    public void ContinuousLoudMonologueWithoutAnyQuietValleyWaitsRatherThanCuttingMidWord()
+    {
+        var audio = Build((true, 65_000));
+
+        Assert.Null(Plan(audio));
+    }
+
+    [Fact]
+    public void ContinuousQuietSpeechAtVoicedFloorWaitsRatherThanCuttingMidWord()
+    {
+        var quietSpeech = new float[SampleRate * 65];
+        for (var i = 0; i < quietSpeech.Length; i++)
+        {
+            quietSpeech[i] = (i % 2 == 0) ? 0.003f : -0.003f;
+        }
+
+        Assert.Null(Plan(quietSpeech));
+    }
 }

@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Pipeline;
@@ -185,25 +186,25 @@ public sealed class PreviewStartupDecouplingTests
     [Fact]
     public async Task ATimeoutDuringPreviewStartupCancelsTheCaptureAndTheStartup()
     {
-        // THE WATCHDOG'S TIMEOUT IS A COMMAND. If the recording is still the one that was armed, the
-        // loops are stopped first - the preview's startup is cancelled - and then it is aborted:
-        // capture cancelled, not stopped. The order the watchdog always had.
+        // THE WATCHDOG'S TIMEOUT IS A COMMAND. When a recording hits its maximum duration while
+        // the preview worker is still starting, capture stops gracefully at the boundary without
+        // waiting for preview startup, cancels preview startup, and transcribes the captured audio.
         var world = await ComposedSessionWorld.StartRecordingWithPreviewStartupHeldAsync();
 
         var timeout = world.Coordinator.TimeOutAsync(world.SessionId);
+        await world.Capture.Stopped.Task.WaitAsync(Patience);
         await world.PreviewEngine.StartCancellationObserved.Task.WaitAsync(Patience);
         Assert.False(timeout.IsCompleted);
-        Assert.True(world.Capture.IsCapturing, "the abort follows the stops, as it always did");
+        Assert.False(world.Capture.IsCapturing);
 
         world.PreviewEngine.AllowStartExit.SetResult();
-        await world.Capture.Cancelled.Task.WaitAsync(Patience);
         var result = await timeout.WaitAsync(Patience);
 
         Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
         Assert.Null(world.Controller.CurrentSession);
-        Assert.False(world.Capture.Stopped.Task.IsCompleted, "the timeout cancels the take; nothing is handed on");
-        Assert.Contains(world.View.Statuses, status => status.Text.Contains("timed out", StringComparison.Ordinal));
-        Assert.Equal(0, world.Engine.Calls);
+        Assert.False(world.Capture.Cancelled.Task.IsCompleted, "graceful cap-stop hands the captured audio on");
+        Assert.Contains(world.View.Statuses, status => status.Text == OverlayPillCatalog.MaxDurationTranscribingText);
+        Assert.Equal(1, world.Engine.Calls);
         Assert.Equal(1, world.PreviewEngine.Stops);
     }
 
