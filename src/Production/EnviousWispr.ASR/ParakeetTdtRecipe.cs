@@ -164,6 +164,7 @@ internal sealed class ParakeetTdtRecipe
 
         var speechEnd = FindSpeechEnd(samples, cancellationToken);
         var outputs = new List<List<DecodedToken>>();
+        var windowRanges = new List<(int StartSample, int EndSample)>();
         var start = 0;
         var windowIndex = 0;
         while (start < totalSamples)
@@ -182,6 +183,7 @@ internal sealed class ParakeetTdtRecipe
             var context = warmup > 0 ? 0 : (windowIndex > 0 ? FrameSamples : 0);
             var contextStart = start - Math.Max(warmup, context);
             var segment = samples.AsSpan(contextStart, audioEnd - contextStart);
+            windowRanges.Add((start, audioEnd));
             if (warmup > 0)
             {
                 outputs.Add(DecodeWindow(
@@ -202,7 +204,7 @@ internal sealed class ParakeetTdtRecipe
                 outputs.Add(DecodeWindow(
                     segment,
                     contextSamples: context,
-                    offsetSample: start,
+                    offsetSample: contextStart,
                     isLast: isLast,
                     padToWindow: true,
                     allowedTokenMask,
@@ -226,16 +228,20 @@ internal sealed class ParakeetTdtRecipe
         }
 
         var merged = outputs[0];
+        var seamRanges = new List<(int StartFrame, int EndFrame)>(Math.Max(0, outputs.Count - 1));
         for (var i = 1; i < outputs.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var seamStart = Math.Min(windowRanges[i].StartSample / FrameSamples, CeilDiv(windowRanges[i - 1].EndSample, FrameSamples)) - EdgeFrames;
+            var seamEnd = Math.Max(windowRanges[i].StartSample / FrameSamples, CeilDiv(windowRanges[i - 1].EndSample, FrameSamples)) + EdgeFrames;
+            seamRanges.Add((Math.Max(0, seamStart), seamEnd));
             merged = Merge(merged, outputs[i]);
         }
 
         merged = EnforceMonotonic(merged);
         if (outputs.Count > 1)
         {
-            merged = CollapseSeamDuplicates(merged);
+            merged = CollapseSeamDuplicates(merged, seamRanges);
         }
 
         var repairs = 0;
@@ -335,7 +341,7 @@ internal sealed class ParakeetTdtRecipe
             return [];
         }
 
-        var actualFrames = CeilDiv(realSampleCount - contextSamples, FrameSamples);
+        var actualFrames = CeilDiv(realSampleCount, FrameSamples);
         var frames = Math.Min(encodedLength, actualFrames);
         if (padToWindow ? frames <= 1 : frames <= 0)
         {
@@ -823,7 +829,9 @@ internal sealed class ParakeetTdtRecipe
         return result;
     }
 
-    internal List<DecodedToken> CollapseSeamDuplicates(IReadOnlyList<DecodedToken> tokens)
+    internal List<DecodedToken> CollapseSeamDuplicates(
+        IReadOnlyList<DecodedToken> tokens,
+        IReadOnlyList<(int StartFrame, int EndFrame)>? seamRanges = null)
     {
         if (tokens.Count < 2)
         {
@@ -880,7 +888,8 @@ internal sealed class ParakeetTdtRecipe
                 string.Equals(previousLower, currentLower, StringComparison.Ordinal) &&
                 char.IsLetter(current[0]) &&
                 !endsSentence[lastKept] &&
-                words[i][0].Frame - words[lastKept][0].Frame <= overlapFrames;
+                words[i][0].Frame - words[lastKept][0].Frame <= overlapFrames &&
+                (seamRanges is null || IsInAnySeam(words[lastKept][0].Frame, words[i][0].Frame, seamRanges));
             if (!isDuplicate)
             {
                 lastKept = i;
@@ -909,6 +918,23 @@ internal sealed class ParakeetTdtRecipe
         }
 
         return result;
+    }
+
+    private static bool IsInAnySeam(
+        int leftFrame,
+        int rightFrame,
+        IReadOnlyList<(int StartFrame, int EndFrame)> seamRanges)
+    {
+        for (var i = 0; i < seamRanges.Count; i++)
+        {
+            var (startFrame, endFrame) = seamRanges[i];
+            if (leftFrame >= startFrame && rightFrame <= endFrame)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     internal List<DecodedToken> RepairSeamGaps(

@@ -340,6 +340,57 @@ public sealed class ParakeetTdtRecipeTests
     }
 
     [Fact]
+    public void MiddleWindowWithContextAlignsFramesAndDecodesFinalRealFrame()
+    {
+        // StrideSamples (206,080 = frame 161) + ChunkSamples (238,080 = 186 frames) = 444,160 (27.76s).
+        // Window 1 has warmup=0, context=1,280 (contextStart = frame 160), 187 frames [0..186], and isLast=true.
+        var exactTwoWindow = new float[ParakeetTdtRecipe.StrideSamples + ParakeetTdtRecipe.ChunkSamples];
+        for (var i = 0; i < exactTwoWindow.Length; i++)
+        {
+            exactTwoWindow[i] = i % 2 == 0 ? 0.1f : -0.1f;
+        }
+
+        var backend = new ScriptedRecipeBackend((window, frame, _, _, _) =>
+        {
+            if (window == 1 && frame == 1) return (2, 1);   // " cat" at first real frame -> global 161
+            if (window == 1 && frame == 186) return (5, 4); // " sat" at final real frame -> global 346
+            return (BlankIndex, 1);
+        });
+        using var ctx = backend.CreateRunContext(CancellationToken.None);
+        var recipe = CreateRecipe(backend);
+
+        var result = recipe.Transcribe(exactTwoWindow, null, null, ctx, CancellationToken.None);
+        Assert.Equal(2, result.WindowCount);
+        Assert.Equal("cat sat", recipe.TokensToText(result.Tokens));
+        Assert.Equal([161, 346], result.Tokens.Select(t => t.Frame));
+    }
+
+    [Fact]
+    public void MultiWindowSeamDuplicateCollapsePreservesNonSeamRepeatsAndCollapsesSeamDuplicates()
+    {
+        var recipe = CreateRecipe(new ScriptedRecipeBackend());
+
+        // With seam bounds [(155, 192)], non-seam repeat ("The" @ 10 + "the" @ 14) stays, seam duplicate collapses.
+        var bounded = recipe.CollapseSeamDuplicates(
+            [new(1, 10, 1), new(0, 14, 1), new(1, 170, 1), new(0, 174, 1), new(2, 195, 1)],
+            [(155, 192)]);
+        Assert.Equal("The the the cat", recipe.TokensToText(bounded));
+
+        // End-to-end multi-window Transcribe on Loud(20.0): seam is [155, 192], non-seam frames 10+14 keep "The the".
+        var backend = new ScriptedRecipeBackend((window, frame, _, _, _) =>
+        {
+            if (window == 0 && frame == 10) return (1, 1);   // " The" @ 10
+            if (window == 0 && frame == 14) return (0, 1);   // " the" @ 14
+            if (window == 1 && frame == 131) return (7, 1);  // " mat" @ global 64 + 131 = 195
+            return (BlankIndex, 1);
+        });
+        using var ctx = backend.CreateRunContext(CancellationToken.None);
+        var multiWindow = CreateRecipe(backend).Transcribe(Loud(20.0), null, null, ctx, CancellationToken.None);
+        Assert.Equal(2, multiWindow.WindowCount);
+        Assert.Equal("The the mat", recipe.TokensToText(multiWindow.Tokens));
+    }
+
+    [Fact]
     public void SeamGapRepairSplicesSpeechGapsPreservesLanguageMasksAndSkipsSilence()
     {
         var vocab = CreateVocab();

@@ -127,16 +127,24 @@ $runtimeDirectory = Join-Path $DataDirectory 'runtime'
 New-Item -ItemType Directory -Force -Path $modelsDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $runtimeDirectory | Out-Null
 
-$parakeetTargetId = if (Test-Path -LiteralPath (Join-Path $ParakeetSourceDirectory 'encoder-model.onnx') -PathType Leaf) {
-    if ((Split-Path -Leaf $ParakeetSourceDirectory) -eq 'parakeet-tdt-0.6b-v3') {
-        'parakeet-tdt-0.6b-v3'
-    }
-    else {
-        'parakeet-ultra'
-    }
+$parakeetLeaf = Split-Path -Leaf $ParakeetSourceDirectory
+$ultraEncoderSha256 = '8A2B47169CF3F1B114010E12C0221BC6F07203289477A65A44847B9E3F1E01ED'
+$parakeetInt8EncoderPath = Join-Path $ParakeetSourceDirectory 'encoder-model.int8.onnx'
+$parakeetTargetId = if ($parakeetLeaf -eq 'parakeet-tdt-0.6b-v3') {
+    'parakeet-tdt-0.6b-v3'
+}
+elseif ($parakeetLeaf -eq 'parakeet-ultra') {
+    'parakeet-ultra'
+}
+elseif (Test-Path -LiteralPath (Join-Path $ParakeetSourceDirectory 'encoder-model.onnx') -PathType Leaf) {
+    'parakeet-tdt-0.6b-v3'
+}
+elseif ((Test-Path -LiteralPath $parakeetInt8EncoderPath -PathType Leaf) -and
+    ((Get-FileHash -LiteralPath $parakeetInt8EncoderPath -Algorithm SHA256).Hash -eq $ultraEncoderSha256)) {
+    'parakeet-ultra'
 }
 else {
-    'parakeet-ultra'
+    'parakeet-tdt-0.6b-v3'
 }
 
 Write-Host 'Provisioning Parakeet final-transcription files...'
