@@ -164,8 +164,11 @@ public sealed partial class PackWordRowView : UserControl
             {
                 Text = capturedAlias,
                 Style = bodyStyle,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextWrapping = TextWrapping.NoWrap,
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            ToolTipService.SetToolTip(aliasText, capturedAlias);
             var removeButton = new Button
             {
                 Style = removeButtonStyle,
@@ -183,19 +186,18 @@ public sealed partial class PackWordRowView : UserControl
             ToolTipService.SetToolTip(removeButton, "Remove mishearing");
             removeButton.Click += async (_, _) => await RemoveAliasAsync(capturedAlias).ConfigureAwait(true);
 
-            var contentPanel = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 4,
-                VerticalAlignment = VerticalAlignment.Center,
-                Children = { aliasText, removeButton },
-            };
+            var contentGrid = new Grid { ColumnSpacing = 4 };
+            contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            contentGrid.Children.Add(aliasText);
+            Grid.SetColumn(removeButton, 1);
+            contentGrid.Children.Add(removeButton);
 
             var chip = new Border
             {
                 Style = chipStyle,
                 Padding = new Thickness(10, 3, 4, 3),
-                Child = contentPanel,
+                Child = contentGrid,
             };
             AliasesWrapPanel.Children.Add(chip);
         }
