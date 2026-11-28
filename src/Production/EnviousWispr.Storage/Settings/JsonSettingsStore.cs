@@ -12,6 +12,7 @@ namespace EnviousWispr.Services.Settings;
 public sealed class JsonSettingsStore : ISettingsStore
 {
     private const int LastDictationShortcutsSchema = 17;
+    private const int SmartInsertionDefaultSchema = 30;
 
     internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -161,6 +162,18 @@ public sealed class JsonSettingsStore : ISettingsStore
                 settings = settings with
                 {
                     Preferences = SettingsSchemaMigration.ResolveClashingLastDictationShortcuts(settings.Preferences)!,
+                };
+            }
+
+            if (settings.Preferences is not null &&
+                schemaVersion < SmartInsertionDefaultSchema &&
+                (!document.RootElement.TryGetProperty("preferences", out var preferencesElement) ||
+                 preferencesElement.ValueKind != JsonValueKind.Object ||
+                 !preferencesElement.TryGetProperty("smartInsertionEnabled", out _)))
+            {
+                settings = settings with
+                {
+                    Preferences = SettingsSchemaMigration.ApplySmartInsertionDefault(settings.Preferences),
                 };
             }
 
@@ -598,7 +611,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 Preferences = SettingsSchemaMigration.ApplyFixLearnedWordsDefault(legacy.Preferences),
             },
-            >= 12 and <= 28 => legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion },
+            >= 12 and <= 29 => legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion },
             _ => null,
         };
     }

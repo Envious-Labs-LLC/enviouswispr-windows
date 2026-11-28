@@ -548,6 +548,42 @@ public sealed class JsonSettingsStoreTests
         });
     }
 
+    [Fact]
+    public async Task LoadMigratesVersionTwentyNineSmartInsertionDefaultWhilePreservingExplicitFalse()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var missingPath = Path.Combine(directory, "settings-v29-missing.json");
+            var baseV29 = CreatePopulatedSettings() with { SchemaVersion = 29 };
+            var missingRoot = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(
+                baseV29,
+                JsonSettingsStore.SerializerOptions))!.AsObject();
+            missingRoot["preferences"]!.AsObject().Remove("smartInsertionEnabled");
+            await File.WriteAllTextAsync(missingPath, missingRoot.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var migratedMissing = await new JsonSettingsStore(missingPath).LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Migrated, migratedMissing.Status);
+            Assert.Equal(29, migratedMissing.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, migratedMissing.Settings.SchemaVersion);
+            Assert.True(migratedMissing.Settings.Preferences.SmartInsertionEnabled);
+
+            var explicitFalsePath = Path.Combine(directory, "settings-v29-false.json");
+            var falseV29 = CreatePopulatedSettings() with
+            {
+                SchemaVersion = 29,
+                Preferences = CreatePopulatedSettings().Preferences with { SmartInsertionEnabled = false },
+            };
+            await File.WriteAllTextAsync(
+                explicitFalsePath,
+                System.Text.Json.JsonSerializer.Serialize(falseV29, JsonSettingsStore.SerializerOptions));
+
+            var migratedFalse = await new JsonSettingsStore(explicitFalsePath).LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Migrated, migratedFalse.Status);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, migratedFalse.Settings.SchemaVersion);
+            Assert.False(migratedFalse.Settings.Preferences.SmartInsertionEnabled);
+        });
+    }
+
     internal static AppSettings CreatePopulatedSettings() => AppSettings.Default with
     {
         LaunchCount = 7,

@@ -595,5 +595,5 @@ public sealed record PortableProfile(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, LearnMemoryEntry>? LearnMemory = null)
 {
-    public const int CurrentSchemaVersion = 22;
+    public const int CurrentSchemaVersion = 23;
 }

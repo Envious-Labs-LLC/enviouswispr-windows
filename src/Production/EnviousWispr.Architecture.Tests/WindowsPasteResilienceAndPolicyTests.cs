@@ -1489,4 +1489,65 @@ public sealed class WindowsPasteResilienceAndPolicyTests
     {
         public void Write(Core.Diagnostics.AppLogEntry entry) { }
     }
+
+    [Fact]
+    public void NormalizeArrivalTextStripsUnicodeFormatCharactersForRichWebEditors()
+    {
+        Assert.Equal("Can you ask them", WindowsTextDeliveryPolicy.NormalizeArrivalText("\uFEFFCan you\u200B ask them\u2060"));
+
+        var slateArrival = WindowsTextDeliveryPolicy.EvaluateArrival(
+            insertedText: "ask them ",
+            observedLeft: "Can you \uFEFFask them\u200B ",
+            observedValue: null,
+            previousLeft: "Can you \uFEFF");
+        Assert.Equal(PasteArrivalStatus.Confirmed, slateArrival);
+    }
+
+    [Fact]
+    public void CaretUnchangedSkipsTextComparisonOnlyWhenDictatedTextCannotBeDeleted()
+    {
+        var target = new TargetWindowId(0x2001, 42, "WindowsTerminal");
+        var expected = new CaretContext(
+            target,
+            "term-focus",
+            TextTargetKind.Terminal,
+            Left: "Can you ",
+            Selection: string.Empty,
+            Right: string.Empty,
+            LeftReachedDocumentStart: true,
+            RightReachedDocumentEnd: true,
+            HasTextContext: true,
+            SupportsDirectValueWrite: false,
+            DirectValueWriteAtEnd: false,
+            IsScreenDerived: true);
+        var spinnerDrifted = expected with { Left = "Can you still ", Right = string.Empty };
+
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, spinnerDrifted, checkCaretTextUnchanged: true));
+        Assert.True(WindowsTextDeliveryPolicy.CaretUnchanged(expected, spinnerDrifted, checkCaretTextUnchanged: false));
+
+        // Window/focus/target-kind mismatches must still fail even when caret text check is skipped.
+        var differentFocus = expected with { FocusedElementId = "other-focus" };
+        var differentWindow = expected with { Target = new TargetWindowId(0x2002, 42, "WindowsTerminal") };
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, differentFocus, checkCaretTextUnchanged: false));
+        Assert.False(WindowsTextDeliveryPolicy.CaretUnchanged(expected, differentWindow, checkCaretTextUnchanged: false));
+    }
+
+    [Fact]
+    public void ShouldRetryColdChromiumFocusMatchesTransientTopLevelChromeWidgetOnly()
+    {
+        var coldChromium = new WindowsTextTargetAdapter.FocusedElementFacts(
+            ProcessId: 100,
+            RuntimeId: "1.100",
+            HasKeyboardFocus: false,
+            IsPassword: false,
+            IsEnabled: true,
+            IsKeyboardFocusable: true,
+            IsControlEdit: false,
+            ClassName: "Chrome_WidgetWin_1");
+        Assert.True(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(coldChromium));
+
+        Assert.False(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(coldChromium with { HasKeyboardFocus = true }));
+        Assert.False(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(coldChromium with { ClassName = "Chrome_RenderWidgetHostHWND" }));
+        Assert.False(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(null));
+    }
 }

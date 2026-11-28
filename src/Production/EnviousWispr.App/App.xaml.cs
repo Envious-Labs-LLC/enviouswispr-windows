@@ -17,6 +17,7 @@ using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
+using EnviousWispr.PostProcessing;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Diagnostics;
@@ -429,6 +430,7 @@ public partial class App : Application, IAsyncDisposable
     {
         try
         {
+            SeamCasingOracleRuntime.Shared.Prewarm();
             foreach (var stage in _deterministicTextPipeline.WarmStages())
             {
                 _logger.Write(new AppLogEntry(
@@ -771,9 +773,12 @@ public partial class App : Application, IAsyncDisposable
     private void DisposeDeliveryRoute()
     {
         var adapter = _textTargetAdapter;
+        var languageDetector = _elsLanguageDetector;
         _textTargetAdapter = null;
         _textDelivery = null;
+        _elsLanguageDetector = null;
         adapter?.Dispose();
+        languageDetector?.Dispose();
     }
 
     private static AppFailureCategory FailureFor(AppError? error) => AppFailureCategories.For(error);

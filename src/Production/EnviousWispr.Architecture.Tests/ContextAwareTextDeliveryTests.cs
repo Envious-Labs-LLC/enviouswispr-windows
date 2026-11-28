@@ -2,6 +2,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Pipeline;
+using EnviousWispr.PostProcessing;
 using EnviousWispr.Presentation;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -463,6 +464,65 @@ public sealed class ContextAwareTextDeliveryTests
 
         Assert.Equal(TextDeliveryRoute.ClipboardOnly, result.Route);
         Assert.Equal("Copied to your clipboard", DeliveryStatusReport.For(result).Text);
+    }
+
+    [Fact]
+    public async Task SmartInsertionHonorsProtectedWordsDisabledToggleAndLowConfidenceHybridAgreement()
+    {
+        SeamCasingOracleRuntime.Shared.Prewarm();
+
+        // 1. Smart insertion enabled lowers continuation and surfaces decision flags.
+        var lowerAdapter = new FakeTargetAdapter(AvailableContext(left: "Can you ", right: string.Empty));
+        var delivery = new ContextAwareTextDelivery(lowerAdapter);
+        var lowered = await delivery.DeliverAsync(Request("Ask them today."));
+        Assert.Equal("ask them today. ", lowered.DeliveredText);
+        Assert.True(lowered.LowercasedFirst);
+        Assert.Equal(CaseRepairDecision.LowercasedFirst, lowered.CaseDecision);
+        Assert.False(lowered.CandidateDeletesDictatedText);
+
+        // 2. SmartInsertionEnabled = false falls back cleanly without seam recasing.
+        var disabledAdapter = new FakeTargetAdapter(AvailableContext(left: "Can you ", right: "later"));
+        var disabled = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(SessionId, "Ask them"),
+            Target,
+            "en",
+            TextDeliveryOptions.Default with { SmartInsertionEnabled = false },
+            SnippetExpanded: false));
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, disabled.RepairDisposition);
+        Assert.Equal(CaseRepairDecision.SkippedSmartInsertionDisabled, disabled.CaseDecision);
+        Assert.Equal("Ask them ", disabled.DeliveredText);
+
+        // 3. ProtectedWords keeps protected custom word capitalized.
+        var protectedAdapter = new FakeTargetAdapter(AvailableContext(left: "Open ", right: string.Empty));
+        var protectedResult = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(SessionId, "Apple pie"),
+            Target,
+            "en",
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false,
+            ProtectedWords: ["apple"]));
+        Assert.False(protectedResult.LowercasedFirst);
+        Assert.Equal(CaseRepairDecision.SkippedProtectedWord, protectedResult.CaseDecision);
+        Assert.Equal("Apple pie ", protectedResult.DeliveredText);
+
+        // 4. LanguageCode null resolves via L4 Hybrid when fake OS detector agrees on mid-confidence phrase.
+        var hybridAdapter = new FakeTargetAdapter(AvailableContext(left: "Please ", right: string.Empty));
+        var hybridDelivery = new ContextAwareTextDelivery(
+            hybridAdapter,
+            osLanguageDetector: new FakeOsLanguageDetector(["en-US"]));
+        var hybridResult = await hybridDelivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(SessionId, "Complete your tests."),
+            Target,
+            LanguageCode: null,
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
+        Assert.True(hybridResult.LowercasedFirst);
+        Assert.Equal("complete your tests. ", hybridResult.DeliveredText);
+    }
+
+    private sealed class FakeOsLanguageDetector(IReadOnlyList<string> tags) : IOsLanguageDetector
+    {
+        public IReadOnlyList<string> DetectBaseTags(string text) => tags;
     }
 
     private static TextDeliveryRequest CopyRequest(string text) => new(

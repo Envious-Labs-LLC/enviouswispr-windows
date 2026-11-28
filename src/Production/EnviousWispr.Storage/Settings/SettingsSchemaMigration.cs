@@ -100,6 +100,12 @@ internal static class SettingsSchemaMigration
             },
         };
 
+    internal static UserPreferences ApplySmartInsertionDefault(UserPreferences preferences) =>
+        preferences with
+        {
+            SmartInsertionEnabled = true,
+        };
+
     internal static UserPreferences? SeedEgOneModelIdIfMissing(UserPreferences? preferences)
     {
         var polish = preferences?.Polish;

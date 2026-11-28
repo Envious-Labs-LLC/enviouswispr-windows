@@ -87,7 +87,8 @@ public sealed partial class MainWindow
             ReturnToStartWindow: ReturnToStartWindowToggle?.IsOn
                 ?? (prefs.PasteTargetMode == PasteTargetMode.WhereDictationStarted),
             LearnFromEdits: LearnFromEditsToggle?.IsOn ?? dictation.LearnFromEditsEnabled,
-            FixLearnedWords: FixLearnedWordsToggle?.IsOn ?? dictation.FixLearnedWordsEnabled);
+            FixLearnedWords: FixLearnedWordsToggle?.IsOn ?? dictation.FixLearnedWordsEnabled,
+            SmartInsertionEnabled: SmartInsertionToggle?.IsOn ?? prefs.SmartInsertionEnabled);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -163,6 +164,10 @@ public sealed partial class MainWindow
         if (ReturnToStartWindowToggle is not null)
         {
             ReturnToStartWindowToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        }
+        if (SmartInsertionToggle is not null)
+        {
+            SmartInsertionToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         }
         LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         ShareUsageMetricsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -681,6 +686,10 @@ public sealed partial class MainWindow
         {
             ReturnToStartWindowToggle.IsOn = preferences.PasteTargetMode == PasteTargetMode.WhereDictationStarted;
             ReturnToStartWindowToggle.IsEnabled = !preferences.CopyInsteadOfPaste;
+        }
+        if (SmartInsertionToggle is not null)
+        {
+            SmartInsertionToggle.IsOn = preferences.SmartInsertionEnabled;
         }
         SelectChimePairing(preferences.RecordingSoundPairing, triggerSave: false);
         UpdatePillDesignControls();

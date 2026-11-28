@@ -394,13 +394,21 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     _phaseJournal?.Record(UatRuntimePhase.DeliveryEntered, sessionId.Value);
                     var deliveryTimer = Stopwatch.StartNew();
                     var language = DeliveryLanguagePolicy.For(transcript);
+                    var lockedLanguage = DeliveryLanguagePolicy.LockedLanguageFor(transcript);
+                    var engineDetectsLanguage = DeliveryLanguagePolicy.EngineDetectsLanguage(transcript);
+                    var protectedWords = DictationLanguageResolver.BuildProtectedWords(
+                        options.CustomWords,
+                        options.EnabledVocabularyPackIds);
                     var result = await delivery.DeliverAsync(
                         new TextDeliveryRequest(
                             processed.Output,
                             pendingSession.Target,
                             language,
                             pendingSession.DeliveryOptions,
-                            SnippetExpanded: finalized.SnippetsExpanded > 0),
+                            SnippetExpanded: finalized.SnippetsExpanded > 0,
+                            ProtectedWords: protectedWords,
+                            LockedLanguageCode: lockedLanguage,
+                            EngineDetectsLanguage: engineDetectsLanguage),
                         cancellationToken).ConfigureAwait(false);
                     deliveryTimer.Stop();
                     _phaseJournal?.Record(UatRuntimePhase.DeliveryReturned, sessionId.Value);

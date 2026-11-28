@@ -1910,4 +1910,42 @@ public sealed class WindowsTextDeliverySafetyTests
         HasTextContext: true,
         SupportsDirectValueWrite: true,
         DirectValueWriteAtEnd: true);
+
+    [Fact]
+    public void PreflightRefusalHonorsCheckCaretTextUnchangedFlag()
+    {
+        var target = new TargetWindowId(0x555, 77, "msedge", "edge-focus");
+        var expected = Context(target, "hello ", string.Empty, string.Empty);
+        var drifted = expected with { Left = "hello world " };
+        var current = new TargetContextResult(TargetContextStatus.Available, drifted);
+
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(current, expected, checkCaretTextUnchanged: true));
+        Assert.Equal(
+            TextDeliveryRefusalReason.None,
+            WindowsTextTargetAdapter.PreflightRefusal(current, expected, checkCaretTextUnchanged: false));
+    }
+
+    [Fact]
+    public void EmptyOrMissingSelectionProducesAvailableEmptyContextWithoutUnsupportedTargetRefusal()
+    {
+        var target = new TargetWindowId(0x777, 88, "EXCEL", "excel-cell");
+        var empty = WindowsTextDeliveryPolicy.EmptyContext(target, "excel-cell", TextTargetKind.Office);
+        Assert.False(empty.HasTextContext);
+        Assert.Equal(string.Empty, empty.Left);
+        Assert.Equal(string.Empty, empty.Right);
+        Assert.False(empty.SupportsDirectValueWrite);
+
+        var adapterPath = Path.Combine(
+            RepositoryRoot(),
+            "src",
+            "Production",
+            "EnviousWispr.Services",
+            "Input",
+            "WindowsTextTargetAdapter.cs");
+        var adapterSource = File.ReadAllText(adapterPath);
+        Assert.Contains("if (caret is null || caret.NoSelection)", adapterSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("caret.NoSelection && targetKind != TextTargetKind.Terminal", adapterSource, StringComparison.Ordinal);
+    }
 }

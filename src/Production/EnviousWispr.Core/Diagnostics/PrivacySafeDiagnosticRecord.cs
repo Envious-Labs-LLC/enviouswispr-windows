@@ -139,7 +139,8 @@ public sealed record PrivacySafeDiagnosticRecord(
     DeliveryFaultKind? Fault = null,
     DiagnosticRecognitionLanguage? RecognitionLanguage = null,
     DiagnosticSnippetImport? SnippetImport = null,
-    DiagnosticWordImport? WordImport = null)
+    DiagnosticWordImport? WordImport = null,
+    CaseRepairDecision? CaseRepairDecision = null)
 {
     public const long MaximumElapsedMilliseconds = 86_400_000;
 
@@ -180,6 +181,9 @@ public sealed record PrivacySafeDiagnosticRecord(
             // member is out of range rather than trimmed into something that looks true.
             entry.SnippetImport is { } snippetImport && snippetImport.IsWithinBounds() ? snippetImport : null,
             // A WORD IMPORT FROM ANOTHER APP, the same way: counts and categories, never a word or a spelling.
-            entry.WordImport is { } wordImport && wordImport.IsWithinBounds() ? wordImport : null);
+            entry.WordImport is { } wordImport && wordImport.IsWithinBounds() ? wordImport : null,
+            entry.CaseRepairDecision is { } caseRepairDecision && Enum.IsDefined(caseRepairDecision)
+                ? caseRepairDecision
+                : null);
     }
 }

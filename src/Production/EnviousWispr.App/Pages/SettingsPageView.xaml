@@ -1432,6 +1432,16 @@
                                 </StackPanel>
                                 <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind ReturnToStartWindowToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="ReturnToStartWindowToggle" x:FieldModifier="internal" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
                             </Grid>
+                            <Border Height="1" Background="{ThemeResource BrandDividerBrush}" />
+                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8D2;" />
+                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                    <Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock x:Name="SmartInsertionToggleLabel" x:FieldModifier="internal" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Smart insertion" TextWrapping="Wrap" VerticalAlignment="Center" /><Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About Smart insertion" ToolTipService.ToolTip="What is this?"><FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" /><Button.Flyout><Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}"><TextBlock MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" Text="Matches spacing and capitalization to the text around your cursor when you dictate into the middle of a sentence." TextWrapping="Wrap" /></Flyout></Button.Flyout></Button></Grid>
+                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Fits text to the spacing and capitals around your cursor." TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind SmartInsertionToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="SmartInsertionToggle" x:FieldModifier="internal" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
+                            </Grid>
                         </StackPanel>
                     </Border>
                 </StackPanel>

@@ -1,5 +1,7 @@
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Settings;
+using EnviousWispr.PostProcessing;
 
 namespace EnviousWispr.Pipeline;
 
@@ -16,8 +18,48 @@ public static class DeliveryLanguagePolicy
     public static string? For(Transcript transcript)
     {
         ArgumentNullException.ThrowIfNull(transcript);
-        return transcript.EngineId.StartsWith(ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase)
-            ? null
-            : transcript.DetectedLanguage;
+        return EngineDetectsLanguage(transcript)
+            ? transcript.DetectedLanguage
+            : null;
+    }
+
+    public static bool EngineDetectsLanguage(Transcript transcript)
+    {
+        ArgumentNullException.ThrowIfNull(transcript);
+        return !transcript.EngineId.StartsWith(ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase) &&
+            !transcript.EngineId.StartsWith("parakeet", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string? LockedLanguageFor(Transcript transcript)
+    {
+        ArgumentNullException.ThrowIfNull(transcript);
+        var trimmed = transcript.RecognitionLanguage?.Trim();
+        if (string.IsNullOrEmpty(trimmed) ||
+            string.Equals(trimmed, LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return trimmed;
+    }
+
+    public static DictationLanguageResolution ResolveFor(
+        Transcript transcript,
+        string text,
+        string surroundingText = "",
+        IOsLanguageDetector? osDetector = null,
+        LanguageIdentifier? identifier = null)
+    {
+        ArgumentNullException.ThrowIfNull(transcript);
+        return DictationLanguageResolver.Resolve(
+            new LanguageEvidence(
+                LockedLanguageFor(transcript),
+                EngineDetectsLanguage(transcript),
+                transcript.DetectedLanguage),
+            text,
+            surroundingText,
+            identifyTextOnAllPaths: false,
+            osDetector: osDetector,
+            identifier: identifier);
     }
 }

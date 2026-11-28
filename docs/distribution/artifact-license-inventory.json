@@ -146,6 +146,37 @@
       "openRequirements": [
         "Confirm the VarCon notice ships in every installed layout and approve public distribution."
       ]
+    },
+    {
+      "id": "seam-casing-hunspell-dictionaries",
+      "artifactClass": "data",
+      "plannedPayload": "12 Brotli-compressed Hunspell .dic.br/.aff.br dictionaries embedded in EnviousWispr.PostProcessing.dll (en, de, fr, it, es, pt, nl, da, sv, fi, ru, tr) plus verbatim notice files copied to licenses/casing/",
+      "upstreamIdentity": "wooorm/dictionaries (LibreOffice, OpenTaal, SCOWL, Dicollecte, RLA-ES, VERO, igerman98, Stavekontrolden, tr-spell) and fginter/hunspell-fi 0.2 (TurkuNLP/Voikko)",
+      "observedLicense": "MULTI-PERMISSIVE-GPL3-COMPATIBLE-LGPL-2.1-DA-FLAGGED",
+      "sourceUrl": "https://github.com/wooorm/dictionaries",
+      "sourceRevision": "wooorm/dictionaries 11-language bundle (Resources/Casing/Licenses/*.license) and fginter/hunspell-fi 0.2 (CC0-1.0, TurkuNLP/Voikko)",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Confirm founder review of Danish Stavekontrolden 2.8 (GPL-2.0 OR LGPL-2.1 OR MPL-1.1) reliance on LGPL-2.1 GPLv3 compatibility and da.license retention.",
+        "Confirm all 12 .license files ship under licenses/casing/ beside the application binary and approve public distribution."
+      ]
+    },
+    {
+      "id": "seam-casing-and-langid-models",
+      "artifactClass": "data",
+      "plannedPayload": "Pure-C# FNV-1a signed INT8 context veto (arm_b_v2.bin.br) and 21-language character n-gram language classifier (langid_v1.bin.br) embedded in EnviousWispr.PostProcessing.dll",
+      "upstreamIdentity": "Universal Dependencies v2.15 CC-BY-4.0 / CC-BY-SA-4.0 train splits only (zero CC-BY-NC-SA splits)",
+      "observedLicense": "CC-BY-4.0 AND CC-BY-SA-4.0",
+      "sourceUrl": "https://universaldependencies.org/",
+      "sourceRevision": "Universal Dependencies r2.15 commercial-clean train splits (EWB1 arm_b_v2.bin and EWL1 langid_v1.bin as embedded .br assets)",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Confirm FSF one-way CC-BY-SA-4.0 to GPLv3 compatibility, zero CC-BY-NC-SA training data contamination, and approve public distribution."
+      ]
     }
   ]
 }

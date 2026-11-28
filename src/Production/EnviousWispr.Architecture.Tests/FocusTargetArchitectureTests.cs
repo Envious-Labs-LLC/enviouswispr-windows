@@ -687,4 +687,38 @@ public sealed class FocusTargetArchitectureTests
         Assert.NotNull(directory);
         return directory!.FullName;
     }
+
+    [Fact]
+    public void CommitPathPassesCapturedFocusClassNameToTargetPolicyAndCandidateDeleteFlag()
+    {
+        var root = FindRepositoryRoot();
+        var adapterSource = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Production",
+            "EnviousWispr.Services",
+            "Input",
+            "WindowsTextTargetAdapter.cs"));
+
+        Assert.Contains("elementClassName: focus?.ClassName", adapterSource, StringComparison.Ordinal);
+        Assert.Contains("checkCaretTextUnchanged: request.CandidateDeletesDictatedText", adapterSource, StringComparison.Ordinal);
+        Assert.Contains("request.CandidateDeletesDictatedText))", adapterSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UrlBarDetectionUsesTwoFactorDetectorAndRemovesSubstringHacks()
+    {
+        var root = FindRepositoryRoot();
+        var adapterSource = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Production",
+            "EnviousWispr.Services",
+            "Input",
+            "WindowsTextTargetAdapter.cs"));
+
+        Assert.Contains("WindowsBrowserAddressBarDetector.IsChromiumAddressBar", adapterSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("automationId.Contains(\"address\"", adapterSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("automationId.Contains(\"urlbar\"", adapterSource, StringComparison.Ordinal);
+    }
 }

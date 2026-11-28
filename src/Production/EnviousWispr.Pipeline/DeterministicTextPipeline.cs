@@ -86,6 +86,7 @@ public sealed class DeterministicTextPipeline
         // loaded runner once crossed the timeout and dropped normalisation. The app builds this once
         // at startup, so a user's first dictation is already warm. Ref: #91, #112.
         InverseTextNormalizer.Warm();
+        SeamCasingOracleRuntime.Shared.Prewarm();
     }
 
     public DeterministicTextPipeline(IReadOnlyList<IDeterministicTextStep> steps)
