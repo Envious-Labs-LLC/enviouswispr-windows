@@ -63,7 +63,7 @@ internal sealed class DeterministicStageExecutor
 
             try
             {
-                timeout = new CancellationTokenSource(step.Timeout, _timeProvider);
+                timeout = new CancellationTokenSource(step.GetTimeout(input), _timeProvider);
                 deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
                 var token = deadline.Token;
                 invocation = Task.Factory.StartNew(

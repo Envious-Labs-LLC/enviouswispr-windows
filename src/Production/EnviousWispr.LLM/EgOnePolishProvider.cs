@@ -159,10 +159,14 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                     timer);
             }
 
-            var systemPrompt = EgOnePrompt.BuildSystemPrompt(request.DetectedLanguage ?? request.RecognitionLanguage);
+            var expectedLanguage = request.DetectedLanguage ?? request.RecognitionLanguage;
+            var systemPrompt = EgOnePrompt.BuildSystemPrompt(expectedLanguage);
             var userMessage = EgOnePrompt.BuildUserMessage(input.Text);
             var maximumOutputTokens = Math.Max(input.Text.Length, 256);
-            if (FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
+            if (FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens) &&
+                PolishChunker.CountWords(input.Text.AsSpan()) <= PolishChunker.MaximumLocalWordsPerChunk &&
+                System.Text.Encoding.UTF8.GetByteCount(input.Text) <=
+                    PolishChunker.MaximumBytesForWords(PolishChunker.MaximumLocalWordsPerChunk))
             {
                 var single = await PolishSingleWithSlotAsync(
                     endpoint,
@@ -172,6 +176,21 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                     maximumOutputTokens,
                     timer,
                     cancellationToken).ConfigureAwait(false);
+                if (!single.UsedFallback)
+                {
+                    var repaired = LeadingMarkerRepair.Repair(input.Text, single.Output.Text, expectedLanguage);
+                    if (!string.Equals(repaired, single.Output.Text, StringComparison.Ordinal) &&
+                        IsSafeOutput(input.Text, repaired))
+                    {
+                        single = new PolishResult(
+                            new ProcessedText(input.SessionId, repaired),
+                            string.Equals(input.Text, repaired, StringComparison.Ordinal)
+                                ? PolishAttemptStatus.Unchanged
+                                : PolishAttemptStatus.Polished,
+                            ElapsedMilliseconds: timer.ElapsedMilliseconds);
+                    }
+                }
+
                 timer.Stop();
                 return single;
             }
@@ -187,8 +206,12 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                     canRetry: false);
             }
 
-            var pieces = PolishChunker.Split(input.Text, chunkBudget);
-            if (pieces.Count <= 1)
+            var pieces = PolishChunker.Split(
+                input.Text,
+                chunkBudget,
+                PolishChunker.MaximumLocalWordsPerChunk,
+                PolishChunker.MaximumBytesForWords(PolishChunker.MaximumLocalWordsPerChunk));
+            if (pieces.Count <= 1 && !FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
             {
                 return Fallback(
                     input,
@@ -242,7 +265,17 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             }
 
             timer.Stop();
-            var finalText = assembled.ToString();
+            var finalText = LeadingMarkerRepair.Repair(input.Text, assembled.ToString(), expectedLanguage);
+            if (!IsSafeOutput(input.Text, finalText))
+            {
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.Failed,
+                    AppErrorCode.PolishFailed,
+                    timer,
+                    canRetry: false);
+            }
+
             var overallStatus = string.Equals(input.Text, finalText, StringComparison.Ordinal)
                 ? PolishAttemptStatus.Unchanged
                 : PolishAttemptStatus.Polished;

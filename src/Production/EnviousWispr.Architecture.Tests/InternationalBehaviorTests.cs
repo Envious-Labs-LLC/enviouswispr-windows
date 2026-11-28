@@ -58,8 +58,10 @@ public sealed class InternationalBehaviorTests
         Assert.Equal(text, result.Output.Text);
         Assert.Equal(DeterministicStageStatus.Skipped, result.Receipts.Single(receipt =>
             receipt.Stage == DeterministicTextStage.SpokenEmoji).Status);
-        Assert.Equal(DeterministicStageStatus.Skipped, result.Receipts.Single(receipt =>
-            receipt.Stage == DeterministicTextStage.InverseTextNormalization).Status);
+        var itnReceipt = result.Receipts.Single(receipt =>
+            receipt.Stage == DeterministicTextStage.InverseTextNormalization);
+        Assert.Equal(DeterministicStageStatus.Completed, itnReceipt.Status);
+        Assert.False(itnReceipt.Changed);
     }
 
     [Fact]

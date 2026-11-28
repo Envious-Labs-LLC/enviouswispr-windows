@@ -17,7 +17,9 @@ public sealed record DeterministicTextOptions(
     bool SpokenPunctuationEnabled,
     EnglishSpelling EnglishSpelling = EnglishSpelling.American,
     bool CasualModeEnabled = false,
-    bool FixLearnedWordsEnabled = true)
+    bool FixLearnedWordsEnabled = true,
+    IReadOnlyDictionary<string, string>? SpokenPunctuationStartWords = null,
+    bool EnglishPeriodWordEnabled = true)
 {
     public static DeterministicTextOptions From(DictationPreferences preferences)
     {
@@ -48,6 +50,12 @@ public sealed record DeterministicTextResult(
 {
     public string DeterministicText { get; init; } = Output.Text;
     public bool SpokenFinalFullStop { get; init; }
+    public string? CleanupLanguage { get; init; }
+    public bool EnglishVeto { get; init; }
+    public string? TextLanguage { get; init; }
+    public string? LearnLanguage { get; init; }
+    public DictationConfidenceBucket ConfidenceBucket { get; init; }
+    public ItnRoute? ItnRoute { get; init; }
 }
 
 public sealed record DeterministicTextContext(
@@ -58,13 +66,21 @@ public sealed record DeterministicTextContext(
     string? PolishedText = null,
     bool SpokenFinalFullStop = false,
     IReadOnlyList<string>? EnabledVocabularyPackIds = null,
-    IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? VocabularyPackOverrides = null);
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? VocabularyPackOverrides = null,
+    string? CleanupLanguage = null,
+    bool EnglishVeto = false,
+    string? TextLanguage = null,
+    string? LearnLanguage = null,
+    DictationConfidenceBucket ConfidenceBucket = DictationConfidenceBucket.None,
+    ItnRoute? ItnRoute = null);
 
 public interface IDeterministicTextStep
 {
     DeterministicTextStage Stage { get; }
 
     TimeSpan Timeout { get; }
+
+    TimeSpan GetTimeout(DeterministicTextContext context) => Timeout;
 
     bool IsEnabled(DeterministicTextContext context);
 
@@ -115,6 +131,12 @@ public sealed class DeterministicTextPipeline
         ArgumentNullException.ThrowIfNull(request.CustomWords);
         ArgumentNullException.ThrowIfNull(request.Options);
 
+        var resolution = DeliveryLanguagePolicy.ResolveFor(request.Transcript, request.Transcript.Text);
+        var route = InverseTextNormalizationGate.ResolveRoute(
+            resolution.Language,
+            resolution.EnglishVeto,
+            DeliveryLanguagePolicy.EngineDetectsLanguage(request.Transcript));
+
         var context = new DeterministicTextContext(
             request.Transcript,
             request.Transcript.Text,
@@ -123,7 +145,13 @@ public sealed class DeterministicTextPipeline
             request.PolishedText,
             SpokenFinalFullStop: false,
             EnabledVocabularyPackIds: request.EnabledVocabularyPackIds,
-            VocabularyPackOverrides: request.VocabularyPackOverrides);
+            VocabularyPackOverrides: request.VocabularyPackOverrides,
+            CleanupLanguage: resolution.Language,
+            EnglishVeto: resolution.EnglishVeto,
+            TextLanguage: resolution.TextLanguage,
+            LearnLanguage: resolution.LearnLanguage,
+            ConfidenceBucket: resolution.ConfidenceBucket,
+            ItnRoute: route);
         var receipts = new List<DeterministicStageReceipt>(_steps.Length);
         var degraded = false;
         foreach (var step in _steps)
@@ -160,6 +188,12 @@ public sealed class DeterministicTextPipeline
         {
             DeterministicText = deterministicText,
             SpokenFinalFullStop = context.SpokenFinalFullStop,
+            CleanupLanguage = context.CleanupLanguage,
+            EnglishVeto = context.EnglishVeto,
+            TextLanguage = context.TextLanguage,
+            LearnLanguage = context.LearnLanguage,
+            ConfidenceBucket = context.ConfidenceBucket,
+            ItnRoute = context.ItnRoute,
         };
     }
 
@@ -180,7 +214,13 @@ public sealed class DeterministicTextPipeline
             polishedText,
             deterministicResult.SpokenFinalFullStop,
             request.EnabledVocabularyPackIds,
-            request.VocabularyPackOverrides);
+            request.VocabularyPackOverrides,
+            deterministicResult.CleanupLanguage,
+            deterministicResult.EnglishVeto,
+            deterministicResult.TextLanguage,
+            deterministicResult.LearnLanguage,
+            deterministicResult.ConfidenceBucket,
+            deterministicResult.ItnRoute);
         // THE SPELLING FIRST, THEN THE EMOJI: the restorer aligns the polish with the deterministic text, and
         // both are British by then. Ref: macOS #3124 runs the same two in the same order.
         var spelling = _steps.SingleOrDefault(candidate => candidate.Stage == DeterministicTextStage.EnglishSpellingAfterPolish);
@@ -244,6 +284,12 @@ public sealed class DeterministicTextPipeline
         {
             DeterministicText = deterministicResult.DeterministicText,
             SpokenFinalFullStop = deterministicResult.SpokenFinalFullStop,
+            CleanupLanguage = deterministicResult.CleanupLanguage,
+            EnglishVeto = deterministicResult.EnglishVeto,
+            TextLanguage = deterministicResult.TextLanguage,
+            LearnLanguage = deterministicResult.LearnLanguage,
+            ConfidenceBucket = deterministicResult.ConfidenceBucket,
+            ItnRoute = deterministicResult.ItnRoute,
         };
     }
 
@@ -394,7 +440,7 @@ public sealed class DeterministicTextPipeline
             cancellationToken.ThrowIfCancellationRequested();
             return context with
             {
-                Text = FillerWordRemover.Remove(context.Text, EffectiveDeterministicLanguage(context.Transcript)),
+                Text = FillerWordRemover.Remove(context.Text, context.CleanupLanguage, context.EnglishVeto),
             };
         }
     }
@@ -409,7 +455,7 @@ public sealed class DeterministicTextPipeline
         public bool IsEnabled(DeterministicTextContext context) =>
             context.Options.EmojiFormatterEnabled &&
             formatter is not null &&
-            IsEnglishDeterministicLanguage(context.Transcript);
+            IsEnglishDeterministicTake(context);
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
@@ -422,19 +468,70 @@ public sealed class DeterministicTextPipeline
     {
         public DeterministicTextStage Stage => DeterministicTextStage.InverseTextNormalization;
 
-        /// <summary>Throttled first call: median 10 ms, slowest 24 ms (normal 5 ms), after construction's warm. Unchanged.</summary>
-        public TimeSpan Timeout => TimeSpan.FromMilliseconds(500);
+        public TimeSpan Timeout => TimeSpan.FromSeconds(ComputeTimeoutSeconds(0));
 
-        public bool IsEnabled(DeterministicTextContext context)
-            => IsEnglishDeterministicLanguage(context.Transcript);
+        public TimeSpan GetTimeout(DeterministicTextContext context) =>
+            TimeSpan.FromSeconds(ComputeTimeoutSeconds(context.Text.Length));
+
+        internal static double ComputeTimeoutSeconds(int characterCount) =>
+            Math.Min(5.0, 0.5 + characterCount / 40_000.0);
+
+        public bool IsEnabled(DeterministicTextContext context) => true;
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var text = InverseTextNormalizer.Normalize(
+            var route = ResolveEffectiveRoute(context);
+            var spokenPunctuation = context.Options.SpokenPunctuationEnabled;
+            var englishStartWord = string.Empty;
+            var hasEnglishStartWord = route.Kind == ItnRouteKind.English &&
+                TryResolveStartWord(
+                    "en",
+                    context.Options.SpokenPunctuationStartWords,
+                    allowDefault: false,
+                    out englishStartWord) &&
+                !string.IsNullOrEmpty(englishStartWord);
+
+            var execution = InverseTextNormalizationGate.Execute(
                 context.Text,
-                context.Options.SpokenPunctuationEnabled,
-                out var spokenFinalFullStop);
+                route,
+                spokenPunctuation: spokenPunctuation && !hasEnglishStartWord,
+                spokenSymbols: true);
+            var text = execution.Text;
+            var spokenFinalFullStop = execution.SpokenFinalFullStop;
+
+            if (spokenPunctuation)
+            {
+                if (hasEnglishStartWord)
+                {
+                    var sw = InverseTextNormalizer.ApplyStartWordPunctuation(
+                        text,
+                        "en",
+                        englishStartWord,
+                        context.Options.EnglishPeriodWordEnabled);
+                    text = sw.Text;
+                    spokenFinalFullStop = sw.SpokenFinalFullStop;
+                }
+                else if (route.Kind != ItnRouteKind.English &&
+                         !context.EnglishVeto &&
+                         SpokenPunctuationRules.BaseCode(context.CleanupLanguage) is { } baseCode &&
+                         SpokenPunctuationRules.RulesFor(baseCode) is not null &&
+                         TryResolveStartWord(
+                             baseCode,
+                             context.Options.SpokenPunctuationStartWords,
+                             allowDefault: true,
+                             out var langStartWord))
+                {
+                    var sw = InverseTextNormalizer.ApplyStartWordPunctuation(
+                        text,
+                        baseCode,
+                        langStartWord,
+                        context.Options.EnglishPeriodWordEnabled);
+                    text = sw.Text;
+                    spokenFinalFullStop = sw.SpokenFinalFullStop;
+                }
+            }
+
             return context with
             {
                 Text = text,
@@ -498,7 +595,7 @@ public sealed class DeterministicTextPipeline
         public bool IsEnabled(DeterministicTextContext context) =>
             converter is not null &&
             context.Options.EnglishSpelling == EnglishSpelling.British &&
-            IsEnglishDeterministicLanguage(context.Transcript) &&
+            IsEnglishDeterministicTake(context) &&
             (!afterPolish || context.PolishedText is not null);
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
@@ -528,7 +625,10 @@ public sealed class DeterministicTextPipeline
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var language = EffectiveDeterministicLanguage(context.Transcript);
+            var route = ResolveEffectiveRoute(context);
+            var language = route.Kind == ItnRouteKind.Language
+                ? route.LanguageCode
+                : context.CleanupLanguage;
             var text = CasualEnding.RemoveFinalFullStop(context.Text, context.SpokenFinalFullStop, language);
             var polished = context.PolishedText is not null
                 ? CasualEnding.RemoveFinalFullStop(context.PolishedText, context.SpokenFinalFullStop, language)
@@ -541,35 +641,66 @@ public sealed class DeterministicTextPipeline
         }
     }
 
-    private static string? EffectiveDeterministicLanguage(Transcript transcript)
+    private static ItnRoute ResolveEffectiveRoute(DeterministicTextContext context)
     {
-        var detected = transcript.DetectedLanguage?.Trim();
-        if (!string.IsNullOrEmpty(detected) &&
-            !detected.Equals(EnviousWispr.Core.Settings.LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase))
+        if (context.ItnRoute is { } existing)
         {
-            return detected;
+            return existing;
         }
 
-        var requested = transcript.RecognitionLanguage?.Trim();
-        if (!string.IsNullOrEmpty(requested) &&
-            !requested.Equals(EnviousWispr.Core.Settings.LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase))
-        {
-            return requested;
-        }
-
-        return null;
+        var resolution = DeliveryLanguagePolicy.ResolveFor(context.Transcript, context.Text);
+        return InverseTextNormalizationGate.ResolveRoute(
+            resolution.Language,
+            resolution.EnglishVeto,
+            DeliveryLanguagePolicy.EngineDetectsLanguage(context.Transcript));
     }
 
-    private static bool IsEnglishDeterministicLanguage(Transcript transcript)
+    private static bool IsEnglishDeterministicTake(DeterministicTextContext context) =>
+        !context.EnglishVeto && ResolveEffectiveRoute(context).Kind == ItnRouteKind.English;
+
+    private static bool TryResolveStartWord(
+        string languageCode,
+        IReadOnlyDictionary<string, string>? overrides,
+        bool allowDefault,
+        out string startWord)
     {
-        var language = EffectiveDeterministicLanguage(transcript);
-        if (!string.IsNullOrEmpty(language))
+        startWord = string.Empty;
+        var forms = SpokenPunctuationRules.StartWordFormsFor(languageCode);
+        if (forms is null)
         {
-            return language.Equals("en", StringComparison.OrdinalIgnoreCase) ||
-                language.StartsWith("en-", StringComparison.OrdinalIgnoreCase) ||
-                language.StartsWith("en_", StringComparison.OrdinalIgnoreCase);
+            return false;
         }
 
-        return !transcript.EngineId.Contains("whisper", StringComparison.OrdinalIgnoreCase);
+        if (overrides is not null)
+        {
+            foreach (var (key, value) in overrides)
+            {
+                if (!string.Equals(SpokenPunctuationRules.BaseCode(key), languageCode, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return allowDefault;
+                }
+
+                if (SpokenPunctuationRules.TryValidateStartWord(value, languageCode, forms, out var validated))
+                {
+                    startWord = validated;
+                    return true;
+                }
+
+                break;
+            }
+        }
+
+        if (!allowDefault)
+        {
+            return false;
+        }
+
+        startWord = SpokenPunctuationRules.DefaultStartWord(languageCode) ?? string.Empty;
+        return true;
     }
 }

@@ -277,9 +277,16 @@ public static partial class InverseTextNormalizer
         HasSpokenFinalFullStop(text, spokenPunctuation);
 
     public static string Normalize(string text, bool spokenPunctuation = false) =>
-        Normalize(text, spokenPunctuation, out _);
+        Normalize(text, spokenPunctuation, spokenSymbols: false, out _);
 
-    public static string Normalize(string text, bool spokenPunctuation, out bool spokenFinalFullStop)
+    public static string Normalize(string text, bool spokenPunctuation, out bool spokenFinalFullStop) =>
+        Normalize(text, spokenPunctuation, spokenSymbols: false, out spokenFinalFullStop);
+
+    public static string Normalize(
+        string text,
+        bool spokenPunctuation,
+        bool spokenSymbols,
+        out bool spokenFinalFullStop)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (string.IsNullOrWhiteSpace(text))
@@ -336,6 +343,7 @@ public static partial class InverseTextNormalizer
         working = NormalizeTimes(working);
         working = NormalizeDates(working);
         working = NormalizeOrdinals(working);
+        working = ApplyStreetAddresses(working, protectedSpans);
         working = NormalizeYears(working);
         working = NormalizeMoneyAndPercent(working);
         working = NormalizeDigitScales(working);
@@ -361,7 +369,7 @@ public static partial class InverseTextNormalizer
             @"\b(\d[\d,]*\.\d+)\s+(?:percent|per\s+cent)\b",
             match => match.Groups[1].Value + "%");
         working = KeepMagnitude(working);
-        working = ApplyPunctuation(working, spokenPunctuation);
+        working = ApplyPunctuation(working, spokenPunctuation, spokenSymbols);
 
         for (var index = 0; index < protectedSpans.Count; index++)
         {
@@ -735,7 +743,7 @@ public static partial class InverseTextNormalizer
 
     private static string NormalizeDigitReads(string input) => Replace(
         input,
-        $@"(?:\b(?:{DigitWordAlternation})\b\s*|\b\d{{1,4}}\b\s*){{2,}}",
+        $@"(?:\b(?:{DigitWordAlternation})\b(?!(?<=\bo)['’]\p{{L}})\s*|\b\d{{1,4}}\b\s*){{2,}}",
         match =>
         {
             var tokens = SplitWords(match.Value);
@@ -993,12 +1001,18 @@ public static partial class InverseTextNormalizer
             return value >= 10 || force ? FormatInteger(value.Value) + trailingAnd : match.Value;
         });
 
-    private static string ApplyPunctuation(string input, bool enabled)
+    private static string ApplyPunctuation(string input, bool enabled, bool spokenSymbols = false)
     {
         var result = input;
+        var joinerGap = enabled && spokenSymbols && !input.Contains(JoinerGapCharacter, StringComparison.Ordinal);
         if (enabled)
         {
             result = ReconcileEnglishRecognizerMarks(result);
+            if (spokenSymbols)
+            {
+                result = ApplyEnglishSymbolCommands(result, joinerGap, periodWord: true);
+            }
+
             var replacements = new (string Pattern, string Value)[]
             {
                 (@"\bnew paragraph\b", "\n\n"), (@"\bnew line\b", "\n"),
@@ -1011,6 +1025,11 @@ public static partial class InverseTextNormalizer
             {
                 result = Replace(result, replacement.Pattern, _ => replacement.Value);
             }
+        }
+
+        if (spokenSymbols)
+        {
+            result = ApplyJoinerCommands(result, enabled, joinerGap);
         }
 
         return Replace(
@@ -1379,15 +1398,27 @@ public static partial class InverseTextNormalizer
         {
             var options = RegexOptions.CultureInvariant |
                 (key.IgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
-            try
+            if (!RequiresBacktrackingEngine(key.Pattern))
             {
-                return new Regex(key.Pattern, options | RegexOptions.NonBacktracking, RegexTimeout);
+                try
+                {
+                    return new Regex(key.Pattern, options | RegexOptions.NonBacktracking, RegexTimeout);
+                }
+                catch (NotSupportedException)
+                {
+                }
             }
-            catch (NotSupportedException)
-            {
-                return new Regex(key.Pattern, options, RegexTimeout);
-            }
+
+            return new Regex(key.Pattern, options, RegexTimeout);
         });
+
+    private static bool RequiresBacktrackingEngine(string pattern) =>
+        pattern.Contains("(?<=", StringComparison.Ordinal) ||
+        pattern.Contains("(?<!", StringComparison.Ordinal) ||
+        pattern.Contains("(?!", StringComparison.Ordinal) ||
+        pattern.Contains("(?=", StringComparison.Ordinal) ||
+        pattern.Contains("(?>", StringComparison.Ordinal) ||
+        pattern.Contains("(?i:", StringComparison.Ordinal);
 
     /// <summary>The patterns that still run on the backtracking engine, for the test that keeps that list short.</summary>
     // BUILDING THE NON-BACKTRACKING PATTERNS COSTS ~257 ms, PAID ONCE PER PROCESS ON THE FIRST CALL.
@@ -1399,7 +1430,8 @@ public static partial class InverseTextNormalizer
     private static readonly Lazy<bool> WarmOnce = new(() =>
     {
         _ = Normalize(WarmRepresentative);
-        _ = Normalize(WarmSpokenPunctuationRepresentative, spokenPunctuation: true);
+        _ = Normalize(WarmSpokenPunctuationRepresentative, spokenPunctuation: true, spokenSymbols: true, out _);
+        _ = NormalizeLanguageNeutral(WarmNeutralRepresentative);
         return true;
     }, LazyThreadSafetyMode.PublicationOnly);
 
@@ -1407,7 +1439,10 @@ public static partial class InverseTextNormalizer
         "one point five dollars and two cents at half past three on the fourth of july nineteen ninety nine";
 
     private const string WarmSpokenPunctuationRepresentative =
-        WarmRepresentative + " Mr. comma J. comma U.S. comma hello. comma, comma period. period new line. wait, new paragraph.";
+        WarmRepresentative + " Mr. comma J. comma U.S. comma hello. comma, comma period. period new line. wait, new paragraph. open paren alpha close paren slash beta";
+
+    private const string WarmNeutralRepresentative =
+        "hans at beispiel punkt de www punto ejemplo punto es localhost dos puntos 3000 2 Punkt 5 Punkt 0";
 
     /// <summary>Builds every pattern once, so no later call pays construction inside a timed stage.</summary>
     public static void Warm() => _ = WarmOnce.Value;

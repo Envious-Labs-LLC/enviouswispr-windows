@@ -40,7 +40,7 @@ public sealed class SnippetChainPlacementTests
         var world = new World();
 
         var finalized = await world.Finalizer.FinalizeAsync(
-            Spoken("please email backslash my sign off"),
+            Spoken("please kindly email backslash my sign off"),
             [],
             AllOn,
             new SnippetVocabulary([new SnippetEntry("my sign off", "Kind regards,\nSam SMITH  (Envious Labs)")], "backslash"),
@@ -50,10 +50,10 @@ public sealed class SnippetChainPlacementTests
         var sent = Assert.Single(provider.Inputs);
         Assert.DoesNotContain("Kind regards", sent, StringComparison.Ordinal);
         Assert.DoesNotContain("SMITH", sent, StringComparison.Ordinal);
-        Assert.Matches("^please email EWSNIP[0-9A-F]{32}$", sent);
+        Assert.Matches("^please kindly email EWSNIP[0-9A-F]{32}$", sent);
         Assert.True(finalized.WasPolished);
-        Assert.Equal("Please email Kind regards,\nSam SMITH  (Envious Labs)!", finalized.Processed.Output.Text);
-        Assert.Equal("please email Kind regards,\nSam SMITH  (Envious Labs)", finalized.Processed.DeterministicText);
+        Assert.Equal("Please kindly email Kind regards,\nSam SMITH  (Envious Labs)!", finalized.Processed.Output.Text);
+        Assert.Equal("please kindly email Kind regards,\nSam SMITH  (Envious Labs)", finalized.Processed.DeterministicText);
         Assert.Equal(1, finalized.SnippetsExpanded);
         world.AssertNoPlaceholderEscaped(finalized);
     }
