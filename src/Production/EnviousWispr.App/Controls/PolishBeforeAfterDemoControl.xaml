@@ -103,19 +103,27 @@
                 </Grid>
             </Border>
 
-            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
                 <FontIcon
                     x:Name="CaptionIcon"
+                    Grid.Column="0"
+                    Margin="0,2,0,0"
+                    VerticalAlignment="Top"
                     AutomationProperties.AccessibilityView="Raw"
                     FontSize="14"
                     Foreground="{ThemeResource BrandSuccessBrush}"
-                    Glyph="\uE73E" />
+                    Glyph="&#xE73E;" />
                 <TextBlock
                     x:Name="DemoCaptionText"
+                    Grid.Column="1"
                     Style="{StaticResource BrandHelperStyle}"
                     Text="Removed fillers, fixed a self-correction, and formatted the greeting and time."
                     TextWrapping="Wrap" />
-            </StackPanel>
+            </Grid>
         </StackPanel>
     </Border>
 </UserControl>

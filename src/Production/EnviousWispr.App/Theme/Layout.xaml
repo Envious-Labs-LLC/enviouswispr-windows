@@ -88,18 +88,18 @@
     <x:Double x:Key="BrandOnboardingPrimaryButtonHeight">48</x:Double>
     <CornerRadius x:Key="BrandOnboardingButtonRadius">12</CornerRadius>
     <x:Double x:Key="BrandOnboardingProgressSegmentWidth">28</x:Double>
-    <x:Double x:Key="BrandOnboardingLipsHeroSize">124</x:Double>
-    <x:Double x:Key="BrandOnboardingLipsStepSize">92</x:Double>
-    <x:Double x:Key="BrandOnboardingLipsCompactSize">72</x:Double>
+    <x:Double x:Key="BrandOnboardingLipsHeroSize">104</x:Double>
+    <x:Double x:Key="BrandOnboardingLipsStepSize">72</x:Double>
+    <x:Double x:Key="BrandOnboardingLipsCompactSize">60</x:Double>
     <x:Double x:Key="BrandOnboardingCompactHeightThreshold">680</x:Double>
     <x:Double x:Key="BrandOnboardingGreetingBubbleMaxWidth">210</x:Double>
     <x:Double x:Key="BrandOnboardingValueIconSize">34</x:Double>
     <CornerRadius x:Key="BrandOnboardingValueIconRadius">10</CornerRadius>
-    <Thickness x:Key="BrandOnboardingContentPadding">28,16,28,28</Thickness>
+    <Thickness x:Key="BrandOnboardingContentPadding">28,10,28,18</Thickness>
     <!-- The pinned first-run action sits in its own band below the scrolling content. It keeps the
          content's side padding so the button lines up with the stage above it, and takes a smaller
          vertical measure because a footer that is as tall as a section reads as another section. -->
-    <Thickness x:Key="BrandOnboardingFooterPadding">28,14,28,20</Thickness>
+    <Thickness x:Key="BrandOnboardingFooterPadding">28,10,28,16</Thickness>
     <x:Double x:Key="BrandOnboardingMarkSize">88</x:Double>
     <x:Double x:Key="BrandOnboardingIconTileSize">52</x:Double>
     <x:Double x:Key="BrandOnboardingIconGlyphSize">22</x:Double>
@@ -117,9 +117,9 @@
     <x:Double x:Key="BrandOnboardingStatusSize">28</x:Double>
     <!-- The practice box: macOS's is 132 tall, room for two or three dictated sentences before it scrolls.
          A MINIMUM, so a longer take grows the box rather than clipping it. -->
-    <x:Double x:Key="BrandOnboardingPracticeBoxHeight">132</x:Double>
+    <x:Double x:Key="BrandOnboardingPracticeBoxHeight">104</x:Double>
     <!-- The Ready screen's keycap: the key's name set in the title style with room around it, as macOS draws it. -->
-    <Thickness x:Key="BrandOnboardingKeycapPadding">32,14,32,14</Thickness>
+    <Thickness x:Key="BrandOnboardingKeycapPadding">28,8,28,8</Thickness>
     <Thickness x:Key="BrandOnboardingChromePadding">20,10,20,0</Thickness>
     <x:Double x:Key="BrandOnboardingChromeHeight">44</x:Double>
     <Thickness x:Key="BrandOnboardingDownloadPillPadding">12,6,12,6</Thickness>
@@ -130,7 +130,7 @@
     <x:Double x:Key="BrandOnboardingNarrowCardMaxWidth">500</x:Double>
     <x:Double x:Key="BrandOnboardingLanguageListHeight">280</x:Double>
     <x:Double x:Key="BrandOnboardingKeycapMinWidth">200</x:Double>
-    <x:Double x:Key="BrandOnboardingKeycapMinHeight">64</x:Double>
+    <x:Double x:Key="BrandOnboardingKeycapMinHeight">52</x:Double>
     <CornerRadius x:Key="BrandOnboardingKeycapRadius">12</CornerRadius>
     <x:Double x:Key="BrandOnboardingLipBarWidth">6</x:Double>
     <CornerRadius x:Key="BrandOnboardingLipBarRadius">3</CornerRadius>

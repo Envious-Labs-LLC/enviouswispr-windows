@@ -729,6 +729,7 @@ public sealed partial class MainWindow
         KeybindCaptureActiveChanged?.Invoke(true);
         OnboardingKeyRehearsalActiveChanged?.Invoke(false);
         SetLiveText(OnboardingKeyStatusText, "Press your new dictation shortcut (press Esc to cancel)...");
+        SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
 
         try
         {
@@ -746,15 +747,21 @@ public sealed partial class MainWindow
                 {
                     CancelOnboardingKeyCapture();
                     SetLiveText(OnboardingKeyStatusText, string.Empty);
+                    SetLiveVisibility(OnboardingKeyStatusText, Visibility.Collapsed);
                     RenderOnboarding();
                 },
-                onInvalidAttempt: hint => SetLiveText(OnboardingKeyStatusText, hint),
+                onInvalidAttempt: hint =>
+                {
+                    SetLiveText(OnboardingKeyStatusText, hint);
+                    SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
+                },
                 dispatchToUi: action => DispatcherQueue.TryEnqueue(() => action()));
         }
         catch (System.ComponentModel.Win32Exception)
         {
             CancelOnboardingKeyCapture();
             SetLiveText(OnboardingKeyStatusText, "Could not start shortcut capture. Pick a preset or try again.");
+            SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
         }
 
         RenderOnboarding();
@@ -783,6 +790,7 @@ public sealed partial class MainWindow
         if (!parsed.Succeeded || parsed.Gesture is not { } parsedGesture)
         {
             SetLiveText(OnboardingKeyStatusText, "Use a supported shortcut such as Ctrl+Win, RightCtrl, or F8.");
+            SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
             return;
         }
 
@@ -795,6 +803,7 @@ public sealed partial class MainWindow
             if (!applied)
             {
                 SetLiveText(OnboardingKeyStatusText, error ?? "Could not switch shortcut right now.");
+                SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
                 return;
             }
         }
@@ -805,6 +814,7 @@ public sealed partial class MainWindow
         _onboardingLastTapUpUtc = null;
         _onboarding.ReportRecordingKey(canonical, mode);
         SetLiveText(OnboardingKeyStatusText, $"Shortcut set to {canonical}. Test holding or double-pressing it below.");
+        SetLiveVisibility(OnboardingKeyStatusText, Visibility.Visible);
         QueueOnboardingCheckpointSave();
         RenderOnboarding();
     }

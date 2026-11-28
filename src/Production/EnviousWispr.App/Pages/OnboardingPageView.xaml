@@ -88,7 +88,7 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <StackPanel x:Name="OnboardingStageHost" x:FieldModifier="internal" Grid.Column="1" Spacing="{StaticResource BrandSpacingL}">
+                <StackPanel x:Name="OnboardingStageHost" x:FieldModifier="internal" Grid.Column="1" Spacing="{StaticResource BrandSpacingM}">
                     <StackPanel.RenderTransform>
                         <TranslateTransform x:Name="OnboardingStageTranslate" x:FieldModifier="internal" X="0" />
                     </StackPanel.RenderTransform>
@@ -139,8 +139,8 @@
                     </StackPanel>
 
                     <!-- 1. WELCOME -->
-                    <StackPanel x:Name="OnboardingWelcomePanel" x:FieldModifier="internal" MaxWidth="{StaticResource BrandOnboardingStageMaxWidth}" HorizontalAlignment="Stretch" Spacing="{StaticResource BrandSpacingL}">
-                        <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+                    <StackPanel x:Name="OnboardingWelcomePanel" x:FieldModifier="internal" MaxWidth="{StaticResource BrandOnboardingStageMaxWidth}" HorizontalAlignment="Stretch" Spacing="{StaticResource BrandSpacingM}">
+                        <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
                             <TextBlock
                                 x:Name="OnboardingWelcomeHeadline"
                                 x:FieldModifier="internal"
@@ -156,8 +156,8 @@
                                 Text="Turn spoken thoughts into polished text in the apps you use." />
                         </StackPanel>
 
-                        <Border Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="{StaticResource BrandOnboardingCompactCardPadding}">
-                            <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                        <Border Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="14,10,14,10">
+                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
                                 <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Border Width="{StaticResource BrandOnboardingValueIconSize}" Height="{StaticResource BrandOnboardingValueIconSize}" CornerRadius="{StaticResource BrandOnboardingValueIconRadius}" Style="{StaticResource BrandIconTileStyle}" VerticalAlignment="Center">
@@ -224,32 +224,22 @@
                     </StackPanel>
 
                     <!-- 2. LANGUAGE -->
-                    <StackPanel x:Name="OnboardingLanguagePanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                        <Border x:Name="OnboardingLanguageGreetingCard" x:FieldModifier="internal" Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="{StaticResource BrandOnboardingCompactCardPadding}">
-                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Spacing="{StaticResource BrandOnboardingTextSpacing}" VerticalAlignment="Center">
-                                    <TextBlock x:Name="OnboardingLanguageGreetingText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="Hello!" TextWrapping="Wrap" />
-                                    <TextBlock x:Name="OnboardingLanguageSelectedTitleText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Detect automatically" TextWrapping="Wrap" />
+                    <StackPanel x:Name="OnboardingLanguagePanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+                            <Border x:Name="OnboardingLanguageEngineBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                    <Ellipse x:Name="OnboardingLanguageEngineDot" x:FieldModifier="internal" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock x:Name="OnboardingLanguageEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Parakeet · 25 languages" />
                                 </StackPanel>
-                                <Border x:Name="OnboardingLanguageEngineBadge" x:FieldModifier="internal" Grid.Column="1" Style="{StaticResource BrandAccentChipStyle}" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                        <Ellipse x:Name="OnboardingLanguageEngineDot" x:FieldModifier="internal" Width="{StaticResource BrandStatusDotSize}" Height="{StaticResource BrandStatusDotSize}" Fill="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                        <TextBlock x:Name="OnboardingLanguageEngineBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="Parakeet · 25 languages" />
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </Border>
+                            </Border>
 
-                        <Button x:Name="OnboardingSuggestedLanguageButton" x:FieldModifier="internal" Click="OnboardingSuggestedLanguageButton_Click" Style="{StaticResource BrandQuietButtonStyle}" HorizontalAlignment="Center" Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                <FontIcon FontSize="14" Glyph="&#xE774;" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
-                                <TextBlock x:Name="OnboardingSuggestedLanguageText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Suggested from Windows: English" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
+                            <Button x:Name="OnboardingSuggestedLanguageButton" x:FieldModifier="internal" Click="OnboardingSuggestedLanguageButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,4,10,4" VerticalAlignment="Center" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                    <FontIcon FontSize="14" Glyph="&#xE774;" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock x:Name="OnboardingSuggestedLanguageText" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Suggested from Windows: English" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
 
                         <RadioButton x:Name="OnboardingDetectAutoCard" x:FieldModifier="internal" GroupName="OnboardingLanguageAuto" Checked="OnboardingDetectAutoCard_Checked" HorizontalAlignment="Stretch" VerticalContentAlignment="Center" Padding="14,10,14,10" Style="{StaticResource BrandSelectableCardStyle}" AutomationProperties.Name="Detect automatically">
                             <StackPanel Spacing="{StaticResource BrandOnboardingTextSpacing}">
@@ -511,7 +501,7 @@
                     </StackPanel>
 
                     <!-- 7. POLISH SEE ALL (On this PC + Cloud) -->
-                    <StackPanel x:Name="OnboardingPolishSeeAllPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                    <StackPanel x:Name="OnboardingPolishSeeAllPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
                         <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
                             <Border HorizontalAlignment="Center" CornerRadius="9" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3">
                                 <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
@@ -576,7 +566,7 @@
                         </StackPanel>
 
                         <Border x:Name="OnboardingSeeAllCloudPanel" x:FieldModifier="internal" Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="{StaticResource BrandOnboardingCompactCardPadding}" Visibility="Collapsed">
-                            <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
                                 <StackPanel Spacing="{StaticResource BrandSpacingXs}">
                                     <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Choose your cloud provider" />
                                     <Border CornerRadius="9" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3" HorizontalAlignment="Left">
@@ -699,9 +689,9 @@
                     </StackPanel>
 
                     <!-- 10. KEY -->
-                    <StackPanel x:Name="OnboardingKeyPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                        <Border Style="{StaticResource BrandOnboardingSurfaceCardStyle}">
-                            <StackPanel HorizontalAlignment="Stretch" Spacing="{StaticResource BrandSpacingM}">
+                    <StackPanel x:Name="OnboardingKeyPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                        <Border Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="{StaticResource BrandOnboardingCompactCardPadding}">
+                            <StackPanel HorizontalAlignment="Stretch" Spacing="{StaticResource BrandSpacingS}">
                                 <Button
                                     x:Name="OnboardingKeycapButton"
                                     x:FieldModifier="internal"
@@ -732,7 +722,7 @@
                                     <Button x:Name="OnboardingPresetAltSpaceButton" x:FieldModifier="internal" Click="OnboardingPresetHotkeyButton_Click" Tag="Alt+Space" Content="Alt+Space" Style="{StaticResource BrandQuietButtonStyle}" />
                                 </StackPanel>
 
-                                <TextBlock x:Name="OnboardingKeyStatusText" x:FieldModifier="internal" AutomationProperties.LiveSetting="Polite" HorizontalAlignment="Center" Style="{StaticResource BrandHelperStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                                <TextBlock x:Name="OnboardingKeyStatusText" x:FieldModifier="internal" AutomationProperties.LiveSetting="Polite" HorizontalAlignment="Center" Style="{StaticResource BrandHelperStyle}" TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed" />
                             </StackPanel>
                         </Border>
 
@@ -744,8 +734,8 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <Border x:Name="OnboardingRehearsalHoldCard" x:FieldModifier="internal" Grid.Column="0" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}" Padding="12">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                    <Border x:Name="OnboardingRehearsalHoldCard" x:FieldModifier="internal" Grid.Column="0" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}" Padding="10,8,10,8">
+                                        <StackPanel Spacing="{StaticResource BrandOnboardingTextSpacing}">
                                             <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Hold to dictate" />
                                             <Border x:Name="OnboardingRehearsalHoldBadge" x:FieldModifier="internal" Style="{StaticResource BrandNeutralChipStyle}" HorizontalAlignment="Left">
                                                 <TextBlock x:Name="OnboardingRehearsalHoldBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandNeutralChipTextStyle}" Text="Try holding" />
@@ -753,8 +743,8 @@
                                             <TextBlock x:Name="OnboardingRehearsalHoldDescText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Hold while you speak, then let go." TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Border>
-                                    <Border x:Name="OnboardingRehearsalDoubleTapCard" x:FieldModifier="internal" Grid.Column="1" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}" Padding="12">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                    <Border x:Name="OnboardingRehearsalDoubleTapCard" x:FieldModifier="internal" Grid.Column="1" Background="{ThemeResource BrandCardBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}" Padding="10,8,10,8">
+                                        <StackPanel Spacing="{StaticResource BrandOnboardingTextSpacing}">
                                             <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Double-press" />
                                             <Border x:Name="OnboardingRehearsalDoubleTapBadge" x:FieldModifier="internal" Style="{StaticResource BrandNeutralChipStyle}" HorizontalAlignment="Left">
                                                 <TextBlock x:Name="OnboardingRehearsalDoubleTapBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandNeutralChipTextStyle}" Text="Tap twice" />
@@ -823,9 +813,9 @@
                     </StackPanel>
 
                     <!-- 12. PRACTICE -->
-                    <StackPanel x:Name="OnboardingPracticePanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                        <Border Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="{StaticResource BrandOnboardingCompactCardPadding}">
-                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                    <StackPanel x:Name="OnboardingPracticePanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                        <Border Style="{StaticResource BrandOnboardingSurfaceCardStyle}" Padding="14,10,14,10">
+                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
                                 <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Style="{StaticResource BrandSubsectionEyebrowStyle}" VerticalAlignment="Center" Text="TRY SAYING" />

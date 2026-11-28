@@ -3990,6 +3990,35 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("WindowsSetupRules.FormatDownloadLabel(totalBytes)", modelDelivery, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void XamlFontIconsUseXmlCharacterEntitiesInsteadOfCSharpUnicodeEscapes()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var appDir = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var badGlyphPattern = new Regex(@"Glyph=""[^""]*\\u[0-9A-Fa-f]{4}", RegexOptions.CultureInvariant);
+        var offenders = new List<string>();
+
+        foreach (var file in Directory.EnumerateFiles(appDir, "*.xaml", SearchOption.AllDirectories))
+        {
+            if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+                file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var content = File.ReadAllText(file);
+            if (badGlyphPattern.IsMatch(content))
+            {
+                offenders.Add(Path.GetRelativePath(appDir, file));
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            "XAML FontIcon Glyph attributes must use XML entities (&#xXXXX;), not literal \\uXXXX C# escapes which render as tofu boxes: "
+                + string.Join(", ", offenders));
+    }
+
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
     private readonly record struct ThemePair(string Light, string Dark);

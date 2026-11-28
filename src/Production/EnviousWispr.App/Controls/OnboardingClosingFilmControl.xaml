@@ -69,7 +69,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Border Grid.Column="0" Width="32" Height="32" Background="{ThemeResource BrandSuccessSoftBrush}" CornerRadius="8">
-                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="\uE73E" />
+                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Speech model" />
@@ -90,7 +90,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Border Grid.Column="0" Width="32" Height="32" Background="{ThemeResource BrandSuccessSoftBrush}" CornerRadius="8">
-                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="\uE73E" />
+                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="AI polish" />
@@ -111,7 +111,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Border Grid.Column="0" Width="32" Height="32" Background="{ThemeResource BrandSuccessSoftBrush}" CornerRadius="8">
-                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="\uE73E" />
+                                <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Dictation key" />
@@ -224,9 +224,9 @@
                                 <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
                                     <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Chat  #design" />
                                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE921" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE922" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE8BB" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
                                     </StackPanel>
                                 </Grid>
                                 <StackPanel Grid.Row="1" Padding="10,8,10,8" Spacing="{StaticResource BrandSpacingS}">
@@ -258,9 +258,9 @@
                                 <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
                                     <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Mail  New message" />
                                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE921" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE922" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE8BB" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
                                     </StackPanel>
                                 </Grid>
                                 <StackPanel Grid.Row="1" Padding="12,8,12,8" Spacing="{StaticResource BrandSpacingXs}">
@@ -301,7 +301,7 @@
                                 StrokeThickness="2">
                                 <Ellipse.RenderTransform><ScaleTransform x:Name="LandClickRingScale" ScaleX="0.3" ScaleY="0.3" /></Ellipse.RenderTransform>
                             </Ellipse>
-                            <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" Foreground="{ThemeResource BrandTextPrimaryBrush}" Glyph="\uE8B0" />
+                            <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" Foreground="{ThemeResource BrandTextPrimaryBrush}" Glyph="&#xE8B0;" />
                         </Grid>
 
                         <!-- Held key chip + floating Recording / Polishing pills -->
@@ -383,18 +383,18 @@
                                 <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
                                     <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="File Explorer" />
                                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE921" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE922" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE8BB" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
                                     </StackPanel>
                                 </Grid>
                                 <StackPanel Grid.Row="1" Padding="14,12,14,12" Spacing="{StaticResource BrandSpacingS}">
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="\uE8B7" />
+                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B7;" />
                                         <TextBlock FontSize="13" Foreground="{ThemeResource BrandTextBodyBrush}" Text="Documents" />
                                     </StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="\uE8B7" />
+                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B7;" />
                                         <TextBlock FontSize="13" Foreground="{ThemeResource BrandTextBodyBrush}" Text="Downloads" />
                                     </StackPanel>
                                     <TextBlock FontSize="12" Foreground="{ThemeResource BrandTextTertiaryBrush}" Text="No text field focused here" />
@@ -424,9 +424,9 @@
                                 <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
                                     <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Notepad  notes.txt" />
                                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE921" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE922" />
-                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE8BB" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                        <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
                                     </StackPanel>
                                 </Grid>
                                 <StackPanel Grid.Row="1" Padding="14,12,14,12" Spacing="{StaticResource BrandSpacingS}">
@@ -447,7 +447,7 @@
                                         Style="{StaticResource BrandSuccessChipStyle}">
                                         <Border.RenderTransform><TranslateTransform x:Name="CopiedClipboardTranslate" Y="6" /></Border.RenderTransform>
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                            <FontIcon FontSize="12" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="\uE73E" />
+                                            <FontIcon FontSize="12" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" />
                                             <TextBlock Style="{StaticResource BrandSuccessChipTextStyle}" Text="Pasted from your clipboard" />
                                         </StackPanel>
                                     </Border>
@@ -525,9 +525,9 @@
                             <Grid Grid.Row="0" Padding="10,0,8,0" Background="{ThemeResource BrandPageBgBrush}" CornerRadius="10,10,0,0">
                                 <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Chat  #dev" />
                                 <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE921" />
-                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE922" />
-                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE8BB" />
+                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE921;" />
+                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE922;" />
+                                    <FontIcon FontSize="9" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8BB;" />
                                 </StackPanel>
                             </Grid>
                             <StackPanel Grid.Row="1" Padding="14,12,14,12" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
@@ -574,7 +574,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" Width="28" Height="28" Background="{ThemeResource BrandAccentLightBrush}" CornerRadius="8">
-                                    <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="\uE82D" />
+                                    <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE82D;" />
                                 </Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Learned &quot;Tuist&quot;" />
@@ -685,7 +685,7 @@
                                 </StackPanel>
 
                                 <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                    <FontIcon FontSize="10" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE70E" />
+                                    <FontIcon FontSize="10" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE70E;" />
                                     <!-- Ringed breathing EnviousWispr tray icon -->
                                     <Border
                                         x:Name="YoursTrayIconRing"
@@ -707,8 +707,8 @@
                                             <Border Width="2.5" Height="8" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1" />
                                         </StackPanel>
                                     </Border>
-                                    <FontIcon FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE701" />
-                                    <FontIcon FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="\uE767" />
+                                    <FontIcon FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE701;" />
+                                    <FontIcon FontSize="11" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE767;" />
                                     <TextBlock VerticalAlignment="Center" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="9:41 AM" />
                                 </StackPanel>
                             </Grid>

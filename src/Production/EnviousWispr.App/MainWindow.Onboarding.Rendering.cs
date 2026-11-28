@@ -282,15 +282,6 @@ public sealed partial class MainWindow
             _onboardingIsUpdatingLanguageUi = false;
         }
 
-        var greeting = SetupLanguageMetadata.GetGreeting(code, CultureInfo.CurrentUICulture);
-        OnboardingLanguageGreetingText.Text = greeting;
-        var displayName = isAuto
-            ? LanguageCatalog.AutomaticTitle
-            : LanguageCatalog.TryGetEntry(code, out var selectedEntry)
-                ? selectedEntry.DisplayName
-                : code;
-        OnboardingLanguageSelectedTitleText.Text = displayName;
-
         var rec = _onboardingRecommendation ?? ComputeOnboardingRecommendation(code);
         _onboardingRecommendation = rec;
         var parakeetRecommended = isAuto || rec.Speech.PrimaryEngine == FinalAsrEngine.Parakeet;
