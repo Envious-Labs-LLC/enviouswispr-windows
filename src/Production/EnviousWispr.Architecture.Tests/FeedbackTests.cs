@@ -363,7 +363,12 @@ public sealed class FeedbackTests : IDisposable
 
         Assert.Equal("bug", root.GetProperty("tags").GetProperty("feedback.kind").GetString());
         Assert.Equal("true", root.GetProperty("tags").GetProperty("diagnostics.included").GetString());
-        Assert.Equal(WindowsObservabilityIdentity.CompiledBuildType, root.GetProperty("tags").GetProperty("app.build_type").GetString());
+#if DEBUG
+        const string expectedBuildType = "debug";
+#else
+        const string expectedBuildType = "release";
+#endif
+        Assert.Equal(expectedBuildType, root.GetProperty("tags").GetProperty("app.build_type").GetString());
 
         using var attachmentHeader = JsonDocument.Parse(lines[3]);
         Assert.Equal("attachment", attachmentHeader.RootElement.GetProperty("type").GetString());

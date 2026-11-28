@@ -18,8 +18,7 @@ public sealed record WindowsObservabilityIdentity(
     string Packaging,
     string Environment,
     Guid ProcessLaunchId,
-    string ProcessRole = "main",
-    string BuildType = WindowsObservabilityIdentity.CompiledBuildType)
+    string ProcessRole = "main")
 {
     public const string PostHogAppIdentifier = "enviouswispr-windows";
     public const string PlatformIdentifier = "windows";
@@ -35,17 +34,13 @@ public sealed record WindowsObservabilityIdentity(
 
     public string SentryRelease => $"{SentryReleasePrefix}@{AppVersion}";
 
-    public string EffectiveBuildType =>
-        string.IsNullOrWhiteSpace(BuildType) ? CompiledBuildType : BuildType.Trim();
-
     public static WindowsObservabilityIdentity CreateDefault(
         ReleaseIdentity? releaseIdentity = null,
         bool isPackagedMsix = false,
         string? appVersion = null,
         string? environment = null,
         Guid? processLaunchId = null,
-        string processRole = "main",
-        string? buildType = null)
+        string processRole = "main")
     {
         var channel = releaseIdentity ?? ReleaseIdentity.Stable;
         var version = string.IsNullOrWhiteSpace(appVersion)
@@ -60,9 +55,6 @@ public sealed record WindowsObservabilityIdentity(
             : (isPackagedMsix && channel.Channel == EnviousWispr.Core.Distribution.ReleaseChannel.Stable
                 ? "production"
                 : "development");
-        var resolvedBuildType = string.IsNullOrWhiteSpace(buildType)
-            ? CompiledBuildType
-            : buildType.Trim();
 
         return new WindowsObservabilityIdentity(
             AppVersion: version,
@@ -72,8 +64,7 @@ public sealed record WindowsObservabilityIdentity(
             Packaging: packaging,
             Environment: resolvedEnvironment,
             ProcessLaunchId: processLaunchId ?? Guid.NewGuid(),
-            ProcessRole: string.IsNullOrWhiteSpace(processRole) ? "main" : processRole.Trim(),
-            BuildType: resolvedBuildType);
+            ProcessRole: string.IsNullOrWhiteSpace(processRole) ? "main" : processRole.Trim());
     }
 }
 
