@@ -519,6 +519,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         string? snippetKeyword = null,
         IReadOnlyList<string>? enabledVocabularyPackIds = null,
         bool hasSeededStarterSnippets = false,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides = null,
         IReadOnlyList<string>? deletedBuiltinWordIds = null)
     {
         ArgumentNullException.ThrowIfNull(customWords);
@@ -530,6 +531,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
             : snippetKeyword;
         EnabledVocabularyPackIds = NormalizePackIds(enabledVocabularyPackIds);
         HasSeededStarterSnippets = hasSeededStarterSnippets;
+        VocabularyPackOverrides = VocabularyPacks.SnapshotOverrides(vocabularyPackOverrides);
         DeletedBuiltinWordIds = BuiltinWords.NormalizeDeletedIds(deletedBuiltinWordIds);
     }
 
@@ -545,6 +547,9 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
 
     /// <summary>Whether starter example snippets have already been evaluated for one-time seeding.</summary>
     public bool HasSeededStarterSnippets { get; }
+
+    /// <summary>Sparse per-pack, per-word overrides (disabled flag and/or custom aliases) keyed by pack ID and lowercased canonical word.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>> VocabularyPackOverrides { get; }
 
     /// <summary>Stable IDs of shipped built-in words the user explicitly deleted so they never resurface.</summary>
     public IReadOnlyList<string> DeletedBuiltinWordIds { get; }
@@ -564,35 +569,40 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         return Interlocked.CompareExchange(ref _effectiveCustomWords, computed, null) ?? computed;
     }
 
-    /// <summary>The same data with other words, keeping the snippets, keyword, packs, seeding flag, and deleted built-in tombstones.</summary>
+    /// <summary>The same data with other words, keeping the snippets, keyword, packs, overrides, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithCustomWords(IReadOnlyList<CustomWordEntry> customWords) =>
-        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with other snippets, keeping the words, keyword, packs, seeding flag, and deleted built-in tombstones.</summary>
+    /// <summary>The same data with other snippets, keeping the words, keyword, packs, overrides, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithSnippets(IReadOnlyList<SnippetEntry> snippets) =>
-        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
+        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with another keyword, keeping the words, snippets, packs, seeding flag, and deleted built-in tombstones.</summary>
+    /// <summary>The same data with another keyword, keeping the words, snippets, packs, overrides, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithSnippetKeyword(string snippetKeyword) =>
-        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
+        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords and tombstones untouched.</summary>
+    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords, overrides, and tombstones untouched.</summary>
     public ReusableUserData WithEnabledVocabularyPackIds(IReadOnlyList<string>? enabledVocabularyPackIds) =>
-        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
+        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides, DeletedBuiltinWordIds);
+
+    /// <summary>The same data with updated sparse vocabulary pack word overrides, leaving CustomWords and tombstones untouched.</summary>
+    public ReusableUserData WithVocabularyPackOverrides(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides) =>
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, vocabularyPackOverrides, DeletedBuiltinWordIds);
 
     /// <summary>The same data with an updated starter-snippet seeding flag.</summary>
     public ReusableUserData WithHasSeededStarterSnippets(bool hasSeededStarterSnippets) =>
-        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets, DeletedBuiltinWordIds);
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets, VocabularyPackOverrides, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with updated deleted built-in tombstones, leaving CustomWords untouched.</summary>
+    /// <summary>The same data with updated deleted built-in tombstones, leaving CustomWords and overrides untouched.</summary>
     public ReusableUserData WithDeletedBuiltinWordIds(IReadOnlyList<string>? deletedBuiltinWordIds) =>
-        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, deletedBuiltinWordIds);
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides, deletedBuiltinWordIds);
 
     /// <summary>Atomically updates both persisted user words and deleted built-in tombstones.</summary>
     public ReusableUserData WithCustomWordsAndDeletedBuiltins(
         IReadOnlyList<CustomWordEntry> customWords,
         IReadOnlyList<string>? deletedBuiltinWordIds) =>
-        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, deletedBuiltinWordIds);
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides, deletedBuiltinWordIds);
 
     public static ReusableUserData Empty { get; } = new(
         Array.Empty<CustomWordEntry>(),
@@ -605,6 +615,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         string.Equals(SnippetKeyword, other.SnippetKeyword, StringComparison.Ordinal) &&
         EnabledVocabularyPackIds.SequenceEqual(other.EnabledVocabularyPackIds, StringComparer.OrdinalIgnoreCase) &&
         HasSeededStarterSnippets == other.HasSeededStarterSnippets &&
+        VocabularyPacks.OverridesEqual(VocabularyPackOverrides, other.VocabularyPackOverrides) &&
         DeletedBuiltinWordIds.SequenceEqual(other.DeletedBuiltinWordIds, StringComparer.OrdinalIgnoreCase);
 
     public override bool Equals(object? obj) => Equals(obj as ReusableUserData);
@@ -629,6 +640,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         }
 
         hash.Add(HasSeededStarterSnippets);
+        VocabularyPacks.AddOverridesToHash(ref hash, VocabularyPackOverrides);
         foreach (var deletedId in DeletedBuiltinWordIds)
         {
             hash.Add(deletedId, StringComparer.OrdinalIgnoreCase);
@@ -666,5 +678,5 @@ public sealed record PortableProfile(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, LearnMemoryEntry>? LearnMemory = null)
 {
-    public const int CurrentSchemaVersion = 22;
+    public const int CurrentSchemaVersion = 23;
 }

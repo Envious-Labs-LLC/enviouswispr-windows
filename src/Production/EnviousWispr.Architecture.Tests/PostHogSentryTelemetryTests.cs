@@ -507,6 +507,12 @@ public sealed class PostHogSentryTelemetryTests
 
         var tags = root.GetProperty("tags");
         Assert.Equal("windows", tags.GetProperty("app.platform").GetString());
+#if DEBUG
+        const string expectedBuildType = "debug";
+#else
+        const string expectedBuildType = "release";
+#endif
+        Assert.Equal(expectedBuildType, tags.GetProperty("app.build_type").GetString());
         Assert.Equal("win-x64-founder", tags.GetProperty("app.channel").GetString());
         Assert.Equal("unpackaged", tags.GetProperty("app.packaging").GetString());
         Assert.Equal("main", tags.GetProperty("process.role").GetString());
@@ -530,6 +536,50 @@ public sealed class PostHogSentryTelemetryTests
         Assert.False(offRoot.GetProperty("tags").TryGetProperty("analytics.distinct_id", out _));
         var offUserId = offRoot.GetProperty("user").GetProperty("id").GetString();
         Assert.NotNull(ObservabilitySanitizer.CanonicalAnonymousPostHogId(offUserId));
+    }
+
+    [Theory]
+    [InlineData("production")]
+    [InlineData("development")]
+    public async Task SentryClientStampsBuildTypeIndependentlyOfEnvironmentAcrossScopeAndPayload(string environment)
+    {
+#if DEBUG
+        const string expectedBuildType = "debug";
+#else
+        const string expectedBuildType = "release";
+#endif
+        Assert.True(SentryDsnDescriptor.TryParse("https://publickey123@o99.ingest.sentry.io/456789", out var dsn));
+        var handler = new RecordingHttpMessageHandler();
+        var identity = WindowsObservabilityIdentity.CreateDefault(
+            ReleaseIdentity.Stable,
+            isPackagedMsix: string.Equals(environment, "production", StringComparison.Ordinal),
+            appVersion: "0.19.0",
+            environment: environment);
+
+        using var sentry = new SentryCrashClient(
+            dsn: dsn,
+            identity: identity,
+            sendCrashReportsAtLaunch: true,
+            usageMetricsEnabled: true,
+            postHogDistinctId: Guid.NewGuid().ToString("D"),
+            messageHandler: handler);
+
+        Assert.Equal(expectedBuildType, sentry.GetScopeTagsSnapshot()["app.build_type"]);
+
+        sentry.SetTag("app.build_type", "tampered");
+        Assert.Equal(expectedBuildType, sentry.GetScopeTagsSnapshot()["app.build_type"]);
+        sentry.SetTag("app.build_type", null);
+        Assert.Equal(expectedBuildType, sentry.GetScopeTagsSnapshot()["app.build_type"]);
+
+        await sentry.CaptureEventAsync(new SentryCaptureEvent(
+            Level: "error",
+            Message: "build_type_check",
+            Tags: new Dictionary<string, string> { ["app.build_type"] = "tampered" }));
+
+        using var doc = JsonDocument.Parse(handler.Requests[0].Body.Split('\n', StringSplitOptions.RemoveEmptyEntries)[2]);
+        var root = doc.RootElement;
+        Assert.Equal(environment, root.GetProperty("environment").GetString());
+        Assert.Equal(expectedBuildType, root.GetProperty("tags").GetProperty("app.build_type").GetString());
     }
 
     [Fact]

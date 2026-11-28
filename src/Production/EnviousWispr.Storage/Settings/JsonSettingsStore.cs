@@ -598,7 +598,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 Preferences = SettingsSchemaMigration.ApplyFixLearnedWordsDefault(legacy.Preferences),
             },
-            >= 12 and <= 28 => legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion },
+            >= 12 and <= 29 => legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion },
             _ => null,
         };
     }

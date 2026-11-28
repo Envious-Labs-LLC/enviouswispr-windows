@@ -26,6 +26,11 @@ public sealed record WindowsObservabilityIdentity(
     public const string SentryPlatformIdentifier = "csharp";
     public const string SentryReleasePrefix = "EnviousLabsLLC.EnviousWispr";
     public const string CrashContextSchemaVersion = "1";
+#if DEBUG
+    public const string CompiledBuildType = "debug";
+#else
+    public const string CompiledBuildType = "release";
+#endif
 
     public string SentryRelease => $"{SentryReleasePrefix}@{AppVersion}";
 

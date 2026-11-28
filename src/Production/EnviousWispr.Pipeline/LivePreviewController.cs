@@ -45,6 +45,10 @@ public interface ILivePreviewEffects
     /// <summary>The enabled vocabulary pack IDs for display-only preview text.</summary>
     IReadOnlyList<string> EnabledVocabularyPackIds => [];
 
+    /// <summary>Sparse per-word overrides for vocabulary packs in display-only preview text.</summary>
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>> VocabularyPackOverrides =>
+        VocabularyPacks.EmptyOverrides;
+
     /// <summary>The user's English spelling preference for display-only preview text (#127).</summary>
     EnglishSpelling EnglishSpelling => EnglishSpelling.American;
 
@@ -212,6 +216,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             var fixLearnedWordsEnabled = _effects.FixLearnedWordsEnabled;
             var customWords = _effects.CustomWords;
             var enabledVocabularyPackIds = _effects.EnabledVocabularyPackIds;
+            var vocabularyPackOverrides = _effects.VocabularyPackOverrides;
             var englishSpelling = _effects.EnglishSpelling;
             _work = RunAsync(
                 sessionId,
@@ -221,6 +226,7 @@ public sealed class LivePreviewController : IAsyncDisposable
                 fixLearnedWordsEnabled,
                 customWords,
                 enabledVocabularyPackIds,
+                vocabularyPackOverrides,
                 englishSpelling,
                 closure,
                 cancellation.Token);
@@ -239,6 +245,7 @@ public sealed class LivePreviewController : IAsyncDisposable
         bool fixLearnedWordsEnabled,
         IReadOnlyList<CustomWordEntry> customWords,
         IReadOnlyList<string> enabledVocabularyPackIds,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>> vocabularyPackOverrides,
         EnglishSpelling englishSpelling,
         int closure,
         CancellationToken cancellationToken)
@@ -324,7 +331,8 @@ public sealed class LivePreviewController : IAsyncDisposable
                         update.RecognitionLanguage,
                         engine.EngineId,
                         enabledVocabularyPackIds: enabledVocabularyPackIds,
-                        excludeLearnedAliases: !fixLearnedWordsEnabled);
+                        excludeLearnedAliases: !fixLearnedWordsEnabled,
+                        vocabularyPackOverrides: vocabularyPackOverrides);
                     if (!string.IsNullOrWhiteSpace(displayText) &&
                         !string.Equals(displayText, lastPublishedText, StringComparison.Ordinal))
                     {

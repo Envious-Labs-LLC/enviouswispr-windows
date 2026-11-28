@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Controls.PackWordRowView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:EnviousWispr.App.Controls">
+    <Border Padding="14,12,14,12" Style="{StaticResource BrandSettingsCardStyle}">
+        <StackPanel Spacing="{StaticResource BrandSpacingS}">
+            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                    <TextBlock x:Name="CanonicalText" Style="{StaticResource BrandRowLabelStyle}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Border x:Name="EditedBadge" Style="{StaticResource BrandWarningChipStyle}" Padding="8,2,8,2" Visibility="Collapsed">
+                        <TextBlock Style="{StaticResource BrandWarningChipTextStyle}" Text="EDITED" />
+                    </Border>
+                </StackPanel>
+                <Button
+                    x:Name="RestoreButton"
+                    Grid.Column="1"
+                    Click="RestoreButton_Click"
+                    Content="Restore"
+                    Padding="10,4,10,4"
+                    Style="{StaticResource BrandQuietButtonStyle}"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed" />
+                <ToggleSwitch
+                    x:Name="WordToggle"
+                    Grid.Column="2"
+                    MinWidth="0"
+                    OffContent=""
+                    OnContent=""
+                    Style="{StaticResource BrandToggleSwitchStyle}"
+                    Toggled="WordToggle_Toggled"
+                    VerticalAlignment="Center" />
+            </Grid>
+            <StackPanel x:Name="WordDetailsPanel" Spacing="{StaticResource BrandSpacingS}">
+                <controls:WrapPanel x:Name="AliasesWrapPanel" HorizontalSpacing="{StaticResource BrandSpacingS}" VerticalSpacing="{StaticResource BrandSpacingS}" />
+                <TextBlock
+                    x:Name="NoAliasesText"
+                    FontStyle="Italic"
+                    Style="{StaticResource BrandHelperStyle}"
+                    Text="No spoken variants"
+                    Visibility="Collapsed" />
+                <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox
+                        x:Name="NewAliasBox"
+                        Grid.Column="0"
+                        KeyDown="NewAliasBox_KeyDown"
+                        MaxLength="256"
+                        PlaceholderText="Add a mishearing (e.g. clawed)"
+                        TextChanged="NewAliasBox_TextChanged" />
+                    <Button
+                        x:Name="AddAliasButton"
+                        Grid.Column="1"
+                        Click="AddAliasButton_Click"
+                        Content="Add"
+                        IsEnabled="False"
+                        Style="{StaticResource BrandQuietButtonStyle}"
+                        VerticalAlignment="Center" />
+                </Grid>
+                <TextBlock
+                    x:Name="RowValidationText"
+                    Style="{StaticResource BrandErrorHelperStyle}"
+                    TextWrapping="Wrap"
+                    Visibility="Collapsed" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

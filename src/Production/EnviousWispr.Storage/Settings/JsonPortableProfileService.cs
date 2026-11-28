@@ -209,7 +209,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 SchemaVersion = PortableProfile.CurrentSchemaVersion,
                 Preferences = SettingsSchemaMigration.ApplyFixLearnedWordsDefault(legacy.Preferences),
             },
-            >= 2 and <= 21 => legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion },
+            >= 2 and <= 22 => legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion },
             _ => null,
         };
     }

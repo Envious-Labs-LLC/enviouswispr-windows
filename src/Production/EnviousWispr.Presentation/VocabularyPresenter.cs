@@ -350,7 +350,169 @@ public sealed class VocabularyPresenter
     {
         ArgumentNullException.ThrowIfNull(packIds);
         var normalized = VocabularyPacks.NormalizePackIds(packIds);
-        return ChangeAsync(data => data.WithEnabledVocabularyPackIds(normalized));
+        return ChangeAsync(data =>
+            data.EnabledVocabularyPackIds.SequenceEqual(normalized, StringComparer.OrdinalIgnoreCase)
+                ? data
+                : data.WithEnabledVocabularyPackIds(normalized));
+    }
+
+    /// <summary>Turns an individual word inside a vocabulary pack on or off without modifying bundled JSON or CustomWords.</summary>
+    public Task<SettingsSaveResult> SetVocabularyPackWordEnabledAsync(string packId, string canonical, bool enabled)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonical);
+        var pack = VocabularyPacks.FindById(packId)
+            ?? throw new ArgumentException($"Unknown vocabulary pack '{packId}'.", nameof(packId));
+        var term = pack.FindTerm(canonical)
+            ?? throw new ArgumentException($"Unknown word '{canonical}' in vocabulary pack '{pack.Id}'.", nameof(canonical));
+
+        return MutatePackWordOverrideAsync(
+            pack,
+            term,
+            existing => existing with { IsEnabled = enabled ? null : false });
+    }
+
+    /// <summary>
+    /// Replaces an individual vocabulary pack word's effective spoken mishearings.
+    /// Restores the alias override to null when the list matches the shipped aliases.
+    /// </summary>
+    public Task<SettingsSaveResult> SetVocabularyPackWordAliasesAsync(
+        string packId,
+        string canonical,
+        IReadOnlyList<string> aliases)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonical);
+        ArgumentNullException.ThrowIfNull(aliases);
+        var pack = VocabularyPacks.FindById(packId)
+            ?? throw new ArgumentException($"Unknown vocabulary pack '{packId}'.", nameof(packId));
+        var term = pack.FindTerm(canonical)
+            ?? throw new ArgumentException($"Unknown word '{canonical}' in vocabulary pack '{pack.Id}'.", nameof(canonical));
+
+        var normalizedAliases = CustomWordEntry.NormalizeAliases(aliases);
+        if (normalizedAliases.Count > CustomWordEntry.MaximumAliasesPerEntry ||
+            normalizedAliases.Any(alias => alias.Length > 256))
+        {
+            return Task.FromResult(new SettingsSaveResult(SettingsSaveRefusal.InvalidValues, Failure: null));
+        }
+
+        IReadOnlyList<string>? storedAliases = VocabularyPacks.AliasesEqualShipped(normalizedAliases, term.Aliases)
+            ? null
+            : normalizedAliases;
+
+        return MutatePackWordOverrideAsync(
+            pack,
+            term,
+            existing => existing with { Aliases = storedAliases });
+    }
+
+    /// <summary>Restores one pack word back to its shipped enabled state and aliases in one atomic transaction.</summary>
+    public Task<SettingsSaveResult> RestoreVocabularyPackWordAsync(string packId, string canonical)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonical);
+        var pack = VocabularyPacks.FindById(packId)
+            ?? throw new ArgumentException($"Unknown vocabulary pack '{packId}'.", nameof(packId));
+        var term = pack.FindTerm(canonical)
+            ?? throw new ArgumentException($"Unknown word '{canonical}' in vocabulary pack '{pack.Id}'.", nameof(canonical));
+
+        return MutatePackWordOverrideAsync(
+            pack,
+            term,
+            _ => new VocabularyPackWordOverride());
+    }
+
+    /// <summary>Restores every edited word in <paramref name="packId"/> back to shipped defaults in one atomic transaction.</summary>
+    public Task<SettingsSaveResult> RestoreVocabularyPackAsync(string packId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packId);
+        var pack = VocabularyPacks.FindById(packId)
+            ?? throw new ArgumentException($"Unknown vocabulary pack '{packId}'.", nameof(packId));
+
+        return ChangeAsync(data =>
+        {
+            var current = data.VocabularyPackOverrides;
+            var hasPack = current.Keys.Any(key => string.Equals(key, pack.Id, StringComparison.OrdinalIgnoreCase));
+            if (!hasPack)
+            {
+                return data;
+            }
+
+            var next = new Dictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, value) in current)
+            {
+                if (!string.Equals(key, pack.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    next[key] = value;
+                }
+            }
+
+            return data.WithVocabularyPackOverrides(VocabularyPacks.PruneEmptyOverrides(next));
+        });
+    }
+
+    private Task<SettingsSaveResult> MutatePackWordOverrideAsync(
+        VocabularyPack pack,
+        VocabularyPackTerm term,
+        Func<VocabularyPackWordOverride, VocabularyPackWordOverride> transform)
+    {
+        var wordKey = VocabularyPacks.OverrideKey(term.Canonical);
+        return ChangeAsync(data =>
+        {
+            var current = data.VocabularyPackOverrides;
+            var nextPacks = new Dictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>(StringComparer.OrdinalIgnoreCase);
+            var packWords = new Dictionary<string, VocabularyPackWordOverride>(StringComparer.Ordinal);
+
+            foreach (var (existingPackId, existingWords) in current)
+            {
+                if (string.Equals(existingPackId, pack.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (existingWords is not null)
+                    {
+                        foreach (var (existingWordKey, existingOverride) in existingWords)
+                        {
+                            if (!string.IsNullOrWhiteSpace(existingWordKey) && existingOverride is not null && !existingOverride.IsEmpty)
+                            {
+                                packWords[VocabularyPacks.OverrideKey(existingWordKey)] = existingOverride;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    nextPacks[existingPackId] = existingWords;
+                }
+            }
+
+            var before = packWords.GetValueOrDefault(wordKey) ?? new VocabularyPackWordOverride();
+            var after = transform(before);
+            if (after.IsEmpty)
+            {
+                if (!packWords.Remove(wordKey))
+                {
+                    return data;
+                }
+            }
+            else
+            {
+                if (packWords.TryGetValue(wordKey, out var existing) && existing.Equals(after))
+                {
+                    return data;
+                }
+
+                packWords[wordKey] = after;
+            }
+
+            if (packWords.Count > 0)
+            {
+                nextPacks[pack.Id] = packWords;
+            }
+
+            var pruned = VocabularyPacks.PruneEmptyOverrides(nextPacks);
+            return VocabularyPacks.OverridesEqual(current, pruned)
+                ? data
+                : data.WithVocabularyPackOverrides(pruned);
+        });
     }
 
     private static CustomWordEntry? FindAliasClash(
@@ -981,7 +1143,11 @@ public sealed class VocabularyPresenter
     public Task<SettingsSaveResult> ChangeAsync(Func<ReusableUserData, ReusableUserData> change)
     {
         ArgumentNullException.ThrowIfNull(change);
-        return _settings.SaveAsync(current => current with { UserData = change(current.UserData) });
+        return _settings.SaveAsync(current =>
+        {
+            var data = change(current.UserData);
+            return ReferenceEquals(data, current.UserData) ? current : current with { UserData = data };
+        });
     }
 
     /// <summary>Applies a change that also has something to say about what it did, worked out inside the gate.</summary>

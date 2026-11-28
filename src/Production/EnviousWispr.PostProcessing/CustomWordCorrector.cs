@@ -39,6 +39,12 @@ public static partial class CustomWordCorrector
 
     public const double AmbiguityMargin = 0.05;
 
+    /// <summary>Minimum surface length for lower-authority vocabulary pack fuzzy matching (macOS #992).</summary>
+    public const int PackFuzzyMinLength = 7;
+
+    /// <summary>Additive stricter similarity bump for lower-authority vocabulary pack fuzzy matching (macOS #992).</summary>
+    public const double PackFuzzyThresholdBump = 0.05;
+
     private static readonly HashSet<string> ReservedTriggerWords =
         new(["emoji", "emoticon"], StringComparer.OrdinalIgnoreCase);
 
@@ -336,7 +342,8 @@ public static partial class CustomWordCorrector
 
             for (var run = Math.Min(longest, tokens.Length - wordIndex); run >= 2; run--)
             {
-                if (!Reachable(text, index, claimed, tokens, wordIndex, run, out var rivals, out _, out var found))
+                if (!Reachable(text, index, claimed, tokens, wordIndex, run, out var rivals, out _, out var found) ||
+                    rivals.Length == 0)
                 {
                     continue;
                 }
@@ -547,15 +554,19 @@ public static partial class CustomWordCorrector
 
     private readonly record struct Run(int Start, int Length, string Phrase, string[] Words);
 
-    /// <summary>Finds single words close enough to a custom word to be that word.</summary>
+    /// <summary>Finds single words close enough to a custom word (then lower-authority pack words) to be that word.</summary>
     private static void FuzzyProposals(
         Match[] tokens,
         CompiledWordIndex index,
         List<Span> claimed,
         List<Proposal> proposals)
     {
-        var poolPenalty = LargeVocabularyPenalty(index.FuzzyPoolSize);
-        var lowestPossibleThreshold = LooseSimilarityThreshold - 0.04 + poolPenalty;
+        var nonPackPoolPenalty = LargeVocabularyPenalty(index.FuzzyPoolSize);
+        var lowestPossibleNonPackThreshold = LooseSimilarityThreshold - 0.04 + nonPackPoolPenalty;
+        var packAliasPoolPenalty = LargeVocabularyPenalty(index.PackAliasFuzzyPoolSize);
+        var lowestPossiblePackAliasThreshold = SimilarityThreshold - 0.04 + packAliasPoolPenalty + PackFuzzyThresholdBump;
+        var packCanonicalPoolPenalty = LargeVocabularyPenalty(index.PackCanonicalFuzzyPoolSize);
+        var lowestPossiblePackCanonicalThreshold = SimilarityThreshold - 0.04 + packCanonicalPoolPenalty + PackFuzzyThresholdBump;
 
         foreach (var match in tokens)
         {
@@ -577,71 +588,161 @@ public static partial class CustomWordCorrector
             }
 
             var tokenMask = ComputeRuneMask(tokenRunes);
-            var maxDeltaForToken = Math.Max(0, (int)Math.Floor((1.0 - lowestPossibleThreshold) * Math.Max(tokenLen, index.MaxFuzzyRuneLength) + 1e-9));
-            var minCandidateLen = Math.Max(index.MinFuzzyRuneLength, tokenLen - maxDeltaForToken);
-            var maxCandidateLen = Math.Min(index.MaxFuzzyRuneLength, tokenLen + maxDeltaForToken);
 
-            CompiledCandidate? best = null;
-            var bestScore = double.NegativeInfinity;
-            CompiledCandidate? secondBestDifferent = null;
-            var secondScore = double.NegativeInfinity;
-
-            for (var candidateLen = minCandidateLen; candidateLen <= maxCandidateLen; candidateLen++)
+            // Tier 1: user/non-pack fuzzy matching always runs first with its own unpenalized pool size.
+            if (index.FuzzyPoolSize > 0 &&
+                TryMatchFuzzyTier(
+                    token,
+                    tokenRunes,
+                    tokenLen,
+                    tokenMask,
+                    index.FuzzyByRuneLength,
+                    index.MinFuzzyRuneLength,
+                    index.MaxFuzzyRuneLength,
+                    nonPackPoolPenalty,
+                    lowestPossibleNonPackThreshold,
+                    thresholdBump: 0.0,
+                    suppressCaseOnly: false,
+                    out var userMatch))
             {
-                if (!index.FuzzyByRuneLength.TryGetValue(candidateLen, out var bucket))
+                claimed.Add(new Span(match.Index, match.Length));
+                proposals.Add(new Proposal(match.Index, match.Length, userMatch.Replacement));
+                continue;
+            }
+
+            // Tier 2 (macOS #992): lower-authority pack fuzzy runs only after user fuzzy misses,
+            // never rewrites a token already recognized by the user vocabulary, requires surface length >= 7,
+            // adds +0.05 threshold bump, and suppresses case-only changes.
+            if (!index.HasPackFuzzyCandidates || index.NonPackExactKeys.Contains(tokenLower))
+            {
+                continue;
+            }
+
+            if (index.PackAliasFuzzyPoolSize > 0 &&
+                TryMatchFuzzyTier(
+                    token,
+                    tokenRunes,
+                    tokenLen,
+                    tokenMask,
+                    index.PackAliasFuzzyByRuneLength,
+                    index.MinPackAliasFuzzyRuneLength,
+                    index.MaxPackAliasFuzzyRuneLength,
+                    packAliasPoolPenalty,
+                    lowestPossiblePackAliasThreshold,
+                    thresholdBump: PackFuzzyThresholdBump,
+                    suppressCaseOnly: true,
+                    out var packAliasMatch))
+            {
+                claimed.Add(new Span(match.Index, match.Length));
+                proposals.Add(new Proposal(match.Index, match.Length, packAliasMatch.Replacement));
+                continue;
+            }
+
+            if (index.PackCanonicalFuzzyPoolSize > 0 &&
+                TryMatchFuzzyTier(
+                    token,
+                    tokenRunes,
+                    tokenLen,
+                    tokenMask,
+                    index.PackCanonicalFuzzyByRuneLength,
+                    index.MinPackCanonicalFuzzyRuneLength,
+                    index.MaxPackCanonicalFuzzyRuneLength,
+                    packCanonicalPoolPenalty,
+                    lowestPossiblePackCanonicalThreshold,
+                    thresholdBump: PackFuzzyThresholdBump,
+                    suppressCaseOnly: true,
+                    out var packCanonicalMatch))
+            {
+                claimed.Add(new Span(match.Index, match.Length));
+                proposals.Add(new Proposal(match.Index, match.Length, packCanonicalMatch.Replacement));
+            }
+        }
+    }
+
+    private static bool TryMatchFuzzyTier(
+        string token,
+        Rune[] tokenRunes,
+        int tokenLen,
+        ulong tokenMask,
+        Dictionary<int, CompiledCandidate[]> byRuneLength,
+        int minRuneLength,
+        int maxRuneLength,
+        double poolPenalty,
+        double lowestPossibleThreshold,
+        double thresholdBump,
+        bool suppressCaseOnly,
+        out CompiledCandidate matched)
+    {
+        matched = null!;
+        var maxDeltaForToken = Math.Max(0, (int)Math.Floor((1.0 - lowestPossibleThreshold) * Math.Max(tokenLen, maxRuneLength) + 1e-9));
+        var minCandidateLen = Math.Max(minRuneLength, tokenLen - maxDeltaForToken);
+        var maxCandidateLen = Math.Min(maxRuneLength, tokenLen + maxDeltaForToken);
+
+        CompiledCandidate? best = null;
+        var bestScore = double.NegativeInfinity;
+        CompiledCandidate? secondBestDifferent = null;
+        var secondScore = double.NegativeInfinity;
+
+        for (var candidateLen = minCandidateLen; candidateLen <= maxCandidateLen; candidateLen++)
+        {
+            if (!byRuneLength.TryGetValue(candidateLen, out var bucket))
+            {
+                continue;
+            }
+
+            var maxLen = Math.Max(tokenLen, candidateLen);
+            foreach (var candidate in bucket)
+            {
+                if (string.Equals(candidate.Replacement, token, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var maxLen = Math.Max(tokenLen, candidateLen);
-                foreach (var candidate in bucket)
+                var threshold = candidate.BaseThreshold - candidate.LengthAdjustment + poolPenalty + thresholdBump;
+                var maxAllowedDistance = MaxDistanceForThreshold(threshold, maxLen);
+                if (Math.Abs(tokenLen - candidateLen) > maxAllowedDistance ||
+                    MaskLowerBoundDistance(tokenMask, candidate.CharMask) > maxAllowedDistance)
                 {
-                    if (string.Equals(candidate.Replacement, token, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    var threshold = candidate.BaseThreshold - candidate.LengthAdjustment + poolPenalty;
-                    var maxAllowedDistance = MaxDistanceForThreshold(threshold, maxLen);
-                    if (Math.Abs(tokenLen - candidateLen) > maxAllowedDistance ||
-                        MaskLowerBoundDistance(tokenMask, candidate.CharMask) > maxAllowedDistance)
-                    {
-                        continue;
-                    }
-
-                    var score = TextSimilarity.LevenshteinSimilarity(
-                        tokenRunes.AsSpan(),
-                        candidate.SurfaceRunes.AsSpan(),
-                        maxAllowedDistance);
-                    if (score < threshold)
-                    {
-                        continue;
-                    }
-
-                    UpdateTopTwo(
-                        candidate,
-                        score,
-                        ref best,
-                        ref bestScore,
-                        ref secondBestDifferent,
-                        ref secondScore);
+                    continue;
                 }
-            }
 
-            if (best is null)
-            {
-                continue;
-            }
+                var score = TextSimilarity.LevenshteinSimilarity(
+                    tokenRunes.AsSpan(),
+                    candidate.SurfaceRunes.AsSpan(),
+                    maxAllowedDistance);
+                if (score < threshold)
+                {
+                    continue;
+                }
 
-            // TWO SURFACES THAT WRITE THE SAME WORD ARE NOT RIVALS.
-            if (secondBestDifferent is not null && bestScore - secondScore < AmbiguityMargin)
-            {
-                continue;
+                UpdateTopTwo(
+                    candidate,
+                    score,
+                    ref best,
+                    ref bestScore,
+                    ref secondBestDifferent,
+                    ref secondScore);
             }
-
-            claimed.Add(new Span(match.Index, match.Length));
-            proposals.Add(new Proposal(match.Index, match.Length, best.Replacement));
         }
+
+        if (best is null)
+        {
+            return false;
+        }
+
+        // TWO SURFACES THAT WRITE THE SAME WORD ARE NOT RIVALS.
+        if (secondBestDifferent is not null && bestScore - secondScore < AmbiguityMargin)
+        {
+            return false;
+        }
+
+        if (suppressCaseOnly && string.Equals(token, best.Replacement, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        matched = best;
+        return true;
     }
 
     private static void UpdateTopTwo(
@@ -777,7 +878,8 @@ public static partial class CustomWordCorrector
         Dictionary<string, Candidate> owners,
         bool overwriteExistingAliases,
         bool excludeLearnedAliases = false,
-        HashSet<string>? skipSurfaces = null)
+        HashSet<string>? skipSurfaces = null,
+        bool includeCanonicalSelfEntries = true)
     {
         foreach (var entry in entries)
         {
@@ -809,6 +911,11 @@ public static partial class CustomWordCorrector
                     owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
                 }
             }
+        }
+
+        if (!includeCanonicalSelfEntries)
+        {
+            return;
         }
 
         foreach (var entry in entries)
@@ -893,13 +1000,33 @@ public static partial class CustomWordCorrector
 
         public int MaxFuzzyRuneLength { get; }
 
+        public HashSet<string> NonPackExactKeys { get; }
+
+        public Dictionary<int, CompiledCandidate[]> PackAliasFuzzyByRuneLength { get; }
+
+        public int PackAliasFuzzyPoolSize { get; }
+
+        public int MinPackAliasFuzzyRuneLength { get; }
+
+        public int MaxPackAliasFuzzyRuneLength { get; }
+
+        public Dictionary<int, CompiledCandidate[]> PackCanonicalFuzzyByRuneLength { get; }
+
+        public int PackCanonicalFuzzyPoolSize { get; }
+
+        public int MinPackCanonicalFuzzyRuneLength { get; }
+
+        public int MaxPackCanonicalFuzzyRuneLength { get; }
+
         public bool HasPhrases => PhrasesByLength.Count > 0;
 
         public bool HasSingleWords => ExactAlnumSingleWords.Count > 0 || ExactComplexMatcher is not null;
 
-        public bool HasFuzzyCandidates => FuzzyPoolSize > 0;
+        public bool HasPackFuzzyCandidates => PackAliasFuzzyPoolSize > 0 || PackCanonicalFuzzyPoolSize > 0;
 
-        public bool IsEmpty => !HasPhrases && !HasSingleWords;
+        public bool HasFuzzyCandidates => FuzzyPoolSize > 0 || HasPackFuzzyCandidates;
+
+        public bool IsEmpty => !HasPhrases && !HasSingleWords && !HasFuzzyCandidates;
 
         private CompiledWordIndex(
             Dictionary<string, Candidate> exactAlnumSingleWords,
@@ -909,7 +1036,16 @@ public static partial class CustomWordCorrector
             Dictionary<int, CompiledCandidate[]> fuzzyByRuneLength,
             int fuzzyPoolSize,
             int minFuzzyRuneLength,
-            int maxFuzzyRuneLength)
+            int maxFuzzyRuneLength,
+            HashSet<string> nonPackExactKeys,
+            Dictionary<int, CompiledCandidate[]> packAliasFuzzyByRuneLength,
+            int packAliasFuzzyPoolSize,
+            int minPackAliasFuzzyRuneLength,
+            int maxPackAliasFuzzyRuneLength,
+            Dictionary<int, CompiledCandidate[]> packCanonicalFuzzyByRuneLength,
+            int packCanonicalFuzzyPoolSize,
+            int minPackCanonicalFuzzyRuneLength,
+            int maxPackCanonicalFuzzyRuneLength)
         {
             ExactAlnumSingleWords = exactAlnumSingleWords;
             ExactComplexMatcher = exactComplexMatcher;
@@ -919,6 +1055,15 @@ public static partial class CustomWordCorrector
             FuzzyPoolSize = fuzzyPoolSize;
             MinFuzzyRuneLength = minFuzzyRuneLength;
             MaxFuzzyRuneLength = maxFuzzyRuneLength;
+            NonPackExactKeys = nonPackExactKeys;
+            PackAliasFuzzyByRuneLength = packAliasFuzzyByRuneLength;
+            PackAliasFuzzyPoolSize = packAliasFuzzyPoolSize;
+            MinPackAliasFuzzyRuneLength = minPackAliasFuzzyRuneLength;
+            MaxPackAliasFuzzyRuneLength = maxPackAliasFuzzyRuneLength;
+            PackCanonicalFuzzyByRuneLength = packCanonicalFuzzyByRuneLength;
+            PackCanonicalFuzzyPoolSize = packCanonicalFuzzyPoolSize;
+            MinPackCanonicalFuzzyRuneLength = minPackCanonicalFuzzyRuneLength;
+            MaxPackCanonicalFuzzyRuneLength = maxPackCanonicalFuzzyRuneLength;
         }
 
         public static CompiledWordIndex Build(
@@ -927,36 +1072,68 @@ public static partial class CustomWordCorrector
             bool excludeLearnedAliases,
             bool reserveExcludedLearnedAliases)
         {
-            var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
-            RegisterEntries(customWords, owners, overwriteExistingAliases: true, excludeLearnedAliases: excludeLearnedAliases);
+            var nonPackOwners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
+            RegisterEntries(
+                customWords,
+                nonPackOwners,
+                overwriteExistingAliases: true,
+                excludeLearnedAliases: excludeLearnedAliases,
+                includeCanonicalSelfEntries: true);
 
+            // Every recognized non-pack exact key (aliases + canonicals, including multi-word canonicals)
+            // so lower-authority pack entries never hijack or rewrite user-owned words (#992).
+            var nonPackExactKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var nonPackClaimedSurfaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in nonPackOwners.Keys)
+            {
+                nonPackClaimedSurfaces.Add(key);
+                if (WordCount(key) == 1)
+                {
+                    nonPackExactKeys.Add(key.ToLowerInvariant());
+                }
+            }
+
+            foreach (var entry in customWords)
+            {
+                if (entry is null || !IsUsable(entry) || (excludeLearnedAliases && entry.IsPureAutoLearned))
+                {
+                    continue;
+                }
+
+                var canonicalSurface = CollapseSpaces(entry.Replacement);
+                if (canonicalSurface.Length > 0)
+                {
+                    nonPackClaimedSurfaces.Add(canonicalSurface);
+                    if (WordCount(canonicalSurface) == 1)
+                    {
+                        nonPackExactKeys.Add(canonicalSurface.ToLowerInvariant());
+                    }
+                }
+            }
+
+            HashSet<string>? reservedLearned = null;
+            if (packWords is { Count: > 0 } && excludeLearnedAliases && reserveExcludedLearnedAliases)
+            {
+                reservedLearned = CollectReservedLearnedSurfaces(customWords);
+            }
+
+            var packExactOwners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
             if (packWords is { Count: > 0 })
             {
-                var reservedLearned = excludeLearnedAliases && reserveExcludedLearnedAliases
-                    ? CollectReservedLearnedSurfaces(customWords)
-                    : null;
-                // Isolated toggleable pack layer: pack entries never overwrite user-defined entries
-                // or active auto-learned aliases still awaiting contextual verification.
-                RegisterEntries(packWords, owners, overwriteExistingAliases: false, excludeLearnedAliases: false, skipSurfaces: reservedLearned);
+                var packSkipSurfaces = reservedLearned is null
+                    ? nonPackClaimedSurfaces
+                    : new HashSet<string>(nonPackClaimedSurfaces.Concat(reservedLearned), StringComparer.OrdinalIgnoreCase);
+                // Isolated toggleable pack layer: pack aliases gap-fill exact slots only (never overwriting
+                // user words, user canonicals, or reserved learned aliases), and pack canonicals are never
+                // added as exact case-flattening self-entries (macOS #992).
+                RegisterEntries(
+                    packWords,
+                    packExactOwners,
+                    overwriteExistingAliases: false,
+                    excludeLearnedAliases: false,
+                    skipSurfaces: packSkipSurfaces,
+                    includeCanonicalSelfEntries: false);
             }
-
-            if (owners.Count == 0)
-            {
-                return new CompiledWordIndex(
-                    new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase),
-                    exactComplexMatcher: null,
-                    new Dictionary<int, PhraseBucket>(),
-                    0,
-                    new Dictionary<int, CompiledCandidate[]>(),
-                    0,
-                    int.MaxValue,
-                    0);
-            }
-
-            var orderedCandidates = owners.Values
-                .OrderByDescending(candidate => WordCount(candidate.Surface))
-                .ThenByDescending(candidate => candidate.Surface.Length)
-                .ToArray();
 
             var exactAlnum = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
             var exactComplex = new List<Candidate>();
@@ -968,99 +1145,133 @@ public static partial class CustomWordCorrector
             var minFuzzyLen = int.MaxValue;
             var maxFuzzyLen = 0;
 
-            foreach (var candidate in orderedCandidates)
+            void AddExactAndUserFuzzy(IEnumerable<Candidate> candidates, bool includeInUserFuzzy)
             {
-                var wordCount = WordCount(candidate.Surface);
-                if (wordCount == 1)
+                var ordered = candidates
+                    .OrderByDescending(candidate => WordCount(candidate.Surface))
+                    .ThenByDescending(candidate => candidate.Surface.Length);
+                foreach (var candidate in ordered)
                 {
-                    if (IsAllWordChars(candidate.Surface))
+                    var wordCount = WordCount(candidate.Surface);
+                    if (wordCount == 1)
                     {
-                        exactAlnum[candidate.Surface] = candidate;
-                    }
-                    else
-                    {
-                        exactComplex.Add(candidate);
-                    }
-
-                    if (candidate.Surface.Length >= 5)
-                    {
-                        var surfaceLower = candidate.Surface.ToLowerInvariant();
-                        var runes = TextSimilarity.ToRuneArray(surfaceLower);
-                        var compiled = new CompiledCandidate(
-                            candidate.Surface,
-                            surfaceLower,
-                            candidate.Replacement,
-                            candidate.Strictness,
-                            runes,
-                            ComputeRuneMask(runes),
-                            BaseThreshold(candidate.Strictness),
-                            LengthAwareAdjustment(candidate.Surface.Length));
-                        if (!fuzzyGrouped.TryGetValue(runes.Length, out var bucket))
+                        if (IsAllWordChars(candidate.Surface))
                         {
-                            bucket = new List<CompiledCandidate>();
-                            fuzzyGrouped[runes.Length] = bucket;
+                            exactAlnum.TryAdd(candidate.Surface, candidate);
+                        }
+                        else
+                        {
+                            exactComplex.Add(candidate);
                         }
 
-                        bucket.Add(compiled);
-                        fuzzyPoolSize++;
-                        if (runes.Length < minFuzzyLen)
+                        if (includeInUserFuzzy && candidate.Surface.Length >= 5)
                         {
-                            minFuzzyLen = runes.Length;
+                            var compiled = CompileCandidate(candidate);
+                            AddToLengthBucket(fuzzyGrouped, compiled, ref fuzzyPoolSize, ref minFuzzyLen, ref maxFuzzyLen);
+                        }
+                    }
+                    else if (wordCount > 1)
+                    {
+                        if (wordCount > longestPhrase)
+                        {
+                            longestPhrase = wordCount;
                         }
 
-                        if (runes.Length > maxFuzzyLen)
+                        if (!exactPhrasesGrouped.TryGetValue(wordCount, out var exactMap))
                         {
-                            maxFuzzyLen = runes.Length;
+                            exactMap = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
+                            exactPhrasesGrouped[wordCount] = exactMap;
+                        }
+
+                        exactMap.TryAdd(candidate.Surface, candidate);
+
+                        if (includeInUserFuzzy)
+                        {
+                            var compiled = CompileCandidate(candidate);
+                            if (!phrasesGrouped.TryGetValue(wordCount, out var phraseList))
+                            {
+                                phraseList = new List<CompiledCandidate>();
+                                phrasesGrouped[wordCount] = phraseList;
+                            }
+
+                            phraseList.Add(compiled);
                         }
                     }
                 }
-                else if (wordCount > 1)
+            }
+
+            AddExactAndUserFuzzy(nonPackOwners.Values, includeInUserFuzzy: true);
+            AddExactAndUserFuzzy(packExactOwners.Values, includeInUserFuzzy: false);
+
+            // Lower-authority pack fuzzy pools (macOS #992): single-word pack aliases and deduplicated
+            // single-word pack canonicals with rune length >= PackFuzzyMinLength (7).
+            var packAliasFuzzyGrouped = new Dictionary<int, List<CompiledCandidate>>();
+            var packAliasFuzzyPoolSize = 0;
+            var minPackAliasFuzzyLen = int.MaxValue;
+            var maxPackAliasFuzzyLen = 0;
+
+            var packCanonicalFuzzyGrouped = new Dictionary<int, List<CompiledCandidate>>();
+            var packCanonicalFuzzyPoolSize = 0;
+            var minPackCanonicalFuzzyLen = int.MaxValue;
+            var maxPackCanonicalFuzzyLen = 0;
+
+            if (packWords is { Count: > 0 })
+            {
+                foreach (var candidate in packExactOwners.Values)
                 {
-                    if (wordCount > longestPhrase)
+                    if (WordCount(candidate.Surface) != 1)
                     {
-                        longestPhrase = wordCount;
+                        continue;
                     }
 
-                    var surfaceLower = candidate.Surface.ToLowerInvariant();
-                    var runes = TextSimilarity.ToRuneArray(surfaceLower);
-                    var compiled = new CompiledCandidate(
-                        candidate.Surface,
-                        surfaceLower,
-                        candidate.Replacement,
-                        candidate.Strictness,
-                        runes,
-                        ComputeRuneMask(runes),
-                        BaseThreshold(candidate.Strictness),
-                        LengthAwareAdjustment(candidate.Surface.Length));
-
-                    if (!phrasesGrouped.TryGetValue(wordCount, out var phraseList))
+                    var compiled = CompileCandidate(candidate);
+                    if (compiled.SurfaceRunes.Length >= PackFuzzyMinLength)
                     {
-                        phraseList = new List<CompiledCandidate>();
-                        phrasesGrouped[wordCount] = phraseList;
+                        AddToLengthBucket(
+                            packAliasFuzzyGrouped,
+                            compiled,
+                            ref packAliasFuzzyPoolSize,
+                            ref minPackAliasFuzzyLen,
+                            ref maxPackAliasFuzzyLen);
+                    }
+                }
+
+                var seenPackCanonicals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var entry in packWords)
+                {
+                    if (entry is null || string.IsNullOrWhiteSpace(entry.Replacement))
+                    {
+                        continue;
                     }
 
-                    phraseList.Add(compiled);
-
-                    if (!exactPhrasesGrouped.TryGetValue(wordCount, out var exactMap))
+                    var canonicalSurface = CollapseSpaces(entry.Replacement);
+                    if (WordCount(canonicalSurface) != 1 ||
+                        ContainsReservedTrigger(canonicalSurface) ||
+                        nonPackClaimedSurfaces.Contains(canonicalSurface) ||
+                        (reservedLearned is not null && reservedLearned.Contains(canonicalSurface)) ||
+                        !seenPackCanonicals.Add(canonicalSurface))
                     {
-                        exactMap = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
-                        exactPhrasesGrouped[wordCount] = exactMap;
+                        continue;
                     }
 
-                    exactMap[candidate.Surface] = candidate;
+                    var compiled = CompileCandidate(new Candidate(canonicalSurface, entry.Replacement, MatchStrictness.Default));
+                    if (compiled.SurfaceRunes.Length >= PackFuzzyMinLength)
+                    {
+                        AddToLengthBucket(
+                            packCanonicalFuzzyGrouped,
+                            compiled,
+                            ref packCanonicalFuzzyPoolSize,
+                            ref minPackCanonicalFuzzyLen,
+                            ref maxPackCanonicalFuzzyLen);
+                    }
                 }
             }
 
-            var phraseBuckets = new Dictionary<int, PhraseBucket>(phrasesGrouped.Count);
-            foreach (var (wordCount, list) in phrasesGrouped)
+            var phraseBuckets = new Dictionary<int, PhraseBucket>(exactPhrasesGrouped.Count);
+            foreach (var (wordCount, exactMap) in exactPhrasesGrouped)
             {
-                phraseBuckets[wordCount] = new PhraseBucket(list.ToArray(), exactPhrasesGrouped[wordCount]);
-            }
-
-            var fuzzyBuckets = new Dictionary<int, CompiledCandidate[]>(fuzzyGrouped.Count);
-            foreach (var (len, list) in fuzzyGrouped)
-            {
-                fuzzyBuckets[len] = list.ToArray();
+                var fuzzyList = phrasesGrouped.TryGetValue(wordCount, out var list) ? list.ToArray() : [];
+                phraseBuckets[wordCount] = new PhraseBucket(fuzzyList, exactMap);
             }
 
             return new CompiledWordIndex(
@@ -1068,10 +1279,73 @@ public static partial class CustomWordCorrector
                 exactComplex.Count > 0 ? AhoCorasickMatcher.Build(exactComplex) : null,
                 phraseBuckets,
                 longestPhrase,
-                fuzzyBuckets,
+                ToArrayBuckets(fuzzyGrouped),
                 fuzzyPoolSize,
                 minFuzzyLen,
-                maxFuzzyLen);
+                maxFuzzyLen,
+                nonPackExactKeys,
+                ToArrayBuckets(packAliasFuzzyGrouped),
+                packAliasFuzzyPoolSize,
+                minPackAliasFuzzyLen,
+                maxPackAliasFuzzyLen,
+                ToArrayBuckets(packCanonicalFuzzyGrouped),
+                packCanonicalFuzzyPoolSize,
+                minPackCanonicalFuzzyLen,
+                maxPackCanonicalFuzzyLen);
+        }
+
+        private static CompiledCandidate CompileCandidate(Candidate candidate)
+        {
+            var surfaceLower = candidate.Surface.ToLowerInvariant();
+            var runes = TextSimilarity.ToRuneArray(surfaceLower);
+            return new CompiledCandidate(
+                candidate.Surface,
+                surfaceLower,
+                candidate.Replacement,
+                candidate.Strictness,
+                runes,
+                ComputeRuneMask(runes),
+                BaseThreshold(candidate.Strictness),
+                LengthAwareAdjustment(candidate.Surface.Length));
+        }
+
+        private static void AddToLengthBucket(
+            Dictionary<int, List<CompiledCandidate>> grouped,
+            CompiledCandidate compiled,
+            ref int poolSize,
+            ref int minLen,
+            ref int maxLen)
+        {
+            var len = compiled.SurfaceRunes.Length;
+            if (!grouped.TryGetValue(len, out var bucket))
+            {
+                bucket = new List<CompiledCandidate>();
+                grouped[len] = bucket;
+            }
+
+            bucket.Add(compiled);
+            poolSize++;
+            if (len < minLen)
+            {
+                minLen = len;
+            }
+
+            if (len > maxLen)
+            {
+                maxLen = len;
+            }
+        }
+
+        private static Dictionary<int, CompiledCandidate[]> ToArrayBuckets(
+            Dictionary<int, List<CompiledCandidate>> grouped)
+        {
+            var result = new Dictionary<int, CompiledCandidate[]>(grouped.Count);
+            foreach (var (len, list) in grouped)
+            {
+                result[len] = list.ToArray();
+            }
+
+            return result;
         }
     }
 

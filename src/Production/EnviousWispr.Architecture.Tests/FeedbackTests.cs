@@ -363,6 +363,12 @@ public sealed class FeedbackTests : IDisposable
 
         Assert.Equal("bug", root.GetProperty("tags").GetProperty("feedback.kind").GetString());
         Assert.Equal("true", root.GetProperty("tags").GetProperty("diagnostics.included").GetString());
+#if DEBUG
+        const string expectedBuildType = "debug";
+#else
+        const string expectedBuildType = "release";
+#endif
+        Assert.Equal(expectedBuildType, root.GetProperty("tags").GetProperty("app.build_type").GetString());
 
         using var attachmentHeader = JsonDocument.Parse(lines[3]);
         Assert.Equal("attachment", attachmentHeader.RootElement.GetProperty("type").GetString());
@@ -389,8 +395,26 @@ public sealed class FeedbackTests : IDisposable
         Assert.False(minimalRoot.TryGetProperty("environment", out _));
         var minimalTags = minimalRoot.GetProperty("tags");
         Assert.Equal("false", minimalTags.GetProperty("diagnostics.included").GetString());
+        Assert.False(minimalTags.TryGetProperty("app.build_type", out _));
         Assert.False(minimalTags.TryGetProperty("app.channel", out _));
         Assert.False(minimalTags.TryGetProperty("app.packaging", out _));
+
+        // When IncludeDiagnostics is true but no snapshot is attached, operational tags including app.build_type must still be omitted.
+        var missingSnapshot = FeedbackSubmission.Create(
+            FeedbackKind.Bug,
+            "Report without snapshot",
+            contactEmail: null,
+            includeDiagnostics: true,
+            diagnosticsSnapshot: null);
+        var missingSnapshotEnvelope = SentryFeedbackSender.BuildEnvelope(dsn, CreateTestIdentity(), missingSnapshot, DateTimeOffset.UtcNow);
+        var missingSnapshotLines = missingSnapshotEnvelope.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(3, missingSnapshotLines.Length);
+        using var missingSnapshotPayload = JsonDocument.Parse(missingSnapshotLines[2]);
+        var missingSnapshotTags = missingSnapshotPayload.RootElement.GetProperty("tags");
+        Assert.Equal("false", missingSnapshotTags.GetProperty("diagnostics.included").GetString());
+        Assert.False(missingSnapshotTags.TryGetProperty("app.build_type", out _));
+        Assert.False(missingSnapshotTags.TryGetProperty("app.channel", out _));
+        Assert.False(missingSnapshotTags.TryGetProperty("app.packaging", out _));
     }
 
     [Fact]

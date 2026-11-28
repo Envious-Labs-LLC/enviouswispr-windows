@@ -182,6 +182,7 @@ public static class AppSettingsValidator
         userData.EnabledVocabularyPackIds.All(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 64) &&
         userData.DeletedBuiltinWordIds.Count <= BuiltinWords.MaximumDeletedBuiltinIds &&
         userData.DeletedBuiltinWordIds.All(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 128) &&
+        IsValidPackOverrides(userData.VocabularyPackOverrides) &&
         userData.CustomWords.All(entry =>
             entry is not null &&
             !string.IsNullOrWhiteSpace(entry.Id) &&
@@ -213,4 +214,48 @@ public static class AppSettingsValidator
             entry.Name.Length <= MaximumSnippetTriggerLength &&
             entry.Body is not null &&
             entry.Body.Length <= MaximumSnippetBodyLength);
+
+    public const int MaximumVocabularyPackOverridePacks = 32;
+    public const int MaximumVocabularyPackOverridesPerPack = 2_000;
+
+    private static bool IsValidPackOverrides(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? overrides)
+    {
+        if (overrides is null || overrides.Count > MaximumVocabularyPackOverridePacks)
+        {
+            return false;
+        }
+
+        foreach (var (packId, wordMap) in overrides)
+        {
+            if (string.IsNullOrWhiteSpace(packId) ||
+                packId.Length > 64 ||
+                wordMap is null ||
+                wordMap.Count > MaximumVocabularyPackOverridesPerPack)
+            {
+                return false;
+            }
+
+            foreach (var (wordKey, wordOverride) in wordMap)
+            {
+                if (string.IsNullOrWhiteSpace(wordKey) ||
+                    wordKey.Length > 256 ||
+                    wordOverride is null)
+                {
+                    return false;
+                }
+
+                if (wordOverride.Aliases is { } aliases)
+                {
+                    if (aliases.Count > CustomWordEntry.MaximumAliasesPerEntry ||
+                        aliases.Any(alias => string.IsNullOrWhiteSpace(alias) || alias.Length > 256))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
 }

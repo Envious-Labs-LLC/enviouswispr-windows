@@ -29,7 +29,7 @@ public sealed class YourWordsScaleAndStorageTests
                 ancestor => ancestor.Name.LocalName == "ScrollViewer");
         }
 
-        foreach (var listName in new[] { "DictionaryList", "SnippetList" })
+        foreach (var listName in new[] { "DictionaryList", "PackWordsList", "SnippetList" })
         {
             var listView = FindNamed(doc, listName);
             Assert.DoesNotContain(
@@ -83,17 +83,32 @@ public sealed class YourWordsScaleAndStorageTests
             }
         }
 
-        var packCardTree = CSharpSyntaxTree.ParseText(
-            File.ReadAllText(Path.Combine(appDir, "MainWindow.Dictionary.cs")),
-            path: "MainWindow.Dictionary.cs");
-        var packMethod = packCardTree.GetRoot().DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
-            .Single(m => m.Identifier.ValueText == "BuildVocabularyPackCard");
-        var packCalls = packMethod.DescendantNodes()
-            .OfType<InvocationExpressionSyntax>()
-            .Select(i => i.Expression.ToString())
-            .ToArray();
-        Assert.DoesNotContain(packCalls, name => name.EndsWith("ApplySettingsToControls", StringComparison.Ordinal));
+        var packMutationMethods = new[]
+        {
+            ("MainWindow.Dictionary.cs", "CommitVocabularyPackMutationAsync"),
+            (Path.Combine("Pages", "DictionaryPageView.xaml.cs"), "BuildVocabularyPackCard"),
+            (Path.Combine("Pages", "DictionaryPageView.xaml.cs"), "HandlePackWordEnabledAsync"),
+            (Path.Combine("Pages", "DictionaryPageView.xaml.cs"), "HandlePackWordAliasesAsync"),
+            (Path.Combine("Pages", "DictionaryPageView.xaml.cs"), "HandlePackWordRestoreAsync"),
+            (Path.Combine("Pages", "DictionaryPageView.xaml.cs"), "PackDetailToggle_Toggled"),
+            (Path.Combine("Pages", "DictionaryPageView.xaml.cs"), "PackDetailRestoreAllButton_Click"),
+        };
+
+        foreach (var (relativePath, methodName) in packMutationMethods)
+        {
+            var packTree = CSharpSyntaxTree.ParseText(
+                File.ReadAllText(Path.Combine(appDir, relativePath)),
+                path: relativePath);
+            var packMethod = packTree.GetRoot().DescendantNodes()
+                .OfType<MethodDeclarationSyntax>()
+                .Single(m => m.Identifier.ValueText == methodName);
+            var packCalls = packMethod.DescendantNodes()
+                .OfType<InvocationExpressionSyntax>()
+                .Select(i => i.Expression.ToString())
+                .ToArray();
+            Assert.DoesNotContain(packCalls, name => name.EndsWith("ApplySettingsToControls", StringComparison.Ordinal));
+            Assert.DoesNotContain(packCalls, name => name.EndsWith("RefreshReusableUserDataViews", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
