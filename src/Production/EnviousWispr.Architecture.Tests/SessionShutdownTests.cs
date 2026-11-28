@@ -1,3 +1,4 @@
+using EnviousWispr.App.Composition;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
@@ -176,7 +177,7 @@ public sealed class SessionShutdownTests
         }
 
         await world.PressAsync();
-        clock.HoldDisposeFor = watchdog ? TimeSpan.FromMinutes(5) : TimeSpan.FromMilliseconds(250);
+        clock.HoldDisposeFor = watchdog ? InitialWatchdogDelay() : TimeSpan.FromMilliseconds(250);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
         Exception? primary = null;
         try
@@ -302,7 +303,7 @@ public sealed class SessionShutdownTests
         await world.PressAsync();
         if (spentSeconds > 0)
         {
-            clock.HoldDisposeFor = TimeSpan.FromMinutes(5);
+            clock.HoldDisposeFor = InitialWatchdogDelay();
         }
 
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
@@ -526,10 +527,18 @@ public sealed class SessionShutdownTests
 
         world.PreviewEngine.AllowStopExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Applied, (await timeout.WaitAsync(Patience)).Disposition);
-        Assert.True(world.Capture.Cancelled.Task.IsCompleted, "the timeout closed the microphone itself");
+        Assert.True(world.Capture.Stopped.Task.IsCompleted, "the timeout closed the microphone gracefully");
         Assert.Equal(0, world.Delivery.Deliveries);
-        Assert.Equal(0, world.Engine.Calls);
+        Assert.Equal(1, world.Engine.Calls);
+        Assert.True(world.Persistence.HasPendingRecovery);
         Assert.Equal(0, world.TearDowns);
+    }
+
+    private static TimeSpan InitialWatchdogDelay()
+    {
+        var duration = RecordingLimits.WatchdogDuration();
+        var lead = RecordingLimits.WarningLead();
+        return lead > TimeSpan.Zero && duration > lead ? duration - lead : duration;
     }
 
     [Fact]
