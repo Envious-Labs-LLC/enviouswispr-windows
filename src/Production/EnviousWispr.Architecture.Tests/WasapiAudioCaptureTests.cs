@@ -1064,4 +1064,48 @@ public sealed class WasapiAudioCaptureTests
         var stopped = await capture.StopAsync();
         Assert.Equal([0.25f, -0.5f, 1f], stopped.Samples.ToArray());
     }
+
+    [Fact]
+    public async Task StaleFirstPacketWatchdogCallbackDoesNotCancelActiveAttemptWatchdog()
+    {
+        var clock = new Deterministic.ManualClock();
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(_ => new FakeRecorderSession()),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => false);
+
+        var firstRequest = new AudioCaptureRequest(DictationSessionId.Create());
+        await capture.StartAsync(firstRequest);
+        await capture.CancelAsync();
+
+        var faults = new List<AudioCaptureStopped>();
+        var secondFault = new TaskCompletionSource<AudioCaptureStopped>(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.UnexpectedStop += (_, args) =>
+        {
+            faults.Add(args);
+            secondFault.TrySetResult(args);
+        };
+
+        var secondSession = DictationSessionId.Create();
+        await capture.StartAsync(new AudioCaptureRequest(secondSession));
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Simulate stale timer callback from attempt 1 firing late after attempt 2 armed its own timer.
+        await capture.OnFirstPacketWatchdogDueAsync(
+            attemptGeneration: 1,
+            firstRequest,
+            isBluetooth: false,
+            allowBluetoothRetry: false);
+
+        // Attempt 2's watchdog must remain armed and fire cleanly at 800ms.
+        Assert.False(secondFault.Task.IsCompleted);
+        clock.Advance(WasapiAudioCapture.WiredFirstPacketTimeout);
+        var fault = await secondFault.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(secondSession, fault.SessionId);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, fault.Error.Code);
+        Assert.Single(faults);
+
+        await capture.CancelAsync();
+    }
 }

@@ -941,8 +941,15 @@ public partial class App
     {
         if (source == LastDictationSource.Shortcut)
         {
-            // PasteLast fires on chord key-up; this brief grace wait catches fast modifier release jitter.
-            await ModifierKeys.WaitForReleaseAsync(TimeSpan.FromMilliseconds(150), cancellationToken).ConfigureAwait(false);
+            // PasteLast fires on chord key-up, returning immediately once modifiers are already up, while
+            // still giving slowly lifted modifiers up to 1 second before falling back to clipboard-only copy.
+            var released = await ModifierKeys
+                .WaitForReleaseAsync(TimeSpan.FromSeconds(1), cancellationToken)
+                .ConfigureAwait(false);
+            if (!released)
+            {
+                return await reuse.CopyAsync(source, shownEntry, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return await reuse.PasteAsync(target, source, shownEntry, cancellationToken).ConfigureAwait(false);

@@ -1771,13 +1771,12 @@ public sealed class WasapiAudioCapture :
         timer?.Dispose();
     }
 
-    private async Task OnFirstPacketWatchdogDueAsync(
+    internal async Task OnFirstPacketWatchdogDueAsync(
         long attemptGeneration,
         AudioCaptureRequest request,
         bool isBluetooth,
         bool allowBluetoothRetry)
     {
-        CancelFirstPacketWatchdogTimer();
         try
         {
             await _transitionGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -1801,6 +1800,8 @@ public sealed class WasapiAudioCapture :
             {
                 return;
             }
+
+            CancelFirstPacketWatchdogTimer();
 
             if (allowBluetoothRetry && isBluetooth)
             {
