@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using EnviousWispr.Core.Networking;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.LLM;
@@ -40,6 +41,10 @@ internal interface IEgOneRuntime : IAsyncDisposable
 
     int? SleepIdleSeconds { get; }
 
+    EgOneServerActivity ServerActivity { get; }
+
+    event EventHandler? ServerActivityChanged;
+
     Task<EgOneEndpoint?> EnsureReadyAsync(CancellationToken cancellationToken);
 
     /// <summary>Returns the live loopback endpoint only if the server is already running and ready; never cold-starts it.</summary>
@@ -61,9 +66,11 @@ public sealed class EgOneServerManager : IEgOneRuntime
     private bool _hasReachedReady;
     private bool _restartUsed;
     private int _failedStarts;
+    private volatile bool _isStarting;
     private volatile bool _disposed;
     private int _preWakeInFlight;
     private volatile bool _isUsingAccelerator;
+    private int _lastPublishedActivity = (int)EgOneServerActivity.Inactive;
 
     public EgOneServerManager(EgOneServerOptions options, HttpMessageHandler? healthHandler = null)
     {
@@ -81,9 +88,20 @@ public sealed class EgOneServerManager : IEgOneRuntime
         _healthClient = SharedHttpClients.CreateClient(healthHandler);
     }
 
+    public event EventHandler? ServerActivityChanged;
+
     public bool IsUsingAccelerator => _isUsingAccelerator;
 
     public int? SleepIdleSeconds => _options.SleepIdleSeconds is > 0 ? _options.SleepIdleSeconds : null;
+
+    public EgOneServerActivity ServerActivity =>
+        _disposed
+            ? EgOneServerActivity.Inactive
+            : _endpoint is not null && IsProcessAlive(_process)
+                ? EgOneServerActivity.Ready
+                : _isStarting
+                    ? EgOneServerActivity.Starting
+                    : EgOneServerActivity.Inactive;
 
     public int? OwnedProcessId
     {
@@ -253,15 +271,25 @@ public sealed class EgOneServerManager : IEgOneRuntime
             return null;
         }
 
-        var initialOptions = _options with { StartupTimeout = ResolveInitialAttemptTimeout(_options) };
-        var endpoint = await StartWithOptionsAsync(initialOptions, cancellationToken).ConfigureAwait(false);
-        if (ShouldRetryOnCpuFallback(_options, endpoint, cancellationToken.IsCancellationRequested))
+        _isStarting = true;
+        NotifyServerActivityChanged();
+        try
         {
-            var cpuOptions = _options with { GpuLayers = 0, AllowCpuFallback = false };
-            endpoint = await StartWithOptionsAsync(cpuOptions, cancellationToken).ConfigureAwait(false);
-        }
+            var initialOptions = _options with { StartupTimeout = ResolveInitialAttemptTimeout(_options) };
+            var endpoint = await StartWithOptionsAsync(initialOptions, cancellationToken).ConfigureAwait(false);
+            if (ShouldRetryOnCpuFallback(_options, endpoint, cancellationToken.IsCancellationRequested))
+            {
+                var cpuOptions = _options with { GpuLayers = 0, AllowCpuFallback = false };
+                endpoint = await StartWithOptionsAsync(cpuOptions, cancellationToken).ConfigureAwait(false);
+            }
 
-        return endpoint;
+            return endpoint;
+        }
+        finally
+        {
+            _isStarting = false;
+            NotifyServerActivityChanged();
+        }
     }
 
     public EgOneEndpoint? TryGetReadyEndpoint()
@@ -306,11 +334,13 @@ public sealed class EgOneServerManager : IEgOneRuntime
             startInfo.ArgumentList.Add(argument);
         }
 
-        var process = new Process { StartInfo = startInfo };
+        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        process.Exited += OnOwnedProcessExited;
         try
         {
             if (!process.Start())
             {
+                process.Exited -= OnOwnedProcessExited;
                 process.Dispose();
                 return null;
             }
@@ -318,6 +348,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
             var processJob = WindowsProcessJob.TryCreateFor(process);
             if (processJob is null)
             {
+                process.Exited -= OnOwnedProcessExited;
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
                 process.Dispose();
@@ -340,6 +371,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
             _endpoint = endpoint;
             _isUsingAccelerator = attemptOptions.GpuLayers is > 0;
             _hasReachedReady = true;
+            NotifyServerActivityChanged();
             return endpoint;
         }
         catch (OperationCanceledException)
@@ -421,9 +453,11 @@ public sealed class EgOneServerManager : IEgOneRuntime
         if (process is null)
         {
             processJob?.Dispose();
+            NotifyServerActivityChanged();
             return;
         }
 
+        process.Exited -= OnOwnedProcessExited;
         try
         {
             if (!process.HasExited)
@@ -447,20 +481,24 @@ public sealed class EgOneServerManager : IEgOneRuntime
         {
             process.Dispose();
             processJob?.Dispose();
+            NotifyServerActivityChanged();
         }
     }
 
     public void TerminateImmediately()
     {
         _endpoint = null;
+        _isStarting = false;
         var process = Interlocked.Exchange(ref _process, null);
         var processJob = Interlocked.Exchange(ref _processJob, null);
         if (process is null)
         {
             processJob?.Dispose();
+            NotifyServerActivityChanged();
             return;
         }
 
+        process.Exited -= OnOwnedProcessExited;
         try
         {
             if (!process.HasExited)
@@ -476,6 +514,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
         {
             process.Dispose();
             processJob?.Dispose();
+            NotifyServerActivityChanged();
         }
     }
 
@@ -495,6 +534,7 @@ public sealed class EgOneServerManager : IEgOneRuntime
             }
 
             _disposed = true;
+            _isStarting = false;
             await StopOwnedProcessAsync().ConfigureAwait(false);
         }
         finally
@@ -502,8 +542,38 @@ public sealed class EgOneServerManager : IEgOneRuntime
             _gate.Release();
             _gate.Dispose();
             _healthClient.Dispose();
+            NotifyServerActivityChanged();
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    private static bool IsProcessAlive(Process? process)
+    {
+        if (process is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return !process.HasExited;
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private void OnOwnedProcessExited(object? sender, EventArgs args) =>
+        NotifyServerActivityChanged();
+
+    private void NotifyServerActivityChanged()
+    {
+        var current = (int)ServerActivity;
+        if (Interlocked.Exchange(ref _lastPublishedActivity, current) != current)
+        {
+            ServerActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 }

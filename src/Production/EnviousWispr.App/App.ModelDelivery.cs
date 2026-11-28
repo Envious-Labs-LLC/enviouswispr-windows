@@ -756,6 +756,11 @@ public partial class App
 
         var provider = _polishProvider;
         _polishProvider = null;
+        if (provider is EgOnePolishProvider egOne)
+        {
+            egOne.ServerActivityChanged -= OnEgOneServerActivityChanged;
+        }
+        NotifyWindowEgOneActivityChanged();
         await CancelAndDrainRepolishAsync().ConfigureAwait(true);
         if (provider is not null)
         {

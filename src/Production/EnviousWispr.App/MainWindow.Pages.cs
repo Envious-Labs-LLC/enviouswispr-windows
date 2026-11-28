@@ -129,6 +129,7 @@ public sealed partial class MainWindow
             {
                 CancelKeybindCapture();
                 StopOllamaLivePollTimer();
+                StopEgOneMemoryTimer();
                 if (_settingsPageView is { } view)
                 {
                     view.Detach();
@@ -164,6 +165,7 @@ public sealed partial class MainWindow
         UpdateRecordingModeButtons();
         UpdateThemeSegmentButtons();
         RenderSpeechEngineCards();
+        UpdateEgOneCards();
         RefreshLivePreviewSectionPresentation();
         UpdateOverlayPositionSegmentButtons();
     }

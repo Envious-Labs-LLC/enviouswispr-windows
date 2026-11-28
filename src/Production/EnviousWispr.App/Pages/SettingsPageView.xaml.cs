@@ -73,6 +73,8 @@ public sealed partial class SettingsPageView : UserControl
 
     private void EgOneDownloadButton_Click(object sender, RoutedEventArgs e) => Host.EgOneDownloadButton_Click(sender, e);
 
+    private void EgOneMemoryPanel_SizeChanged(object sender, SizeChangedEventArgs e) => Host.EgOneMemoryPanel_SizeChanged(sender, e);
+
     private void EgOneRemoveButton_Click(object sender, RoutedEventArgs e) => Host.EgOneRemoveButton_Click(sender, e);
 
     private void EgOneSizeCard_Checked(object sender, RoutedEventArgs e) => Host.EgOneSizeCard_Checked(sender, e);

@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Globalization;
 using EnviousWispr.Core.Credentials;
+using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Onboarding;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
@@ -8,9 +10,12 @@ using EnviousWispr.LLM;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
 using EnviousWispr.Services.Distribution;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 
 namespace EnviousWispr.App;
 
@@ -34,10 +39,11 @@ public sealed class SelectableChoiceOption : INotifyPropertyChanged
 {
     private bool _isSelected;
 
-    public SelectableChoiceOption(string name, string description)
+    public SelectableChoiceOption(string name, string description, string? badgeText = null)
     {
         Name = name;
         Description = description;
+        BadgeText = badgeText;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -46,6 +52,11 @@ public sealed class SelectableChoiceOption : INotifyPropertyChanged
     public string Name { get; }
 
     public string Description { get; }
+
+    public string? BadgeText { get; }
+
+    public Visibility BadgeVisibility =>
+        string.IsNullOrWhiteSpace(BadgeText) ? Visibility.Collapsed : Visibility.Visible;
 
     public bool IsSelected
     {
@@ -100,7 +111,7 @@ public sealed partial class MainWindow
     private readonly SelectableChoiceOption[] PolishProviderChoices =
     [
         new("None", "Leaves the deterministic transcript unchanged."),
-        new("EG-1", "Polishes locally with the bundled Envious Grammar model."),
+        new("EG-1", "Polishes locally with the bundled Envious Grammar model.", "Recommended"),
         new("Ollama", "Polishes locally with an Ollama model on this PC."),
         new("OpenAI", "Sends transcript text directly to your OpenAI account."),
         new("Anthropic", "Sends transcript text directly to your Anthropic account."),
@@ -116,6 +127,27 @@ public sealed partial class MainWindow
     private bool _isUpdatingPolishModelPicker;
     private bool _isUpdatingEgOneCards;
     private HardwareProfile? _hardwareProfile;
+    private SystemMemorySampler? _egOneMemorySampler;
+    private DispatcherQueueTimer? _egOneMemoryTimer;
+    private readonly Dictionary<string, EgOneMemoryPresentation> _latestEgOneMemoryPresentations = new(StringComparer.Ordinal);
+
+    /// <summary>Queries the live EG-1 helper server lifecycle state keyed by normalized model ID.</summary>
+    public Func<IReadOnlyDictionary<string, EgOneServerActivity>>? GetEgOneServerActivities { get; set; }
+
+    /// <summary>Refreshes EG-1 card memory attribution immediately when the local helper starts, reaches ready, or stops.</summary>
+    public void NotifyEgOneActivityChanged()
+    {
+        if (_shuttingDownProductWindows ||
+            _session.Closing ||
+            !IsSettingsPageLoaded ||
+            AiPolishSection is not { Visibility: Visibility.Visible } ||
+            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != PolishProvider.EgOne)
+        {
+            return;
+        }
+
+        UpdateEgOneCards();
+    }
 
     /// <summary>The person asked to download an EG-1 model size.</summary>
     public event Action<string>? EgOneModelDownloadRequested;
@@ -243,6 +275,12 @@ public sealed partial class MainWindow
         {
             ActivePolishProviderNameText.Text = ProviderDisplayName(provider);
         }
+        if (ActivePolishProviderRecommendedBadge is not null)
+        {
+            ActivePolishProviderRecommendedBadge.Visibility = provider == PolishProvider.EgOne
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
 
         var selectedEgOneState = provider == PolishProvider.EgOne
             ? ResolveEgOneDisplayState(ResolveSelectedEgOneModelId())
@@ -287,7 +325,12 @@ public sealed partial class MainWindow
         }
         if (provider == PolishProvider.EgOne)
         {
+            UpdateEgOneMemoryTimer(tickImmediately: true, renderOnChange: false);
             UpdateEgOneCards();
+        }
+        else
+        {
+            UpdateEgOneMemoryTimer(tickImmediately: false);
         }
         if (OllamaSettingsPanel is not null)
         {
@@ -439,6 +482,122 @@ public sealed partial class MainWindow
             DeliveryStage: modelExists ? SpeechModelDelivery.Installed : SpeechModelDelivery.Missing);
     }
 
+    internal SetupHardwareSnapshot BuildSetupHardwareSnapshot(string? selectedLanguageCode = null)
+    {
+        var profile = _hardwareProfile ??= HardwareProfileSummary.GetCurrent();
+        var languageCode = selectedLanguageCode
+            ?? _selectedWhisperLanguage
+            ?? _settings?.Preferences.Dictation.WhisperLanguage;
+        return new SetupHardwareSnapshot(
+            TotalRamGb: profile.TotalRamGb,
+            GpuKind: profile.GpuKind,
+            DedicatedVramGb: profile.DedicatedVramGb,
+            PhysicalCoreCount: profile.PhysicalCoreCount,
+            PerformanceCoreCount: profile.PerformanceCoreCount,
+            Architecture: profile.Architecture,
+            AvailableDiskGb: profile.AvailableDiskGb,
+            SelectedLanguageCode: languageCode,
+            SystemLanguageCode: CultureInfo.CurrentUICulture.Name,
+            CudaRuntimeInstalled: _cudaRuntimeAvailable);
+    }
+
+    private SystemMemorySampler EnsureEgOneMemorySampler() =>
+        _egOneMemorySampler ??= new SystemMemorySampler(
+            SystemMemoryReader.ReadCurrent,
+            IsEgOneMemorySamplingVisible);
+
+    private bool IsEgOneMemorySamplingVisible()
+    {
+        if (_shuttingDownProductWindows ||
+            _session.Closing ||
+            !IsSettingsPageLoaded ||
+            SettingsPage is not { Visibility: Visibility.Visible } ||
+            AiPolishSection is not { Visibility: Visibility.Visible } ||
+            EgOneSettingsPanel is not { Visibility: Visibility.Visible } ||
+            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != PolishProvider.EgOne)
+        {
+            return false;
+        }
+
+        if (_onboardingLoaded && OnboardingView is { Visibility: Visibility.Visible })
+        {
+            return false;
+        }
+
+        try
+        {
+            if (AppWindow is not { IsVisible: true })
+            {
+                return false;
+            }
+
+            if (AppWindow.Presenter is OverlappedPresenter presenter &&
+                presenter.State == OverlappedPresenterState.Minimized)
+            {
+                return false;
+            }
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    internal void UpdateEgOneMemoryTimer(bool tickImmediately, bool renderOnChange = true)
+    {
+        if (!IsEgOneMemorySamplingVisible())
+        {
+            _egOneMemoryTimer?.Stop();
+            return;
+        }
+
+        var sampler = EnsureEgOneMemorySampler();
+        if (tickImmediately && sampler.Tick() && renderOnChange)
+        {
+            UpdateEgOneCards();
+        }
+
+        if (_egOneMemoryTimer is null && DispatcherQueue is { } queue)
+        {
+            _egOneMemoryTimer = queue.CreateTimer();
+            _egOneMemoryTimer.Interval = SystemMemorySampler.SampleInterval;
+            _egOneMemoryTimer.IsRepeating = true;
+            _egOneMemoryTimer.Tick += OnEgOneMemoryTimerTick;
+        }
+
+        if (_egOneMemoryTimer is { IsRunning: false })
+        {
+            _egOneMemoryTimer.Start();
+        }
+    }
+
+    private void StopEgOneMemoryTimer()
+    {
+        if (_egOneMemoryTimer is not null)
+        {
+            _egOneMemoryTimer.Stop();
+            _egOneMemoryTimer.Tick -= OnEgOneMemoryTimerTick;
+            _egOneMemoryTimer = null;
+        }
+    }
+
+    private void OnEgOneMemoryTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        if (!IsEgOneMemorySamplingVisible())
+        {
+            sender.Stop();
+            return;
+        }
+
+        var sampler = EnsureEgOneMemorySampler();
+        if (sampler.Tick())
+        {
+            UpdateEgOneCards();
+        }
+    }
+
     private void UpdateEgOneCards()
     {
         if (_isUpdatingEgOneCards
@@ -450,10 +609,30 @@ public sealed partial class MainWindow
         }
 
         var profile = _hardwareProfile ??= HardwareProfileSummary.GetCurrent();
+        var sampler = EnsureEgOneMemorySampler();
+        if (sampler.LatestReading is null && IsEgOneMemorySamplingVisible())
+        {
+            sampler.Tick();
+        }
+
+        var liveReading = sampler.LatestReading;
         if (EgOneMemoryText is not null)
         {
-            EgOneMemoryText.Text = profile.SummaryText;
+            EgOneMemoryText.Text = EgOneMemoryBarPresentation.FormatPcMemoryHeading(
+                profile.TotalRamGb,
+                profile.GpuKind,
+                profile.DedicatedVramGb,
+                profile.PhysicalCoreCount,
+                liveReading);
         }
+
+        var totalPhysicalBytes = liveReading?.TotalPhysicalBytes ??
+            (profile.TotalRamGb > 0d && double.IsFinite(profile.TotalRamGb)
+                ? Math.Max(1UL, (ulong)Math.Round(profile.TotalRamGb * EgOneMemoryFacts.BytesPerGiB, MidpointRounding.AwayFromZero))
+                : (ulong?)null);
+        var recommendation = WindowsSetupRecommender.Recommend(BuildSetupHardwareSnapshot());
+        var recommendedModelId = EnginePolishPresentation.NormalizeEgOneModelId(recommendation.Polish.PrimaryModelId);
+        var serverActivities = GetEgOneServerActivities?.Invoke();
 
         var rawModelId = _selectedEgOneModelId;
         if (string.IsNullOrWhiteSpace(rawModelId) &&
@@ -534,13 +713,25 @@ public sealed partial class MainWindow
             var state = ResolveEgOneDisplayState(slot.Item1);
             var otherInFlight = _activeEgOneDownloadModelId is not null &&
                 !string.Equals(_activeEgOneDownloadModelId, slot.Item1, StringComparison.Ordinal);
+            var activity = serverActivities is not null &&
+                serverActivities.TryGetValue(slot.Item1, out var resolvedActivity)
+                    ? resolvedActivity
+                    : EgOneServerActivity.Inactive;
             var card = EnginePolishPresentation.DescribeEgOneCard(
                 slot.Item1,
                 normalizedModelId,
-                profile.RecommendedEgOneModelId,
+                recommendedModelId,
                 state,
                 otherInFlight,
-                _egOneServerExecutableExists);
+                _egOneServerExecutableExists,
+                totalPhysicalBytes,
+                liveReading?.UsedBytes,
+                activity);
+            if (card.Memory is { } memory)
+            {
+                _latestEgOneMemoryPresentations[slot.Item1] = memory;
+            }
+
             ApplyEgOneCardPresentation(
                 card,
                 slot.Item2,
@@ -556,6 +747,7 @@ public sealed partial class MainWindow
                 slot.Item12,
                 slot.Item13,
                 slot.Item14);
+            ApplyEgOneMemoryPresentation(slot.Item1, card);
         }
 
         if (EgOneInstallStatusText is not null)
@@ -659,7 +851,7 @@ public sealed partial class MainWindow
 
         if (specsText is not null)
         {
-            specsText.Text = card.SpecsSummary;
+            specsText.Text = $"{card.QualityText} \u00B7 {card.SpeedText} \u00B7 {card.DiskSizeText}";
         }
 
         if (detailText is not null)
@@ -696,6 +888,298 @@ public sealed partial class MainWindow
             chooseProviderButton.Visibility = card.ShowChooseProviderButton ? Visibility.Visible : Visibility.Collapsed;
         }
     }
+
+    internal void EgOneMemoryPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string modelId })
+        {
+            UpdateEgOneMemoryTrackAndLayout(modelId);
+        }
+    }
+
+    private void ApplyEgOneMemoryPresentation(string modelId, EgOneCardPresentation card)
+    {
+        if (card.Memory is not { } memory)
+        {
+            return;
+        }
+
+        var controls = ResolveEgOneMemoryControls(modelId);
+        if (controls is null)
+        {
+            return;
+        }
+
+        var (panel, headerGrid, valueRow, valueText, lightestText, track, usedBar, peakBar, keyGrid, inUseEntry, inUseText, sizeEntry, sizeDot, sizeText, percentText, warningText) = controls.Value;
+        var warned = memory.Warning != EgOneMemoryWarning.None;
+
+        if (valueText is not null)
+        {
+            valueText.Text = memory.ValueText;
+            var valueStyleKey = warned ? "BrandMemoryWarningTextStyle" : "BrandMemoryDefaultTextStyle";
+            if (Application.Current.Resources[valueStyleKey] is Style valueStyle)
+            {
+                valueText.Style = valueStyle;
+            }
+        }
+
+        if (lightestText is not null)
+        {
+            lightestText.Visibility = !string.IsNullOrWhiteSpace(memory.LightestMark)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        var fillStyleKey = warned ? "BrandMemoryWarningFillStyle" : "BrandMemoryAccentFillStyle";
+        if (Application.Current.Resources[fillStyleKey] is Style fillStyle)
+        {
+            if (peakBar is not null)
+            {
+                peakBar.Style = fillStyle;
+            }
+
+            if (sizeDot is not null)
+            {
+                sizeDot.Style = fillStyle;
+            }
+        }
+
+        if (keyGrid is not null)
+        {
+            if (memory.Key is { } key)
+            {
+                keyGrid.Visibility = Visibility.Visible;
+                if (inUseText is not null)
+                {
+                    inUseText.Text = key.InUseLabel;
+                }
+
+                if (sizeText is not null)
+                {
+                    sizeText.Text = key.SizeLabel;
+                    var sizeStyleKey = warned ? "BrandMemoryWarningTextStyle" : "BrandMemoryAccentTextStyle";
+                    if (Application.Current.Resources[sizeStyleKey] is Style sizeStyle)
+                    {
+                        sizeText.Style = sizeStyle;
+                    }
+                }
+
+                if (percentText is not null)
+                {
+                    percentText.Text = key.PercentText;
+                    var percentStyleKey = warned ? "BrandMemoryWarningTextStyle" : "BrandMemorySecondaryTextStyle";
+                    if (Application.Current.Resources[percentStyleKey] is Style percentStyle)
+                    {
+                        percentText.Style = percentStyle;
+                    }
+                }
+            }
+            else
+            {
+                keyGrid.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        if (warningText is not null)
+        {
+            warningText.Text = memory.WarningText ?? string.Empty;
+            warningText.Visibility = string.IsNullOrWhiteSpace(memory.WarningText)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
+        UpdateEgOneMemoryTrackAndLayout(modelId);
+    }
+
+    private void UpdateEgOneMemoryTrackAndLayout(string modelId)
+    {
+        if (!_latestEgOneMemoryPresentations.TryGetValue(modelId, out var memory))
+        {
+            return;
+        }
+
+        var controls = ResolveEgOneMemoryControls(modelId);
+        if (controls is null)
+        {
+            return;
+        }
+
+        var (panel, headerGrid, valueRow, _, _, track, usedBar, peakBar, keyGrid, inUseEntry, _, sizeEntry, _, _, percentText, _) = controls.Value;
+        var trackWidth = track?.ActualWidth ?? 0d;
+        if (trackWidth > 0d)
+        {
+            var usedWidth = memory.UsedFraction > 0d
+                ? Math.Clamp(Math.Round(trackWidth * memory.UsedFraction), 0d, trackWidth)
+                : 0d;
+            if (usedBar is not null)
+            {
+                usedBar.Width = usedWidth;
+                usedBar.Visibility = usedWidth > 0d ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            var peakLeft = Math.Clamp(Math.Round(trackWidth * memory.PeakStart), 0d, trackWidth);
+            var peakWidth = memory.PeakFraction > 0d
+                ? Math.Clamp(Math.Round(trackWidth * memory.PeakFraction), 0d, Math.Max(0d, trackWidth - peakLeft))
+                : 0d;
+            if (peakBar is not null)
+            {
+                peakBar.Margin = new Thickness(peakLeft, 0d, 0d, 0d);
+                peakBar.Width = peakWidth;
+                peakBar.Visibility = peakWidth > 0d ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        var panelWidth = panel?.ActualWidth ?? 0d;
+        if (panelWidth <= 0d)
+        {
+            return;
+        }
+
+        if (headerGrid is not null && valueRow is not null)
+        {
+            valueRow.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var stackHeader = valueRow.DesiredSize.Width + 72d > panelWidth;
+            Grid.SetRow(valueRow, stackHeader ? 1 : 0);
+            Grid.SetColumn(valueRow, stackHeader ? 0 : 1);
+            Grid.SetColumnSpan(valueRow, stackHeader ? 2 : 1);
+            valueRow.HorizontalAlignment = stackHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        }
+
+        if (keyGrid is { Visibility: Visibility.Visible } &&
+            inUseEntry is not null &&
+            sizeEntry is not null &&
+            percentText is not null)
+        {
+            var keyWidth = keyGrid.ActualWidth > 0d ? keyGrid.ActualWidth : panelWidth;
+            var infinity = new Size(double.PositiveInfinity, double.PositiveInfinity);
+            inUseEntry.Measure(infinity);
+            sizeEntry.Measure(infinity);
+            percentText.Measure(infinity);
+
+            var gap = 12d;
+            var firstTwoWidth = inUseEntry.DesiredSize.Width + gap + sizeEntry.DesiredSize.Width;
+            var oneLineFits = firstTwoWidth + gap + percentText.DesiredSize.Width <= keyWidth;
+            var twoLinesFit = firstTwoWidth <= keyWidth;
+
+            if (oneLineFits)
+            {
+                Grid.SetRow(inUseEntry, 0);
+                Grid.SetColumn(inUseEntry, 0);
+                Grid.SetColumnSpan(inUseEntry, 1);
+
+                Grid.SetRow(sizeEntry, 0);
+                Grid.SetColumn(sizeEntry, 1);
+                Grid.SetColumnSpan(sizeEntry, 1);
+
+                Grid.SetRow(percentText, 0);
+                Grid.SetColumn(percentText, 2);
+                Grid.SetColumnSpan(percentText, 1);
+                percentText.HorizontalAlignment = HorizontalAlignment.Right;
+            }
+            else if (twoLinesFit)
+            {
+                Grid.SetRow(inUseEntry, 0);
+                Grid.SetColumn(inUseEntry, 0);
+                Grid.SetColumnSpan(inUseEntry, 1);
+
+                Grid.SetRow(sizeEntry, 0);
+                Grid.SetColumn(sizeEntry, 1);
+                Grid.SetColumnSpan(sizeEntry, 2);
+
+                Grid.SetRow(percentText, 1);
+                Grid.SetColumn(percentText, 0);
+                Grid.SetColumnSpan(percentText, 3);
+                percentText.HorizontalAlignment = HorizontalAlignment.Left;
+            }
+            else
+            {
+                Grid.SetRow(inUseEntry, 0);
+                Grid.SetColumn(inUseEntry, 0);
+                Grid.SetColumnSpan(inUseEntry, 3);
+
+                Grid.SetRow(sizeEntry, 1);
+                Grid.SetColumn(sizeEntry, 0);
+                Grid.SetColumnSpan(sizeEntry, 3);
+
+                Grid.SetRow(percentText, 2);
+                Grid.SetColumn(percentText, 0);
+                Grid.SetColumnSpan(percentText, 3);
+                percentText.HorizontalAlignment = HorizontalAlignment.Left;
+            }
+        }
+    }
+
+    private (
+        StackPanel? Panel,
+        Grid? HeaderGrid,
+        StackPanel? ValueRow,
+        TextBlock? ValueText,
+        TextBlock? LightestText,
+        Border? Track,
+        Border? UsedBar,
+        Border? PeakBar,
+        Grid? KeyGrid,
+        StackPanel? InUseEntry,
+        TextBlock? InUseText,
+        StackPanel? SizeEntry,
+        Border? SizeDot,
+        TextBlock? SizeText,
+        TextBlock? PercentText,
+        TextBlock? WarningText)? ResolveEgOneMemoryControls(string modelId) =>
+        EnginePolishPresentation.NormalizeEgOneModelId(modelId) switch
+        {
+            EnginePolishPresentation.EgOneMiniModelId => (
+                EgOneMiniMemoryPanel,
+                EgOneMiniMemoryHeaderGrid,
+                EgOneMiniMemoryValueRow,
+                EgOneMiniMemoryValueText,
+                EgOneMiniMemoryLightestText,
+                EgOneMiniMemoryTrack,
+                EgOneMiniMemoryUsedBar,
+                EgOneMiniMemoryPeakBar,
+                EgOneMiniMemoryKeyGrid,
+                EgOneMiniMemoryKeyInUseEntry,
+                EgOneMiniMemoryKeyInUseText,
+                EgOneMiniMemoryKeySizeEntry,
+                EgOneMiniMemoryKeySizeDot,
+                EgOneMiniMemoryKeySizeText,
+                EgOneMiniMemoryKeyPercentText,
+                EgOneMiniMemoryWarningText),
+            EnginePolishPresentation.EgOneMicroModelId => (
+                EgOneMicroMemoryPanel,
+                EgOneMicroMemoryHeaderGrid,
+                EgOneMicroMemoryValueRow,
+                EgOneMicroMemoryValueText,
+                EgOneMicroMemoryLightestText,
+                EgOneMicroMemoryTrack,
+                EgOneMicroMemoryUsedBar,
+                EgOneMicroMemoryPeakBar,
+                EgOneMicroMemoryKeyGrid,
+                EgOneMicroMemoryKeyInUseEntry,
+                EgOneMicroMemoryKeyInUseText,
+                EgOneMicroMemoryKeySizeEntry,
+                EgOneMicroMemoryKeySizeDot,
+                EgOneMicroMemoryKeySizeText,
+                EgOneMicroMemoryKeyPercentText,
+                EgOneMicroMemoryWarningText),
+            _ => (
+                EgOneFullMemoryPanel,
+                EgOneFullMemoryHeaderGrid,
+                EgOneFullMemoryValueRow,
+                EgOneFullMemoryValueText,
+                EgOneFullMemoryLightestText,
+                EgOneFullMemoryTrack,
+                EgOneFullMemoryUsedBar,
+                EgOneFullMemoryPeakBar,
+                EgOneFullMemoryKeyGrid,
+                EgOneFullMemoryKeyInUseEntry,
+                EgOneFullMemoryKeyInUseText,
+                EgOneFullMemoryKeySizeEntry,
+                EgOneFullMemoryKeySizeDot,
+                EgOneFullMemoryKeySizeText,
+                EgOneFullMemoryKeyPercentText,
+                EgOneFullMemoryWarningText),
+        };
 
     internal void EgOneDownloadButton_Click(object sender, RoutedEventArgs e)
     {

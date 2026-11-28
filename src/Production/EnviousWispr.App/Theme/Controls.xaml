@@ -60,6 +60,15 @@
     <Style x:Key="BrandNeutralChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandSidebarBgBrush}" />
     </Style>
+    <Style x:Key="BrandSolidAccentChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
+    </Style>
+    <Style x:Key="BrandMemoryAccentFillStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
+    <Style x:Key="BrandMemoryWarningFillStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BrandWarningBrush}" />
+    </Style>
     <Style x:Key="BrandPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
@@ -1113,7 +1122,12 @@
     </DataTemplate>
     <DataTemplate x:Key="BrandSelectableChoiceTemplate">
         <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
-            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextWrapping="Wrap" />
+                <Border Padding="8,2" Style="{StaticResource BrandSolidAccentChipStyle}" Visibility="{Binding BadgeVisibility}">
+                    <TextBlock Style="{StaticResource BrandSolidAccentChipTextStyle}" Text="{Binding BadgeText}" />
+                </Border>
+            </StackPanel>
             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding Description}" TextWrapping="Wrap" />
         </StackPanel>
     </DataTemplate>

@@ -6,6 +6,7 @@ using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Networking;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
@@ -85,6 +86,14 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
     public string ModelId => _modelId;
 
     public bool IsLocalRuntimeReady => !_disposed && _runtime.TryGetReadyEndpoint() is not null;
+
+    public EgOneServerActivity ServerActivity => _disposed ? EgOneServerActivity.Inactive : _runtime.ServerActivity;
+
+    public event EventHandler? ServerActivityChanged
+    {
+        add => _runtime.ServerActivityChanged += value;
+        remove => _runtime.ServerActivityChanged -= value;
+    }
 
     public int? OwnedProcessId => _runtime.OwnedProcessId;
 

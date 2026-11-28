@@ -86,6 +86,7 @@ internal static class MainWindowHostBinder
             Subscribe(h => _window.EgOneModelDownloadRequested += h, _models.EgOneModelDownloadRequested);
             Subscribe(h => _window.EgOneModelDownloadCancelRequested += h, _models.EgOneModelDownloadCancelRequested);
             Subscribe(h => _window.EgOneModelRemoveRequested += h, _models.EgOneModelRemoveRequested);
+            _window.GetEgOneServerActivities = _models.GetEgOneServerActivities;
             Subscribe(h => _window.SpeechEngineDownloadRequested += h, _models.SpeechEngineDownloadRequested);
             Subscribe(h => _window.SpeechEngineRemoveRequested += h, _models.SpeechEngineRemoveRequested);
             _window.IsSpeechEngineBusy = _models.IsSpeechEngineBusy;
@@ -178,6 +179,7 @@ internal static class MainWindowHostBinder
             Unsubscribe(h => _window.EgOneModelDownloadRequested -= h, _models.EgOneModelDownloadRequested);
             Unsubscribe(h => _window.EgOneModelDownloadCancelRequested -= h, _models.EgOneModelDownloadCancelRequested);
             Unsubscribe(h => _window.EgOneModelRemoveRequested -= h, _models.EgOneModelRemoveRequested);
+            _window.GetEgOneServerActivities = null;
             Unsubscribe(h => _window.SpeechEngineDownloadRequested -= h, _models.SpeechEngineDownloadRequested);
             Unsubscribe(h => _window.SpeechEngineRemoveRequested -= h, _models.SpeechEngineRemoveRequested);
             _window.IsSpeechEngineBusy = null;

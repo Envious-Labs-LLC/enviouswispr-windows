@@ -5,6 +5,7 @@ using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Feedback;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Onboarding;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
@@ -57,6 +58,7 @@ internal sealed record WindowModelHost(
     Action<string>? EgOneModelDownloadRequested = null,
     Action? EgOneModelDownloadCancelRequested = null,
     Action<string>? EgOneModelRemoveRequested = null,
+    Func<IReadOnlyDictionary<string, EgOneServerActivity>>? GetEgOneServerActivities = null,
     Action<FinalAsrEngine>? SpeechEngineDownloadRequested = null,
     Action<FinalAsrEngine>? SpeechEngineRemoveRequested = null,
     Func<bool>? IsSpeechEngineBusy = null,
