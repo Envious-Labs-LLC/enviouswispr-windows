@@ -592,7 +592,7 @@
     <x:Double x:Key="PillImportMessageMaxWidth">280</x:Double>
     <x:Double x:Key="PillCardWidth">320</x:Double>
     <x:Double x:Key="PillCardInnerMaxWidth">280</x:Double>
-    <x:Double x:Key="PillInPanelNoticeMaxWidth">280</x:Double>
+    <x:Double x:Key="PillInPanelNoticeMaxWidth">312</x:Double>
     <x:Double x:Key="PillCardSpacing">12</x:Double>
     <x:Double x:Key="PillCardTipSpacing">10</x:Double>
     <x:Double x:Key="PillCardTightSpacing">6</x:Double>

@@ -40,6 +40,9 @@ public static class StreamingCommitPlanner
     /// </remarks>
     public static readonly TimeSpan MinimumCommit = TimeSpan.FromSeconds(1.5);
 
+    /// <summary>Maximum continuous speech allowed before forcing a quietest-valley streaming commit.</summary>
+    public static readonly TimeSpan MaximumUncommittedDuration = TimeSpan.FromSeconds(AudioQuietCut.MaximumPieceSeconds);
+
     /// <summary>
     /// The next stretch ready to transcribe, or null when nothing is.
     /// </summary>
@@ -95,21 +98,29 @@ public static class StreamingCommitPlanner
             }
         }
 
-        if (end <= committedThrough)
+        var minimumSamples = (int)(MinimumCommit.TotalSeconds * sampleRate);
+        if (end > committedThrough && speechSamples >= minimumSamples)
         {
-            return null;
+            return new StreamingCommit(committedThrough, end);
         }
 
-        // MEASURED ON THE SPEECH, NOT ON THE AUDIO. The minimum exists because a recogniser given a
-        // fragment has almost no context, and context comes from words rather than from seconds -
-        // so 1.8 seconds containing 600ms of speech either side of a long pause is still a fragment.
-        // The first version measured the whole commit and would have sent exactly that.
-        //
-        // Found by a test asserting a short utterance waits. It failed on its first run, and the
-        // failure was the policy rather than the expectation.
-        var minimumSamples = (int)(MinimumCommit.TotalSeconds * sampleRate);
-        return speechSamples < minimumSamples
-            ? null
-            : new StreamingCommit(committedThrough, end);
+        // Forced quiet-cut commit for long continuous speech (>60s without a 400ms pause), so an
+        // unbroken hour-long monologue streams continuously instead of hoarding 60 minutes for release.
+        var maxUncommittedSamples = checked(sampleRate * AudioQuietCut.MaximumPieceSeconds);
+        var uncommitted = samples[committedThrough..];
+        if (uncommitted.Length > maxUncommittedSamples)
+        {
+            var heardSpeechAfterCommit = segments.Any(segment => segment.IsSpeech && segment.EndSample > committedThrough);
+            if (heardSpeechAfterCommit || !AudioQuietCut.IsSilent(uncommitted))
+            {
+                var cutLength = AudioQuietCut.NextPieceLength(uncommitted, atEnd: false, sampleRate);
+                if (cutLength > 0)
+                {
+                    return new StreamingCommit(committedThrough, committedThrough + cutLength);
+                }
+            }
+        }
+
+        return null;
     }
 }

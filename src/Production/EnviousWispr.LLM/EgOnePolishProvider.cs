@@ -119,6 +119,18 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             ? Task.FromResult(false)
             : _runtime.TryPreWakeAsync(cancellationToken);
 
+    internal static TimeSpan ResolveInferenceTimeout(TimeSpan configuredTimeout, int characterCount)
+    {
+        if (configuredTimeout < TimeSpan.FromSeconds(15) || characterCount <= 0)
+        {
+            return configuredTimeout;
+        }
+
+        var baseSeconds = configuredTimeout.TotalSeconds;
+        var scaledSeconds = Math.Clamp(baseSeconds + (characterCount / 200.0), baseSeconds, 90.0);
+        return TimeSpan.FromSeconds(scaledSeconds);
+    }
+
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
         CancellationToken cancellationToken = default)
@@ -161,7 +173,7 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             }
 
             using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCancellation.CancelAfter(_inferenceTimeout);
+            timeoutCancellation.CancelAfter(ResolveInferenceTimeout(_inferenceTimeout, input.Text.Length));
             try
             {
                 await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);

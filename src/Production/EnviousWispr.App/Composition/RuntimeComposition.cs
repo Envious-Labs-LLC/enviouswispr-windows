@@ -35,6 +35,11 @@ public interface IRuntimeView
 
     /// <summary>A record press was refused because <paramref name="holder"/> had the session; the pill says so.</summary>
     void ShowSessionBusy(SessionHolder holder);
+
+    /// <summary>Surfaces the in-panel warning that the active recording is approaching the 60-minute cap.</summary>
+    void ShowApproachingCapNotice()
+    {
+    }
 }
 
 /// <summary>The shell's leaf reads the long-lived session owners need; nothing here sequences anything.</summary>

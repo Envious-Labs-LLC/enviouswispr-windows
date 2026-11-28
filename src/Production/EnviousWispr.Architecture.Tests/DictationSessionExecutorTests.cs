@@ -876,9 +876,9 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
-    public async Task ATimeoutForTheRecordingStillInFlightAbortsResetsAndWarns()
+    public async Task ATimeoutForTheRecordingStillInFlightStopsAndTranscribesGracefully()
     {
-        var (executor, capture, effects, controller) = Build();
+        var (executor, capture, effects, controller, world) = BuildWithFinalization();
         await executor.ExecuteAsync(Press(), CancellationToken.None);
         var recording = controller.CurrentSession!;
         effects.Trace.Clear();
@@ -886,12 +886,52 @@ public sealed class DictationSessionExecutorTests
         var result = await executor.ExecuteAsync(Timeout(recording.Id), CancellationToken.None);
 
         Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
-        Assert.Null(controller.CurrentSession);
-        Assert.Equal(1, capture.CancelCount);
-        Assert.Equal(0, capture.StopCount);
+        Assert.Equal(recording.Id, result.Session?.Id);
+        Assert.Equal(0, capture.CancelCount);
+        Assert.Equal(1, capture.StopCount);
+        Assert.Single(world.Finalization.Finalized);
+        Assert.True(world.Finalization.LastMaxDurationReached);
         Assert.Equal(
-            ["Background:Stop", "RecordRecordingTimedOut:SessionTimedOut", "ShowRecordingTimedOut", "RecordDictationEdge"],
-            effects.Trace);
+            [
+                "RecordRecordingTimedOut:SessionTimedOut",
+                "ShowMaxDurationTranscribing",
+                "Background:StopWatchdog",
+                "RecordTransition:FinalizeReady",
+                "Background:Stop",
+                "Finalize:recoveryOnly=False",
+                "RecordDictationEdge",
+            ],
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
+    }
+
+    [Fact]
+    public async Task ComputeFinalizationDeadlineScalesLongAudioOnlyWhenDefaultDeadlineIsActive()
+    {
+        var defaultExecutor = Build().Executor;
+        Assert.Equal(TimeSpan.FromMinutes(3), defaultExecutor.ComputeFinalizationDeadline(sampleCount: 16_000 * 10, sampleRate: 16_000));
+        Assert.Equal(TimeSpan.FromSeconds(120 + (3600 * 0.5)), defaultExecutor.ComputeFinalizationDeadline(sampleCount: 16_000 * 3600, sampleRate: 16_000));
+        Assert.Equal(TimeSpan.FromMinutes(35), defaultExecutor.ComputeFinalizationDeadline(sampleCount: 16_000 * 10_000, sampleRate: 16_000));
+
+        var customExecutor = BuildWithFinalization(processingDeadline: TimeSpan.FromSeconds(5)).Executor;
+        Assert.Equal(TimeSpan.FromSeconds(5), customExecutor.ComputeFinalizationDeadline(sampleCount: 16_000 * 3600, sampleRate: 16_000));
+    }
+
+    [Fact]
+    public async Task ATimeoutWhoseFinalizationThrowsRecoversSafely()
+    {
+        var (executor, capture, effects, controller, world) = BuildWithFinalization();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var recording = controller.CurrentSession!;
+        effects.Trace.Clear();
+        world.Finalization.Throws = true;
+
+        var result = await executor.ExecuteAsync(Timeout(recording.Id), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Null(controller.CurrentSession);
+        Assert.Contains("RecordRecordingTimedOut:SessionTimedOut", effects.Trace);
+        Assert.Contains("RecordSessionRecovered:SessionTimedOut", effects.Trace);
+        Assert.Contains("ShowSessionRecovered:TimedOut", effects.Trace);
     }
 
     [Fact]
@@ -1177,6 +1217,12 @@ public sealed class DictationSessionExecutorTests
             ProcessingShown.TrySetResult(true);
         }
 
+        public void ShowMaxDurationTranscribing()
+        {
+            Trace.Add("ShowMaxDurationTranscribing");
+            ProcessingShown.TrySetResult(true);
+        }
+
         public void CancelRecordingCue() => Trace.Add("CancelRecordingCue");
 
         public void RecordSessionFailure() => Trace.Add("RecordSessionFailure");
@@ -1254,8 +1300,14 @@ public sealed class DictationSessionExecutorTests
 
         public TaskCompletionSource Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task<FinalizationReport> RunAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, CancellationToken cancellationToken)
+        public bool LastMaxDurationReached { get; private set; }
+
+        public Task<FinalizationReport> RunAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, CancellationToken cancellationToken) =>
+            RunAsync(sessionId, audio, recoveryOnly, maxDurationReached: false, cancellationToken);
+
+        public async Task<FinalizationReport> RunAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, bool maxDurationReached, CancellationToken cancellationToken)
         {
+            LastMaxDurationReached = maxDurationReached;
             trace.Add($"Finalize:recoveryOnly={recoveryOnly}");
             Finalized.Add(audio);
             Token = cancellationToken;

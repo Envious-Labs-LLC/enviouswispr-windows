@@ -750,6 +750,91 @@ public sealed class StreamingTranscriptionControllerTests
         return world;
     }
 
+    [Fact]
+    public async Task IncrementalSnapshotSourceReadsOnlyTailAndMapsRangesCleanly()
+    {
+        var session = DictationSessionId.Create();
+        var engine = new FakeEngine { NextText = "first sentence" };
+        var audio = new FakeIncrementalAudio { Session = session };
+        var effects = new FakeEffects { Engine = engine, Audio = audio };
+        var log = new FakeLogger();
+        var clock = new Deterministic.ManualClock();
+        var controller = new StreamingTranscriptionController(effects, log, clock);
+
+        audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        controller.Start(session);
+        clock.Advance(Poll);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+
+        Assert.Equal([0], audio.RequestedStarts);
+        var firstCommit = engine.Requests[0];
+
+        audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 2500), (false, 1000), (true, 400));
+        engine.NextText = "second sentence";
+        clock.Advance(Poll);
+        await clock.WhenRegistered(3).WaitAsync(Patience);
+
+        Assert.Equal([0, firstCommit.Length], audio.RequestedStarts);
+        await controller.StopAsync();
+
+        engine.NextText = "and final words";
+        var whole = Build((false, 200), (true, 3000), (false, 1200), (true, 2500), (false, 1000), (true, 1800));
+        var transcript = await controller.TranscribeUsingAnyHeadStartAsync(
+            engine,
+            new CapturedAudio(session, whole, SampleRate, 1),
+            CancellationToken.None);
+
+        Assert.Equal("first sentence second sentence and final words", transcript.Text);
+    }
+
+    [Fact]
+    public async Task WholeAudioOverSixtySecondsIsChunkedAndSilentPiecesAreSkipped()
+    {
+        var world = World.Build();
+        // 65s silent first piece + 65s audible speech + 10s tail speech.
+        var samples = Build((false, 65_000), (true, 75_000));
+        var scriptedEngine = new ScriptedChunkEngine(
+            (_ => new Transcript(world.Session, "minute two words", "scripted")),
+            (_ => new Transcript(world.Session, "final tail words", "scripted")));
+
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            scriptedEngine,
+            new CapturedAudio(world.Session, samples, SampleRate, 1),
+            CancellationToken.None);
+
+        Assert.Equal("minute two words final tail words", transcript.Text);
+        Assert.Equal(2, scriptedEngine.Calls);
+        Assert.All(scriptedEngine.Lengths, length => Assert.True(length <= AudioPieceCutter.MaximumPieceSamples));
+    }
+
+    [Fact]
+    public async Task LongAudioFinalTranscriptionSalvagesEarlierPiecesWhenALaterPieceFails()
+    {
+        var world = World.Build();
+        var samples = Build((true, 80_000));
+        var call = 0;
+        var scriptedEngine = new ScriptedChunkEngine(_ =>
+        {
+            call++;
+            if (call == 1)
+            {
+                return new Transcript(world.Session, "first minute preserved", "scripted");
+            }
+
+            throw new TranscriptionEngineException(
+                new AppError(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker, CanRetry: true));
+        });
+
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            scriptedEngine,
+            new CapturedAudio(world.Session, samples, SampleRate, 1),
+            CancellationToken.None);
+
+        Assert.Equal("first minute preserved", transcript.Text);
+        Assert.True(transcript.UsedFallback);
+        Assert.Equal(AppErrorCode.RuntimeWorkerFailed, transcript.DegradedError?.Code);
+    }
+
     private static float[] Build(params (bool IsSpeech, int Milliseconds)[] parts)
     {
         var samples = new float[parts.Sum(part => SampleRate * part.Milliseconds / 1000)];
@@ -825,6 +910,61 @@ public sealed class StreamingTranscriptionControllerTests
             _sampled.Increment();
             BeforeReturn?.Invoke();
             return snapshot;
+        }
+    }
+
+    private sealed class FakeIncrementalAudio : IAudioIncrementalSnapshotSource
+    {
+        private readonly List<int> _requestedStarts = [];
+        private readonly object _lock = new();
+
+        public DictationSessionId Session { get; set; }
+        public float[] Samples { get; set; } = [];
+
+        public int[] RequestedStarts
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _requestedStarts.ToArray();
+                }
+            }
+        }
+
+        public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration) =>
+            new(Session, Samples, SampleRate, 1);
+
+        public IncrementalAudioSnapshot? GetSnapshotFrom(int startSample)
+        {
+            lock (_lock)
+            {
+                _requestedStarts.Add(startSample);
+            }
+
+            var clamped = Math.Min(startSample, Samples.Length);
+            return new IncrementalAudioSnapshot(
+                Session,
+                SampleRate,
+                clamped,
+                Samples.Length,
+                Samples.AsMemory(clamped));
+        }
+    }
+
+    private sealed class ScriptedChunkEngine(params Func<CapturedAudio, Transcript>[] handlers) : ITranscriptionEngine
+    {
+        private int _index;
+        public List<int> Lengths { get; } = [];
+        public int Calls => _index;
+        public string EngineId => "scripted";
+
+        public Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
+        {
+            Lengths.Add(audio.Samples.Length);
+            var handler = handlers[Math.Min(_index, handlers.Length - 1)];
+            _index++;
+            return Task.FromResult(handler(audio));
         }
     }
 

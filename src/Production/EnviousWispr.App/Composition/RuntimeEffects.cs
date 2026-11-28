@@ -18,6 +18,14 @@ internal sealed class RecordingTimerEffects(RuntimeShell shell, SessionQueue que
 
     public void Post(PushToTalkSignal signal, DictationSessionId forSession) => _ = queue.HandAsync(signal, forSession);
 
+    public void RecordingApproachingCap(DictationSessionId sessionId)
+    {
+        if (!shell.Leaving() && shell.RecordingSessionId() == sessionId)
+        {
+            shell.View.ShowApproachingCapNotice();
+        }
+    }
+
     public void RecordingTimedOut(DictationSessionId sessionId) => queue.TimeOut(sessionId);
 }
 

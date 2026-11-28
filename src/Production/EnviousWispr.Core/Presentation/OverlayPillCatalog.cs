@@ -44,7 +44,9 @@ public static class OverlayPillCatalog
     public const double LearnedErrorDwellSeconds = 3.0;
     public const double EscapeRecoveryDwellSeconds = 3.0;
 
-    public static readonly TimeSpan ApproachingCapElapsedThreshold = TimeSpan.FromSeconds(280);
+    public static readonly TimeSpan ApproachingCapElapsedThreshold = TimeSpan.FromMinutes(59);
+
+    public const string MaxDurationTranscribingText = "60-minute limit reached. Transcribing...";
 
     public static OverlayPillSurfaceKind ResolveSurface(DictationOverlayState state) => state switch
     {
@@ -216,7 +218,7 @@ public static class OverlayPillCatalog
 
     public static string FormatRecordingNoticeText(RecordingNoticeKind notice) => notice switch
     {
-        RecordingNoticeKind.ApproachingCap => "Approaching 5 min recording limit",
+        RecordingNoticeKind.ApproachingCap => "Recording auto-stops in under a minute (60-minute cap)",
         RecordingNoticeKind.AutoStopUnavailable => "Auto-stop unavailable right now",
         _ => string.Empty,
     };

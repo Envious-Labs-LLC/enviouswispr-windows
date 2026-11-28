@@ -92,7 +92,7 @@ public enum SessionCommandKind
     /// <summary>Windows is locking or suspending: whatever is recording is preserved, whatever else is reset.</summary>
     Interruption,
 
-    /// <summary>The recording has run for as long as it is allowed; if it is still the one recording, it is aborted.</summary>
+    /// <summary>The recording has run for as long as it is allowed; if it is still the one recording, capture stops and is transcribed.</summary>
     Timeout,
 }
 
@@ -659,8 +659,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             }
             else if (command.IsTerminal)
             {
-                if (command.Kind == SessionCommandKind.PushToTalk &&
-                    command.Signal is PushToTalkSignal.Released or PushToTalkSignal.Cancelled &&
+                if (((command.Kind == SessionCommandKind.PushToTalk &&
+                      command.Signal is PushToTalkSignal.Released or PushToTalkSignal.Cancelled) ||
+                     command.Kind == SessionCommandKind.Timeout) &&
                     releaseTarget is null)
                 {
                     if (_captureReleaseTargetWithOptions is not null)

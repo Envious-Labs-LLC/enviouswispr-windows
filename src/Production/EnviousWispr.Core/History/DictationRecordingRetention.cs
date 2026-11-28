@@ -9,7 +9,7 @@ public static class DictationRecordingRetention
     public const int DefaultMaximumRecordings = 100;
 
     /// <summary>Default maximum total byte budget retained locally for dictation WAV recordings.</summary>
-    public const long DefaultMaximumTotalBytes = 128L * 1024 * 1024;
+    public const long DefaultMaximumTotalBytes = 512L * 1024 * 1024;
 
     /// <summary>
     /// Returns the paths to delete, oldest first, so both count and total byte budgets hold.

@@ -235,6 +235,15 @@ public sealed class EgOnePolishProviderTests
     }
 
     [Fact]
+    public void ResolveInferenceTimeoutScalesWithoutInflatingShortTestTimeouts()
+    {
+        Assert.Equal(TimeSpan.FromMilliseconds(30), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromMilliseconds(30), 20_000));
+        Assert.Equal(TimeSpan.FromSeconds(15), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromSeconds(15), 0));
+        Assert.Equal(TimeSpan.FromSeconds(65), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromSeconds(15), 10_000));
+        Assert.Equal(TimeSpan.FromSeconds(90), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromSeconds(15), 50_000));
+    }
+
+    [Fact]
     public async Task ConnectionFailureRetriesOnceAndDisposalCleansRuntime()
     {
         var runtime = new FakeRuntime();

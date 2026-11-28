@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 
 namespace EnviousWispr.App;
 
-internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioSnapshotSource
+internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioIncrementalSnapshotSource
 {
     private const int RequiredSampleRate = 16_000;
     private static readonly HashSet<string> ReviewedFixtureHashes = new(
@@ -154,6 +154,32 @@ internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioSnapshotS
             _samples.AsMemory(offset, arrived - offset),
             RequiredSampleRate,
             Channels: 1);
+    }
+
+    public IncrementalAudioSnapshot? GetSnapshotFrom(int startSample)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(startSample);
+        if (_request is not { } request)
+        {
+            return null;
+        }
+
+        var arrived = ArrivedAudio.Count(
+            Stopwatch.GetElapsedTime(_startedTicks),
+            _samples.Length,
+            RequiredSampleRate);
+        if (arrived <= 0)
+        {
+            return null;
+        }
+
+        var clampedStart = Math.Min(startSample, arrived);
+        return new IncrementalAudioSnapshot(
+            request.SessionId,
+            RequiredSampleRate,
+            clampedStart,
+            arrived,
+            _samples.AsMemory(clampedStart, arrived - clampedStart));
     }
 
     public ValueTask DisposeAsync()

@@ -6,8 +6,10 @@ using System.Runtime.InteropServices;
 namespace EnviousWispr.Audio;
 
 public sealed class WasapiAudioCapture :
-    IMicrophoneTestCapture, IAudioSnapshotSource, ICaptureStartTimings
+    IMicrophoneTestCapture, IAudioIncrementalSnapshotSource, ICaptureStartTimings
 {
+    public static readonly TimeSpan DefaultHardCaptureBackstop = TimeSpan.FromMinutes(61);
+
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
         Channels: 1,
@@ -18,6 +20,7 @@ public sealed class WasapiAudioCapture :
     private readonly MemoryStream _capturedBytes = new();
     private readonly IAudioRecorderFactory _recorderFactory;
     private readonly TimeSpan _stopTimeout;
+    private readonly long _maxCapturedBytes;
     private IAudioRecorderSession? _recorder;
     private TaskCompletionSource<Exception?>? _recordingStopped;
     private AudioCaptureRequest? _request;
@@ -25,6 +28,8 @@ public sealed class WasapiAudioCapture :
     private volatile bool _clientRequestedStop;
     private volatile bool _backendStopped;
     private volatile bool _unexpectedStop;
+    private int _backstopTriggered;
+    private int _backstopSignalled;
     private bool _disposed;
     private long? _lastDeviceOpenMilliseconds;
     private long? _lastStreamStartMilliseconds;
@@ -34,20 +39,32 @@ public sealed class WasapiAudioCapture :
     private float _rms;
 
     public WasapiAudioCapture()
-        : this(new WasapiRecorderFactory(), TimeSpan.FromSeconds(2))
+        : this(new WasapiRecorderFactory(), TimeSpan.FromSeconds(2), DefaultHardCaptureBackstop)
     {
     }
 
-    internal WasapiAudioCapture(IAudioRecorderFactory recorderFactory, TimeSpan stopTimeout)
+    internal WasapiAudioCapture(
+        IAudioRecorderFactory recorderFactory,
+        TimeSpan stopTimeout,
+        TimeSpan? hardCaptureBackstop = null)
     {
         ArgumentNullException.ThrowIfNull(recorderFactory);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(stopTimeout, TimeSpan.Zero);
+        var effectiveBackstop = hardCaptureBackstop ?? DefaultHardCaptureBackstop;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(effectiveBackstop, TimeSpan.Zero);
 
         _recorderFactory = recorderFactory;
         _stopTimeout = stopTimeout;
+        var requestedSamples = effectiveBackstop.TotalSeconds * AudioSampleConverter.TargetSampleRate;
+        var maxSamples = requestedSamples >= (int.MaxValue / sizeof(float))
+            ? int.MaxValue / sizeof(float)
+            : Math.Max(1L, (long)Math.Ceiling(requestedSamples));
+        _maxCapturedBytes = maxSamples * sizeof(float);
     }
 
     public event EventHandler<AudioLevel>? LevelChanged;
+
+    public event EventHandler<DictationSessionId>? MaxDurationBackstopReached;
 
     public bool IsCapturing => _isCapturing;
 
@@ -115,6 +132,43 @@ public sealed class WasapiAudioCapture :
             Channels: 1);
     }
 
+    public IncrementalAudioSnapshot? GetSnapshotFrom(int startSample)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(startSample);
+        byte[]? tailBytes = null;
+        DictationSessionId sessionId;
+        int clampedStartSample;
+        int totalSamples;
+        lock (_bufferGate)
+        {
+            if (!_isCapturing || _request is null)
+            {
+                return null;
+            }
+
+            sessionId = _request.SessionId;
+            var totalBytes = checked((int)_capturedBytes.Length);
+            totalSamples = totalBytes / sizeof(float);
+            clampedStartSample = Math.Min(startSample, totalSamples);
+            var byteOffset = clampedStartSample * sizeof(float);
+            var tailByteCount = totalBytes - byteOffset;
+            if (tailByteCount > 0 && _capturedBytes.TryGetBuffer(out var buffer) && buffer.Array is not null)
+            {
+                tailBytes = buffer.Array.AsSpan(buffer.Offset + byteOffset, tailByteCount).ToArray();
+            }
+        }
+
+        var tailSamples = tailBytes is null
+            ? ReadOnlyMemory<float>.Empty
+            : AudioSampleConverter.ConvertToMono16Khz(tailBytes, CaptureFormat).Samples;
+        return new IncrementalAudioSnapshot(
+            sessionId,
+            AudioSampleConverter.TargetSampleRate,
+            clampedStartSample,
+            totalSamples,
+            tailSamples);
+    }
+
     public async Task<AudioOperationResult> StartAsync(
         AudioCaptureRequest request,
         CancellationToken cancellationToken = default)
@@ -169,6 +223,7 @@ public sealed class WasapiAudioCapture :
             lock (_bufferGate)
             {
                 _capturedBytes.SetLength(0);
+                _capturedBytes.Capacity = 0;
             }
 
             _packets = 0;
@@ -182,6 +237,8 @@ public sealed class WasapiAudioCapture :
             _clientRequestedStop = false;
             _backendStopped = false;
             _unexpectedStop = false;
+            Volatile.Write(ref _backstopTriggered, 0);
+            Volatile.Write(ref _backstopSignalled, 0);
             recorder.DataAvailable += OnDataAvailable;
             recorder.Stopped += OnRecordingStopped;
 
@@ -319,6 +376,7 @@ public sealed class WasapiAudioCapture :
             lock (_bufferGate)
             {
                 _capturedBytes.SetLength(0);
+                _capturedBytes.Capacity = 0;
             }
 
             ClearSession();
@@ -368,7 +426,7 @@ public sealed class WasapiAudioCapture :
         // half silent would read as a quarter silent, and the microphone test's whole job is to
         // tell three kinds of nothing apart. LastPacketCount means packets of audio that arrived,
         // not times the recorder woke up.
-        if (args.Bytes.Length == 0)
+        if (args.Bytes.Length == 0 || !_isCapturing || Volatile.Read(ref _backstopTriggered) != 0)
         {
             return;
         }
@@ -383,22 +441,67 @@ public sealed class WasapiAudioCapture :
         try
         {
             var converted = AudioSampleConverter.ConvertToMono16Khz(bytes, CaptureFormat);
+            var hitBackstop = false;
+            var wroteAudio = false;
+            DictationSessionId backstopSession = default;
             lock (_bufferGate)
             {
-                _capturedBytes.Write(bytes);
+                if (!_isCapturing || _request is null || Volatile.Read(ref _backstopTriggered) != 0)
+                {
+                    return;
+                }
+
+                var remaining = _maxCapturedBytes - _capturedBytes.Length;
+                var writeCount = bytes.Length;
+                if (remaining <= 0)
+                {
+                    writeCount = 0;
+                    hitBackstop = true;
+                }
+                else if (writeCount >= remaining)
+                {
+                    writeCount = (int)(remaining - (remaining % sizeof(float)));
+                    hitBackstop = true;
+                }
+
+                if (writeCount > 0)
+                {
+                    _capturedBytes.Write(bytes.AsSpan(0, writeCount));
+                    wroteAudio = true;
+                }
+
+                if (hitBackstop)
+                {
+                    backstopSession = _request.SessionId;
+                    Volatile.Write(ref _backstopTriggered, 1);
+                }
             }
 
-            if (converted.Peak > _peak)
+            if (wroteAudio)
             {
-                _peak = converted.Peak;
+                if (converted.Peak > _peak)
+                {
+                    _peak = converted.Peak;
+                }
+
+                if (converted.RootMeanSquare > _rms)
+                {
+                    _rms = converted.RootMeanSquare;
+                }
+
+                LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
             }
 
-            if (converted.RootMeanSquare > _rms)
+            if (hitBackstop && Interlocked.CompareExchange(ref _backstopSignalled, 1, 0) == 0)
             {
-                _rms = converted.RootMeanSquare;
+                ThreadPool.QueueUserWorkItem(
+                    static state =>
+                    {
+                        var (self, id) = ((WasapiAudioCapture, DictationSessionId))state!;
+                        self.MaxDurationBackstopReached?.Invoke(self, id);
+                    },
+                    (this, backstopSession));
             }
-
-            LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
         }
         catch (ArgumentException exception)
         {
@@ -422,14 +525,28 @@ public sealed class WasapiAudioCapture :
 
     private float[] SnapshotSamples()
     {
-        byte[] bytes;
         lock (_bufferGate)
         {
-            bytes = _capturedBytes.ToArray();
-            _capturedBytes.SetLength(0);
-        }
+            var byteCount = checked((int)_capturedBytes.Length);
+            if (byteCount == 0 || !_capturedBytes.TryGetBuffer(out var buffer) || buffer.Array is null)
+            {
+                _capturedBytes.SetLength(0);
+                _capturedBytes.Capacity = 0;
+                return [];
+            }
 
-        return AudioSampleConverter.ConvertToMono16Khz(bytes, CaptureFormat).Samples;
+            try
+            {
+                return AudioSampleConverter.ConvertToMono16Khz(
+                    buffer.Array.AsSpan(buffer.Offset, byteCount),
+                    CaptureFormat).Samples;
+            }
+            finally
+            {
+                _capturedBytes.SetLength(0);
+                _capturedBytes.Capacity = 0;
+            }
+        }
     }
 
     private async ValueTask ReleaseRecorderAsync(IAudioRecorderSession recorder)
@@ -448,6 +565,8 @@ public sealed class WasapiAudioCapture :
         _clientRequestedStop = false;
         _backendStopped = false;
         _unexpectedStop = false;
+        Volatile.Write(ref _backstopTriggered, 0);
+        Volatile.Write(ref _backstopSignalled, 0);
     }
 
     private static AudioOperationResult Failure(AppErrorCode code, bool canRetry) => new(

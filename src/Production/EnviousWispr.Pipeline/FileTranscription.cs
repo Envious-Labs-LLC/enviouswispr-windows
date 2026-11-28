@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
@@ -13,54 +14,18 @@ namespace EnviousWispr.Pipeline;
 /// </remarks>
 public static class AudioPieceCutter
 {
-    public const int SampleRate = 16_000;
-    public static readonly int MaximumPieceSamples = SampleRate * 60;
-    public static readonly int SearchSamples = SampleRate * 10;
-    private static readonly int FrameSamples = SampleRate / 10;
+    public const int SampleRate = AudioQuietCut.DefaultSampleRate;
+    public static readonly int MaximumPieceSamples = SampleRate * AudioQuietCut.MaximumPieceSeconds;
+    public static readonly int SearchSamples = SampleRate * AudioQuietCut.SearchWindowSeconds;
 
     /// <summary>How many samples of <paramref name="audio"/> the next piece takes.</summary>
     /// <param name="audio">The audio not yet transcribed, from its start.</param>
     /// <param name="atEnd">True when nothing follows <paramref name="audio"/>: a short remainder is the last piece.</param>
-    public static int NextPieceLength(ReadOnlySpan<float> audio, bool atEnd)
-    {
-        if (audio.Length <= MaximumPieceSamples)
-        {
-            return atEnd ? audio.Length : 0;
-        }
-
-        var searchStart = MaximumPieceSamples - SearchSamples;
-        var quietest = MaximumPieceSamples;
-        var quietestEnergy = double.MaxValue;
-        for (var frameStart = searchStart; frameStart + FrameSamples <= MaximumPieceSamples; frameStart += FrameSamples)
-        {
-            var energy = 0.0;
-            foreach (var sample in audio.Slice(frameStart, FrameSamples))
-            {
-                energy += sample * (double)sample;
-            }
-
-            // The LAST of equally quiet frames, so a silence is cut at its far end and the piece keeps its words whole.
-            if (energy <= quietestEnergy)
-            {
-                quietestEnergy = energy;
-                quietest = frameStart + (FrameSamples / 2);
-            }
-        }
-
-        return quietest;
-    }
+    public static int NextPieceLength(ReadOnlySpan<float> audio, bool atEnd, int sampleRate = SampleRate) =>
+        AudioQuietCut.NextPieceLength(audio, atEnd, sampleRate);
 
     /// <summary>A piece with nothing in it: whisper.cpp writes words into silence, so it is not sent at all.</summary>
-    public static bool IsSilent(ReadOnlySpan<float> piece)
-    {
-        var peak = 0f;
-        foreach (var sample in piece)
-        {
-            peak = Math.Max(peak, Math.Abs(sample));
-        }
-
-        return peak < 0.005f;
-    }
+    public static bool IsSilent(ReadOnlySpan<float> piece) => AudioQuietCut.IsSilent(piece);
 }
 
 public enum FileTranscriptionOutcome

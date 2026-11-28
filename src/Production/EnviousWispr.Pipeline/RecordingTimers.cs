@@ -27,6 +27,11 @@ public interface IRecordingTimerEffects
     /// <summary>A signal on the recording's behalf; the queue ignores it if that recording has ended by the time it runs.</summary>
     void Post(PushToTalkSignal signal, DictationSessionId forSession);
 
+    /// <summary>Posts an advisory notice that the active recording is approaching its maximum duration.</summary>
+    void RecordingApproachingCap(DictationSessionId sessionId)
+    {
+    }
+
     /// <summary>Posts that the recording armed as <paramref name="sessionId"/> has run for as long as it is allowed, and returns.</summary>
     void RecordingTimedOut(DictationSessionId sessionId);
 }
@@ -61,9 +66,14 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     /// <summary>Whether a watch has been armed and not yet stopped.</summary>
     public bool IsArmed => _watch is { IsCompleted: false };
 
-    public void Start(DictationSessionId sessionId, TimeSpan duration)
+    public void Start(DictationSessionId sessionId, TimeSpan duration, TimeSpan? warningLead = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(duration, TimeSpan.Zero);
+        if (warningLead is { } lead)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(lead, TimeSpan.Zero);
+        }
+
         _cancellation?.Cancel();
         // A WATCH REPLACED BEFORE IT FINISHED IS RETIRED, NOT DROPPED. Its callback may still be
         // running; its source is not disposed under it, and the next stop joins it - so a stop that
@@ -83,10 +93,15 @@ public sealed class RecordingWatchdog : IAsyncDisposable
         _cancellation = new CancellationTokenSource();
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _done = done;
-        _watch = WatchAsync(sessionId, duration, done, _cancellation.Token);
+        _watch = WatchAsync(sessionId, duration, warningLead, done, _cancellation.Token);
     }
 
-    private async Task WatchAsync(DictationSessionId sessionId, TimeSpan duration, TaskCompletionSource done, CancellationToken cancellationToken)
+    private async Task WatchAsync(
+        DictationSessionId sessionId,
+        TimeSpan duration,
+        TimeSpan? warningLead,
+        TaskCompletionSource done,
+        CancellationToken cancellationToken)
     {
         // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
         // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
@@ -97,7 +112,24 @@ public sealed class RecordingWatchdog : IAsyncDisposable
         using var dictation = DictationScope.Begin(sessionId.Value);
         try
         {
-            await Task.Delay(duration, _clock, cancellationToken).ConfigureAwait(false);
+            if (warningLead is { } lead && lead > TimeSpan.Zero && duration > lead)
+            {
+                await Task.Delay(duration - lead, _clock, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    _effects.RecordingApproachingCap(sessionId);
+                }
+                catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+                {
+                    // An advisory notice failure must never disarm the cap-stop timer.
+                }
+
+                await Task.Delay(lead, _clock, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await Task.Delay(duration, _clock, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
