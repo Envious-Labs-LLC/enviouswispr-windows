@@ -502,7 +502,7 @@ public partial class App
                             .TranscribeAsync(audio, token),
                         Finish: async (transcript, token) =>
                         {
-                            var customWords = _settings.UserData.CustomWords;
+                            var customWords = _settings.UserData.EffectiveCustomWords();
                             var fileTextOptions = _deterministicTextOptions with { CasualModeEnabled = false };
                             var processed = await _deterministicTextPipeline.ProcessAsync(
                                 new DeterministicTextRequest(

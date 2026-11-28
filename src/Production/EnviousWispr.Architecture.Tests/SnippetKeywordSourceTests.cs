@@ -34,7 +34,7 @@ public sealed class SnippetKeywordSourceTests
         // while forwarding every preserved ReusableUserData field.
         Assert.Contains(files, path => path.EndsWith("VocabularyPresenter.cs", StringComparison.Ordinal));
         Assert.Contains(
-            "new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets)",
+            "new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds)",
             File.ReadAllText(owner),
             StringComparison.Ordinal);
     }

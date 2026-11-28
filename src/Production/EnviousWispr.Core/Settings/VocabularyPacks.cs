@@ -47,7 +47,8 @@ public sealed record VocabularyPack
                 term.Canonical,
                 MatchStrictness.Default,
                 term.Category,
-                id: $"pack:{id}:{term.Canonical}"))
+                id: $"pack:{id}:{term.Canonical}",
+                origin: CustomWordOrigin.Pack))
             .ToArray();
         _exampleTerms = terms
             .Select(term => term.Canonical)
@@ -77,7 +78,8 @@ public sealed record VocabularyPack
             term.Canonical,
             MatchStrictness.Default,
             term.Category,
-            id: $"pack:{Id}:{term.Canonical}"))
+            id: $"pack:{Id}:{term.Canonical}",
+            origin: CustomWordOrigin.Pack))
         .ToArray();
 
     public int FixCount => Terms.Count;

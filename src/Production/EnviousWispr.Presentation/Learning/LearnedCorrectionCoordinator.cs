@@ -17,7 +17,8 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
         CustomWordEntry PostSave,
         LearnedCorrectionPillKind Kind,
         string PairKey,
-        LearnVia Via)
+        LearnVia Via,
+        bool RedeleteBuiltinOnUndo = false)
     {
         public bool Admitted { get; set; }
     }
@@ -146,7 +147,14 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
 
         lock (_sync)
         {
-            _undoRecord = new UndoRecord(pill.PillId, outcome.Before, postSave, kind, pairKey, via);
+            _undoRecord = new UndoRecord(
+                pill.PillId,
+                outcome.Before,
+                postSave,
+                kind,
+                pairKey,
+                via,
+                outcome.RedeleteBuiltinOnUndo);
         }
 
         Log(AppEventCode.LearnAdded);
@@ -208,7 +216,10 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        var undoResult = await _vocabulary.UndoLearnedWordAsync(record.PostSave, record.PreSave)
+        var undoResult = await _vocabulary.UndoLearnedWordAsync(
+                record.PostSave,
+                record.PreSave,
+                record.RedeleteBuiltinOnUndo)
             .ConfigureAwait(false);
 
         if (!undoResult.Saved || undoResult.Value == LearnedUndoWriteStatus.Refused)
@@ -241,7 +252,7 @@ public sealed class LearnedCorrectionCoordinator : ILearnedCorrectionCoordinator
         ArgumentNullException.ThrowIfNull(removedEntries);
         foreach (var entry in removedEntries)
         {
-            if (entry.LearnedAliases.Count == 0)
+            if (entry.Origin == CustomWordOrigin.Builtin || entry.LearnedAliases.Count == 0)
             {
                 continue;
             }

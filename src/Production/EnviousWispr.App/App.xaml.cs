@@ -143,7 +143,7 @@ public partial class App : Application, IAsyncDisposable
                 new WindowRuntimeView(this),
                 LivePreviewEnabled: () => _settings.Preferences.LivePreviewEnabled,
                 History: () => _settings.Preferences.History,
-                CustomWords: () => _settings.UserData.CustomWords,
+                CustomWords: () => _settings.UserData.EffectiveCustomWords(),
                 EnabledVocabularyPackIds: () => _settings.UserData.EnabledVocabularyPackIds,
                 Audio: () => _audioCapture as IAudioSnapshotSource,
                 Engine: () => _transcriptionEngine,
@@ -279,7 +279,7 @@ public partial class App : Application, IAsyncDisposable
             LaunchCount = checked(loadResult.Settings.LaunchCount + 1),
         };
         _settings = settings;
-        _customWords = settings.UserData.CustomWords;
+        _customWords = settings.UserData.EffectiveCustomWords();
         _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
@@ -615,7 +615,7 @@ public partial class App : Application, IAsyncDisposable
         var previousPolish = _settings.Preferences.Polish;
         var previousLearnFromEdits = _settings.Preferences.Dictation.LearnFromEditsEnabled;
         _settings = settings;
-        _customWords = settings.UserData.CustomWords;
+        _customWords = settings.UserData.EffectiveCustomWords();
         _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);

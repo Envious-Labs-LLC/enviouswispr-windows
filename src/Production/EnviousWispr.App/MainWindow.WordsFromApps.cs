@@ -96,7 +96,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var baseline = _session.Settings.Current.UserData.CustomWords;
+        var baseline = _session.Settings.Current.UserData.EffectiveCustomWords();
         var plan = await Task.Run(() => CustomWordImport.Plan(batch.Entries, baseline)).ConfigureAwait(true);
         string? staleNotice = null;
         while (true)

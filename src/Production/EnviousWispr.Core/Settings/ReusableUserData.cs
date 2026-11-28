@@ -6,6 +6,14 @@ using EnviousWispr.Core.Learning;
 
 namespace EnviousWispr.Core.Settings;
 
+/// <summary>Runtime origin of a <see cref="CustomWordEntry"/> (never persisted to JSON).</summary>
+public enum CustomWordOrigin
+{
+    User,
+    Builtin,
+    Pack,
+}
+
 [JsonConverter(typeof(CustomWordEntryJsonConverter))]
 public sealed record CustomWordEntry
 {
@@ -29,7 +37,8 @@ public sealed record CustomWordEntry
         WordCategory category = WordCategory.General,
         string? id = null,
         IReadOnlyList<string>? learnedAliases = null,
-        DateTimeOffset? learnedAt = null)
+        DateTimeOffset? learnedAt = null,
+        CustomWordOrigin origin = CustomWordOrigin.User)
     {
         Aliases = NormalizeAliases(aliases);
         Replacement = replacement?.Trim() ?? string.Empty;
@@ -37,6 +46,7 @@ public sealed record CustomWordEntry
         Category = category;
         LearnedAliases = NormalizeLearnedAliases(learnedAliases, Aliases);
         LearnedAt = learnedAt;
+        Origin = origin;
         Id = !string.IsNullOrWhiteSpace(id)
             ? id.Trim()
             : CreateDeterministicId(Aliases, Replacement, Strictness, Category);
@@ -60,9 +70,17 @@ public sealed record CustomWordEntry
     /// <summary>Timestamp when the app automatically learned this word from an edit; null when user-authored.</summary>
     public DateTimeOffset? LearnedAt { get; init; }
 
-    /// <summary>Whether any part of this word was taught automatically by post-paste edit observation.</summary>
+    /// <summary>Runtime-only origin tag excluded from JSON persistence; decoded entries are always <see cref="CustomWordOrigin.User"/>.</summary>
     [JsonIgnore]
-    public bool IsAutoLearned => LearnedAt.HasValue || LearnedAliases.Count > 0;
+    public CustomWordOrigin Origin { get; init; }
+
+    /// <summary>Whether any aliases on this entry are routed through the contextual Learned Word Check rather than hard-swapped.</summary>
+    [JsonIgnore]
+    public bool HasCheckerAliases => LearnedAt.HasValue || LearnedAliases.Count > 0;
+
+    /// <summary>Whether this entry was taught automatically by post-paste edit observation (never true for untouched built-ins).</summary>
+    [JsonIgnore]
+    public bool IsAutoLearned => Origin != CustomWordOrigin.Builtin && HasCheckerAliases;
 
     /// <summary>Whether every spoken alias on this entry is auto-learned (no user-authored alias exists).</summary>
     [JsonIgnore]
@@ -71,6 +89,20 @@ public sealed record CustomWordEntry
         (LearnedAliases.Count == 0
             ? LearnedAt.HasValue
             : Aliases.All(alias => LearnedAliases.Contains(alias, StringComparer.OrdinalIgnoreCase)));
+
+    /// <summary>Returns an equivalent entry tagged as <see cref="CustomWordOrigin.User"/> for user-owned persistence and export.</summary>
+    public CustomWordEntry OwnedByUser() =>
+        Origin == CustomWordOrigin.User
+            ? this
+            : new CustomWordEntry(
+                Aliases,
+                Replacement,
+                Strictness,
+                Category,
+                Id,
+                LearnedAliases,
+                LearnedAt,
+                CustomWordOrigin.User);
 
     /// <summary>Returns only the auto-learned aliases for this entry, preserving any user-added aliases on mixed entries.</summary>
     public IReadOnlyList<string> EffectiveLearnedAliases() =>
@@ -99,6 +131,7 @@ public sealed record CustomWordEntry
                string.Equals(Replacement, other.Replacement, StringComparison.Ordinal) &&
                Strictness == other.Strictness &&
                Category == other.Category &&
+               Origin == other.Origin &&
                Aliases.SequenceEqual(other.Aliases, StringComparer.Ordinal) &&
                LearnedAliases.SequenceEqual(other.LearnedAliases, StringComparer.Ordinal) &&
                Nullable.Equals(LearnedAt, other.LearnedAt);
@@ -111,6 +144,7 @@ public sealed record CustomWordEntry
         hash.Add(Replacement, StringComparer.Ordinal);
         hash.Add(Strictness);
         hash.Add(Category);
+        hash.Add(Origin);
         foreach (var alias in Aliases)
         {
             hash.Add(alias, StringComparer.Ordinal);
@@ -471,6 +505,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// </param>
     /// <param name="enabledVocabularyPackIds">IDs of toggleable vocabulary packs active for deterministic correction.</param>
     /// <param name="hasSeededStarterSnippets">Whether one-time seeding of starter example snippets has been applied.</param>
+    /// <param name="deletedBuiltinWordIds">Stable IDs of built-in words the user explicitly deleted (tombstones).</param>
     /// <remarks>
     /// THE KEYWORD LIVES WITH THE SNIPPETS, as it does on macOS (<c>SnippetVocabulary.keyword</c>, saved
     /// in the snippet store), so a portable profile carries it with the snippets it belongs to. A change
@@ -483,7 +518,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         IReadOnlyList<SnippetEntry> snippets,
         string? snippetKeyword = null,
         IReadOnlyList<string>? enabledVocabularyPackIds = null,
-        bool hasSeededStarterSnippets = false)
+        bool hasSeededStarterSnippets = false,
+        IReadOnlyList<string>? deletedBuiltinWordIds = null)
     {
         ArgumentNullException.ThrowIfNull(customWords);
         ArgumentNullException.ThrowIfNull(snippets);
@@ -494,6 +530,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
             : snippetKeyword;
         EnabledVocabularyPackIds = NormalizePackIds(enabledVocabularyPackIds);
         HasSeededStarterSnippets = hasSeededStarterSnippets;
+        DeletedBuiltinWordIds = BuiltinWords.NormalizeDeletedIds(deletedBuiltinWordIds);
     }
 
     public IReadOnlyList<CustomWordEntry> CustomWords { get; }
@@ -509,25 +546,42 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// <summary>Whether starter example snippets have already been evaluated for one-time seeding.</summary>
     public bool HasSeededStarterSnippets { get; }
 
-    /// <summary>The same data with other words, keeping the snippets, keyword, packs, and seeding flag.</summary>
+    /// <summary>Stable IDs of shipped built-in words the user explicitly deleted so they never resurface.</summary>
+    public IReadOnlyList<string> DeletedBuiltinWordIds { get; }
+
+    /// <summary>Returns the live two-tier dictionary: active shipped built-ins plus user-authored words and overrides.</summary>
+    public IReadOnlyList<CustomWordEntry> EffectiveCustomWords() =>
+        BuiltinWords.Merge(CustomWords, DeletedBuiltinWordIds);
+
+    /// <summary>The same data with other words, keeping the snippets, keyword, packs, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithCustomWords(IReadOnlyList<CustomWordEntry> customWords) =>
-        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with other snippets, keeping the words, keyword, packs, and seeding flag.</summary>
+    /// <summary>The same data with other snippets, keeping the words, keyword, packs, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithSnippets(IReadOnlyList<SnippetEntry> snippets) =>
-        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with another keyword, keeping the words, snippets, packs, and seeding flag.</summary>
+    /// <summary>The same data with another keyword, keeping the words, snippets, packs, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithSnippetKeyword(string snippetKeyword) =>
-        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
 
-    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords untouched.</summary>
+    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords and tombstones untouched.</summary>
     public ReusableUserData WithEnabledVocabularyPackIds(IReadOnlyList<string>? enabledVocabularyPackIds) =>
-        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets, DeletedBuiltinWordIds);
 
     /// <summary>The same data with an updated starter-snippet seeding flag.</summary>
     public ReusableUserData WithHasSeededStarterSnippets(bool hasSeededStarterSnippets) =>
-        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets);
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets, DeletedBuiltinWordIds);
+
+    /// <summary>The same data with updated deleted built-in tombstones, leaving CustomWords untouched.</summary>
+    public ReusableUserData WithDeletedBuiltinWordIds(IReadOnlyList<string>? deletedBuiltinWordIds) =>
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, deletedBuiltinWordIds);
+
+    /// <summary>Atomically updates both persisted user words and deleted built-in tombstones.</summary>
+    public ReusableUserData WithCustomWordsAndDeletedBuiltins(
+        IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<string>? deletedBuiltinWordIds) =>
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, deletedBuiltinWordIds);
 
     public static ReusableUserData Empty { get; } = new(
         Array.Empty<CustomWordEntry>(),
@@ -539,7 +593,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         Snippets.SequenceEqual(other.Snippets) &&
         string.Equals(SnippetKeyword, other.SnippetKeyword, StringComparison.Ordinal) &&
         EnabledVocabularyPackIds.SequenceEqual(other.EnabledVocabularyPackIds, StringComparer.OrdinalIgnoreCase) &&
-        HasSeededStarterSnippets == other.HasSeededStarterSnippets;
+        HasSeededStarterSnippets == other.HasSeededStarterSnippets &&
+        DeletedBuiltinWordIds.SequenceEqual(other.DeletedBuiltinWordIds, StringComparer.OrdinalIgnoreCase);
 
     public override bool Equals(object? obj) => Equals(obj as ReusableUserData);
 
@@ -563,6 +618,11 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         }
 
         hash.Add(HasSeededStarterSnippets);
+        foreach (var deletedId in DeletedBuiltinWordIds)
+        {
+            hash.Add(deletedId, StringComparer.OrdinalIgnoreCase);
+        }
+
         return hash.ToHashCode();
     }
 
