@@ -42,6 +42,7 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         _notifications.DeviceRemoved += OnDeviceRemoved;
         _notifications.DeviceStateChanged += OnDeviceStateChanged;
         _notifications.DefaultDeviceChanged += OnDefaultDeviceChanged;
+        _notifications.PropertyValueChanged += OnPropertyValueChanged;
     }
 
     public event EventHandler<AudioDeviceChange>? DevicesChanged;
@@ -345,6 +346,7 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         _notifications.DeviceRemoved -= OnDeviceRemoved;
         _notifications.DeviceStateChanged -= OnDeviceStateChanged;
         _notifications.DefaultDeviceChanged -= OnDefaultDeviceChanged;
+        _notifications.PropertyValueChanged -= OnPropertyValueChanged;
         _notifications.Dispose();
         _enumerator.Dispose();
     }
@@ -377,6 +379,11 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         InvalidateCache();
         var affectsCapture = args.Flow is DataFlow.Capture or DataFlow.All;
         Raise(AudioDeviceChangeTracker.DefaultChanged(args.DeviceId, affectsCapture));
+    }
+
+    private void OnPropertyValueChanged(object? sender, DevicePropertyChangedEventArgs args)
+    {
+        InvalidateCache();
     }
 
     private void InvalidateCache()

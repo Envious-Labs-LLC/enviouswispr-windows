@@ -20,7 +20,8 @@ public sealed record CapturedAudio(
     int SampleRate,
     int Channels,
     AudioCaptureOutcome Outcome = AudioCaptureOutcome.Completed,
-    AppError? Error = null);
+    AppError? Error = null,
+    int DrainedPreRollSampleCount = 0);
 
 public sealed record TranscriptTokenTiming(
     string Text,

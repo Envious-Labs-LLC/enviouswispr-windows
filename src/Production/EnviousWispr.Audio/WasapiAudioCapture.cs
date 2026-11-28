@@ -27,6 +27,7 @@ public sealed class WasapiAudioCapture :
         Cold = 0,
         WarmIdle = 1,
         Capturing = 2,
+        DrainingToWarm = 3,
     }
 
     private readonly object _bufferGate = new();
@@ -39,6 +40,7 @@ public sealed class WasapiAudioCapture :
     private readonly TimeProvider _timeProvider;
     private IAudioRecorderSession? _recorder;
     private TaskCompletionSource<Exception?>? _recordingStopped;
+    private TaskCompletionSource? _warmDrainTcs;
     private AudioCaptureRequest? _request;
     private AudioDeviceId? _warmDeviceId;
     private ITimer? _warmTeardownTimer;
@@ -46,6 +48,7 @@ public sealed class WasapiAudioCapture :
     private int _warmPolicy = (int)MicrophoneWarmPolicy.Off;
     private long _warmIdleSinceTimestamp;
     private long _warmGeneration;
+    private int _inFlightCaptureCallbacks;
     private int _preRollWriteIndex;
     private int _preRollCount;
     private int _drainedPreRollSampleCount;
@@ -108,6 +111,8 @@ public sealed class WasapiAudioCapture :
     public long? LastDeviceOpenMilliseconds => _lastDeviceOpenMilliseconds;
 
     public long? LastStreamStartMilliseconds => _lastStreamStartMilliseconds;
+
+    internal Action? BeforeDataConversionForTesting { get; set; }
 
     public int LastPacketCount => Volatile.Read(ref _packets);
 
@@ -463,31 +468,68 @@ public sealed class WasapiAudioCapture :
             var warmPolicy = WarmPolicy;
 
             float[]? warmSamples = null;
+            var warmDrainedPreRoll = 0;
             var transitionedToWarm = false;
+            TaskCompletionSource? drainTcs = null;
+            var attemptWarmTransition = false;
             lock (_bufferGate)
             {
                 if (warmPolicy != MicrophoneWarmPolicy.Off && !_backendStopped && !_unexpectedStop)
                 {
-                    warmSamples = SnapshotSamplesLocked();
-                    Volatile.Write(
-                        ref _lastCaptureWasWholeZero,
-                        !_sawNonZeroPostPreRoll && (_packets > 0 || warmSamples.Length > _drainedPreRollSampleCount));
-                    ClearPreRollRingLocked();
-                    _drainedPreRollSampleCount = 0;
-                    _exactZeroRunSamples = 0;
-                    _exactZeroSinceTakeStart = true;
-                    _sawNonZeroPostPreRoll = false;
-                    _request = null;
-                    _clientRequestedStop = false;
-                    _backendStopped = false;
-                    _unexpectedStop = false;
-                    Volatile.Write(ref _backstopTriggered, 0);
-                    Volatile.Write(ref _backstopSignalled, 0);
+                    attemptWarmTransition = true;
                     _isCapturing = false;
-                    _state = CaptureState.WarmIdle;
-                    _warmGeneration++;
-                    _warmIdleSinceTimestamp = _timeProvider.GetTimestamp();
-                    transitionedToWarm = true;
+                    _state = CaptureState.DrainingToWarm;
+                    ClearPreRollRingLocked();
+                    if (_inFlightCaptureCallbacks > 0)
+                    {
+                        drainTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        _warmDrainTcs = drainTcs;
+                    }
+                }
+            }
+
+            if (attemptWarmTransition)
+            {
+                var drainTimedOut = false;
+                if (drainTcs is not null)
+                {
+                    try
+                    {
+                        await drainTcs.Task
+                            .WaitAsync(_stopTimeout, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (TimeoutException)
+                    {
+                        drainTimedOut = true;
+                    }
+                }
+
+                lock (_bufferGate)
+                {
+                    _warmDrainTcs = null;
+                    if (!drainTimedOut && !_backendStopped && !_unexpectedStop && _state == CaptureState.DrainingToWarm)
+                    {
+                        warmSamples = SnapshotSamplesLocked();
+                        warmDrainedPreRoll = _drainedPreRollSampleCount;
+                        Volatile.Write(
+                            ref _lastCaptureWasWholeZero,
+                            !_sawNonZeroPostPreRoll && (_packets > 0 || warmSamples.Length > warmDrainedPreRoll));
+                        _drainedPreRollSampleCount = 0;
+                        _exactZeroRunSamples = 0;
+                        _exactZeroSinceTakeStart = true;
+                        _sawNonZeroPostPreRoll = false;
+                        _request = null;
+                        _clientRequestedStop = false;
+                        _backendStopped = false;
+                        _unexpectedStop = false;
+                        Volatile.Write(ref _backstopTriggered, 0);
+                        Volatile.Write(ref _backstopSignalled, 0);
+                        _state = CaptureState.WarmIdle;
+                        _warmGeneration++;
+                        _warmIdleSinceTimestamp = _timeProvider.GetTimestamp();
+                        transitionedToWarm = true;
+                    }
                 }
             }
 
@@ -498,7 +540,8 @@ public sealed class WasapiAudioCapture :
                     request.SessionId,
                     warmSamples!,
                     AudioSampleConverter.TargetSampleRate,
-                    Channels: 1);
+                    Channels: 1,
+                    DrainedPreRollSampleCount: warmDrainedPreRoll);
             }
 
             Exception? stopException = null;
@@ -532,12 +575,14 @@ public sealed class WasapiAudioCapture :
 
             var interrupted = _unexpectedStop || stopException is not null;
             float[] samples;
+            int coldDrainedPreRoll;
             lock (_bufferGate)
             {
                 samples = SnapshotSamplesLocked();
+                coldDrainedPreRoll = _drainedPreRollSampleCount;
                 Volatile.Write(
                     ref _lastCaptureWasWholeZero,
-                    !_sawNonZeroPostPreRoll && (_packets > 0 || samples.Length > _drainedPreRollSampleCount));
+                    !_sawNonZeroPostPreRoll && (_packets > 0 || samples.Length > coldDrainedPreRoll));
             }
 
             try
@@ -552,12 +597,13 @@ public sealed class WasapiAudioCapture :
 
             ClearSession();
             return interrupted
-                ? Interrupted(request.SessionId, samples)
+                ? Interrupted(request.SessionId, samples, coldDrainedPreRoll)
                 : new CapturedAudio(
                     request.SessionId,
                     samples,
                     AudioSampleConverter.TargetSampleRate,
-                    Channels: 1);
+                    Channels: 1,
+                    DrainedPreRollSampleCount: coldDrainedPreRoll);
         }
         finally
         {
@@ -814,18 +860,43 @@ public sealed class WasapiAudioCapture :
             return;
         }
 
-        var bytes = args.IsSilent ? new byte[args.Bytes.Length] : args.Bytes.ToArray();
+        bool enteredDuringCapture;
+        lock (_bufferGate)
+        {
+            if (_state == CaptureState.Capturing)
+            {
+                _inFlightCaptureCallbacks++;
+                enteredDuringCapture = true;
+            }
+            else if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm)
+            {
+                enteredDuringCapture = false;
+            }
+            else
+            {
+                return;
+            }
+        }
+
         try
         {
+            if (enteredDuringCapture)
+            {
+                BeforeDataConversionForTesting?.Invoke();
+            }
+
+            var bytes = args.IsSilent ? new byte[args.Bytes.Length] : args.Bytes.ToArray();
             var converted = AudioSampleConverter.ConvertToMono16Khz(bytes, CaptureFormat);
             var hitBackstop = false;
             var wroteAudio = false;
             DictationSessionId backstopSession = default;
             lock (_bufferGate)
             {
-                if (_state == CaptureState.WarmIdle)
+                if (!enteredDuringCapture)
                 {
-                    if (!_backendStopped && !_unexpectedStop)
+                    if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm &&
+                        !_backendStopped &&
+                        !_unexpectedStop)
                     {
                         AppendPreRollLocked(converted.Samples);
                     }
@@ -833,8 +904,7 @@ public sealed class WasapiAudioCapture :
                     return;
                 }
 
-                if (_state != CaptureState.Capturing ||
-                    !_isCapturing ||
+                if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
                     _request is null ||
                     Volatile.Read(ref _backstopTriggered) != 0)
                 {
@@ -906,7 +976,7 @@ public sealed class WasapiAudioCapture :
                 }
             }
 
-            if (wroteAudio)
+            if (wroteAudio && _state == CaptureState.Capturing)
             {
                 LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
             }
@@ -934,6 +1004,27 @@ public sealed class WasapiAudioCapture :
 
             stoppedTcs?.TrySetResult(exception);
         }
+        finally
+        {
+            if (enteredDuringCapture)
+            {
+                TaskCompletionSource? drainToSignal = null;
+                lock (_bufferGate)
+                {
+                    if (_inFlightCaptureCallbacks > 0)
+                    {
+                        _inFlightCaptureCallbacks--;
+                    }
+
+                    if (_inFlightCaptureCallbacks == 0)
+                    {
+                        drainToSignal = _warmDrainTcs;
+                    }
+                }
+
+                drainToSignal?.TrySetResult();
+            }
+        }
     }
 
     private void OnRecordingStopped(object? sender, AudioRecorderStopped args)
@@ -941,14 +1032,16 @@ public sealed class WasapiAudioCapture :
         var scheduleWarmCleanup = false;
         long warmGeneration = 0;
         TaskCompletionSource<Exception?>? stoppedTcs;
+        TaskCompletionSource? drainToSignal = null;
         lock (_bufferGate)
         {
             _backendStopped = true;
             stoppedTcs = _recordingStopped;
-            if (_state == CaptureState.Capturing && !_clientRequestedStop)
+            if (_state is CaptureState.Capturing or CaptureState.DrainingToWarm && !_clientRequestedStop)
             {
                 _unexpectedStop = true;
                 _isCapturing = false;
+                drainToSignal = _warmDrainTcs;
             }
             else if (_state == CaptureState.WarmIdle && !_clientRequestedStop)
             {
@@ -957,6 +1050,7 @@ public sealed class WasapiAudioCapture :
             }
         }
 
+        drainToSignal?.TrySetResult();
         stoppedTcs?.TrySetResult(args.Exception);
         if (scheduleWarmCleanup)
         {
@@ -1080,10 +1174,14 @@ public sealed class WasapiAudioCapture :
 
     private void ClearSession()
     {
+        TaskCompletionSource? drainToSignal;
         lock (_bufferGate)
         {
             _state = CaptureState.Cold;
             _isCapturing = false;
+            _inFlightCaptureCallbacks = 0;
+            drainToSignal = _warmDrainTcs;
+            _warmDrainTcs = null;
             _recorder = null;
             _recordingStopped = null;
             _request = null;
@@ -1100,6 +1198,8 @@ public sealed class WasapiAudioCapture :
             Volatile.Write(ref _backstopTriggered, 0);
             Volatile.Write(ref _backstopSignalled, 0);
         }
+
+        drainToSignal?.TrySetResult();
     }
 
     private static AudioOperationResult Failure(AppErrorCode code, bool canRetry) => new(
@@ -1114,7 +1214,10 @@ public sealed class WasapiAudioCapture :
         AudioCaptureOutcome.Interrupted,
         new AppError(code, AppErrorStage.AudioCapture, CanRetry: false));
 
-    private static CapturedAudio Interrupted(DictationSessionId sessionId, float[] samples) => new(
+    private static CapturedAudio Interrupted(
+        DictationSessionId sessionId,
+        float[] samples,
+        int drainedPreRollSampleCount = 0) => new(
         sessionId,
         samples,
         AudioSampleConverter.TargetSampleRate,
@@ -1123,5 +1226,6 @@ public sealed class WasapiAudioCapture :
         new AppError(
             AppErrorCode.AudioDeviceLost,
             AppErrorStage.AudioCapture,
-            CanRetry: samples.Length > 0));
+            CanRetry: samples.Length > 0),
+        DrainedPreRollSampleCount: drainedPreRollSampleCount);
 }

@@ -30,6 +30,12 @@ public static class SilentMicNoticePolicy
 
     public static ReadOnlyMemory<float> TrimTrailingExactZeros(
         ReadOnlyMemory<float> samples,
+        out bool isWholeZero) =>
+        TrimTrailingExactZeros(samples, drainedPreRollSampleCount: 0, out isWholeZero);
+
+    public static ReadOnlyMemory<float> TrimTrailingExactZeros(
+        ReadOnlyMemory<float> samples,
+        int drainedPreRollSampleCount,
         out bool isWholeZero)
     {
         if (samples.IsEmpty)
@@ -38,11 +44,18 @@ public static class SilentMicNoticePolicy
             return samples;
         }
 
-        var span = samples.Span;
-        var trailingZeros = 0;
-        for (var index = span.Length - 1; index >= 0; index--)
+        var preRoll = Math.Clamp(drainedPreRollSampleCount, 0, samples.Length);
+        var postPreRoll = samples.Span[preRoll..];
+        if (postPreRoll.IsEmpty)
         {
-            if (span[index] == 0f)
+            isWholeZero = preRoll > 0;
+            return isWholeZero ? ReadOnlyMemory<float>.Empty : samples;
+        }
+
+        var trailingZeros = 0;
+        for (var index = postPreRoll.Length - 1; index >= 0; index--)
+        {
+            if (postPreRoll[index] == 0f)
             {
                 trailingZeros++;
             }
@@ -52,7 +65,7 @@ public static class SilentMicNoticePolicy
             }
         }
 
-        if (trailingZeros == span.Length)
+        if (trailingZeros == postPreRoll.Length)
         {
             isWholeZero = true;
             return ReadOnlyMemory<float>.Empty;
@@ -61,7 +74,7 @@ public static class SilentMicNoticePolicy
         isWholeZero = false;
         if (trailingZeros >= TrailingZeroTrimMinimumSamples)
         {
-            return samples[..(span.Length - trailingZeros)];
+            return samples[..(samples.Length - trailingZeros)];
         }
 
         return samples;

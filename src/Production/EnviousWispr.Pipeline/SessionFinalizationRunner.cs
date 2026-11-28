@@ -365,7 +365,10 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
         var audioForTranscription = audio;
         if (audio.Samples.Length > 0)
         {
-            var trimmed = SilentMicNoticePolicy.TrimTrailingExactZeros(audio.Samples, out var isWholeZero);
+            var trimmed = SilentMicNoticePolicy.TrimTrailingExactZeros(
+                audio.Samples,
+                audio.DrainedPreRollSampleCount,
+                out var isWholeZero);
             if (isWholeZero)
             {
                 _effects.ArchiveAudio(audio);

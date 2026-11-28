@@ -77,6 +77,16 @@ public sealed class SilentMicNoticePolicyTests
         var longResult = SilentMicNoticePolicy.TrimTrailingExactZeros(longSuffix, out var longWholeZero);
         Assert.False(longWholeZero);
         Assert.Equal(new[] { 0f, 0f, -0.35f }, longResult.ToArray());
+
+        // Non-zero warm pre-roll followed by all-zero post-preroll samples must still classify as whole-zero.
+        var preRollPlusZeros = new float[800 + 16_000];
+        preRollPlusZeros[10] = 0.5f;
+        var preRollWholeZeroResult = SilentMicNoticePolicy.TrimTrailingExactZeros(
+            preRollPlusZeros,
+            drainedPreRollSampleCount: 800,
+            out var preRollIsWholeZero);
+        Assert.True(preRollIsWholeZero);
+        Assert.True(preRollWholeZeroResult.IsEmpty);
     }
 
     [Fact]
@@ -203,6 +213,25 @@ public sealed class SilentMicNoticePolicyTests
     {
         var samples = new float[32_000];
         var world = await FinalizationHarness.CreateAsync(samples, engineSpoken: "should not run");
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Held, report.Outcome);
+        Assert.Equal(0, world.Engine.Calls);
+        Assert.Empty(world.Delivery.Requests);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.Equal(["ArchiveAudio", "RetireWarmCapture", "ShowZeroSignalAdvisory"], world.Trace);
+    }
+
+    [Fact]
+    public async Task SessionFinalizationRunnerTreatsNonZeroPreRollPlusZeroPostPreRollAsWholeZero()
+    {
+        var samples = new float[800 + 16_000];
+        samples[5] = 0.45f;
+        var world = await FinalizationHarness.CreateAsync(
+            samples,
+            engineSpoken: "should not transcribe pre-roll",
+            drainedPreRollSampleCount: 800);
 
         var report = await world.RunAsync();
 
@@ -377,9 +406,12 @@ public sealed class SilentMicNoticePolicyTests
         public required DictationSessionId SessionId { get; init; }
         public required List<string> Trace { get; init; }
 
-        public static async Task<FinalizationHarness> CreateAsync(float[] samples, string engineSpoken)
+        public static async Task<FinalizationHarness> CreateAsync(
+            float[] samples,
+            string engineSpoken,
+            int drainedPreRollSampleCount = 0)
         {
-            var capture = new StaticCapture(samples);
+            var capture = new StaticCapture(samples, drainedPreRollSampleCount);
             var controller = new PushToTalkSessionController(capture, new StaticTargetProvider(), minimumHoldDuration: TimeSpan.Zero);
             var started = await controller.PressAsync();
             var released = await controller.ReleaseAsync();
@@ -424,7 +456,7 @@ public sealed class SilentMicNoticePolicyTests
             Runner.RunAsync(SessionId, Audio, recoveryOnly: false, CancellationToken.None);
     }
 
-    private sealed class StaticCapture(float[] samples) : IAudioCapture
+    private sealed class StaticCapture(float[] samples, int drainedPreRollSampleCount = 0) : IAudioCapture
     {
         public event EventHandler<AudioLevel>? LevelChanged { add { } remove { } }
         public bool IsCapturing { get; private set; }
@@ -436,7 +468,12 @@ public sealed class SilentMicNoticePolicyTests
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
         {
             IsCapturing = false;
-            return Task.FromResult(new CapturedAudio(DictationSessionId.Create(), samples, 16_000, 1));
+            return Task.FromResult(new CapturedAudio(
+                DictationSessionId.Create(),
+                samples,
+                16_000,
+                1,
+                DrainedPreRollSampleCount: drainedPreRollSampleCount));
         }
         public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
         {

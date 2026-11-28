@@ -645,8 +645,48 @@ public sealed class WasapiAudioCaptureTests
         recorder.Emit(Enumerable.Repeat(0.2f, 400).ToArray());
         await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
         recorder.EmitSilentFloats(1_600);
-        await capture.StopAsync();
+        var stoppedAudio = await capture.StopAsync();
         Assert.True(capture.LastCaptureWasWholeZero);
+        Assert.Equal(400, stoppedAudio.DrainedPreRollSampleCount);
+    }
+
+    [Fact]
+    public async Task StopAsyncDrainsInFlightDataCallbackBeforeEnteringWarmIdle()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = new WasapiAudioCapture(new FakeRecorderFactory(recorder), TimeSpan.FromSeconds(2));
+        await capture.SetWarmPolicyAsync(MicrophoneWarmPolicy.Seconds30);
+
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+
+        using var conversionEntered = new ManualResetEventSlim(false);
+        using var allowConversionToFinish = new ManualResetEventSlim(false);
+        capture.BeforeDataConversionForTesting = () =>
+        {
+            conversionEntered.Set();
+            allowConversionToFinish.Wait(TimeSpan.FromSeconds(2));
+        };
+
+        var emitTask = Task.Run(() => recorder.Emit(0.25f, -0.35f, 0.45f));
+        Assert.True(conversionEntered.Wait(TimeSpan.FromSeconds(2)));
+
+        var stopTask = capture.StopAsync();
+        await Task.Delay(30);
+        Assert.False(stopTask.IsCompleted);
+
+        capture.BeforeDataConversionForTesting = null;
+        allowConversionToFinish.Set();
+
+        await emitTask;
+        var audio = await stopTask;
+        Assert.Equal(AudioCaptureOutcome.Completed, audio.Outcome);
+        Assert.False(recorder.Disposed);
+        Assert.Equal(new[] { 0.25f, -0.35f, 0.45f }, audio.Samples.ToArray());
+
+        // Subsequent warm start must not receive the already-drained packet in its pre-roll.
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        var nextAudio = await capture.StopAsync();
+        Assert.Empty(nextAudio.Samples.ToArray());
     }
 
     private static WasapiAudioCapture CreateCapture(FakeRecorderSession recorder) =>
