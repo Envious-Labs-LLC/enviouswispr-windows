@@ -59,7 +59,14 @@ public sealed class WrapPanel : Panel
                 continue;
             }
 
-            child.Measure(new Size(maxWidth, double.PositiveInfinity));
+            // Measure unconstrained first so shrink-to-fit children (including Grids with a star text column)
+            // take their compact natural width and wrap side by side; only cap children wider than the row.
+            child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (child.DesiredSize.Width > maxWidth && !double.IsInfinity(maxWidth))
+            {
+                child.Measure(new Size(maxWidth, double.PositiveInfinity));
+            }
+
             var desired = child.DesiredSize;
 
             var neededWidth = lineWidth > 0 ? lineWidth + hSpacing + desired.Width : desired.Width;
