@@ -11,8 +11,14 @@ namespace EnviousWispr.Pipeline;
 /// </summary>
 public interface IStreamingTranscriptionEffects
 {
-    /// <summary>The user's Live Preview switch, read when a recording starts; streaming yields to it.</summary>
+    /// <summary>The user's Live Preview switch, read when a recording starts.</summary>
     bool LivePreviewEnabled { get; }
+
+    /// <summary>
+    /// True when Live Preview actively holds the same runtime hardware resource (CPU or Accelerator) as
+    /// final ASR, so streaming yields rather than contending without an arbiter lease.
+    /// </summary>
+    bool YieldsToLivePreview => false;
 
     /// <summary>The final speech engine in force, or null when none is loaded.</summary>
     ITranscriptionEngine? Engine { get; }
@@ -166,7 +172,8 @@ public sealed class StreamingTranscriptionController
             _lastSnapshotSamples = 0;
             _hadEmptySegment = false;
             _usable = false;
-            if (_effects.Engine is not { } engine ||
+            if (_effects.YieldsToLivePreview ||
+                _effects.Engine is not { } engine ||
                 _effects.Audio is not { } snapshots)
             {
                 return;

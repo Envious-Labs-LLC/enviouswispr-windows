@@ -587,6 +587,61 @@ public sealed class Wave2AsrStreamingHardeningTests
     }
 
     [Fact]
+    public void LocalAgreement2AvoidsReEmittingRevisedSingleCommittedWord()
+    {
+        var stabilizer = new LivePreviewAgreementStabilizer();
+
+        Assert.Equal("one two", stabilizer.Stabilize("one two"));
+        Assert.Equal("one three", stabilizer.Stabilize("one three"));
+        Assert.Single(stabilizer.AgreedTail);
+
+        // Single committed word revised from "one" to "won": do not emit "one won three four".
+        var pass3 = stabilizer.Stabilize("won three four");
+        Assert.Equal("one three four", pass3);
+    }
+
+    [Fact]
+    public async Task StreamingYieldsToLivePreviewOnlyWhenSharingSameRuntimeResourceKind()
+    {
+        var audio = new IncrementalStubAudio();
+        var clock = new Deterministic.ManualClock();
+        var logger = new RecordingLog();
+        var previewEnabled = true;
+
+        // Shared CPU (or shared Accelerator) yields streaming cleanly to preview's arbiter lease.
+        var cpuFinal = new ScopedEngineStub(RuntimeResourceKind.Cpu);
+        var cpuPreview = new ScopedPreviewEngineStub(RuntimeResourceKind.Cpu);
+        var gpuFinal = new ScopedEngineStub(RuntimeResourceKind.Accelerator);
+
+        ITranscriptionEngine activeFinal = cpuFinal;
+        ILivePreviewEngine activePreview = cpuPreview;
+        var shell = new RuntimeShell(
+            new NullRuntimeView(),
+            () => previewEnabled,
+            () => HistoryPreferences.Default,
+            () => [],
+            () => audio,
+            () => activeFinal,
+            () => activePreview,
+            () => null,
+            () => null,
+            () => null,
+            () => false,
+            _ => Task.FromResult<string?>(null));
+        var effects = new StreamingTranscriptionEffects(shell);
+        var streaming = new StreamingTranscriptionController(effects, logger, clock);
+
+        streaming.Start(DictationSessionId.Create());
+        Assert.False(streaming.IsRunning);
+
+        // Disjoint Accelerator final + Cpu preview runs streaming concurrently with zero resource contention.
+        activeFinal = gpuFinal;
+        streaming.Start(DictationSessionId.Create());
+        Assert.True(streaming.IsRunning);
+        await streaming.StopAsync();
+    }
+
+    [Fact]
     public async Task CoordinatedStreamingAndPreviewAnchorsCommittedChunksAndSlicesTrailingWindow()
     {
         var clock = new Deterministic.ManualClock();
@@ -1087,5 +1142,36 @@ public sealed class Wave2AsrStreamingHardeningTests
             Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped));
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class ScopedEngineStub(RuntimeResourceKind kind) : ITranscriptionEngine, IRuntimeResourceScoped
+    {
+        public string EngineId => "scoped-engine";
+        public RuntimeResourceKind ResourceKind { get; } = kind;
+        public Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new Transcript(audio.SessionId, string.Empty, EngineId));
+    }
+
+    private sealed class ScopedPreviewEngineStub(RuntimeResourceKind kind) : ILivePreviewEngine, IRuntimeResourceScoped
+    {
+        public string EngineId => "scoped-preview";
+        public RuntimeResourceKind ResourceKind { get; } = kind;
+        public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Ready));
+        public Task<LivePreviewUpdate> PreviewAsync(AudioSnapshot snapshot, long sequence, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LivePreviewUpdate(snapshot.SessionId.Value, sequence, true, string.Empty));
+        public Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class NullRuntimeView : IRuntimeView
+    {
+        public void ShowPreview(LivePreviewFrame? frame) { }
+        public void ShowRecoveredText(RecoveryTextLoadResult result, bool undoOffered) { }
+        public void ClearRecoveredText() { }
+        public void NotifyHistoryChanged() { }
+        public void ShowMainWindow() { }
+        public void ShowSessionBusy(SessionHolder holder) { }
     }
 }

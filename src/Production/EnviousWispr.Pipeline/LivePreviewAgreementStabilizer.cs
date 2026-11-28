@@ -60,7 +60,7 @@ public sealed class LivePreviewAgreementStabilizer
             return CombineAnchoredAndTail(_anchoredPrefix, fallbackTail);
         }
 
-        var cut = ComputeCommittedCutIndex(_agreedTail, units);
+        var cut = ComputeCommittedCutIndex(_agreedTail, units, _previousHypothesis);
         var fresh = units.GetRange(cut, units.Count - cut);
 
         var agreed = 0;
@@ -82,7 +82,10 @@ public sealed class LivePreviewAgreementStabilizer
         return CombineAnchoredAndTail(_anchoredPrefix, tailText);
     }
 
-    internal static int ComputeCommittedCutIndex(IReadOnlyList<WordUnit> committed, IReadOnlyList<WordUnit> hypothesis)
+    internal static int ComputeCommittedCutIndex(
+        IReadOnlyList<WordUnit> committed,
+        IReadOnlyList<WordUnit> hypothesis,
+        IReadOnlyList<WordUnit>? previousHypothesis = null)
     {
         if (committed.Count == 0 || hypothesis.Count == 0)
         {
@@ -101,6 +104,15 @@ public sealed class LivePreviewAgreementStabilizer
         if (exact == committed.Count)
         {
             return exact;
+        }
+
+        // When committed words were revised (including the single-word case), check whether the word
+        // immediately after committed.Count aligns with the previous unconfirmed hypothesis head.
+        if (previousHypothesis is { Count: > 0 } &&
+            hypothesis.Count > committed.Count &&
+            string.Equals(hypothesis[committed.Count].Key, previousHypothesis[0].Key, StringComparison.Ordinal))
+        {
+            return committed.Count;
         }
 
         // Allow at most 1 acoustic revision inside the already-committed head window when aligned afterwards

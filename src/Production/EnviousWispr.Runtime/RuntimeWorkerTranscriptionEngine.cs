@@ -53,7 +53,7 @@ internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDis
     Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline);
 }
 
-public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime
+public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime, IRuntimeResourceScoped
 {
     private const int RequiredSampleRate = 16_000;
     private static readonly TimeSpan DefaultResourceWaitTimeout = TimeSpan.FromSeconds(2);
@@ -162,6 +162,8 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
     }
 
     public string EngineId { get; }
+
+    public RuntimeResourceKind ResourceKind => _resourceKind;
 
     public int? WorkerProcessId => _supervisor.WorkerProcessId;
 

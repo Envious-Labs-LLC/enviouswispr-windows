@@ -36,6 +36,11 @@ public sealed record RuntimeWorkerResult(
     RuntimeWorkerState State,
     AppError? Error = null);
 
+public interface IRuntimeResourceScoped
+{
+    RuntimeResourceKind ResourceKind { get; }
+}
+
 public interface IRuntimeWorkerSupervisor : IAsyncDisposable
 {
     RuntimeWorkerState State { get; }
