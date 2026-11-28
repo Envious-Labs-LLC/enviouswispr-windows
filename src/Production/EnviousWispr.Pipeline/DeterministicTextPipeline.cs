@@ -682,7 +682,7 @@ public sealed class DeterministicTextPipeline
 
                 if (string.IsNullOrWhiteSpace(value))
                 {
-                    return allowDefault;
+                    break;
                 }
 
                 if (SpokenPunctuationRules.TryValidateStartWord(value, languageCode, forms, out var validated))
@@ -701,6 +701,6 @@ public sealed class DeterministicTextPipeline
         }
 
         startWord = SpokenPunctuationRules.DefaultStartWord(languageCode) ?? string.Empty;
-        return true;
+        return startWord.Length > 0;
     }
 }

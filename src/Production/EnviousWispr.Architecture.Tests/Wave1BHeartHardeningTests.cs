@@ -124,6 +124,17 @@ public sealed class Wave1BHeartHardeningTests
         Assert.Equal("fr", french.CleanupLanguage);
         Assert.Equal(ItnRouteKind.Language, french.ItnRoute?.Kind);
         Assert.Equal("euh trois color", french.Output.Text);
+
+        var frenchBlankOverride = await pipeline.ProcessAsync(new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), "Un point important", "whisper", DetectedLanguage: "fr"),
+            CustomWords: [],
+            Options: new DeterministicTextOptions(
+                WordCorrectionEnabled: false,
+                FillerRemovalEnabled: false,
+                EmojiFormatterEnabled: false,
+                SpokenPunctuationEnabled: true,
+                SpokenPunctuationStartWords: new Dictionary<string, string> { ["fr"] = "   " })));
+        Assert.Equal("Un point important", frenchBlankOverride.Output.Text);
     }
 
     [Fact]
