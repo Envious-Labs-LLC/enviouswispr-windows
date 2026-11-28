@@ -590,7 +590,7 @@ public sealed partial class MainWindow
     {
         if (!IsEgOneMemorySamplingVisible())
         {
-            sender.Stop();
+            UpdateEgOneMemoryTimer(tickImmediately: false);
             return;
         }
 
