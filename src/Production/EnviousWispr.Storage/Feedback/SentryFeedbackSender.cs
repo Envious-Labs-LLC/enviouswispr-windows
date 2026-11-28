@@ -357,6 +357,7 @@ public sealed partial class SentryFeedbackSender : ISentryFeedbackTransport, IDi
             contexts["diagnostics"] = BuildSanitizedDiagnosticsDictionary(snapshot);
 
             tags["app.platform"] = WindowsObservabilityIdentity.PlatformIdentifier;
+            tags["app.build_type"] = identity.EffectiveBuildType;
             tags["app.channel"] = identity.ReleaseChannel;
             tags["app.packaging"] = identity.Packaging;
             tags["runtime.asr_engine"] = snapshot.FinalAsrEngine;

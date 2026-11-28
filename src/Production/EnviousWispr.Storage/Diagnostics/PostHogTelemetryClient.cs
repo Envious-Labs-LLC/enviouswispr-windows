@@ -18,7 +18,8 @@ public sealed record WindowsObservabilityIdentity(
     string Packaging,
     string Environment,
     Guid ProcessLaunchId,
-    string ProcessRole = "main")
+    string ProcessRole = "main",
+    string BuildType = WindowsObservabilityIdentity.CompiledBuildType)
 {
     public const string PostHogAppIdentifier = "enviouswispr-windows";
     public const string PlatformIdentifier = "windows";
@@ -26,8 +27,16 @@ public sealed record WindowsObservabilityIdentity(
     public const string SentryPlatformIdentifier = "csharp";
     public const string SentryReleasePrefix = "EnviousLabsLLC.EnviousWispr";
     public const string CrashContextSchemaVersion = "1";
+#if DEBUG
+    public const string CompiledBuildType = "debug";
+#else
+    public const string CompiledBuildType = "release";
+#endif
 
     public string SentryRelease => $"{SentryReleasePrefix}@{AppVersion}";
+
+    public string EffectiveBuildType =>
+        string.IsNullOrWhiteSpace(BuildType) ? CompiledBuildType : BuildType.Trim();
 
     public static WindowsObservabilityIdentity CreateDefault(
         ReleaseIdentity? releaseIdentity = null,
@@ -35,7 +44,8 @@ public sealed record WindowsObservabilityIdentity(
         string? appVersion = null,
         string? environment = null,
         Guid? processLaunchId = null,
-        string processRole = "main")
+        string processRole = "main",
+        string? buildType = null)
     {
         var channel = releaseIdentity ?? ReleaseIdentity.Stable;
         var version = string.IsNullOrWhiteSpace(appVersion)
@@ -50,6 +60,9 @@ public sealed record WindowsObservabilityIdentity(
             : (isPackagedMsix && channel.Channel == EnviousWispr.Core.Distribution.ReleaseChannel.Stable
                 ? "production"
                 : "development");
+        var resolvedBuildType = string.IsNullOrWhiteSpace(buildType)
+            ? CompiledBuildType
+            : buildType.Trim();
 
         return new WindowsObservabilityIdentity(
             AppVersion: version,
@@ -59,7 +72,8 @@ public sealed record WindowsObservabilityIdentity(
             Packaging: packaging,
             Environment: resolvedEnvironment,
             ProcessLaunchId: processLaunchId ?? Guid.NewGuid(),
-            ProcessRole: string.IsNullOrWhiteSpace(processRole) ? "main" : processRole.Trim());
+            ProcessRole: string.IsNullOrWhiteSpace(processRole) ? "main" : processRole.Trim(),
+            BuildType: resolvedBuildType);
     }
 }
 
