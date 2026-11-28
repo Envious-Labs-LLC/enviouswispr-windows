@@ -46,6 +46,43 @@ public sealed class ParakeetVocabularyTests
         }
     }
 
+    [Fact]
+    public void FrenchBlocklistMatchesOnlyFrenchAndCoversExactFortyFourTokensWithAndWithoutBoundaryChar()
+    {
+        var allFortyFour = new[]
+        {
+            " the", " The", " and", " And", " they", " you", " You", " with",
+            " that", " That", " this", " This", " have", " from", " was", " Was",
+            " were", " are", " been", " would", " could", " will", " their", " there",
+            " when", " what", " where", " which", " who", " not", " But", " but",
+            " So", " so", " It", " we", " We", " our", " your", " my",
+            " him", " her", " them", " these",
+        };
+        var rawTokens = allFortyFour
+            .Select((token, index) => index % 2 == 0 ? token : "\u2581" + token[1..])
+            .Concat(["\u2581le", "the", " themost", "<unk>", "<blk>"])
+            .ToArray();
+        var vocabulary = ParakeetVocabulary.FromTokens(rawTokens, blankIndex: rawTokens.Length - 1);
+
+        var frenchMask = vocabulary.FrenchBlocklistMaskFor("fr");
+        Assert.NotNull(frenchMask);
+        for (var i = 0; i < allFortyFour.Length; i++)
+        {
+            Assert.True(frenchMask![i], $"Expected French English blocklist to include '{allFortyFour[i]}'.");
+        }
+
+        Assert.False(frenchMask![allFortyFour.Length]);     // "\u2581le"
+        Assert.False(frenchMask[allFortyFour.Length + 1]);  // "the" without leading word boundary
+        Assert.False(frenchMask[allFortyFour.Length + 2]);  // " themost"
+        Assert.False(frenchMask[allFortyFour.Length + 3]);  // "<unk>"
+        Assert.False(frenchMask[allFortyFour.Length + 4]);  // "<blk>"
+
+        foreach (var other in new[] { null, "", "auto", "en", "de", "nl", "it", "es", "pl", "ru", "el" })
+        {
+            Assert.Null(vocabulary.FrenchBlocklistMaskFor(other));
+        }
+    }
+
     private static string CreateTemporaryDirectory()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"EnviousWispr-Vocab-{Guid.NewGuid():N}");

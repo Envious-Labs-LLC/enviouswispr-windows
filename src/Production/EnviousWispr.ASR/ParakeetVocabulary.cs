@@ -2,9 +2,49 @@ namespace EnviousWispr.ASR;
 
 internal sealed class ParakeetVocabulary
 {
+    private static readonly HashSet<string> FrenchEnglishBlocklistTokens = new(StringComparer.Ordinal)
+    {
+        " the", " The",
+        " and", " And",
+        " they",
+        " you", " You",
+        " with",
+        " that", " That",
+        " this", " This",
+        " have",
+        " from",
+        " was", " Was",
+        " were",
+        " are",
+        " been",
+        " would",
+        " could",
+        " will",
+        " their",
+        " there",
+        " when",
+        " what",
+        " where",
+        " which",
+        " who",
+        " not",
+        " But", " but",
+        " So", " so",
+        " It",
+        " we", " We",
+        " our",
+        " your",
+        " my",
+        " him",
+        " her",
+        " them",
+        " these",
+    };
+
     private readonly bool[] _latinMask;
     private readonly bool[] _cyrillicMask;
     private readonly bool[] _greekMask;
+    private readonly bool[] _frenchEnglishBlocklistMask;
 
     private ParakeetVocabulary(string[] tokens, int blankIndex)
     {
@@ -13,6 +53,7 @@ internal sealed class ParakeetVocabulary
         _latinMask = BuildScriptMask(tokens, blankIndex, ParakeetScript.Latin);
         _cyrillicMask = BuildScriptMask(tokens, blankIndex, ParakeetScript.Cyrillic);
         _greekMask = BuildScriptMask(tokens, blankIndex, ParakeetScript.Greek);
+        _frenchEnglishBlocklistMask = BuildFrenchEnglishBlocklistMask(tokens, blankIndex);
     }
 
     public string[] Tokens { get; }
@@ -29,6 +70,15 @@ internal sealed class ParakeetVocabulary
         _ => null,
     };
 
+    /// <summary>
+    /// Returns the French-only English-exclusive word blocklist mask matching macOS <c>TdtDecoderV3</c> (#630/#840/#1678),
+    /// or null for every other language so non-French Latin languages remain untouched.
+    /// </summary>
+    public bool[]? FrenchBlocklistMaskFor(string? effectiveLanguage) =>
+        string.Equals(effectiveLanguage, "fr", StringComparison.OrdinalIgnoreCase)
+            ? _frenchEnglishBlocklistMask
+            : null;
+
     internal static ParakeetVocabulary FromTokens(string[] tokens, int blankIndex)
     {
         ArgumentNullException.ThrowIfNull(tokens);
@@ -40,23 +90,79 @@ internal sealed class ParakeetVocabulary
     internal static int SelectToken(
         ReadOnlySpan<float> logits,
         int blankIndex,
-        bool[]? allowedTokenMask)
+        bool[]? allowedTokenMask) =>
+        SelectToken(logits, blankIndex, allowedTokenMask, blockedTokenMask: null);
+
+    internal static int SelectToken(
+        ReadOnlySpan<float> logits,
+        int blankIndex,
+        bool[]? allowedTokenMask,
+        bool[]? blockedTokenMask)
     {
-        var top1 = IndexOfMaximum(logits);
-        if (allowedTokenMask is null ||
-            top1 == blankIndex ||
-            (uint)top1 >= (uint)allowedTokenMask.Length ||
-            allowedTokenMask[top1])
+        var selected = IndexOfMaximum(logits);
+        if (selected == blankIndex)
         {
-            return top1;
+            return selected;
         }
 
-        var limit = Math.Min(logits.Length, allowedTokenMask.Length);
+        if (allowedTokenMask is not null &&
+            ((uint)selected >= (uint)allowedTokenMask.Length || !allowedTokenMask[selected]))
+        {
+            var scriptFallback = FindBestAllowedToken(
+                logits,
+                blankIndex,
+                allowedTokenMask,
+                blockedTokenMask: null);
+            if (scriptFallback >= 0)
+            {
+                selected = scriptFallback;
+            }
+        }
+
+        if (blockedTokenMask is not null &&
+            (uint)selected < (uint)blockedTokenMask.Length &&
+            blockedTokenMask[selected])
+        {
+            var blocklistFallback = FindBestAllowedToken(
+                logits,
+                blankIndex,
+                allowedTokenMask,
+                blockedTokenMask);
+            if (blocklistFallback >= 0)
+            {
+                selected = blocklistFallback;
+            }
+        }
+
+        return selected;
+    }
+
+    private static int FindBestAllowedToken(
+        ReadOnlySpan<float> logits,
+        int blankIndex,
+        bool[]? allowedTokenMask,
+        bool[]? blockedTokenMask)
+    {
+        var limit = allowedTokenMask is not null
+            ? Math.Min(logits.Length, allowedTokenMask.Length)
+            : logits.Length;
         var bestIndex = -1;
         var bestValue = float.NegativeInfinity;
         for (var index = 0; index < limit; index++)
         {
-            if (index == blankIndex || !allowedTokenMask[index])
+            if (index == blankIndex)
+            {
+                continue;
+            }
+
+            if (allowedTokenMask is not null && !allowedTokenMask[index])
+            {
+                continue;
+            }
+
+            if (blockedTokenMask is not null &&
+                (uint)index < (uint)blockedTokenMask.Length &&
+                blockedTokenMask[index])
             {
                 continue;
             }
@@ -68,7 +174,7 @@ internal sealed class ParakeetVocabulary
             }
         }
 
-        return bestIndex >= 0 ? bestIndex : top1;
+        return bestIndex;
     }
 
     internal static bool IsControlToken(string? token)
@@ -98,7 +204,24 @@ internal sealed class ParakeetVocabulary
         return mask;
     }
 
-    private static int IndexOfMaximum(ReadOnlySpan<float> values)
+    private static bool[] BuildFrenchEnglishBlocklistMask(string[] tokens, int blankIndex)
+    {
+        var mask = new bool[tokens.Length];
+        for (var index = 0; index < tokens.Length; index++)
+        {
+            if (index == blankIndex || IsControlToken(tokens[index]) || string.IsNullOrEmpty(tokens[index]))
+            {
+                continue;
+            }
+
+            var normalized = tokens[index].Replace('\u2581', ' ');
+            mask[index] = FrenchEnglishBlocklistTokens.Contains(normalized);
+        }
+
+        return mask;
+    }
+
+    internal static int IndexOfMaximum(ReadOnlySpan<float> values)
     {
         var bestIndex = 0;
         var bestValue = float.NegativeInfinity;

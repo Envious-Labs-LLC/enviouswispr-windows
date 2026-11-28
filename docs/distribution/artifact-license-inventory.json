@@ -1,21 +1,21 @@
 {
   "schemaVersion": 1,
-  "evidenceObservedAt": "2026-11-23",
+  "evidenceObservedAt": "2026-11-27",
   "artifacts": [
     {
       "id": "parakeet-final-model",
       "artifactClass": "model",
-      "plannedPayload": "Parakeet TDT 0.6B v3 ONNX model pack",
-      "upstreamIdentity": "nvidia/parakeet-tdt-0.6b-v3",
+      "plannedPayload": "Parakeet Ultra (NVIDIA Parakeet TDT 0.6B v3 post-trained by moondream) ONNX int8 model pack",
+      "upstreamIdentity": "nvidia/parakeet-tdt-0.6b-v3 (post-trained by moondream as Parakeet Ultra)",
       "observedLicense": "CC-BY-4.0",
       "sourceUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
-      "sourceRevision": "istupakov/parakeet-tdt-0.6b-v3-onnx 8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce (5 ONNX files pinned by size and SHA-256 in models/manifests/parakeet-tdt-0.6b-v3.json)",
+      "sourceRevision": "Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx 3b80a92332b5d34c364a35a880ef049c7fede9f2 (5 ONNX int8 files pinned by size and SHA-256 in models/manifests/parakeet-ultra.json)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Verify the upstream nvidia/parakeet-tdt-0.6b-v3 base checkpoint revision corresponding to the pinned istupakov ONNX export.",
-        "Confirm full-precision sidecar distribution policy alongside the signed int8 delivery manifest.",
+        "Verify the upstream nvidia/parakeet-tdt-0.6b-v3 base checkpoint and moondream Parakeet Ultra post-training provenance corresponding to Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx @ 3b80a92332b5d34c364a35a880ef049c7fede9f2.",
+        "Confirm development-only full-precision sidecar policy alongside the bundled parakeet-ultra int8 delivery manifest.",
         "Approve and preserve the required CC-BY-4.0 attribution notice."
       ]
     },

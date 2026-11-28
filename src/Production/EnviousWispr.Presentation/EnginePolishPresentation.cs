@@ -163,7 +163,7 @@ public static class EnginePolishPresentation
         new(PolishUnloadPolicy.FifteenMinutes, "After 15 minutes"),
         new(PolishUnloadPolicy.SixtyMinutes, "After 1 hour"),
     ];
-    public const string ParakeetBundleSizeLabel = "640 MB";
+    public const string ParakeetBundleSizeLabel = "638 MB";
     public const string WhisperBundleSizeLabel = "548 MB";
     public const string RemovalBlockedBusyNotice =
         "Finish the current dictation or file transcription before removing a speech model.";
@@ -190,7 +190,7 @@ public static class EnginePolishPresentation
         _ => new EngineSummaryPresentation(
             Name: "Parakeet",
             BadgeText: "Recommended",
-            Description: "Fast local speech recognition for 25 languages (640 MB) that runs smoothly on most PCs.",
+            Description: "Fast local speech recognition for 25 languages (638 MB) that runs smoothly on most PCs.",
             IconGlyph: "\uE945",
             ShowWhisperLanguage: true,
             IsRecommended: true),

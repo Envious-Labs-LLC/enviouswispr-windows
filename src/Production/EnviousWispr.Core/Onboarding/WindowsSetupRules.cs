@@ -121,7 +121,7 @@ public sealed record WindowsSetupRules(
         ParallelDownloadsMinRamGb: 16d,
         SpeechCatalog: new Dictionary<string, SpeechCatalogRuleEntry>(StringComparer.Ordinal)
         {
-            [ParakeetModelIds.Final] = new("Parakeet", FinalAsrEngine.Parakeet, "640 MB", 670_619_803L, "25 languages"),
+            [ParakeetModelIds.Final] = new("Parakeet", FinalAsrEngine.Parakeet, "638 MB", 667_974_615L, "25 languages"),
             [WhisperModelIds.Final] = new("Whisper", FinalAsrEngine.Whisper, "548 MB", 574_041_195L, "99+ languages"),
         },
         PolishCatalog: new Dictionary<string, PolishCatalogRuleEntry>(StringComparer.Ordinal)

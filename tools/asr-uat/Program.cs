@@ -6,7 +6,12 @@ using EnviousWispr.Core.Runtime;
 using EnviousWispr.Services.Runtime;
 
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
-var modelDirectory = Path.Combine(repositoryRoot, "models", "parakeet-tdt-0.6b-v3");
+var ultraDirectory = Path.Combine(repositoryRoot, "models", ParakeetModelIds.Final);
+var legacyDirectory = Path.Combine(repositoryRoot, "models", ParakeetModelIds.LegacyV3);
+var modelDirectory = File.Exists(Path.Combine(ultraDirectory, "encoder-model.int8.onnx")) ||
+    File.Exists(Path.Combine(ultraDirectory, "encoder-model.onnx"))
+    ? ultraDirectory
+    : legacyDirectory;
 var audioDirectory = Path.Combine(repositoryRoot, "spikes", "s1", "audio");
 var clips = new Dictionary<string, float[]>(StringComparer.Ordinal)
 {

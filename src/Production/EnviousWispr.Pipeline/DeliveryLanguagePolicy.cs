@@ -26,8 +26,7 @@ public static class DeliveryLanguagePolicy
     public static bool EngineDetectsLanguage(Transcript transcript)
     {
         ArgumentNullException.ThrowIfNull(transcript);
-        return !transcript.EngineId.StartsWith(ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase) &&
-            !transcript.EngineId.StartsWith("parakeet", StringComparison.OrdinalIgnoreCase);
+        return !IsParakeetEngineId(transcript.EngineId);
     }
 
     public static string? LockedLanguageFor(Transcript transcript)
@@ -61,5 +60,13 @@ public static class DeliveryLanguagePolicy
             identifyTextOnAllPaths: false,
             osDetector: osDetector,
             identifier: identifier);
+    }
+
+    private static bool IsParakeetEngineId(string engineId)
+    {
+        var modelId = engineId.Split(':', 2)[0];
+        return string.Equals(modelId, ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(modelId, ParakeetModelIds.LegacyV3, StringComparison.OrdinalIgnoreCase) ||
+            modelId.StartsWith("parakeet", StringComparison.OrdinalIgnoreCase);
     }
 }

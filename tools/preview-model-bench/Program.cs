@@ -149,11 +149,11 @@ var candidates = new List<Candidate?>
         whisperSmallDirectory, ModelFile: null),
     new("whisper-large-v3-turbo q5_0", FinalAsrEngine.Whisper, WhisperModelPack.Quantized,
         whisperTurboDirectory, ModelFile: null),
-    new("parakeet-tdt-0.6b-v3 int8", FinalAsrEngine.Parakeet, WhisperModelPack.Quantized,
+    new($"{ParakeetModelIds.Final} int8", FinalAsrEngine.Parakeet, WhisperModelPack.Quantized,
         parakeetInt8Directory, ModelFile: null),
     // THE PRODUCT REFUSES THE QUANTIZED PARAKEET PACK ON THE CARD before it looks for any library, so a card
     // candidate is the full-precision pack, named as such (ParakeetTranscriptionEngine, validation before CUDA).
-    new("parakeet-tdt-0.6b-v3 full precision", FinalAsrEngine.Parakeet, WhisperModelPack.Quantized,
+    new($"{ParakeetModelIds.Final} full precision", FinalAsrEngine.Parakeet, WhisperModelPack.Quantized,
         parakeetFp32Directory, ModelFile: null, ParakeetModelPack.FullPrecision),
 }
 .Where(candidate => candidate is not null)
