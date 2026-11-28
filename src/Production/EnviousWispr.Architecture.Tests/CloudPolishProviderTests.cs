@@ -278,7 +278,10 @@ public sealed class CloudPolishProviderTests
             var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             using var doc = JsonDocument.Parse(body);
             var userContent = doc.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
-            var inner = userContent.Replace("<TRANSCRIPT>", string.Empty).Replace("</TRANSCRIPT>", string.Empty).Trim();
+            const string prefixHeader = "Transcript to clean:\n\n";
+            var inner = userContent.StartsWith(prefixHeader, StringComparison.Ordinal)
+                ? userContent[prefixHeader.Length..]
+                : userContent;
             var polished = inner.Replace("word", "Word", StringComparison.Ordinal);
             return JsonResponse(JsonSerializer.Serialize(new
             {
@@ -329,6 +332,42 @@ public sealed class CloudPolishProviderTests
         Assert.Equal(input, result.Output);
         Assert.True(result.UsedFallback);
         Assert.Equal(AppErrorCode.PolishOutputTruncated, result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task LongTranscriptUnchangedAcrossWhitespaceChunkBoundariesPreservesExactSeparatorsAndUnchangedStatus()
+    {
+        var prefix = string.Join(' ', Enumerable.Repeat("alpha", 1_666));
+        var suffix = string.Join(' ', Enumerable.Repeat("beta", 1_000));
+        var longText = $"{prefix}   \t  {suffix}";
+        Assert.True(longText.Length > CloudPolishProviderBase.ChunkedPolishThresholdCharacters);
+        var input = new ProcessedText(DictationSessionId.Create(), longText);
+
+        var handler = new ScriptedHandler(request =>
+        {
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            using var doc = JsonDocument.Parse(body);
+            var userContent = doc.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+            const string prefixHeader = "Transcript to clean:\n\n";
+            var inner = userContent.StartsWith(prefixHeader, StringComparison.Ordinal)
+                ? userContent[prefixHeader.Length..]
+                : userContent;
+            return JsonResponse(JsonSerializer.Serialize(new
+            {
+                choices = new[]
+                {
+                    new { finish_reason = "stop", message = new { content = inner } },
+                },
+            }));
+        });
+        await using var provider = new OpenAiPolishProvider(
+            new FakeApiKeyStore(PolishProvider.OpenAI, "secret"),
+            messageHandler: handler);
+
+        var result = await provider.TryPolishAsync(new PolishRequest(input, "en"));
+
+        Assert.Equal(PolishAttemptStatus.Unchanged, result.Status);
+        Assert.Equal(longText, result.Output.Text);
     }
 
     private static void AssertRequestContainsTextButNoAudio(JsonElement root, Uri uri)

@@ -31,7 +31,7 @@ public static class AudioQuietCut
         ReadOnlySpan<float> audio,
         int sampleRate,
         out int cutLength,
-        double maximumFrameRms = 0.005)
+        double maximumFrameRms = 0.0015)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
         cutLength = 0;

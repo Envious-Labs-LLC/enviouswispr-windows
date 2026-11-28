@@ -183,4 +183,16 @@ public sealed class StreamingCommitPlannerTests
 
         Assert.Null(Plan(audio));
     }
+
+    [Fact]
+    public void ContinuousQuietSpeechAtVoicedFloorWaitsRatherThanCuttingMidWord()
+    {
+        var quietSpeech = new float[SampleRate * 65];
+        for (var i = 0; i < quietSpeech.Length; i++)
+        {
+            quietSpeech[i] = (i % 2 == 0) ? 0.003f : -0.003f;
+        }
+
+        Assert.Null(Plan(quietSpeech));
+    }
 }

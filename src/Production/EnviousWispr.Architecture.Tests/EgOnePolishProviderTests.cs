@@ -245,6 +245,47 @@ public sealed class EgOnePolishProviderTests
     }
 
     [Fact]
+    public async Task LargeTranscriptBeyond8kContextIsChunkedCleanlyAndRevertsOnFailure()
+    {
+        var runtime = new FakeRuntime { Endpoint = new EgOneEndpoint(18_082, "test-token", 8_192) };
+        var p1 = string.Join(' ', Enumerable.Repeat("first", 900));
+        var p2 = string.Join(' ', Enumerable.Repeat("second", 900));
+        var longText = $"{p1}\n\n{p2}";
+        var handler = new StubHandler(async (request, cancellationToken) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            var userContent = document.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+            var inner = userContent.Replace("<TRANSCRIPT>", string.Empty).Replace("</TRANSCRIPT>", string.Empty).Trim();
+            return JsonResponse(inner.Replace("first", "First", StringComparison.Ordinal).Replace("second", "Second", StringComparison.Ordinal));
+        });
+        await using var provider = new EgOnePolishProvider(runtime, Options, handler);
+        var input = Input(longText);
+
+        var result = await provider.TryPolishAsync(new PolishRequest(input, "en"));
+
+        Assert.Equal(PolishAttemptStatus.Polished, result.Status);
+        Assert.True(handler.CallCount >= 2);
+        Assert.Contains("First", result.Output.Text, StringComparison.Ordinal);
+        Assert.Contains("Second", result.Output.Text, StringComparison.Ordinal);
+
+        // If any chunk fails, the full original input must be returned intact.
+        var failingCalls = 0;
+        var failingHandler = new StubHandler((_, _) =>
+        {
+            failingCalls++;
+            return failingCalls == 1
+                ? Task.FromResult(JsonResponse(p1))
+                : Task.FromResult(JsonResponse("   "));
+        });
+        await using var failingProvider = new EgOnePolishProvider(runtime, Options, failingHandler);
+        var failed = await failingProvider.TryPolishAsync(new PolishRequest(input, "en"));
+
+        Assert.True(failed.UsedFallback);
+        Assert.Equal(input, failed.Output);
+    }
+
+    [Fact]
     public async Task ConnectionFailureRetriesOnceAndDisposalCleansRuntime()
     {
         var runtime = new FakeRuntime();

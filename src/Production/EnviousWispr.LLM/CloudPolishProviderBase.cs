@@ -72,90 +72,10 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
 
     internal static IReadOnlyList<(string Text, string SeparatorAfter)> SplitForPolish(
         string text,
-        int maxChunkCharacters = MaximumChunkCharacters)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxChunkCharacters, 0);
-
-        if (text.Length <= maxChunkCharacters)
-        {
-            return [(text, string.Empty)];
-        }
-
-        var chunks = new List<(string Text, string SeparatorAfter)>();
-        var cursor = 0;
-        while (cursor < text.Length)
-        {
-            var remaining = text.Length - cursor;
-            if (remaining <= maxChunkCharacters)
-            {
-                chunks.Add((text[cursor..], string.Empty));
-                break;
-            }
-
-            var limit = cursor + maxChunkCharacters;
-            var (splitEnd, nextCursor, separator) = FindBestSplitPoint(text, cursor, limit);
-            chunks.Add((text[cursor..splitEnd], separator));
-            cursor = nextCursor;
-        }
-
-        return chunks;
-    }
-
-    private static (int SplitEnd, int NextCursor, string Separator) FindBestSplitPoint(
-        string text,
-        int start,
-        int limit)
-    {
-        var windowLength = limit - start;
-        var minPreferred = start + (windowLength / 2);
-
-        // 1. Prefer paragraph breaks (\r\n\r\n or \n\n) so structure stays natural.
-        var paragraphBreak = text.LastIndexOf("\n\n", limit - 1, windowLength, StringComparison.Ordinal);
-        if (paragraphBreak >= minPreferred)
-        {
-            return (paragraphBreak, paragraphBreak + 2, "\n\n");
-        }
-
-        var singleNewline = text.LastIndexOf('\n', limit - 1, windowLength);
-        if (singleNewline >= minPreferred)
-        {
-            return (singleNewline, singleNewline + 1, "\n");
-        }
-
-        // 2. Next prefer sentence boundaries (. ! ? followed by whitespace).
-        for (var i = limit - 2; i >= minPreferred; i--)
-        {
-            if (text[i] is '.' or '!' or '?' && char.IsWhiteSpace(text[i + 1]))
-            {
-                var next = i + 1;
-                while (next < limit && char.IsWhiteSpace(text[next]))
-                {
-                    next++;
-                }
-
-                return (i + 1, next, " ");
-            }
-        }
-
-        // 3. Fall back to whitespace so words are never split mid-word.
-        for (var i = limit - 1; i > start; i--)
-        {
-            if (char.IsWhiteSpace(text[i]))
-            {
-                var next = i + 1;
-                while (next < text.Length && char.IsWhiteSpace(text[next]))
-                {
-                    next++;
-                }
-
-                return (i, next, " ");
-            }
-        }
-
-        // 4. Unbroken string without whitespace: hard split at limit.
-        return (limit, limit, string.Empty);
-    }
+        int maxChunkCharacters = MaximumChunkCharacters) =>
+        PolishChunker.Split(text, maxChunkCharacters)
+            .Select(piece => (piece.Text, piece.SeparatorAfter))
+            .ToArray();
 
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
@@ -244,7 +164,7 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
         }
 
         timer.Stop();
-        var assembled = builder.ToString().Trim();
+        var assembled = builder.ToString();
         return new PolishResult(
             new ProcessedText(request.Input.SessionId, assembled),
             string.Equals(request.Input.Text, assembled, StringComparison.Ordinal)

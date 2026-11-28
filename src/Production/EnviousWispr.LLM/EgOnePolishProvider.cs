@@ -147,7 +147,6 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 
         var timer = Stopwatch.StartNew();
         EnterCriticalSlotPriority();
-        var slotAcquired = false;
         try
         {
             var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
@@ -163,7 +162,22 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             var systemPrompt = EgOnePrompt.BuildSystemPrompt(request.DetectedLanguage ?? request.RecognitionLanguage);
             var userMessage = EgOnePrompt.BuildUserMessage(input.Text);
             var maximumOutputTokens = Math.Max(input.Text.Length, 256);
-            if (!FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
+            if (FitsContext(endpoint.ContextTokens, systemPrompt, userMessage, maximumOutputTokens))
+            {
+                var single = await PolishSingleWithSlotAsync(
+                    endpoint,
+                    input,
+                    systemPrompt,
+                    userMessage,
+                    maximumOutputTokens,
+                    timer,
+                    cancellationToken).ConfigureAwait(false);
+                timer.Stop();
+                return single;
+            }
+
+            var chunkBudget = ResolveChunkCharacterBudget(endpoint.ContextTokens, systemPrompt.Length);
+            if (chunkBudget <= 0)
             {
                 return Fallback(
                     input,
@@ -173,95 +187,194 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
                     canRetry: false);
             }
 
-            using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCancellation.CancelAfter(ResolveInferenceTimeout(_inferenceTimeout, input.Text.Length));
-            try
+            var pieces = PolishChunker.Split(input.Text, chunkBudget);
+            if (pieces.Count <= 1)
             {
-                await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
-                slotAcquired = true;
+                return Fallback(
+                    input,
+                    PolishAttemptStatus.InputTooLarge,
+                    AppErrorCode.PolishInputTooLarge,
+                    timer,
+                    canRetry: false);
+            }
 
-                for (var attempt = 0; attempt < 2; attempt++)
+            var assembled = new System.Text.StringBuilder(input.Text.Length);
+            foreach (var piece in pieces)
+            {
+                if (string.IsNullOrWhiteSpace(piece.Text))
                 {
-                    if (attempt > 0)
-                    {
-                        await Task.Delay(TimeSpan.FromMilliseconds(750), timeoutCancellation.Token)
-                            .ConfigureAwait(false);
-                        endpoint = await _runtime.EnsureReadyAsync(timeoutCancellation.Token)
-                            .ConfigureAwait(false);
-                        if (endpoint is null)
-                        {
-                            break;
-                        }
-                    }
-
-                    try
-                    {
-                        _runtime.BeginModelRequest();
-                        string? parsed;
-                        try
-                        {
-                            parsed = await SendAsync(
-                                endpoint,
-                                systemPrompt,
-                                userMessage,
-                                maximumOutputTokens,
-                                timeoutCancellation.Token).ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            _runtime.EndModelRequest();
-                        }
-                        if (parsed is null || !IsSafeOutput(input.Text, parsed))
-                        {
-                            return Fallback(
-                                input,
-                                PolishAttemptStatus.Failed,
-                                AppErrorCode.PolishFailed,
-                                timer);
-                        }
-
-                        timer.Stop();
-                        var status = string.Equals(input.Text, parsed, StringComparison.Ordinal)
-                            ? PolishAttemptStatus.Unchanged
-                            : PolishAttemptStatus.Polished;
-                        return new PolishResult(
-                            new ProcessedText(input.SessionId, parsed),
-                            status,
-                            ElapsedMilliseconds: timer.ElapsedMilliseconds);
-                    }
-                    catch (HttpRequestException) when (attempt == 0)
-                    {
-                        // One retry covers a single owned-server crash or a transient loopback reset.
-                    }
+                    assembled.Append(piece.Text).Append(piece.SeparatorAfter);
+                    continue;
                 }
 
-                return Fallback(
-                    input,
-                    PolishAttemptStatus.Failed,
-                    AppErrorCode.PolishFailed,
-                    timer);
+                var pieceMessage = EgOnePrompt.BuildUserMessage(piece.Text);
+                var pieceOutputTokens = Math.Max(piece.Text.Length, 256);
+                if (!FitsContext(endpoint.ContextTokens, systemPrompt, pieceMessage, pieceOutputTokens))
+                {
+                    return Fallback(
+                        input,
+                        PolishAttemptStatus.InputTooLarge,
+                        AppErrorCode.PolishInputTooLarge,
+                        timer,
+                        canRetry: false);
+                }
+
+                var pieceInput = new ProcessedText(input.SessionId, piece.Text);
+                var pieceResult = await PolishSingleWithSlotAsync(
+                    endpoint,
+                    pieceInput,
+                    systemPrompt,
+                    pieceMessage,
+                    pieceOutputTokens,
+                    timer,
+                    cancellationToken).ConfigureAwait(false);
+                if (pieceResult.UsedFallback)
+                {
+                    return Fallback(
+                        input,
+                        pieceResult.Status,
+                        pieceResult.Error?.Code ?? AppErrorCode.PolishFailed,
+                        timer,
+                        pieceResult.Error?.CanRetry ?? true);
+                }
+
+                assembled.Append(pieceResult.Output.Text).Append(piece.SeparatorAfter);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+
+            timer.Stop();
+            var finalText = assembled.ToString();
+            var overallStatus = string.Equals(input.Text, finalText, StringComparison.Ordinal)
+                ? PolishAttemptStatus.Unchanged
+                : PolishAttemptStatus.Polished;
+            return new PolishResult(
+                new ProcessedText(input.SessionId, finalText),
+                overallStatus,
+                ElapsedMilliseconds: timer.ElapsedMilliseconds);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _polishInFlight);
+        }
+    }
+
+    internal static int ResolveChunkCharacterBudget(int contextTokens, int systemPromptCharacters)
+    {
+        if (contextTokens < 4_096)
+        {
+            return 0;
+        }
+
+        // Leave room for system prompt tokens, <TRANSCRIPT> wrapper (~32 chars), and fixed 256 margin.
+        var reservedTokens = ((systemPromptCharacters + 32 + 3) / 4) + 256;
+        var availableTokens = contextTokens - reservedTokens;
+        if (availableTokens < 1_024)
+        {
+            return 0;
+        }
+
+        // Output tokens budget 1 per character + prompt tokens ~0.25 per character => ~1.25 tokens/char.
+        return Math.Clamp((int)(availableTokens / 1.3), 512, 5_000);
+    }
+
+    private async Task<PolishResult> PolishSingleWithSlotAsync(
+        EgOneEndpoint endpoint,
+        ProcessedText input,
+        string systemPrompt,
+        string userMessage,
+        int maximumOutputTokens,
+        Stopwatch timer,
+        CancellationToken cancellationToken)
+    {
+        var slotAcquired = false;
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCancellation.CancelAfter(ResolveInferenceTimeout(_inferenceTimeout, input.Text.Length));
+        try
+        {
+            await _slotGate.WaitAsync(timeoutCancellation.Token).ConfigureAwait(false);
+            slotAcquired = true;
+
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                return Fallback(
-                    input,
-                    PolishAttemptStatus.TimedOut,
-                    AppErrorCode.PolishTimedOut,
-                    timer);
+                if (attempt > 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(750), timeoutCancellation.Token)
+                        .ConfigureAwait(false);
+                    var refreshed = await _runtime.EnsureReadyAsync(timeoutCancellation.Token)
+                        .ConfigureAwait(false);
+                    if (refreshed is null)
+                    {
+                        break;
+                    }
+
+                    endpoint = refreshed;
+                }
+
+                try
+                {
+                    _runtime.BeginModelRequest();
+                    string? parsed;
+                    try
+                    {
+                        parsed = await SendAsync(
+                            endpoint,
+                            systemPrompt,
+                            userMessage,
+                            maximumOutputTokens,
+                            timeoutCancellation.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _runtime.EndModelRequest();
+                    }
+                    if (parsed is null || !IsSafeOutput(input.Text, parsed))
+                    {
+                        return Fallback(
+                            input,
+                            PolishAttemptStatus.Failed,
+                            AppErrorCode.PolishFailed,
+                            timer);
+                    }
+
+                    var status = string.Equals(input.Text, parsed, StringComparison.Ordinal)
+                        ? PolishAttemptStatus.Unchanged
+                        : PolishAttemptStatus.Polished;
+                    return new PolishResult(
+                        new ProcessedText(input.SessionId, parsed),
+                        status,
+                        ElapsedMilliseconds: timer.ElapsedMilliseconds);
+                }
+                catch (HttpRequestException) when (attempt == 0)
+                {
+                    // One retry covers a single owned-server crash or a transient loopback reset.
+                }
             }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception) when (
-                exception is HttpRequestException or JsonException or IOException or InvalidOperationException)
-            {
-                return Fallback(
-                    input,
-                    PolishAttemptStatus.Failed,
-                    AppErrorCode.PolishFailed,
-                    timer);
-            }
+
+            return Fallback(
+                input,
+                PolishAttemptStatus.Failed,
+                AppErrorCode.PolishFailed,
+                timer);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Fallback(
+                input,
+                PolishAttemptStatus.TimedOut,
+                AppErrorCode.PolishTimedOut,
+                timer);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or JsonException or IOException or InvalidOperationException)
+        {
+            return Fallback(
+                input,
+                PolishAttemptStatus.Failed,
+                AppErrorCode.PolishFailed,
+                timer);
         }
         finally
         {
@@ -269,8 +382,6 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
             {
                 _slotGate.Release();
             }
-
-            Interlocked.Decrement(ref _polishInFlight);
         }
     }
 
