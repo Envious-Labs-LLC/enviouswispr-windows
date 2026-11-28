@@ -63,11 +63,15 @@ public sealed partial class SettingsPageView : UserControl
 
     private void DownloadGraphicsRuntimeButton_Click(object sender, RoutedEventArgs e) => Host.DownloadGraphicsRuntimeButton_Click(sender, e);
 
+    private void ActivePolishProviderHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) => Host.ActivePolishProviderHeaderGrid_SizeChanged(sender, e);
+
     private void DownloadLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e) => Host.DownloadLivePreviewWhisperButton_Click(sender, e);
 
     private void EgOneCardFooter_SizeChanged(object sender, SizeChangedEventArgs e) => Host.EgOneCardFooter_SizeChanged(sender, e);
 
     private void EgOneCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) => Host.EgOneCardsGrid_SizeChanged(sender, e);
+
+    private void EgOneSectionHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) => Host.EgOneSectionHeaderGrid_SizeChanged(sender, e);
 
     private void EgOneChooseProviderButton_Click(object sender, RoutedEventArgs e) => Host.EgOneChooseProviderButton_Click(sender, e);
 
