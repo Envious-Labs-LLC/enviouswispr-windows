@@ -785,11 +785,41 @@ public sealed partial class MainWindow
 
         var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
         ActivePolishProviderNameText.Measure(infinite);
-        ActivePolishProviderBadgesPanel.Measure(infinite);
-        var stack = ActivePolishProviderNameText.DesiredSize.Width + ActivePolishProviderBadgesPanel.DesiredSize.Width + 12d > available;
-        Grid.SetRow(ActivePolishProviderBadgesPanel, stack ? 1 : 0);
-        Grid.SetColumn(ActivePolishProviderBadgesPanel, stack ? 0 : 1);
-        Grid.SetColumnSpan(ActivePolishProviderBadgesPanel, stack ? 2 : 1);
+        var recWidth = 0d;
+        var recVisible = ActivePolishProviderRecommendedBadge is { Visibility: Visibility.Visible };
+        if (recVisible)
+        {
+            ActivePolishProviderRecommendedBadge!.Measure(infinite);
+            recWidth = ActivePolishProviderRecommendedBadge.DesiredSize.Width;
+        }
+
+        var statusWidth = 0d;
+        if (ActivePolishProviderBadge is { Visibility: Visibility.Visible })
+        {
+            ActivePolishProviderBadge.Measure(infinite);
+            statusWidth = ActivePolishProviderBadge.DesiredSize.Width;
+        }
+
+        var badgesHorizontalWidth = recVisible && statusWidth > 0d
+            ? recWidth + 8d + statusWidth
+            : recWidth + statusWidth;
+
+        var inline = ActivePolishProviderNameText.DesiredSize.Width + 8d + badgesHorizontalWidth <= available;
+        if (inline)
+        {
+            ActivePolishProviderBadgesPanel.Orientation = Orientation.Horizontal;
+            Grid.SetRow(ActivePolishProviderBadgesPanel, 0);
+            Grid.SetColumn(ActivePolishProviderBadgesPanel, 1);
+            Grid.SetColumnSpan(ActivePolishProviderBadgesPanel, 1);
+            return;
+        }
+
+        ActivePolishProviderBadgesPanel.Orientation = badgesHorizontalWidth <= available
+            ? Orientation.Horizontal
+            : Orientation.Vertical;
+        Grid.SetRow(ActivePolishProviderBadgesPanel, 1);
+        Grid.SetColumn(ActivePolishProviderBadgesPanel, 0);
+        Grid.SetColumnSpan(ActivePolishProviderBadgesPanel, 2);
     }
 
     internal void EgOneSectionHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>

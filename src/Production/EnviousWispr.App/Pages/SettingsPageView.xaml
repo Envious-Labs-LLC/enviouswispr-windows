@@ -773,11 +773,11 @@
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <TextBlock x:Name="ActivePolishProviderNameText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" TextWrapping="NoWrap" VerticalAlignment="Center" />
-                                        <StackPanel x:Name="ActivePolishProviderBadgesPanel" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                            <Border x:Name="ActivePolishProviderRecommendedBadge" x:FieldModifier="internal" Style="{StaticResource BrandSolidAccentChipStyle}" Padding="8,2">
+                                        <StackPanel x:Name="ActivePolishProviderBadgesPanel" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                            <Border x:Name="ActivePolishProviderRecommendedBadge" x:FieldModifier="internal" Style="{StaticResource BrandSolidAccentChipStyle}" HorizontalAlignment="Left" Padding="8,2">
                                                 <TextBlock Style="{StaticResource BrandSolidAccentChipTextStyle}" Text="Recommended" />
                                             </Border>
-                                            <Border x:Name="ActivePolishProviderBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                            <Border x:Name="ActivePolishProviderBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" HorizontalAlignment="Left" Padding="8,2">
                                                 <TextBlock x:Name="ActivePolishProviderBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="On this PC" />
                                             </Border>
                                         </StackPanel>
