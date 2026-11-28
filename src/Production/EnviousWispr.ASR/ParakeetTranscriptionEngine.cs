@@ -12,7 +12,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace EnviousWispr.ASR;
 
-public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IDisposable
+public sealed partial class ParakeetTranscriptionEngine : IProgressReportingTranscriptionEngine, IDisposable
 {
     public const string ModelId = ParakeetModelIds.Final;
     public const int RequiredSampleRate = 16_000;
@@ -109,6 +109,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         ModelPack = options.ModelPack;
         EngineId = $"{ModelId}:{Provider.ToString().ToLowerInvariant()}";
 
+        options.OnInitStage?.Invoke("ModelInitStarted");
         ConfigureCudaRuntime(options);
         var (backend, vocabulary) = OnnxParakeetBackend.Create(options);
         _backend = backend;
@@ -171,6 +172,13 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
     public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
         string? language,
+        CancellationToken cancellationToken = default) =>
+        TranscribeAsync(audio, language, onProgress: null, cancellationToken);
+
+    public Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
+        Action<string, double?>? onProgress,
         CancellationToken cancellationToken = default)
     {
         var effectiveLanguage = LanguageCatalog.EffectiveRecognitionCode(FinalAsrEngine.Parakeet, language);
@@ -180,14 +188,30 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
             _vocabulary.MaskFor(script),
             _vocabulary.FrenchBlocklistMaskFor(effectiveLanguage),
             effectiveLanguage,
+            onProgress,
             cancellationToken);
     }
+
+    private Task<Transcript> TranscribeWithLanguageAsync(
+        CapturedAudio audio,
+        bool[]? allowedTokenMask,
+        bool[]? blockedTokenMask,
+        string? recognitionLanguage,
+        CancellationToken cancellationToken) =>
+        TranscribeWithLanguageAsync(
+            audio,
+            allowedTokenMask,
+            blockedTokenMask,
+            recognitionLanguage,
+            onProgress: null,
+            cancellationToken);
 
     private async Task<Transcript> TranscribeWithLanguageAsync(
         CapturedAudio audio,
         bool[]? allowedTokenMask,
         bool[]? blockedTokenMask,
         string? recognitionLanguage,
+        Action<string, double?>? onProgress,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(audio);
@@ -219,7 +243,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             return await Task.Run(
-                () => TranscribeCore(audio, allowedTokenMask, blockedTokenMask, recognitionLanguage, cancellationToken),
+                () => TranscribeCore(audio, allowedTokenMask, blockedTokenMask, recognitionLanguage, onProgress, cancellationToken),
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -351,6 +375,7 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
         bool[]? allowedTokenMask,
         bool[]? blockedTokenMask,
         string? recognitionLanguage,
+        Action<string, double?>? onProgress,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -377,7 +402,8 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                     var analysis = AnalyzeVoicedSpeech(audioSamples);
                     return (analysis.HasVoicedSpeech, analysis.TrimmedStartSample, analysis.TrimmedLength);
                 }
-                : null);
+                : null,
+            onProgress);
 
         var text = _recipe.TokensToText(recipeResult.Tokens);
         var fullDuration = TimeSpan.FromSeconds(samples.Length / (double)RequiredSampleRate);
@@ -962,9 +988,12 @@ public sealed partial class ParakeetTranscriptionEngine : ILanguageSelectableTra
                     : QuantizedDecoderFileName;
 
                 preprocessor = new InferenceSession(Path.Combine(modelDirectory, PreprocessorFileName), sessionOptions);
+                options.OnInitStage?.Invoke("WeightsMapped");
                 encoder = new InferenceSession(Path.Combine(modelDirectory, encoderFile), sessionOptions);
+                options.OnInitStage?.Invoke("EncoderReady");
                 decoder = new InferenceSession(Path.Combine(modelDirectory, decoderFile), sessionOptions);
                 var vocabulary = ParakeetVocabulary.Load(Path.Combine(modelDirectory, VocabularyFileName));
+                options.OnInitStage?.Invoke("ExecutionProviderReady");
 
                 var decoderInputs = decoder.InputMetadata;
                 var encoderDimension = checked((int)decoderInputs["encoder_outputs"].Dimensions[1]);

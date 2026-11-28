@@ -1,4 +1,5 @@
 using System.Text;
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
@@ -8,12 +9,14 @@ using Whisper.net.LibraryLoader;
 
 namespace EnviousWispr.ASR;
 
-public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IAsyncDisposable, IDisposable
+public sealed class WhisperTranscriptionEngine : IProgressReportingTranscriptionEngine, IAsyncDisposable, IDisposable
 {
     public const string ModelId = WhisperModelIds.Final;
     public const string PreviewModelId = WhisperModelIds.Preview;
     public const string NativeRuntimeVersion = "whisper.net-1.9.1-whisper.cpp-23ee035";
     public const int RequiredSampleRate = 16_000;
+    private const int MaxLidWindows = 4;
+    private const int MinimumLidWindowSamples = RequiredSampleRate / 4;
 
     private readonly WhisperFactory _factory;
     private readonly WhisperProcessor _processor;
@@ -23,6 +26,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
     // THE LOAD-TIME LANGUAGE IS KEPT APART FROM THE CURRENT ONE. A take that names no language runs in
     // the language this engine was built with, never in whatever the previous take switched it to.
     private readonly string _initialLanguage;
+    private Action<string, double?>? _activeProgressCallback;
     private string _language;
     private bool _disposed;
 
@@ -37,6 +41,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
         WhisperFactory? factory = null;
         try
         {
+            options.OnInitStage?.Invoke("ModelInitStarted");
             RuntimeOptions.LoadedLibrary = null;
             RuntimeOptions.RuntimeLibraryOrder = options.Provider == RuntimeProviderKind.Cuda
                 ? [RuntimeLibrary.Cuda]
@@ -49,11 +54,20 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
                     UseFlashAttention = options.UseFlashAttention,
                     GpuDevice = options.CudaDeviceId,
                 });
+            options.OnInitStage?.Invoke("WeightsMapped");
             var builder = factory.CreateBuilder()
                 .WithThreads(options.ThreadCount)
                 .WithNoContext()
                 .WithTokenTimestamps()
-                .WithoutStringPool();
+                .WithoutStringPool()
+                .WithProbabilities()
+                .WithEncoderBeginHandler(_ =>
+                {
+                    _activeProgressCallback?.Invoke("EncoderStarted", null);
+                    return true;
+                })
+                .WithProgressHandler(progress =>
+                    _activeProgressCallback?.Invoke("DecodeProgress", Math.Clamp(progress / 100.0, 0.0, 1.0)));
             _initialLanguage = string.IsNullOrWhiteSpace(options.Language) ||
                 string.Equals(options.Language, AutomaticLanguage, StringComparison.OrdinalIgnoreCase)
                 ? AutomaticLanguage
@@ -64,6 +78,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
                 : builder.WithLanguage(_language);
             _processor = builder.Build();
             _factory = factory;
+            options.OnInitStage?.Invoke("ExecutionProviderReady");
         }
         catch (Exception exception) when (IsRuntimeFailure(exception))
         {
@@ -85,7 +100,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
     public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
         CancellationToken cancellationToken = default) =>
-        TranscribeCoreAsync(audio, _initialLanguage, cancellationToken);
+        TranscribeCoreAsync(audio, _initialLanguage, onProgress: null, cancellationToken);
 
     /// <summary>Transcribes this take in the language given, switching the loaded model to it first when it differs.</summary>
     /// <remarks>
@@ -97,7 +112,18 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
         CapturedAudio audio,
         string? language,
         CancellationToken cancellationToken = default) =>
-        TranscribeCoreAsync(audio, NormalizeLanguage(language), cancellationToken);
+        TranscribeCoreAsync(audio, NormalizeLanguage(language), onProgress: null, cancellationToken);
+
+    public Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
+        Action<string, double?>? onProgress,
+        CancellationToken cancellationToken = default) =>
+        TranscribeCoreAsync(
+            audio,
+            language is null ? _initialLanguage : NormalizeLanguage(language),
+            onProgress,
+            cancellationToken);
 
     private static string NormalizeLanguage(string? language) =>
         string.IsNullOrWhiteSpace(language) ||
@@ -108,6 +134,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
     private async Task<Transcript> TranscribeCoreAsync(
         CapturedAudio audio,
         string? requestedLanguage,
+        Action<string, double?>? onProgress,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(audio);
@@ -136,6 +163,13 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
             {
                 _processor.ChangeLanguage(requestedLanguage);
                 _language = requestedLanguage;
+            }
+
+            _activeProgressCallback = onProgress;
+            (string? Language, double? Confidence, double? Margin) lidResult = (null, null, null);
+            if (string.Equals(_language, AutomaticLanguage, StringComparison.Ordinal))
+            {
+                lidResult = DetectMultiWindowLanguage(audio.Samples.Span, audio.SampleRate, cancellationToken);
             }
 
             var text = new StringBuilder();
@@ -170,13 +204,29 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
 
             processorPhase.Returned();
 
+            var finalDetectedLanguage = detectedLanguage ?? lidResult.Language;
+            double? finalConfidence = null;
+            double? finalMargin = null;
+            if (lidResult.Language is not null &&
+                finalDetectedLanguage is not null &&
+                string.Equals(
+                    NormalizeBaseLanguage(finalDetectedLanguage),
+                    NormalizeBaseLanguage(lidResult.Language),
+                    StringComparison.Ordinal))
+            {
+                finalConfidence = lidResult.Confidence;
+                finalMargin = lidResult.Margin;
+            }
+
             return new Transcript(
                 audio.SessionId,
                 WhisperNonSpeechFilter.Clean(text.ToString()),
                 EngineId,
                 timings,
-                DetectedLanguage: detectedLanguage,
-                RecognitionLanguage: _language);
+                DetectedLanguage: finalDetectedLanguage,
+                RecognitionLanguage: _language,
+                DetectedLanguageConfidence: finalConfidence,
+                DetectedLanguageMargin: finalMargin);
         }
         catch (OperationCanceledException)
         {
@@ -188,8 +238,160 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
         }
         finally
         {
+            _activeProgressCallback = null;
             _transcriptionGate.Release();
         }
+    }
+
+    private (string? Language, double? Confidence, double? Margin) DetectMultiWindowLanguage(
+        ReadOnlySpan<float> samples,
+        int sampleRate,
+        CancellationToken cancellationToken)
+    {
+        var ranges = BuildVoicedLidWindows(samples, sampleRate);
+        if (ranges.Count == 0)
+        {
+            return (null, null, null);
+        }
+
+        var observations = new List<(string Language, float Probability)>(ranges.Count);
+        foreach (var (start, length) in ranges)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _activeProgressCallback?.Invoke("LidWindow", null);
+            try
+            {
+                var slice = samples.Slice(start, length).ToArray();
+                var (lang, probability) = _processor.DetectLanguageWithProbability(slice);
+                if (!string.IsNullOrWhiteSpace(lang) && !float.IsNaN(probability) && !float.IsInfinity(probability))
+                {
+                    observations.Add((lang, probability));
+                }
+            }
+            catch (Exception exception) when (IsRuntimeFailure(exception))
+            {
+                // Heart-protection: skip a single failed LID window without aborting decode.
+            }
+        }
+
+        return AggregateLanguageObservations(observations);
+    }
+
+    internal static IReadOnlyList<(int Start, int Length)> BuildVoicedLidWindows(
+        ReadOnlySpan<float> samples,
+        int sampleRate = RequiredSampleRate,
+        int maxWindows = MaxLidWindows)
+    {
+        if (sampleRate <= 0 || maxWindows <= 0 || samples.Length < MinimumLidWindowSamples)
+        {
+            return [];
+        }
+
+        (double StartSec, double EndSec)[] schedule =
+        [
+            (0.0, 4.0),
+            (4.0, 8.0),
+            (1.0, 5.0),
+            (0.0, 12.0),
+        ];
+
+        var seen = new HashSet<(int, int)>();
+        var windows = new List<(int Start, int Length)>(maxWindows);
+        foreach (var (startSec, endSec) in schedule)
+        {
+            var start = Math.Min(samples.Length, (int)(startSec * sampleRate));
+            var end = Math.Min(samples.Length, (int)(endSec * sampleRate));
+            var length = end - start;
+            if (length < MinimumLidWindowSamples || !seen.Add((start, length)))
+            {
+                continue;
+            }
+
+            if (AudioQuietCut.IsBelowVoicedFloor(samples.Slice(start, length)))
+            {
+                continue;
+            }
+
+            windows.Add((start, length));
+            if (windows.Count >= maxWindows)
+            {
+                break;
+            }
+        }
+
+        return windows;
+    }
+
+    internal static (string? Language, double? Confidence, double? Margin) AggregateLanguageObservations(
+        IReadOnlyList<(string Language, float Probability)> observations)
+    {
+        if (observations.Count == 0)
+        {
+            return (null, null, null);
+        }
+
+        var totals = new Dictionary<string, double>(StringComparer.Ordinal);
+        var validCount = 0;
+        foreach (var (language, probability) in observations)
+        {
+            var normalized = NormalizeBaseLanguage(language);
+            if (normalized.Length == 0 || float.IsNaN(probability) || float.IsInfinity(probability))
+            {
+                continue;
+            }
+
+            var clamped = Math.Clamp((double)probability, 0.0, 1.0);
+            totals[normalized] = totals.GetValueOrDefault(normalized) + clamped;
+            validCount++;
+        }
+
+        if (validCount == 0 || totals.Count == 0)
+        {
+            return (null, null, null);
+        }
+
+        string? topLanguage = null;
+        var topScore = -1.0;
+        var secondObserved = 0.0;
+        var totalObserved = 0.0;
+        foreach (var (language, sum) in totals)
+        {
+            var score = sum / validCount;
+            totalObserved += score;
+            if (score > topScore)
+            {
+                secondObserved = Math.Max(secondObserved, Math.Max(0.0, topScore));
+                topScore = score;
+                topLanguage = language;
+            }
+            else if (score > secondObserved)
+            {
+                secondObserved = score;
+            }
+        }
+
+        if (topLanguage is null)
+        {
+            return (null, null, null);
+        }
+
+        var residualUpperBound = Math.Max(0.0, 1.0 - totalObserved);
+        var runnerUpBound = Math.Max(secondObserved, residualUpperBound);
+        var margin = Math.Max(0.0, topScore - runnerUpBound);
+        return (topLanguage, Math.Clamp(topScore, 0.0, 1.0), Math.Clamp(margin, 0.0, 1.0));
+    }
+
+    private static string NormalizeBaseLanguage(string? language)
+    {
+        var trimmed = language?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return string.Empty;
+        }
+
+        var separator = trimmed.AsSpan().IndexOfAny('-', '_');
+        var head = separator < 0 ? trimmed : trimmed[..separator];
+        return head.ToLowerInvariant();
     }
 
     internal const float HighNoSpeechProbabilityThreshold = 0.85f;

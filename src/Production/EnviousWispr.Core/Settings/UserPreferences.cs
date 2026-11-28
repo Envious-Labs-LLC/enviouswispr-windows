@@ -412,7 +412,8 @@ public sealed record UserPreferences(
     [property: JsonConverter(typeof(LivePreviewEngineChoiceJsonConverter))]
     LivePreviewEngineChoice LivePreviewEngine = LivePreviewEngineChoice.Parakeet,
     PasteTargetMode PasteTargetMode = PasteTargetMode.WhereDictationStarted,
-    bool SmartInsertionEnabled = true)
+    bool SmartInsertionEnabled = true,
+    IReadOnlyDictionary<string, int>? InputChannelByDeviceId = null)
 {
     public static UserPreferences Default { get; } = new(
         DictationPreferences.Default,
@@ -428,5 +429,6 @@ public sealed record UserPreferences(
         CopyInsteadOfPaste: false,
         LivePreviewEngine: LivePreviewEngineChoice.Parakeet,
         PasteTargetMode: PasteTargetMode.WhereDictationStarted,
-        SmartInsertionEnabled: true);
+        SmartInsertionEnabled: true,
+        InputChannelByDeviceId: null);
 }

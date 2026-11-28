@@ -5,6 +5,7 @@ using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Preview;
 using EnviousWispr.Core.Reliability;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing;
@@ -29,10 +30,16 @@ internal sealed class RecordingTimerEffects(RuntimeShell shell, SessionQueue que
     public void RecordingTimedOut(DictationSessionId sessionId) => queue.TimeOut(sessionId);
 }
 
-/// <summary>The shell's half of streaming: the final engine, the capture, and the switch it yields to.</summary>
+/// <summary>The shell's half of streaming: the final engine, the capture, and resource contention with preview.</summary>
 internal sealed class StreamingTranscriptionEffects(RuntimeShell shell) : IStreamingTranscriptionEffects
 {
     public bool LivePreviewEnabled => shell.LivePreviewEnabled();
+
+    public bool YieldsToLivePreview =>
+        shell.LivePreviewEnabled() &&
+        shell.Engine() is IRuntimeResourceScoped finalScoped &&
+        shell.PreviewEngine() is IRuntimeResourceScoped previewScoped &&
+        finalScoped.ResourceKind == previewScoped.ResourceKind;
 
     public ITranscriptionEngine? Engine => shell.Engine();
 
@@ -40,7 +47,9 @@ internal sealed class StreamingTranscriptionEffects(RuntimeShell shell) : IStrea
 }
 
 /// <summary>The shell's half of live preview: what it built, what it can sample, and the surface.</summary>
-internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffects
+internal sealed class LivePreviewEffects(
+    RuntimeShell shell,
+    Func<StreamingProgressSnapshot?>? streamingProgress = null) : ILivePreviewEffects
 {
     public bool Enabled => shell.LivePreviewEnabled();
 
@@ -51,6 +60,8 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
     public IAudioSnapshotSource? Audio => shell.Audio();
 
     public DictationSessionId? RecordingSessionId => shell.RecordingSessionId();
+
+    public StreamingProgressSnapshot? StreamingProgress => streamingProgress?.Invoke();
 
     public bool WordCorrectionEnabled => shell.Dictation?.Invoke().WordCorrectionEnabled ?? false;
 

@@ -59,6 +59,12 @@ public sealed class LanguageLockSuggester
     /// <summary>How many offers one language gets before it goes quiet.</summary>
     public const int OffersPerLanguage = 3;
 
+    /// <summary>Minimum Whisper LID probability before an observation advances a lock run.</summary>
+    public const double HighConfidenceThreshold = 0.85;
+
+    /// <summary>Minimum probability margin over the runner-up language to prevent anti-flap churn.</summary>
+    public const double MinimumConfidenceMargin = 0.10;
+
     private readonly Dictionary<string, int> _runs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _offers = new(StringComparer.Ordinal);
 
@@ -138,10 +144,14 @@ public sealed class LanguageLockSuggester
     /// <param name="detectedLanguage">What recognition said, or null when it said nothing.</param>
     /// <param name="current">The language setting as it stands right now.</param>
     /// <param name="activeEngine">The final ASR engine currently configured.</param>
+    /// <param name="confidence">Optional multi-window LID confidence in [0, 1]. When present, requires &gt;= 0.85.</param>
+    /// <param name="margin">Optional probability margin over runner-up language in [0, 1].</param>
     public LanguageLockOffer? Observe(
         string? detectedLanguage,
         string? current,
-        FinalAsrEngine activeEngine = FinalAsrEngine.Whisper)
+        FinalAsrEngine activeEngine = FinalAsrEngine.Whisper,
+        double? confidence = null,
+        double? margin = null)
     {
         // ALREADY PINNED MEANS THERE IS NOTHING TO OFFER. Somebody who has chosen a language has
         // answered this question, and asking again would be the app arguing with them.
@@ -160,6 +170,19 @@ public sealed class LanguageLockSuggester
         // working in Spanish who says one English sentence has not stopped working in Spanish.
         if (heard == "en")
         {
+            return null;
+        }
+
+        // Anti-flap hysteresis: low confidence or narrow margin breaks the candidate streak.
+        if (confidence is { } c && (double.IsNaN(c) || c < HighConfidenceThreshold))
+        {
+            _runs.Clear();
+            return null;
+        }
+
+        if (margin is { } m && (double.IsNaN(m) || m < MinimumConfidenceMargin))
+        {
+            _runs.Clear();
             return null;
         }
 

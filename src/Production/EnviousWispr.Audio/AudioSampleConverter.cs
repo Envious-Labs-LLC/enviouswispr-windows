@@ -24,7 +24,8 @@ public static class AudioSampleConverter
 
     public static AudioConversionResult ConvertToMono16Khz(
         ReadOnlySpan<byte> source,
-        AudioBufferFormat format)
+        AudioBufferFormat format,
+        int selectedChannelIndex = 0)
     {
         Validate(format);
         var bytesPerSample = BytesPerSample(format.Encoding);
@@ -48,20 +49,15 @@ public static class AudioSampleConverter
             return ConvertNativeMono16KhzFloat(MemoryMarshal.Cast<byte, float>(source));
         }
 
+        var channelIndex = Math.Clamp(selectedChannelIndex, 0, format.Channels - 1);
         var mono = new float[frameCount];
         double sumSquares = 0;
         var peak = 0f;
         for (var frame = 0; frame < frameCount; frame++)
         {
-            double sum = 0;
-            var frameOffset = frame * bytesPerFrame;
-            for (var channel = 0; channel < format.Channels; channel++)
-            {
-                var sampleOffset = frameOffset + (channel * bytesPerSample);
-                sum += Decode(source.Slice(sampleOffset, bytesPerSample), format.Encoding);
-            }
-
-            var sample = Math.Clamp((float)(sum / format.Channels), -1f, 1f);
+            var sampleOffset = (frame * bytesPerFrame) + (channelIndex * bytesPerSample);
+            var rawSample = Decode(source.Slice(sampleOffset, bytesPerSample), format.Encoding);
+            var sample = Math.Clamp(rawSample, -1f, 1f);
             mono[frame] = sample;
             peak = Math.Max(peak, Math.Abs(sample));
             sumSquares += sample * sample;
@@ -93,11 +89,20 @@ public static class AudioSampleConverter
             (float)Math.Sqrt(sumSquares / source.Length));
     }
 
-    private static float[] Resample(float[] source, int sourceSampleRate)
+    private static float[] Resample(float[] source, int sourceSampleRate) =>
+        ResampleMonoTo16Khz(source, sourceSampleRate, source);
+
+    internal static float[] ResampleMonoTo16Khz(ReadOnlySpan<float> source, int sourceSampleRate) =>
+        ResampleMonoTo16Khz(source, sourceSampleRate, exactCopySource: null);
+
+    private static float[] ResampleMonoTo16Khz(
+        ReadOnlySpan<float> source,
+        int sourceSampleRate,
+        float[]? exactCopySource)
     {
         if (sourceSampleRate == TargetSampleRate || source.Length == 0)
         {
-            return source;
+            return exactCopySource ?? source.ToArray();
         }
 
         var outputLength = Math.Max(
@@ -105,14 +110,44 @@ public static class AudioSampleConverter
             (int)Math.Round(source.Length * (double)TargetSampleRate / sourceSampleRate));
         var output = new float[outputLength];
         var sourceStep = sourceSampleRate / (double)TargetSampleRate;
+        var cutoffRatio = Math.Min(1.0, TargetSampleRate / (double)sourceSampleRate);
+        const int SincZeroCrossings = 12;
+        var radius = Math.Max(SincZeroCrossings, (int)Math.Ceiling(SincZeroCrossings / cutoffRatio));
 
         for (var index = 0; index < output.Length; index++)
         {
             var sourcePosition = index * sourceStep;
-            var lower = Math.Min((int)sourcePosition, source.Length - 1);
-            var upper = Math.Min(lower + 1, source.Length - 1);
-            var fraction = sourcePosition - lower;
-            output[index] = (float)(source[lower] + ((source[upper] - source[lower]) * fraction));
+            var center = (int)Math.Floor(sourcePosition);
+            var start = Math.Max(0, center - radius);
+            var end = Math.Min(source.Length - 1, center + radius);
+            double weightedSum = 0;
+            double totalWeight = 0;
+
+            for (var n = start; n <= end; n++)
+            {
+                var distance = n - sourcePosition;
+                if (Math.Abs(distance) > radius)
+                {
+                    continue;
+                }
+
+                var hannWindow = 0.5 * (1.0 + Math.Cos(Math.PI * distance / radius));
+                var sinc = Math.Abs(distance) < 1e-12
+                    ? cutoffRatio
+                    : Math.Sin(Math.PI * cutoffRatio * distance) / (Math.PI * distance);
+                var weight = sinc * hannWindow;
+                weightedSum += source[n] * weight;
+                totalWeight += weight;
+            }
+
+            if (totalWeight > 1e-12)
+            {
+                output[index] = Math.Clamp((float)(weightedSum / totalWeight), -1f, 1f);
+            }
+            else
+            {
+                output[index] = source[Math.Clamp(center, 0, source.Length - 1)];
+            }
         }
 
         return output;

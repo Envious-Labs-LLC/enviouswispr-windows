@@ -558,6 +558,7 @@ public sealed partial class MainWindow
         try
         {
             var preferences = _settings.Preferences;
+            EnviousWispr.Audio.AudioInputChannelRegistry.Configure(preferences.InputChannelByDeviceId);
             _lastActiveEngine = preferences.Dictation.FinalEngine;
             _selectedWhisperLanguage = LanguageCatalog.NormalizeOrDefault(preferences.Dictation.WhisperLanguage);
             _recordingModeIndex = (int)preferences.Dictation.RecordingMode;

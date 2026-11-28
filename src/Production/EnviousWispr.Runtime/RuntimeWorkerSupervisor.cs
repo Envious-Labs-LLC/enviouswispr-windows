@@ -10,11 +10,16 @@ public sealed partial class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
 {
     private const int ProtocolVersion = 1;
 
+    internal static readonly TimeSpan DefaultStageStallTimeout = TimeSpan.FromSeconds(12);
+    internal static readonly TimeSpan DefaultMaxProgressStartupTimeout = TimeSpan.FromSeconds(120);
+
     private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly string _workerExecutable;
     private readonly string[] _workerArguments;
     private readonly int _maximumRestarts;
     private readonly ProcessPriorityClass? _processPriority;
+    private readonly TimeSpan _stageStallTimeout;
+    private readonly TimeSpan _maxProgressStartupTimeout;
     private readonly SemaphoreSlim _gate = new(1, 1);
     /// <summary>The handshake between closing admission and publishing a generation or its process; never held across an await.</summary>
     private readonly object _lifecycle = new();
@@ -33,15 +38,29 @@ public sealed partial class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         IEnumerable<string>? workerArguments = null,
         int maximumRestarts = 1,
         ProcessPriorityClass? processPriority = null,
-        UatRuntimePhaseJournal? phaseJournal = null)
+        UatRuntimePhaseJournal? phaseJournal = null,
+        TimeSpan? stageStallTimeout = null,
+        TimeSpan? maxProgressStartupTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workerExecutable);
         ArgumentOutOfRangeException.ThrowIfNegative(maximumRestarts);
+        if (stageStallTimeout is { } explicitStall)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(explicitStall, TimeSpan.Zero);
+        }
+
+        if (maxProgressStartupTimeout is { } explicitStartupMax)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(explicitStartupMax, TimeSpan.Zero);
+        }
+
         _workerExecutable = Path.GetFullPath(workerExecutable);
         _workerArguments = workerArguments?.ToArray() ?? [];
         _maximumRestarts = maximumRestarts;
         _processPriority = processPriority;
         _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
+        _stageStallTimeout = stageStallTimeout ?? DefaultStageStallTimeout;
+        _maxProgressStartupTimeout = maxProgressStartupTimeout ?? DefaultMaxProgressStartupTimeout;
     }
 
     /// <summary>The worker's state; Aborted once an abort has run, whatever a request in flight writes after it.</summary>

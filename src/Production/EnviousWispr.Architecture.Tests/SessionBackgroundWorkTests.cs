@@ -37,12 +37,11 @@ public sealed class SessionBackgroundWorkTests
         // THE EXACT SEQUENCE, READ AT THE LEAVES. The watchdog's timer is the first thing registered
         // on the clock; the preview reads whether it is enabled; the preferences are read, once, at
         // the auto-stop's boundary; the auto-stop reads its audio and registers its poll; streaming
-        // reads whether the preview is on and registers its poll. Swapping any two adjacent starts
-        // changes this list. And none of it waited on a worker: the engine's start is still held.
+        // coordinates alongside preview (no longer checking LivePreviewEnabled to stand down) and registers its poll.
         await start.WaitAsync(Patience);
         await world.Engine.StartStarted.Task.WaitAsync(Patience);
         Assert.Equal(
-            ["timer:180000ms", "preview:enabled", "preferences", "autostop:audio", "timer:250ms", "streaming:enabled", "timer:500ms"],
+            ["timer:180000ms", "preview:enabled", "preferences", "autostop:audio", "timer:250ms", "timer:500ms"],
             world.Leaves);
         Assert.True(world.Watchdog.IsArmed);
         Assert.True(world.Preview.IsRunning);

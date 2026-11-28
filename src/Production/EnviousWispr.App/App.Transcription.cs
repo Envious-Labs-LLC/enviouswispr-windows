@@ -34,6 +34,7 @@ public partial class App
 
     private async Task ConfigureTranscriptionAsync(FinalAsrEngine configuredEngine)
     {
+        EnviousWispr.Audio.AudioInputChannelRegistry.Configure(_settings.Preferences.InputChannelByDeviceId);
         // WHAT THE GRAPHICS RUNTIME OFFER READS, reset first so a configuration that stops early offers nothing.
         _configuredTranscription = null;
         // THE FIRST-RUN GATE READS THIS, NOT THE SENTENCES BELOW: every return from here says which it was.
@@ -320,7 +321,10 @@ public partial class App
                 Language: language,
                 CurrentLanguage: CurrentWhisperLanguage,
                 CudaRuntimeDirectory: _cudaRuntimeDirectory,
-                ResourceAdmission: _resourceArbiter));
+                ResourceAdmission: _resourceArbiter,
+                ResourceProbe: _resourceProbe,
+                IsSessionActive: () => _sessionController?.CurrentSession is not null,
+                Logger: _logger));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateCpuParakeetEngine(
@@ -352,7 +356,10 @@ public partial class App
                 CpuFallbackThreads: selection.IntraOpThreads,
                 Language: language,
                 CurrentLanguage: CurrentWhisperLanguage,
-                ResourceAdmission: _resourceArbiter));
+                ResourceAdmission: _resourceArbiter,
+                ResourceProbe: _resourceProbe,
+                IsSessionActive: () => _sessionController?.CurrentSession is not null,
+                Logger: _logger));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
@@ -389,7 +396,10 @@ public partial class App
             Language: language,
             CurrentLanguage: CurrentWhisperLanguage,
             CudaRuntimeDirectory: _cudaRuntimeDirectory,
-            ResourceAdmission: _resourceArbiter));
+            ResourceAdmission: _resourceArbiter,
+            ResourceProbe: _resourceProbe,
+            IsSessionActive: () => _sessionController?.CurrentSession is not null,
+            Logger: _logger));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
@@ -421,7 +431,10 @@ public partial class App
             WhisperPack: selection.ModelPack.Value,
             Language: language,
             CurrentLanguage: CurrentWhisperLanguage,
-            ResourceAdmission: _resourceArbiter));
+            ResourceAdmission: _resourceArbiter,
+            ResourceProbe: _resourceProbe,
+            IsSessionActive: () => _sessionController?.CurrentSession is not null,
+            Logger: _logger));
     }
 
     /// <summary>Transcribes a chosen audio file for the Transcribe a File page. Ref: #211, macOS #2648.</summary>

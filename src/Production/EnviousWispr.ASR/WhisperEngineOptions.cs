@@ -9,4 +9,5 @@ public sealed record WhisperEngineOptions(
     int ThreadCount,
     string? Language = null,
     int CudaDeviceId = 0,
-    bool UseFlashAttention = true);
+    bool UseFlashAttention = true,
+    Action<string>? OnInitStage = null);

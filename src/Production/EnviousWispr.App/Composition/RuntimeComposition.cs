@@ -257,8 +257,11 @@ public static class RuntimeComposition
                 parts.Shell.ClipboardText,
                 SnippetExpansionStage.Timeout),
             parts.LearnedWordCheck);
-        var preview = new LivePreviewController(new LivePreviewEffects(parts.Shell), parts.Logger, parts.Clock);
         var streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(parts.Shell), parts.Logger, parts.Clock);
+        var preview = new LivePreviewController(
+            new LivePreviewEffects(parts.Shell, streaming.SnapshotProgress),
+            parts.Logger,
+            parts.Clock);
         var queue = new SessionQueue(parts.Shell, parts.Logger);
         var timers = new RecordingTimerEffects(parts.Shell, queue);
         var silentMic = new SilentMicMonitor(

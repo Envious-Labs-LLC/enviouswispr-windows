@@ -85,7 +85,9 @@ public sealed partial class MainWindow
             ? _languageSuggestions.Observe(
                 detectedLanguage,
                 _settings.Preferences.Dictation.WhisperLanguage,
-                _settings.Preferences.Dictation.FinalEngine)
+                _settings.Preferences.Dictation.FinalEngine,
+                delivered.DetectedLanguageConfidence,
+                delivered.DetectedLanguageMargin)
             : null;
         if (offer is null)
         {

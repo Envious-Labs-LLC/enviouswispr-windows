@@ -2,8 +2,10 @@ using System.Globalization;
 using System.IO.MemoryMappedFiles;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 
@@ -31,7 +33,12 @@ public sealed record RuntimeWorkerTranscriptionOptions(
     Func<string?>? CurrentLanguage = null,
     bool AllowFullPrecisionFallback = true,
     IRuntimeResourceAdmission? ResourceAdmission = null,
-    TimeSpan? ResourceWaitTimeout = null);
+    TimeSpan? ResourceWaitTimeout = null,
+    ISystemResourceProbe? ResourceProbe = null,
+    Func<bool>? IsSessionActive = null,
+    TimeProvider? Clock = null,
+    TimeSpan? IdleCheckInterval = null,
+    IAppLogger? Logger = null);
 
 internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
 {
@@ -46,18 +53,31 @@ internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDis
     Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline);
 }
 
-public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime
+public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime, IRuntimeResourceScoped
 {
     private const int RequiredSampleRate = 16_000;
     private static readonly TimeSpan DefaultResourceWaitTimeout = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan DefaultIdleCheckInterval = TimeSpan.FromSeconds(60);
+
     private readonly RuntimeWorkerSupervisor _supervisor;
     private readonly TimeSpan _startupTimeout;
+    private readonly TimeSpan? _explicitTranscriptionTimeout;
     private readonly TimeSpan _transcriptionTimeout;
+    private readonly FinalAsrEngine _engine;
+    private readonly RuntimeProviderKind _provider;
     private readonly Func<string?> _language;
     private readonly IRuntimeResourceAdmission? _resourceAdmission;
     private readonly RuntimeResourceKind _resourceKind;
     private readonly TimeSpan _resourceWaitTimeout;
+    private readonly ISystemResourceProbe? _resourceProbe;
+    private readonly Func<bool>? _isSessionActive;
+    private readonly TimeProvider _clock;
+    private readonly IAppLogger? _logger;
+    private readonly SemaphoreSlim _unloadGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly Task? _idleMonitorTask;
+    private long _lastUsedUtcTicks;
+    private int _activeTranscriptions;
     private bool _disposed;
 
     public RuntimeWorkerTranscriptionEngine(RuntimeWorkerTranscriptionOptions options)
@@ -67,7 +87,10 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         EngineId = options.Engine == FinalAsrEngine.Whisper
             ? $"{WhisperModelIds.For(options.WhisperPack)}:{options.Provider.ToString().ToLowerInvariant()}:isolated"
             : $"{ParakeetModelIds.Final}:{options.Provider.ToString().ToLowerInvariant()}:isolated";
+        _engine = options.Engine;
+        _provider = options.Provider;
         _startupTimeout = options.StartupTimeout ?? TimeSpan.FromSeconds(30);
+        _explicitTranscriptionTimeout = options.TranscriptionTimeout;
         _transcriptionTimeout = options.TranscriptionTimeout ?? TimeSpan.FromMinutes(2);
         _language = LanguageFor(options);
         _resourceAdmission = options.ResourceAdmission;
@@ -75,11 +98,22 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             ? RuntimeResourceKind.Cpu
             : RuntimeResourceKind.Accelerator;
         _resourceWaitTimeout = options.ResourceWaitTimeout ?? DefaultResourceWaitTimeout;
+        _resourceProbe = options.ResourceProbe;
+        _isSessionActive = options.IsSessionActive;
+        _clock = options.Clock ?? TimeProvider.System;
+        _logger = options.Logger;
+        _lastUsedUtcTicks = _clock.GetUtcNow().UtcTicks;
         _supervisor = new RuntimeWorkerSupervisor(
             options.WorkerExecutable,
             CreateWorkerArguments(options),
             options.MaximumWorkerRestarts,
             options.WorkerPriority);
+
+        if (_resourceProbe is not null || options.IdleCheckInterval is not null)
+        {
+            var interval = options.IdleCheckInterval ?? DefaultIdleCheckInterval;
+            _idleMonitorTask = RunIdleMonitorAsync(interval);
+        }
     }
 
     /// <summary>The engine over a supervisor a test built: the production adapter, a worker of the test's choosing.</summary>
@@ -91,31 +125,183 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         Func<string?>? language = null,
         IRuntimeResourceAdmission? resourceAdmission = null,
         RuntimeResourceKind resourceKind = RuntimeResourceKind.Cpu,
-        TimeSpan? resourceWaitTimeout = null)
+        TimeSpan? resourceWaitTimeout = null,
+        FinalAsrEngine engine = FinalAsrEngine.Parakeet,
+        RuntimeProviderKind? provider = null,
+        ISystemResourceProbe? resourceProbe = null,
+        Func<bool>? isSessionActive = null,
+        TimeProvider? clock = null,
+        TimeSpan? idleCheckInterval = null,
+        IAppLogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(supervisor);
         ArgumentException.ThrowIfNullOrWhiteSpace(engineId);
         _supervisor = supervisor;
         _language = language ?? (static () => null);
         EngineId = engineId;
+        _engine = engine;
+        _provider = provider ?? (resourceKind == RuntimeResourceKind.Cpu
+            ? RuntimeProviderKind.Cpu
+            : RuntimeProviderKind.Cuda);
         _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(30);
+        _explicitTranscriptionTimeout = transcriptionTimeout;
         _transcriptionTimeout = transcriptionTimeout ?? TimeSpan.FromMinutes(2);
         _resourceAdmission = resourceAdmission;
         _resourceKind = resourceKind;
         _resourceWaitTimeout = resourceWaitTimeout ?? DefaultResourceWaitTimeout;
+        _resourceProbe = resourceProbe;
+        _isSessionActive = isSessionActive;
+        _clock = clock ?? TimeProvider.System;
+        _logger = logger;
+        _lastUsedUtcTicks = _clock.GetUtcNow().UtcTicks;
+
+        if (_resourceProbe is not null || idleCheckInterval is not null)
+        {
+            _idleMonitorTask = RunIdleMonitorAsync(idleCheckInterval ?? DefaultIdleCheckInterval);
+        }
     }
 
     public string EngineId { get; }
 
+    public RuntimeResourceKind ResourceKind => _resourceKind;
+
     public int? WorkerProcessId => _supervisor.WorkerProcessId;
 
-    public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
-        await _supervisor.StartAsync(_startupTimeout, cancellationToken).ConfigureAwait(false);
+    public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
+    {
+        TouchLastUsed();
+        return await _supervisor.StartAsync(_startupTimeout, cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
         await _supervisor.StopAsync(cancellationToken).ConfigureAwait(false);
 
     public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline) => _supervisor.AbortAsync(deadline);
+
+    internal static TimeSpan ComputePieceTimeout(
+        TimeSpan audioDuration,
+        FinalAsrEngine engine,
+        RuntimeProviderKind provider,
+        TimeSpan? configuredTimeout = null)
+    {
+        if (configuredTimeout is { } explicitTimeout)
+        {
+            return explicitTimeout;
+        }
+
+        var isCpuWhisper = engine == FinalAsrEngine.Whisper && provider == RuntimeProviderKind.Cpu;
+        var chunkSeconds = Math.Max(0.0, audioDuration.TotalSeconds);
+        var scaledSeconds = Math.Clamp(
+            60.0 + (chunkSeconds * (isCpuWhisper ? 4.0 : 1.5)),
+            120.0,
+            420.0);
+        return TimeSpan.FromSeconds(scaledSeconds);
+    }
+
+    internal async Task<bool> CheckIdleUnloadAsync(CancellationToken cancellationToken = default)
+    {
+        if (_disposed || _supervisor.WorkerProcessId is null)
+        {
+            return false;
+        }
+
+        var isRecording = Volatile.Read(ref _activeTranscriptions) > 0 ||
+            (_isSessionActive?.Invoke() == true);
+        if (isRecording)
+        {
+            TouchLastUsed();
+            _ = ModelUnloadPolicy.Decide(isRecording: true, TimeSpan.Zero, snapshot: null);
+            return false;
+        }
+
+        var idle = _clock.GetUtcNow() - new DateTimeOffset(Interlocked.Read(ref _lastUsedUtcTicks), TimeSpan.Zero);
+        if (idle < TimeSpan.Zero)
+        {
+            idle = TimeSpan.Zero;
+        }
+
+        SystemResourceSnapshot? snapshot = null;
+        if (_resourceProbe is not null)
+        {
+            try
+            {
+                snapshot = _resourceProbe.Probe();
+            }
+            catch
+            {
+                snapshot = null;
+            }
+        }
+
+        if (ModelUnloadPolicy.Decide(isRecording: false, idle, snapshot) != ModelUnloadDecision.Unload)
+        {
+            return false;
+        }
+
+        await _unloadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_disposed ||
+                _supervisor.WorkerProcessId is null ||
+                Volatile.Read(ref _activeTranscriptions) > 0 ||
+                _isSessionActive?.Invoke() == true)
+            {
+                return false;
+            }
+
+            var recheckedIdle = _clock.GetUtcNow() -
+                new DateTimeOffset(Interlocked.Read(ref _lastUsedUtcTicks), TimeSpan.Zero);
+            if (ModelUnloadPolicy.Decide(isRecording: false, recheckedIdle, snapshot) != ModelUnloadDecision.Unload)
+            {
+                return false;
+            }
+
+            var stopped = await _supervisor.StopAsync(cancellationToken).ConfigureAwait(false);
+            if (stopped.Succeeded &&
+                snapshot is { IsAvailable: true } &&
+                snapshot.AvailablePhysicalMemoryBytes < ModelUnloadPolicy.MemoryPressureBytes)
+            {
+                _logger?.Write(new AppLogEntry(
+                    _clock.GetUtcNow(),
+                    AppEventCode.ResourcePressureDetected));
+            }
+
+            return stopped.Succeeded;
+        }
+        finally
+        {
+            _unloadGate.Release();
+        }
+    }
+
+    private void TouchLastUsed() =>
+        Interlocked.Exchange(ref _lastUsedUtcTicks, _clock.GetUtcNow().UtcTicks);
+
+    private async Task RunIdleMonitorAsync(TimeSpan interval)
+    {
+        try
+        {
+            while (!_lifetimeCancellation.IsCancellationRequested)
+            {
+                await Task.Delay(interval, _clock, _lifetimeCancellation.Token).ConfigureAwait(false);
+                try
+                {
+                    await CheckIdleUnloadAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch
+                {
+                    // Never allow idle unload background tick failure to fault the host runtime.
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
 
     public async Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
@@ -167,6 +353,14 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         IAsyncDisposable? resourceLease = null;
         IAsyncDisposable? cpuFallbackLease = null;
         RuntimeWorkerResponse? response;
+        var audioDuration = TimeSpan.FromSeconds(audio.Samples.Length / (double)RequiredSampleRate);
+        var requestTimeout = ComputePieceTimeout(
+            audioDuration,
+            _engine,
+            _provider,
+            _explicitTranscriptionTimeout);
+        Interlocked.Increment(ref _activeTranscriptions);
+        TouchLastUsed();
         try
         {
             if (_resourceAdmission is not null)
@@ -199,7 +393,7 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
 
             response = await _supervisor.TranscribeAsync(
                 request,
-                _transcriptionTimeout,
+                requestTimeout,
                 effectiveCancellationToken).ConfigureAwait(false);
             if (response is null)
             {
@@ -213,12 +407,14 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
 
                 response = await _supervisor.TranscribeAsync(
                     request,
-                    _transcriptionTimeout,
+                    requestTimeout,
                     effectiveCancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
+            TouchLastUsed();
+            Interlocked.Decrement(ref _activeTranscriptions);
             if (cpuFallbackLease is not null)
             {
                 await cpuFallbackLease.DisposeAsync().ConfigureAwait(false);
@@ -253,7 +449,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             transcript.UsedFallback,
             transcript.DegradedError,
             transcript.DetectedLanguage,
-            transcript.RecognitionLanguage);
+            transcript.RecognitionLanguage,
+            transcript.DetectedLanguageConfidence,
+            transcript.DetectedLanguageMargin);
     }
 
     /// <summary>What each take is told: the live language preference, or the load-time fallback.</summary>
@@ -319,6 +517,11 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         {
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(transcriptionTimeout, TimeSpan.Zero);
         }
+
+        if (options.IdleCheckInterval is { } idleCheckInterval)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(idleCheckInterval, TimeSpan.Zero);
+        }
     }
 
     private static TranscriptionEngineException Failure(
@@ -335,7 +538,13 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
 
         _disposed = true;
         _lifetimeCancellation.Cancel();
+        if (_idleMonitorTask is not null)
+        {
+            await _idleMonitorTask.ConfigureAwait(false);
+        }
+
         await _supervisor.DisposeAsync().ConfigureAwait(false);
+        _unloadGate.Dispose();
         _lifetimeCancellation.Dispose();
         GC.SuppressFinalize(this);
     }

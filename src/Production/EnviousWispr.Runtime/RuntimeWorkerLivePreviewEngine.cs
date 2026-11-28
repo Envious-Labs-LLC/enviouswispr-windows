@@ -7,7 +7,7 @@ using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.Services.Runtime;
 
-public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
+public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine, IRuntimeResourceScoped
 {
     private readonly Func<IWorkerTranscriptionRuntime>? _replacement;
     private readonly RuntimeResourceArbiter _resourceArbiter;
@@ -17,6 +17,8 @@ public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
     private IAsyncDisposable? _resourceLease;
     private bool _retired;
     private bool _disposed;
+
+    public RuntimeResourceKind ResourceKind => _resource;
 
     public RuntimeWorkerLivePreviewEngine(
         RuntimeWorkerTranscriptionOptions options,
