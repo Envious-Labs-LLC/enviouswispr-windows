@@ -68,32 +68,71 @@ public sealed class Wave1HotkeyAndAudioHardeningTests
     }
 
     [Fact]
-    public void PhysicalReconciliationPurgesOrphanedModifiersAndKeysWhilePreservingLiveHolds()
+    public void PhysicalReconciliationPurgesOrphanedUnconsumedModifiersAndKeysWhilePreservingLiveHolds()
     {
         var held = new HeldModifierKeys();
         var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
 
         held.Observe(LeftControl, isKeyDown: true, _ => false);
         held.Observe(LeftShift, isKeyDown: true, key => key == LeftControl);
-        tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
         tracker.Process(LetterC, isKeyDown: true, HotkeyModifiers.Control);
         Assert.True(tracker.HasHeldState);
 
         // Negative guard: while GetAsyncKeyState says all tracked keys are still physically down, reconcile keeps them.
         var noneMissingMods = held.Reconcile(_ => true, out _);
         Assert.Empty(noneMissingMods);
-        Assert.Null(tracker.ReconcileHeldKeys(_ => true));
+        tracker.ReconcileHeldKeys(_ => true);
         Assert.True(tracker.HasHeldState);
 
-        // Now simulate lost WM_KEYUP: only Shift remains down; Control, F8, and C are physically up.
+        // Now simulate lost WM_KEYUP: only Shift remains down; Control and ordinary 'C' are physically up.
         var purgedModifiers = held.Reconcile(vk => vk == LeftShift, out var observedMods);
         Assert.Equal([LeftControl], purgedModifiers);
         Assert.Equal(HotkeyModifiers.Shift, observedMods);
 
-        var released = tracker.ReconcileHeldKeys(vk => vk == LeftShift);
-        Assert.NotNull(released);
-        Assert.Equal(PushToTalkSignal.Released, released.Value.Signal);
+        tracker.ReconcileHeldKeys(vk => vk == LeftShift);
         Assert.False(tracker.HasHeldState);
+    }
+
+    [Fact]
+    public void ReconcileHeldKeysDoesNotDropConsumedRecordOrPasteLastHoldsWhileResetClearsAll()
+    {
+        const HotkeyModifiers pasteMods = HotkeyModifiers.Alt | HotkeyModifiers.Shift;
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(F8, HotkeyModifiers.None),
+            new HotkeyBinding(HotkeyEdgeTracker.EscapeVirtualKey, HotkeyModifiers.None),
+            new HotkeyBinding(LetterW, HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk,
+            typesCharacter: (_, _) => false,
+            pasteLast: new HotkeyBinding(LetterV, pasteMods));
+
+        // Consumed F8 PTT down -> GetAsyncKeyState reports false because WH_KEYBOARD_LL swallowed WM_KEYDOWN.
+        var f8Down = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        Assert.True(f8Down.Consume);
+        Assert.Equal(PushToTalkSignal.Pressed, f8Down.Signal);
+
+        tracker.ReconcileHeldKeys(_ => false);
+
+        var f8Up = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+        Assert.True(f8Up.Consume);
+        Assert.Equal(PushToTalkSignal.Released, f8Up.Signal);
+
+        // Consumed PasteLast down -> ReconcileHeldKeys(_ => false) must not disarm it before key-up.
+        var vDown = tracker.Process(LetterV, isKeyDown: true, pasteMods);
+        Assert.True(vDown.Consume);
+        Assert.Null(vDown.Signal);
+
+        tracker.ReconcileHeldKeys(_ => false);
+
+        var vUp = tracker.Process(LetterV, isKeyDown: false, HotkeyModifiers.None);
+        Assert.True(vUp.Consume);
+        Assert.Equal(PushToTalkSignal.PasteLast, vUp.Signal);
+
+        // ResetHeldKeys on lock/suspend/capture still clears consumed holds cleanly.
+        _ = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        tracker.ResetHeldKeys();
+        var afterResetUp = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+        Assert.False(afterResetUp.Consume);
+        Assert.Null(afterResetUp.Signal);
     }
 
     // ---- F12: Toggle mode honored on Ctrl+Win & modifier-only bindings ----

@@ -73,10 +73,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             }
         }
 
-        if (_edgeTracker.ReconcileHeldKeys(IsPressed) is { } reconciledDecision)
-        {
-            EmitDecision(reconciledDecision);
-        }
+        _edgeTracker.ReconcileHeldKeys(IsPressed);
 
         if (_edgeTracker.TickDecision() is { } tickDecision)
         {

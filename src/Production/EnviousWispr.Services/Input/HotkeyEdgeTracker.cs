@@ -679,7 +679,7 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
-    /// <summary>True when any key, modifier, or pending gesture is currently marked held.</summary>
+    /// <summary>True when any unconsumed key, modifier, or pending gesture is currently marked held.</summary>
     public bool HasHeldState
     {
         get
@@ -687,13 +687,7 @@ internal sealed class HotkeyEdgeTracker
             lock (_sync)
             {
                 return _heldOrdinaryKeys.Count > 0 ||
-                    _recordHeld ||
-                    _cancelHeld ||
-                    _quickAddHeld ||
                     _typingKey != NoKey ||
-                    _oneShotKeyPresses.Count > 0 ||
-                    (_pasteLast?.Held ?? false) ||
-                    (_copyLast?.Held ?? false) ||
                     _modifierSetEngaged ||
                     (_recordGesture?.IsHolding ?? false) ||
                     (_recordGesture?.HasTentativeRecording ?? false);
@@ -702,10 +696,16 @@ internal sealed class HotkeyEdgeTracker
     }
 
     /// <summary>
-    /// Reconciles tracked non-modifier keys against <paramref name="isKeyDown"/> so keys whose release
-    /// was swallowed (e.g. UAC, UIPI, Win+L) cannot poison future gestures or stick Push-to-Talk open.
+    /// Reconciles unconsumed ordinary keys against <paramref name="isKeyDown"/> so keys whose release
+    /// was swallowed (e.g. UAC, UIPI, Win+L) cannot poison future modifier gestures.
     /// </summary>
-    internal HotkeyEdgeDecision? ReconcileHeldKeys(Func<uint, bool> isKeyDown)
+    /// <remarks>
+    /// Consumed keys (ordinary-key PTT, Cancel, QuickAdd, PasteLast/CopyLast, one-shots) are swallowed by
+    /// <c>WH_KEYBOARD_LL</c> before Windows updates <c>GetAsyncKeyState</c>, so polling
+    /// <c>GetAsyncKeyState</c> for them would always read up and drop active holds at 40 ms.
+    /// Consumed holds are cleared via <see cref="ResetHeldKeys"/> on suspend/lock/unlock/capture.
+    /// </remarks>
+    internal void ReconcileHeldKeys(Func<uint, bool> isKeyDown)
     {
         ArgumentNullException.ThrowIfNull(isKeyDown);
 
@@ -720,60 +720,6 @@ internal sealed class HotkeyEdgeTracker
             {
                 _heldOrdinaryKeys.RemoveWhere(vk => vk != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(vk));
             }
-
-            if (_oneShotKeyPresses.Count > 0)
-            {
-                List<uint>? orphanedOneShots = null;
-                foreach (var key in _oneShotKeyPresses.Keys)
-                {
-                    if (key != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(key))
-                    {
-                        orphanedOneShots ??= [];
-                        orphanedOneShots.Add(key);
-                    }
-                }
-
-                if (orphanedOneShots is not null)
-                {
-                    foreach (var key in orphanedOneShots)
-                    {
-                        _oneShotKeyPresses.Remove(key);
-                    }
-                }
-            }
-
-            if (_cancelHeld && !isKeyDown(_cancel.VirtualKey))
-            {
-                _cancelHeld = false;
-            }
-
-            if (_quickAddHeld && !isKeyDown(_quickAdd.VirtualKey))
-            {
-                _quickAddHeld = false;
-            }
-
-            if (_pasteLast is { Held: true } pasteLast && !isKeyDown(pasteLast.Binding.VirtualKey))
-            {
-                pasteLast.Held = false;
-            }
-
-            if (_copyLast is { Held: true } copyLast && !isKeyDown(copyLast.Binding.VirtualKey))
-            {
-                copyLast.Held = false;
-            }
-
-            if (_recordGesture is null && _recordHeld && !isKeyDown(_record.VirtualKey))
-            {
-                _recordHeld = false;
-                var cancelledPending = _cancelledUntilRecordRelease;
-                _cancelledUntilRecordRelease = false;
-                if (!cancelledPending && _recordingMode != DictationRecordingMode.Toggle)
-                {
-                    return new HotkeyEdgeDecision(Consume: false, PushToTalkSignal.Released);
-                }
-            }
-
-            return null;
         }
     }
 
