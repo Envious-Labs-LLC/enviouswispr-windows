@@ -791,8 +791,17 @@ public sealed class StreamingTranscriptionControllerTests
     public async Task WholeAudioOverSixtySecondsIsChunkedAndSilentPiecesAreSkipped()
     {
         var world = World.Build();
-        // 65s silent first piece + 65s audible speech + 10s tail speech.
-        var samples = Build((false, 65_000), (true, 75_000));
+        // 65s silent first piece + 65s quiet speech (peak 0.003, >= Parakeet 0.002 voiced floor) + 10s tail speech.
+        var silent = Build((false, 65_000));
+        var quietSpeech = new float[SampleRate * 75];
+        for (var i = 0; i < quietSpeech.Length; i++)
+        {
+            quietSpeech[i] = (i % 2 == 0) ? 0.003f : -0.003f;
+        }
+
+        var samples = new float[silent.Length + quietSpeech.Length];
+        silent.CopyTo(samples, 0);
+        quietSpeech.CopyTo(samples, silent.Length);
         var scriptedEngine = new ScriptedChunkEngine(
             (_ => new Transcript(world.Session, "minute two words", "scripted")),
             (_ => new Transcript(world.Session, "final tail words", "scripted")));

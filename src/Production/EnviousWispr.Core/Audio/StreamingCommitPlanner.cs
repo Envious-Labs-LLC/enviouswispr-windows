@@ -104,20 +104,17 @@ public static class StreamingCommitPlanner
             return new StreamingCommit(committedThrough, end);
         }
 
-        // Forced quiet-cut commit for long continuous speech (>60s without a 400ms pause), so an
-        // unbroken hour-long monologue streams continuously instead of hoarding 60 minutes for release.
+        // Forced quiet-valley commit for long dictations with only brief (<400ms) pauses past 60s.
+        // Only commits when a genuine quiet valley (RMS <= 0.005) exists so unbroken speech never cuts mid-word.
         var maxUncommittedSamples = checked(sampleRate * AudioQuietCut.MaximumPieceSeconds);
         var uncommitted = samples[committedThrough..];
         if (uncommitted.Length > maxUncommittedSamples)
         {
             var heardSpeechAfterCommit = segments.Any(segment => segment.IsSpeech && segment.EndSample > committedThrough);
-            if (heardSpeechAfterCommit || !AudioQuietCut.IsSilent(uncommitted))
+            if ((heardSpeechAfterCommit || !AudioQuietCut.IsBelowVoicedFloor(uncommitted)) &&
+                AudioQuietCut.TryFindQuietValley(uncommitted, sampleRate, out var cutLength))
             {
-                var cutLength = AudioQuietCut.NextPieceLength(uncommitted, atEnd: false, sampleRate);
-                if (cutLength > 0)
-                {
-                    return new StreamingCommit(committedThrough, committedThrough + cutLength);
-                }
+                return new StreamingCommit(committedThrough, committedThrough + cutLength);
             }
         }
 

@@ -262,6 +262,7 @@ public sealed class CloudPolishProviderTests
         Assert.Equal(TimeSpan.FromSeconds(20), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromSeconds(20), 0));
         Assert.Equal(TimeSpan.FromSeconds(120), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromSeconds(20), 50_000));
         Assert.Equal(TimeSpan.FromSeconds(180), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromSeconds(20), 200_000));
+        Assert.Equal(TimeSpan.FromMinutes(5), CloudPolishProviderBase.ResolveTimeout(TimeSpan.FromMinutes(5), 50_000));
     }
 
     [Fact]

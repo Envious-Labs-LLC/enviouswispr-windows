@@ -921,7 +921,7 @@ public sealed class StreamingTranscriptionController
 
             var piece = audio.Samples.Slice(offset, pieceLength);
             offset += pieceLength;
-            if (AudioQuietCut.IsSilent(piece.Span))
+            if (AudioQuietCut.IsBelowVoicedFloor(piece.Span))
             {
                 continue;
             }

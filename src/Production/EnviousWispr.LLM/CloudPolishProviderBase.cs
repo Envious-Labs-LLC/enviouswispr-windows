@@ -62,10 +62,11 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
         }
 
         var baseSeconds = configuredTimeout.TotalSeconds;
+        var effectiveCap = Math.Max(baseSeconds, MaximumScaledTimeout.TotalSeconds);
         var scaledSeconds = Math.Clamp(
             baseSeconds + (characterCount / 500.0),
             baseSeconds,
-            MaximumScaledTimeout.TotalSeconds);
+            effectiveCap);
         return TimeSpan.FromSeconds(scaledSeconds);
     }
 

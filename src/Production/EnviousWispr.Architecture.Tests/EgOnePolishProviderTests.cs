@@ -241,6 +241,7 @@ public sealed class EgOnePolishProviderTests
         Assert.Equal(TimeSpan.FromSeconds(15), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromSeconds(15), 0));
         Assert.Equal(TimeSpan.FromSeconds(65), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromSeconds(15), 10_000));
         Assert.Equal(TimeSpan.FromSeconds(90), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromSeconds(15), 50_000));
+        Assert.Equal(TimeSpan.FromMinutes(3), EgOnePolishProvider.ResolveInferenceTimeout(TimeSpan.FromMinutes(3), 10_000));
     }
 
     [Fact]

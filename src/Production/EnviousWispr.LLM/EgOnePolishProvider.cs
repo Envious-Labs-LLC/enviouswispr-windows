@@ -127,7 +127,8 @@ public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
         }
 
         var baseSeconds = configuredTimeout.TotalSeconds;
-        var scaledSeconds = Math.Clamp(baseSeconds + (characterCount / 200.0), baseSeconds, 90.0);
+        var effectiveCap = Math.Max(baseSeconds, 90.0);
+        var scaledSeconds = Math.Clamp(baseSeconds + (characterCount / 200.0), baseSeconds, effectiveCap);
         return TimeSpan.FromSeconds(scaledSeconds);
     }
 

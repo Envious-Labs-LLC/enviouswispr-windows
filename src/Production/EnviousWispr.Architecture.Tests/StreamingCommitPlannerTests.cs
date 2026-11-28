@@ -175,4 +175,12 @@ public sealed class StreamingCommitPlannerTests
 
         Assert.Null(Plan(audio));
     }
+
+    [Fact]
+    public void ContinuousLoudMonologueWithoutAnyQuietValleyWaitsRatherThanCuttingMidWord()
+    {
+        var audio = Build((true, 65_000));
+
+        Assert.Null(Plan(audio));
+    }
 }
