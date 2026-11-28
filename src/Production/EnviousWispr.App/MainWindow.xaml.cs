@@ -485,11 +485,11 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    public void SetRecordingSilentMicNotice(MicSilenceLevel level)
+    public void SetRecordingSilentMicNotice(MicSilenceLevel level, bool isEndpointMuted = false)
     {
         if (!_overlayWindow.IsPreviewVisible)
         {
-            _overlayWindow.SetSilentMicNotice(level);
+            _overlayWindow.SetSilentMicNotice(level, isEndpointMuted);
         }
     }
 

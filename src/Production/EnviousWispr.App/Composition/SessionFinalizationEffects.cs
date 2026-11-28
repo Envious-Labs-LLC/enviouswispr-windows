@@ -156,10 +156,25 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     public void NotifyPasteCompleted(PasteCompletedEvent paste) =>
         parts.Shell.OnPasteCompleted?.Invoke(paste);
 
-    public void ShowZeroSignalAdvisory() =>
+    public void ShowZeroSignalAdvisory()
+    {
+        var isMuted = parts.Capture is EnviousWispr.Core.Audio.ISilentMicSampleSource { LastCaptureWasEndpointMuted: true };
+        if (isMuted)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.AudioDeviceMuted,
+                AppFailureCategory.AudioUnavailable));
+            _view.ShowStatus(DictationStatus.Advisory(
+                "Your microphone is muted in Windows. Unmute it in Sound Settings or press your mic mute key.",
+                StatusActions.OpenMicrophone));
+            return;
+        }
+
         _view.ShowStatus(DictationStatus.Advisory(
             "Audio isn't capturing. Your mic may be muted or disconnected. Please check your microphone settings.",
             StatusActions.OpenMicrophone));
+    }
 
     public Task RetireWarmCaptureAsync() =>
         parts.Capture is EnviousWispr.Core.Audio.IWarmAudioCapture warm

@@ -97,15 +97,36 @@ internal sealed class ComposedSessionWorld
 
     public static ComposedSessionWorld Create(string spoken, TimeProvider? clock = null) => Create(spoken, clock, new FakeRunState(), Guid.NewGuid());
 
+    public static ComposedSessionWorld CreateWithHoldMinimum(
+        string spoken,
+        TimeProvider? clock = null,
+        TimeSpan? minimumHoldDuration = null) =>
+        CreateCore(spoken, clock, new FakeRunState(), Guid.NewGuid(), recoveryStore: null, resources: null, minimumHoldDuration: minimumHoldDuration, useProductionDefaultHold: true);
+
     /// <param name="runState">The run-state store the edges go to: the fake that lists them, or the production store on a file.</param>
     /// <param name="runId">The run the shell would name, as it does through its RunId read.</param>
     /// <param name="recoveryStore">The recovery store the words go to: the fake that lists them, or the production store on a file.</param>
-    public static ComposedSessionWorld Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId, IRecoveryTextStore? recoveryStore = null, ISystemResourceProbe? resources = null)
+    public static ComposedSessionWorld Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId, IRecoveryTextStore? recoveryStore = null, ISystemResourceProbe? resources = null) =>
+        CreateCore(spoken, clock, runState, runId, recoveryStore, resources, minimumHoldDuration: TimeSpan.Zero, useProductionDefaultHold: false);
+
+    private static ComposedSessionWorld CreateCore(
+        string spoken,
+        TimeProvider? clock,
+        IApplicationRunStateStore runState,
+        Guid runId,
+        IRecoveryTextStore? recoveryStore,
+        ISystemResourceProbe? resources,
+        TimeSpan? minimumHoldDuration,
+        bool useProductionDefaultHold)
     {
         var log = new RecordingLogger();
         clock ??= TimeProvider.System;
         var capture = new FakeAudioCapture();
-        var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
+        var controller = new PushToTalkSessionController(
+            capture,
+            new FakeTargetProvider(101),
+            timeProvider: clock,
+            minimumHoldDuration: useProductionDefaultHold ? minimumHoldDuration : (minimumHoldDuration ?? TimeSpan.Zero));
         var engine = new FakeEngine(spoken);
         var previewEngine = new FakePreviewEngine();
         var delivery = new FakeDelivery();
@@ -732,11 +753,20 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
         remove { }
     }
 
+    public event EventHandler<AudioCaptureStopped>? UnexpectedStop;
+
     public bool IsCapturing { get; private set; }
 
     public bool HoldStart { get; set; }
     public bool ReturnTake { get; set; }
+    public Func<DictationSessionId, CapturedAudio>? StopResultFactory { get; set; }
     public int StartCount { get; private set; }
+
+    public void RaiseUnexpectedStop(AppError error)
+    {
+        IsCapturing = false;
+        UnexpectedStop?.Invoke(this, new AudioCaptureStopped(_sessionId, error));
+    }
 
     public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -760,7 +790,7 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
     {
         IsCapturing = false;
         Stopped.TrySetResult();
-        return Task.FromResult(new CapturedAudio(_sessionId, ReturnTake ? Take : OneSample, SampleRate: 16_000, Channels: 1));
+        return Task.FromResult(StopResultFactory?.Invoke(_sessionId) ?? new CapturedAudio(_sessionId, ReturnTake ? Take : OneSample, SampleRate: 16_000, Channels: 1));
     }
 
     /// <summary>Completed when a recording was stopped: its audio handed on.</summary>

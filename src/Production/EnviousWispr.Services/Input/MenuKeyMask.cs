@@ -24,7 +24,7 @@ internal static class MenuKeyMask
     /// </summary>
     public static readonly nint Tag = 0x45574D4B;
 
-    private const ushort VirtualKeyUnassigned = 0xE8;
+    internal const ushort VirtualKeyUnassigned = 0xE8;
     private const uint InputKeyboard = 1;
     private const uint KeyEventKeyUp = 0x0002;
 

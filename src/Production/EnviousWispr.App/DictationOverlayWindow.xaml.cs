@@ -1120,7 +1120,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             InPanelNoticeText.Style = OverlayChromeAnimator.GetPillStyle(
                 readingWell ? "PillWellModeTextStyle" : "PillNoticeTextStyle");
         }
-        else if (notice == RecordingNoticeKind.MicSilentStrong)
+        else if (notice == RecordingNoticeKind.MicSilentStrong || notice == RecordingNoticeKind.MicMuted)
         {
             InPanelNoticeIcon.Glyph = "\uE7BA";
             InPanelNoticeIcon.Style = OverlayChromeAnimator.GetPillStyle("PillWarningGlyphIconStyle");
@@ -1479,7 +1479,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         ApplyApproachingCapNotice();
     }
 
-    public void SetSilentMicNotice(MicSilenceLevel level)
+    public void SetSilentMicNotice(MicSilenceLevel level, bool isEndpointMuted = false)
     {
         if (_cleanedUp || _isPreviewSession || _state != DictationOverlayState.Recording)
         {
@@ -1491,12 +1491,14 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             return;
         }
 
-        var next = level switch
-        {
-            MicSilenceLevel.Calm => RecordingNoticeKind.MicSilentCalm,
-            MicSilenceLevel.Strong => RecordingNoticeKind.MicSilentStrong,
-            _ => RecordingNoticeKind.None,
-        };
+        var next = isEndpointMuted && level != MicSilenceLevel.None
+            ? RecordingNoticeKind.MicMuted
+            : level switch
+            {
+                MicSilenceLevel.Calm => RecordingNoticeKind.MicSilentCalm,
+                MicSilenceLevel.Strong => RecordingNoticeKind.MicSilentStrong,
+                _ => RecordingNoticeKind.None,
+            };
         if (next == RecordingNoticeKind.None)
         {
             if (!IsSilentMicNotice(_recordingNotice))
@@ -1518,14 +1520,16 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(InPanelNoticeText, noticeText);
             AnnounceStateChange(
                 InPanelNoticeText,
-                next == RecordingNoticeKind.MicSilentStrong
+                next is RecordingNoticeKind.MicSilentStrong or RecordingNoticeKind.MicMuted
                     ? DictationOverlayState.Warning
                     : DictationOverlayState.Advisory);
         }
     }
 
     private static bool IsSilentMicNotice(RecordingNoticeKind notice) =>
-        notice is RecordingNoticeKind.MicSilentCalm or RecordingNoticeKind.MicSilentStrong;
+        notice is RecordingNoticeKind.MicSilentCalm
+            or RecordingNoticeKind.MicSilentStrong
+            or RecordingNoticeKind.MicMuted;
 
     private void ApplyApproachingCapNotice()
     {

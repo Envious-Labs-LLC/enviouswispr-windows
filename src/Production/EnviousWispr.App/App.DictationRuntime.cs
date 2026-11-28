@@ -123,6 +123,7 @@ public partial class App
     private void OnKeybindCaptureActiveChanged(bool active)
     {
         _keybindCaptureActive = active;
+        _pushToTalkHook?.ResetHeldKeys();
         _pushToTalkHook?.SetCapturingKeybind(active);
     }
 
@@ -141,18 +142,27 @@ public partial class App
 
         var canonicalGesture = parsedGesture.ToString();
         var current = _presentation?.Settings.Current ?? _settings;
-        var conflicts = HotkeyConflictDetector.Find(
-            new (string Role, string Text)[]
-            {
-                ("Recording", canonicalGesture),
-                ("Cancel", current.Preferences.Dictation.CancelGesture),
-                ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
-                ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
-                ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
-            });
+        var roleBindings = new (string Role, string Text)[]
+        {
+            ("Recording", canonicalGesture),
+            ("Cancel", current.Preferences.Dictation.CancelGesture),
+            ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
+            ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
+            ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
+        };
+        var conflicts = HotkeyConflictDetector.Find(roleBindings);
         if (conflicts.Count > 0)
         {
             return (false, HotkeyConflictDetector.Describe(conflicts));
+        }
+
+        var blockedSystem = HotkeyConflictDetector
+            .FindSystemConflicts(roleBindings)
+            .Where(conflict => conflict.Severity == SystemShortcutConflictSeverity.Blocked)
+            .ToArray();
+        if (blockedSystem.Length > 0)
+        {
+            return (false, HotkeyConflictDetector.DescribeSystemConflicts(blockedSystem));
         }
 
         var disableGlobalHotkey = string.Equals(
@@ -438,6 +448,7 @@ public partial class App
         _sessionController = new PushToTalkSessionController(
             audioCapture,
             new WindowsForegroundTargetProvider(),
+            minimumHoldDuration: audioCapture is PublicFixtureAudioCapture ? TimeSpan.Zero : null,
             deliveryOptions: () => TextDeliveryOptions.Default with
             {
                 CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
@@ -930,7 +941,8 @@ public partial class App
     {
         if (source == LastDictationSource.Shortcut)
         {
-            await ModifierKeys.WaitForReleaseAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            // PasteLast fires on chord key-up; this brief grace wait catches fast modifier release jitter.
+            await ModifierKeys.WaitForReleaseAsync(TimeSpan.FromMilliseconds(150), cancellationToken).ConfigureAwait(false);
         }
 
         return await reuse.PasteAsync(target, source, shownEntry, cancellationToken).ConfigureAwait(false);

@@ -14,6 +14,7 @@ public enum SessionTransitionKind
     FinalizeReady,
     Delivering,
     Cancelled,
+    Discarded,
     Completed,
     Reset,
     Ignored,
@@ -68,7 +69,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         _audioCapture = audioCapture;
         _targetProvider = targetProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _minimumHoldDuration = minimumHoldDuration ?? TimeSpan.FromMilliseconds(100);
+        _minimumHoldDuration = minimumHoldDuration ?? TimeSpan.FromMilliseconds(500);
         // ASKED FOR AT THE PRESS, NOT SNAPSHOT AT STARTUP. Reading the settings once when this was
         // built meant saving a delivery choice did nothing until the app was restarted - the toggle
         // moved, the file changed, and the next recording used the value from launch. Reading it
@@ -259,10 +260,16 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
 
     public Task<SessionTransitionResult> ReleaseAsync(
         CancellationToken cancellationToken = default) =>
-        ReleaseAsync(releaseContext: null, cancellationToken);
+        ReleaseAsync(releaseContext: null, allowShortHold: false, cancellationToken);
+
+    public Task<SessionTransitionResult> ReleaseAsync(
+        ReleaseTargetContext? releaseContext,
+        CancellationToken cancellationToken = default) =>
+        ReleaseAsync(releaseContext, allowShortHold: false, cancellationToken);
 
     public async Task<SessionTransitionResult> ReleaseAsync(
         ReleaseTargetContext? releaseContext,
+        bool allowShortHold,
         CancellationToken cancellationToken = default)
     {
         var captureFallback = releaseContext is null &&
@@ -277,14 +284,20 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                 return Ignored();
             }
 
-            var heldFor = _timeProvider.GetUtcNow() - CurrentSession.StartedAt;
-            var remainingDebounce = _minimumHoldDuration - heldFor;
-            if (remainingDebounce > TimeSpan.Zero)
+            if (!allowShortHold && _minimumHoldDuration > TimeSpan.Zero)
             {
-                await Task.Delay(
-                    remainingDebounce,
-                    _timeProvider,
-                    cancellationToken).ConfigureAwait(false);
+                var heldFor = _timeProvider.GetUtcNow() - CurrentSession.StartedAt;
+                if (heldFor < _minimumHoldDuration)
+                {
+                    await _audioCapture.CancelAsync(cancellationToken).ConfigureAwait(false);
+                    CurrentSession = CurrentSession with
+                    {
+                        State = DictationSessionState.Cancelled,
+                        FinishedAt = _timeProvider.GetUtcNow(),
+                    };
+                    RaiseChanged();
+                    return new SessionTransitionResult(SessionTransitionKind.Discarded, CurrentSession);
+                }
             }
 
             var sessionId = CurrentSession.Id.Value;

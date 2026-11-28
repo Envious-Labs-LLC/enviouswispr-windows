@@ -28,42 +28,100 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     private readonly HotkeyEdgeTracker _edgeTracker;
     private readonly HeldModifierKeys _heldModifiers = new();
     private readonly Channel<PushToTalkSignalEvent> _signals = Channel.CreateUnbounded<PushToTalkSignalEvent>(
-        new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly Task _dispatchTask;
+    private readonly Lock _timerGate = new();
     private nint _hook;
     // Fully qualified: this project also sees System.Windows.Forms.Timer, and a Forms timer
     // needs a message pump, which the hook thread does not have.
-    private readonly System.Threading.Timer? _gestureTimer;
+    private readonly System.Threading.Timer _gestureTimer;
+    private bool _timerRunning;
+    private bool _disposed;
 
-    /// <summary>How often a pending gesture is given a chance to complete.</summary>
+    /// <summary>How often a pending gesture or held-key reconciliation check runs.</summary>
     /// <remarks>
     /// Comfortably finer than the shortest deadline it has to catch, so the worst case adds a few
-    /// tens of milliseconds to a gesture that already waits two hundred. Cheap enough to run for the
-    /// life of the app, and it only runs at all for a modifier binding.
+    /// tens of milliseconds to a gesture that already waits two hundred, and recovers any orphaned
+    /// physical key whose WM_KEYUP was swallowed by UAC/UIPI/lock within 40 ms.
     /// </remarks>
     private static readonly TimeSpan GestureTickInterval = TimeSpan.FromMilliseconds(40);
 
-    /// <summary>Whether the recording binding needs the gesture clock running.</summary>
+    /// <summary>Whether the recording binding needs the gesture clock running at construction.</summary>
     private static bool IsModifierBinding(HotkeyGesture gesture, uint virtualKey) =>
         (virtualKey == 0 && gesture.Modifiers != HotkeyModifiers.None) ||
         HotkeyEdgeTracker.IsModifierKey(virtualKey);
 
     private void PumpGesture()
     {
-        var decision = _edgeTracker.TickDecision();
-        if (decision is null)
+        lock (_timerGate)
         {
-            return;
+            if (_disposed || _hook == 0)
+            {
+                return;
+            }
         }
 
-        if (decision.Value.Signal is { } signal)
+        // Reconcile held modifiers and ordinary keys against GetAsyncKeyState first so orphaned keys
+        // (e.g. released on an elevated UAC window or secure desktop) are cleanly released before ticking.
+        var missingModifiers = _heldModifiers.Reconcile(IsPressed, out var gestureModifiers);
+        if (missingModifiers.Count > 0)
         {
-            _signals.Writer.TryWrite(new PushToTalkSignalEvent(signal, decision.Value.IsHandsFree));
+            var activeModifiers = ReadActiveModifiers();
+            foreach (var missingKey in missingModifiers)
+            {
+                EmitDecision(_edgeTracker.Process(missingKey, isKeyDown: false, activeModifiers, gestureModifiers));
+            }
         }
 
-        if (decision.Value.MaskMenuKey)
+        if (_edgeTracker.ReconcileHeldKeys(IsPressed) is { } reconciledDecision)
+        {
+            EmitDecision(reconciledDecision);
+        }
+
+        if (_edgeTracker.TickDecision() is { } tickDecision)
+        {
+            EmitDecision(tickDecision);
+        }
+
+        UpdateGestureTimer();
+    }
+
+    private void EmitDecision(HotkeyEdgeDecision decision)
+    {
+        if (decision.Signal is { } signal)
+        {
+            _signals.Writer.TryWrite(new PushToTalkSignalEvent(signal, decision.IsHandsFree));
+        }
+
+        if (decision.MaskMenuKey)
         {
             MenuKeyMask.Send();
+        }
+    }
+
+    private void UpdateGestureTimer()
+    {
+        var shouldRun = _edgeTracker.NextDeadline is not null ||
+            _edgeTracker.HasHeldState ||
+            _heldModifiers.HasAny;
+
+        lock (_timerGate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (shouldRun && !_timerRunning)
+            {
+                _timerRunning = true;
+                _gestureTimer.Change(GestureTickInterval, GestureTickInterval);
+            }
+            else if (!shouldRun && _timerRunning)
+            {
+                _timerRunning = false;
+                _gestureTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            }
         }
     }
 
@@ -103,14 +161,13 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         //
         // Armed only when a modifier binding is in use, so an ordinary key runs no timer and the
         // common path keeps exactly the cost it has today.
-        if (_edgeTracker.NextDeadline is not null || IsModifierBinding(gesture, virtualKey))
-        {
-            _gestureTimer = new System.Threading.Timer(
-                _ => PumpGesture(),
-                state: null,
-                dueTime: GestureTickInterval,
-                period: GestureTickInterval);
-        }
+        var startTimer = _edgeTracker.NextDeadline is not null || IsModifierBinding(gesture, virtualKey);
+        _timerRunning = startTimer;
+        _gestureTimer = new System.Threading.Timer(
+            _ => PumpGesture(),
+            state: null,
+            dueTime: startTimer ? GestureTickInterval : Timeout.InfiniteTimeSpan,
+            period: startTimer ? GestureTickInterval : Timeout.InfiniteTimeSpan);
         _hook = SetWindowsHookEx(
             WhKeyboardLowLevel,
             _procedure,
@@ -277,10 +334,13 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         // Stop the clock BEFORE closing the channel. A tick that lands after the writer completes
         // would try to write to a closed channel, which is a fault raised on a timer thread nobody
         // is watching - the kind that shows up as a mysterious process exit rather than an error.
-        if (_gestureTimer is not null)
+        lock (_timerGate)
         {
-            await _gestureTimer.DisposeAsync().ConfigureAwait(false);
+            _disposed = true;
+            _timerRunning = false;
         }
+
+        await _gestureTimer.DisposeAsync().ConfigureAwait(false);
 
         _signals.Writer.TryComplete();
         await _dispatchTask.ConfigureAwait(false);
@@ -291,6 +351,14 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     public void SetCancelArmed(bool armed) => _edgeTracker.SetCancelArmed(armed);
 
     public void SetCapturingKeybind(bool capturing) => _edgeTracker.SetCapturingKeybind(capturing);
+
+    /// <summary>Clears all held key and modifier tracking state (for suspend/lock/unlock/capture).</summary>
+    public void ResetHeldKeys()
+    {
+        _heldModifiers.Clear();
+        _edgeTracker.ResetHeldKeys();
+        UpdateGestureTimer();
+    }
 
     private nint HookCallback(int code, nint message, nint data)
     {
@@ -317,15 +385,8 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 isKeyDown,
                 ReadActiveModifiers(),
                 gestureModifiers);
-            if (decision.Signal is not null)
-            {
-                _signals.Writer.TryWrite(new PushToTalkSignalEvent(decision.Signal.Value, decision.IsHandsFree));
-            }
-
-            if (decision.MaskMenuKey)
-            {
-                MenuKeyMask.Send();
-            }
+            EmitDecision(decision);
+            UpdateGestureTimer();
 
             if (decision.Consume)
             {

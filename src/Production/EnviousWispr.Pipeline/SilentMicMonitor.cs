@@ -9,6 +9,8 @@ public interface ISilentMicNoticeEffects
 {
     void ShowSilentMicNotice(MicSilenceLevel level);
 
+    void ShowSilentMicNotice(MicSilenceLevel level, bool isEndpointMuted) => ShowSilentMicNotice(level);
+
     void ClearSilentMicNotice();
 }
 
@@ -78,6 +80,7 @@ public sealed class SilentMicMonitor : IAsyncDisposable
     {
         using var scope = DictationScope.Begin(sessionId.Value);
         var shownLevel = MicSilenceLevel.None;
+        var shownMuted = false;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -95,19 +98,22 @@ public sealed class SilentMicMonitor : IAsyncDisposable
                     return;
                 }
 
-                var level = SilentMicNoticePolicy.Evaluate(run, warningsEnabled);
-                if (level == MicSilenceLevel.None)
+                var effectiveRun = run.Value with { IsEndpointMuted = run.Value.IsEndpointMuted || source.IsEndpointMuted };
+                var notice = SilentMicNoticePolicy.EvaluateNotice(effectiveRun, warningsEnabled);
+                if (notice.Level == MicSilenceLevel.None)
                 {
                     if (shownLevel != MicSilenceLevel.None)
                     {
                         _effects.ClearSilentMicNotice();
                         shownLevel = MicSilenceLevel.None;
+                        shownMuted = false;
                     }
                 }
-                else if (level != shownLevel)
+                else if (notice.Level != shownLevel || notice.IsEndpointMuted != shownMuted)
                 {
-                    _effects.ShowSilentMicNotice(level);
-                    shownLevel = level;
+                    _effects.ShowSilentMicNotice(notice.Level, notice.IsEndpointMuted);
+                    shownLevel = notice.Level;
+                    shownMuted = notice.IsEndpointMuted;
                 }
             }
         }

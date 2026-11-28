@@ -70,6 +70,9 @@ public partial class App
         _window?.DispatcherQueue.TryEnqueue(ExitFromTray);
     }
 
+    private void OnCatalogAudioDevicesChanged(object? sender, AudioDeviceChange change) =>
+        OnAudioDevicesChanged(change);
+
     private void OnAudioDevicesChanged(AudioDeviceChange change)
     {
         // A MICROPHONE VANISHING MID-DICTATION IS A FACT ABOUT THAT DICTATION, and this arrives on
@@ -85,6 +88,42 @@ public partial class App
             change.AffectsCapture
                 ? AppFailureCategory.AudioUnavailable
                 : AppFailureCategory.None));
+        if (change.AffectsCapture &&
+            change.Kind is AudioDeviceChangeKind.DefaultChanged or AudioDeviceChangeKind.Removed or AudioDeviceChangeKind.StateChanged)
+        {
+            _ = HandleCaptureTopologyChangedAsync();
+        }
+    }
+
+    private async Task HandleCaptureTopologyChangedAsync()
+    {
+        if (Leaving || _audioCapture is not IWarmAudioCapture warm)
+        {
+            return;
+        }
+
+        // If Auto microphone is active (PreferredMicrophoneId == null), immediately refresh warm
+        // capture onto the newly resolved physical default device when idle so warm pre-roll
+        // stays ready without waiting for the next hotkey press.
+        if (string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId) &&
+            _presentation is { Closing: false } presentation)
+        {
+            try
+            {
+                var devices = await presentation.DeviceCatalog().GetCaptureDevicesAsync().ConfigureAwait(false);
+                var resolution = InputDeviceResolver.Resolve(devices, preferredDeviceId: null);
+                await warm.RefreshWarmAsync(
+                        resolution.SelectedDeviceId,
+                        resolution.SelectedDevice?.Transport == AudioDeviceTransport.Bluetooth)
+                    .ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+            {
+            }
+        }
+
+        await TearDownWarmAudioCaptureAsync().ConfigureAwait(false);
     }
 
     /// <summary>One snippet import attempt, logged as counts and categories (macOS <c>SnippetImportReporter</c>).</summary>

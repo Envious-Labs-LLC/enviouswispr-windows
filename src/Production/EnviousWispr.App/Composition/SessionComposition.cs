@@ -94,12 +94,32 @@ public static class SessionComposition
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the
         // queue's first hop.
-        return new DictationSessionCoordinator(
+        DictationSessionCoordinator? coordinator = null;
+        void OnCaptureUnexpectedStop(object? _, AudioCaptureStopped args)
+        {
+            if (coordinator is not { } targetCoordinator)
+            {
+                return;
+            }
+
+            try
+            {
+                _ = targetCoordinator.NotifyCaptureFaultedAsync(args.SessionId, args.Error);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        parts.Capture.UnexpectedStop += OnCaptureUnexpectedStop;
+        coordinator = new DictationSessionCoordinator(
             executor,
             parts.Controller.CaptureStartContext,
             parts.Clock,
             parts.Controller.CaptureReleaseTarget,
-            parts.Controller.CaptureReleaseTarget);
+            parts.Controller.CaptureReleaseTarget,
+            onDispose: () => parts.Capture.UnexpectedStop -= OnCaptureUnexpectedStop);
+        return coordinator;
     }
 }
 

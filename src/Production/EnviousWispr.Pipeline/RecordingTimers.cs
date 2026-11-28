@@ -301,6 +301,7 @@ public sealed class AutoStopMonitor : IAsyncDisposable
         // answer the question being asked of it.
         var window = required + required;
         var heardSpeech = false;
+        double? observedNoiseFloor = null;
 
         try
         {
@@ -314,15 +315,23 @@ public sealed class AutoStopMonitor : IAsyncDisposable
                     continue;
                 }
 
-                var segmenter = new SpeechSegmenter(snapshot.SampleRate, SegmentPause);
+                var segmenter = new SpeechSegmenter(snapshot.SampleRate, SegmentPause, applyHighPassFilter: true);
                 var samples = snapshot.Samples.Span;
-                heardSpeech |= segmenter.Segment(samples).Any(segment => segment.IsSpeech);
+                var segments = segmenter.Segment(samples, observedNoiseFloor, out var nonZeroWindowFloor);
+                if (nonZeroWindowFloor > 0)
+                {
+                    observedNoiseFloor = observedNoiseFloor is { } prior
+                        ? Math.Min(prior, nonZeroWindowFloor)
+                        : nonZeroWindowFloor;
+                }
+
+                heardSpeech |= segments.Any(segment => segment.IsSpeech);
 
                 var decision = AutoStopPolicy.Decide(
                     dictation.AutoStopEnabled,
                     isHandsFreeOrToggle: true,
                     heardSpeech,
-                    segmenter.TrailingSilence(samples),
+                    segmenter.TrailingSilence(samples, observedNoiseFloor),
                     required);
                 if (decision != AutoStopDecision.Stop)
                 {

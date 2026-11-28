@@ -55,6 +55,7 @@ public enum RecordingNoticeKind
     AutoStopUnavailable,
     MicSilentCalm,
     MicSilentStrong,
+    MicMuted,
 }
 
 /// <summary>Visual variant for rich error capsules that offer a recovery action.</summary>

@@ -364,6 +364,7 @@ public partial class App : Application, IAsyncDisposable
             _diagnosticExportService,
             _ollamaModelHost,
             historyRepolishService);
+        _presentation.DeviceCatalog().DevicesChanged += OnCatalogAudioDevicesChanged;
         var mishearingAdvisor = new AdmittedMishearingAdvisor(
             CurrentPolishSetup,
             _resourceArbiter,
@@ -541,14 +542,7 @@ public partial class App : Application, IAsyncDisposable
             Dictation: new WindowDictationHost(
                 SessionStatusChanged: OnSessionStatusChanged,
                 RecordingSoundPlaybackFailed: OnRecordingSoundPlaybackFailed,
-                AudioDevicesChanged: change =>
-                {
-                    OnAudioDevicesChanged(change);
-                    if (change.AffectsCapture)
-                    {
-                        _ = TearDownWarmAudioCaptureAsync();
-                    }
-                },
+                AudioDevicesChanged: null,
                 DictationEnded: OnDictationEnded,
                 TranscriptionRetryRequested: OnTranscriptionRetryRequested,
                 ManualDictationToggleRequested: OnManualDictationToggleRequested,
@@ -759,6 +753,9 @@ public partial class App : Application, IAsyncDisposable
 
         public void SetRecordingSilentMicNotice(MicSilenceLevel level) =>
             app.PostToLiveWindow(window => window.SetRecordingSilentMicNotice(level));
+
+        public void SetRecordingSilentMicNotice(MicSilenceLevel level, bool isEndpointMuted) =>
+            app.PostToLiveWindow(window => window.SetRecordingSilentMicNotice(level, isEndpointMuted));
     }
 
     /// <summary>The window as the session sees it: each sink one dispatch to the window, and nothing decided here.</summary>

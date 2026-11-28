@@ -113,7 +113,8 @@ internal sealed class HotkeyEdgeTracker
         _recordGesture = isModifierSet || isSingleModifier
             ? new HotkeyGesturePolicy(
                 isModifierSet ? ModifierSetSentinel : record.VirtualKey,
-                needsHoldThreshold: true)
+                needsHoldThreshold: true,
+                toggleMode: recordingMode == DictationRecordingMode.Toggle)
             : null;
     }
 
@@ -357,7 +358,12 @@ internal sealed class HotkeyEdgeTracker
                     if (oneShot.Held && virtualKey == oneShot.Binding.VirtualKey)
                     {
                         oneShot.Held = false;
-                        return new HotkeyEdgeDecision(Consume: true);
+                        return oneShot.Signal == PushToTalkSignal.PasteLast
+                            ? new HotkeyEdgeDecision(
+                                Consume: true,
+                                PushToTalkSignal.PasteLast,
+                                MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0)
+                            : new HotkeyEdgeDecision(Consume: true);
                     }
                 }
 
@@ -473,7 +479,7 @@ internal sealed class HotkeyEdgeTracker
 
     private void UpdateHeldOrdinaryKeys(uint virtualKey, bool isKeyDown)
     {
-        if (IsModifierKey(virtualKey))
+        if (virtualKey == MenuKeyMask.VirtualKeyUnassigned || IsModifierKey(virtualKey))
         {
             return;
         }
@@ -625,9 +631,14 @@ internal sealed class HotkeyEdgeTracker
                     Consume: false,
                     PushToTalkSignal.Pressed,
                     MaskMenuKey: RequiresAltMenuMask && !_altMaskSentForPress,
-                    IsHandsFree: false);
+                    IsHandsFree: _recordingMode == DictationRecordingMode.Toggle);
 
             case HotkeyGestureOutcome.ToggleStarted:
+                if (_recordingMode == DictationRecordingMode.Toggle && _ownsActiveRecording)
+                {
+                    return null;
+                }
+
                 _cancelledUntilRecordRelease = false;
                 _ownsActiveRecording = true;
                 return new HotkeyEdgeDecision(
@@ -668,11 +679,125 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
-    /// <summary>Forgets a modifier press in progress.</summary>
+    /// <summary>True when any key, modifier, or pending gesture is currently marked held.</summary>
+    public bool HasHeldState
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _heldOrdinaryKeys.Count > 0 ||
+                    _recordHeld ||
+                    _cancelHeld ||
+                    _quickAddHeld ||
+                    _typingKey != NoKey ||
+                    _oneShotKeyPresses.Count > 0 ||
+                    (_pasteLast?.Held ?? false) ||
+                    (_copyLast?.Held ?? false) ||
+                    _modifierSetEngaged ||
+                    (_recordGesture?.IsHolding ?? false) ||
+                    (_recordGesture?.HasTentativeRecording ?? false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reconciles tracked non-modifier keys against <paramref name="isKeyDown"/> so keys whose release
+    /// was swallowed (e.g. UAC, UIPI, Win+L) cannot poison future gestures or stick Push-to-Talk open.
+    /// </summary>
+    internal HotkeyEdgeDecision? ReconcileHeldKeys(Func<uint, bool> isKeyDown)
+    {
+        ArgumentNullException.ThrowIfNull(isKeyDown);
+
+        lock (_sync)
+        {
+            if (_typingKey != NoKey && _typingKey != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(_typingKey))
+            {
+                _typingKey = NoKey;
+            }
+
+            if (_heldOrdinaryKeys.Count > 0)
+            {
+                _heldOrdinaryKeys.RemoveWhere(vk => vk != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(vk));
+            }
+
+            if (_oneShotKeyPresses.Count > 0)
+            {
+                List<uint>? orphanedOneShots = null;
+                foreach (var key in _oneShotKeyPresses.Keys)
+                {
+                    if (key != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(key))
+                    {
+                        orphanedOneShots ??= [];
+                        orphanedOneShots.Add(key);
+                    }
+                }
+
+                if (orphanedOneShots is not null)
+                {
+                    foreach (var key in orphanedOneShots)
+                    {
+                        _oneShotKeyPresses.Remove(key);
+                    }
+                }
+            }
+
+            if (_cancelHeld && !isKeyDown(_cancel.VirtualKey))
+            {
+                _cancelHeld = false;
+            }
+
+            if (_quickAddHeld && !isKeyDown(_quickAdd.VirtualKey))
+            {
+                _quickAddHeld = false;
+            }
+
+            if (_pasteLast is { Held: true } pasteLast && !isKeyDown(pasteLast.Binding.VirtualKey))
+            {
+                pasteLast.Held = false;
+            }
+
+            if (_copyLast is { Held: true } copyLast && !isKeyDown(copyLast.Binding.VirtualKey))
+            {
+                copyLast.Held = false;
+            }
+
+            if (_recordGesture is null && _recordHeld && !isKeyDown(_record.VirtualKey))
+            {
+                _recordHeld = false;
+                var cancelledPending = _cancelledUntilRecordRelease;
+                _cancelledUntilRecordRelease = false;
+                if (!cancelledPending && _recordingMode != DictationRecordingMode.Toggle)
+                {
+                    return new HotkeyEdgeDecision(Consume: false, PushToTalkSignal.Released);
+                }
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>Forgets every held key, modifier, and gesture press in progress.</summary>
     public void ResetHeldKeys()
     {
         lock (_sync)
         {
+            _recordHeld = false;
+            _cancelHeld = false;
+            _quickAddHeld = false;
+            _cancelledUntilRecordRelease = false;
+            _typingKey = NoKey;
+            _oneShotKeyPresses.Clear();
+            if (_pasteLast is not null)
+            {
+                _pasteLast.Held = false;
+            }
+
+            if (_copyLast is not null)
+            {
+                _copyLast.Held = false;
+            }
+
             _altMaskSentForPress = false;
             _modifierSetEngaged = false;
             _ownsActiveRecording = false;
@@ -825,7 +950,7 @@ internal sealed class HotkeyEdgeTracker
         oneShot.Held = true;
         return new HotkeyEdgeDecision(
             Consume: true,
-            oneShot.Signal,
+            oneShot.Signal == PushToTalkSignal.PasteLast ? null : oneShot.Signal,
             MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
     }
 

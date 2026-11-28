@@ -429,4 +429,7 @@ public enum AppEventCode
 
     /// <summary>Smart insertion and continuation casing evaluated a seam (closed enum disposition only, never user words or surrounding context).</summary>
     TextDeliveryCaseEvaluated,
+
+    /// <summary>Captured endpoint reported Windows AudioEndpointVolume mute active during silent-microphone handling.</summary>
+    AudioDeviceMuted,
 }

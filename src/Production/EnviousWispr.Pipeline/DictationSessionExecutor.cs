@@ -4,6 +4,7 @@ using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
 
@@ -151,6 +152,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     private CancellationTokenSource? _processing;
     private CancellationTokenSource? _escapeCancel;
     private bool _escapeRecoveryForSession;
+    private bool _activeTakeAllowsShortHold;
     private bool _closed;
     private readonly object _cleanupOwnership = new();
     private CleanupPhase? _cleanupPhase;
@@ -581,8 +583,99 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         {
             SessionCommandKind.Interruption => InterruptAsync(command),
             SessionCommandKind.Timeout => TimeOutAsync(command),
+            SessionCommandKind.CaptureFault => HandleCaptureFaultAsync(command),
             _ => ExecutePushToTalkAsync(command, stoppingToken),
         };
+    }
+
+    private async Task<SessionCommandResult> HandleCaptureFaultAsync(SessionCommand command)
+    {
+        var active = _controller.CurrentSession;
+        if (active is not { State: DictationSessionState.Recording } ||
+            (command.ForSession is { } expectedSession && active.Id != expectedSession))
+        {
+            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+        }
+
+        using var dictation = DictationScope.Begin(active.Id.Value);
+        SessionTransitionResult? transition = null;
+        try
+        {
+            _activeTakeAllowsShortHold = false;
+            _background.CloseStreamingAdmission();
+            _finalization.ResetTranscriptionComplete();
+            await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
+
+            var result = await _controller
+                .ReleaseAsync(command.ReleaseTarget, allowShortHold: true, CancellationToken.None)
+                .ConfigureAwait(false);
+            transition = result;
+            RecordTransition(result);
+            if (result.Kind == SessionTransitionKind.FinalizeReady &&
+                result.Session is not null &&
+                result.Audio is not null &&
+                !result.Audio.Samples.IsEmpty)
+            {
+                if (!Volatile.Read(ref _closed))
+                {
+                    _effects.ShowTransitionStatus(result);
+                }
+
+                await FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false, preserving: null)
+                    .ConfigureAwait(false);
+                return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+            }
+
+            await _background.StopAsync().ConfigureAwait(false);
+            var error = result.Error ?? command.CaptureError ?? new AppError(
+                AppErrorCode.AudioDeviceLost,
+                AppErrorStage.AudioCapture,
+                CanRetry: true);
+            if (_controller.CurrentSession is not null)
+            {
+                if (_controller.CurrentSession.State != DictationSessionState.Failed)
+                {
+                    await _controller.AbortAsync(error, CancellationToken.None).ConfigureAwait(false);
+                }
+
+                await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            if (!Volatile.Read(ref _closed))
+            {
+                var failedResult = result.Kind == SessionTransitionKind.Failed && result.Error is not null
+                    ? result
+                    : new SessionTransitionResult(SessionTransitionKind.Failed, result.Session ?? active, result.Audio, error);
+                _effects.ShowTransitionStatus(failedResult);
+            }
+
+            return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session ?? active);
+        }
+        catch (RetainedStopException)
+        {
+            RetainCleanup(
+                new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                SessionFailureKind.Failed);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session ?? active);
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            _effects.RecordSessionFailure();
+            await RecoverFailedSessionAsync(
+                    command.CaptureError ?? new AppError(AppErrorCode.AudioDeviceLost, AppErrorStage.AudioCapture, CanRetry: true),
+                    SessionFailureKind.Failed)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session ?? active);
+        }
+        finally
+        {
+            _finalization.ResetTranscriptionComplete();
+            ReleaseProcessingDeadline();
+            if (!HasRetainedCleanup)
+            {
+                await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>
@@ -677,9 +770,10 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// </remarks>
     private void RecordTransition(SessionTransitionResult result)
     {
-        if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+        if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed or SessionTransitionKind.Discarded)
         {
             _escapeRecoveryForSession = false;
+            _activeTakeAllowsShortHold = false;
         }
 
         _effects.RecordTransition(result);
@@ -889,6 +983,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 command.IsHandsFree &&
                 _controller.CurrentSession is { State: DictationSessionState.Recording } activeSession)
             {
+                _activeTakeAllowsShortHold = true;
                 _background.EnableHandsFree(
                     activeSession.Id,
                     _effects.RecordingSettings() with { IsHandsFree = true });
@@ -954,6 +1049,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             try
             {
                 var releaseToken = Volatile.Read(ref _escapeCancel)?.Token ?? none;
+                var allowShortHold = _activeTakeAllowsShortHold || recoverCancelledRecording;
                 var result = signal switch
                 {
                     // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
@@ -962,12 +1058,12 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                         await _controller.PressAsync(startContext, none).ConfigureAwait(false),
                     PushToTalkSignal.Pressed => await _controller.PressAsync(none).ConfigureAwait(false),
                     PushToTalkSignal.Released when command.ReleaseTarget is { } releaseTarget =>
-                        await _controller.ReleaseAsync(releaseTarget, releaseToken).ConfigureAwait(false),
-                    PushToTalkSignal.Released => await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
+                        await _controller.ReleaseAsync(releaseTarget, allowShortHold, releaseToken).ConfigureAwait(false),
+                    PushToTalkSignal.Released => await _controller.ReleaseAsync(releaseContext: null, allowShortHold, releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Cancelled when recoverCancelledRecording && command.ReleaseTarget is { } escapeReleaseTarget =>
-                        await _controller.ReleaseAsync(escapeReleaseTarget, releaseToken).ConfigureAwait(false),
+                        await _controller.ReleaseAsync(escapeReleaseTarget, allowShortHold: true, releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Cancelled when recoverCancelledRecording =>
-                        await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
+                        await _controller.ReleaseAsync(releaseContext: null, allowShortHold: true, releaseToken).ConfigureAwait(false),
                     PushToTalkSignal.Cancelled => await _controller.CancelAsync(none).ConfigureAwait(false),
                     PushToTalkSignal.Discarded => await _controller.CancelAsync(none).ConfigureAwait(false),
                     _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
@@ -995,12 +1091,15 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                         await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
                     }
 
+                    var recordingSettings = _effects.RecordingSettings();
+                    _activeTakeAllowsShortHold = command.IsHandsFree ||
+                        recordingSettings.Dictation().RecordingMode == DictationRecordingMode.Toggle;
                     _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
                     // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
                     // that started under one auto-stop preference finishes under it.
                     await _background.StartAsync(
                             result.Session.Id,
-                            _effects.RecordingSettings() with { IsHandsFree = command.IsHandsFree })
+                            recordingSettings with { IsHandsFree = command.IsHandsFree })
                         .ConfigureAwait(false);
                     startedConfirmed = true;
                 }
@@ -1008,6 +1107,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     result.Session is not null &&
                     result.Audio is not null)
                 {
+                    _activeTakeAllowsShortHold = false;
                     // Useful speech work may still be processing after capture ended. Reuse the
                     // existing capture-complete status instead of leaving the recording pill active.
                     if (!recoverCancelledRecording &&
@@ -1021,9 +1121,10 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                         .ConfigureAwait(false);
                     return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
                 }
-                else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+                else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed or SessionTransitionKind.Discarded)
                 {
-                    if (optimisticRecording)
+                    _activeTakeAllowsShortHold = false;
+                    if (optimisticRecording || (result.Kind == SessionTransitionKind.Discarded && optimisticProcessing))
                     {
                         _effects.CancelRecordingCue();
                     }

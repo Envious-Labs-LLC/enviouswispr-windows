@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
@@ -94,6 +95,9 @@ public enum SessionCommandKind
 
     /// <summary>The recording has run for as long as it is allowed; if it is still the one recording, capture stops and is transcribed.</summary>
     Timeout,
+
+    /// <summary>Active audio capture stalled or disconnected unexpectedly mid-take; transition immediately out of recording.</summary>
+    CaptureFault,
 }
 
 /// <param name="Kind">What the command is.</param>
@@ -115,7 +119,8 @@ public sealed record SessionCommand(
     DictationSessionId? ForSession = null,
     bool IsHandsFree = false,
     bool PromotionOnly = false,
-    ReleaseTargetContext? ReleaseTarget = null)
+    ReleaseTargetContext? ReleaseTarget = null,
+    AppError? CaptureError = null)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -136,7 +141,7 @@ public sealed record SessionCommand(
     public bool IsTerminal => Kind switch
     {
         SessionCommandKind.PushToTalk => Signal != PushToTalkSignal.Pressed,
-        SessionCommandKind.Timeout => true,
+        SessionCommandKind.Timeout or SessionCommandKind.CaptureFault => true,
         _ => false,
     };
 }
@@ -248,6 +253,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private readonly Func<RecordingStartContext>? _captureStartContext;
     private readonly Func<ReleaseTargetContext?>? _captureReleaseTarget;
     private readonly Func<TextDeliveryOptions?, ReleaseTargetContext?>? _captureReleaseTargetWithOptions;
+    private readonly Action? _onDispose;
     private readonly Channel<QueuedCommand> _queue;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _admission = new();
@@ -288,7 +294,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         Func<RecordingStartContext>? captureStartContext = null,
         TimeProvider? clock = null,
         Func<ReleaseTargetContext?>? captureReleaseTarget = null,
-        Func<TextDeliveryOptions?, ReleaseTargetContext?>? captureReleaseTargetWithOptions = null)
+        Func<TextDeliveryOptions?, ReleaseTargetContext?>? captureReleaseTargetWithOptions = null,
+        Action? onDispose = null)
     {
         ArgumentNullException.ThrowIfNull(executor);
         _executor = executor;
@@ -296,6 +303,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         _captureStartContext = captureStartContext;
         _captureReleaseTarget = captureReleaseTarget;
         _captureReleaseTargetWithOptions = captureReleaseTargetWithOptions;
+        _onDispose = onDispose;
         _queue = Channel.CreateUnbounded<QueuedCommand>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -589,6 +597,21 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         return Submit(new SessionCommand(signal) with { ForSession = forSession, IsHandsFree = isHandsFree });
     }
 
+    /// <summary>
+    /// Transitions an active recording immediately when audio capture stalls or stops unexpectedly mid-take.
+    /// </summary>
+    public Task<SessionCommandResult> NotifyCaptureFaultedAsync(
+        DictationSessionId forSession,
+        AppError error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        return Submit(new SessionCommand(
+            SessionCommandKind.CaptureFault,
+            PushToTalkSignal.Released,
+            ForSession: forSession,
+            CaptureError: error));
+    }
+
     private Task<SessionCommandResult> Submit(SessionCommand command)
     {
         QueuedCommand queued;
@@ -661,7 +684,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             {
                 if (((command.Kind == SessionCommandKind.PushToTalk &&
                       command.Signal is PushToTalkSignal.Released or PushToTalkSignal.Cancelled) ||
-                     command.Kind == SessionCommandKind.Timeout) &&
+                     command.Kind is SessionCommandKind.Timeout or SessionCommandKind.CaptureFault) &&
                     releaseTarget is null)
                 {
                     if (_captureReleaseTargetWithOptions is not null)
@@ -817,6 +840,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _onDispose?.Invoke();
         // THE CANCELLATION SOURCE AND THE GATE OUTLIVE A CONSUMER THAT WOULD NOT STOP, AND THE GATE
         // OUTLIVES A HOLD STILL OUT. Disposing them under a running consumer turns the next token read
         // or gate release into an ObjectDisposedException inside the loop, and disposing the gate under

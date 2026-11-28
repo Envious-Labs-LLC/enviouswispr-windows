@@ -35,7 +35,62 @@ public sealed class HeldModifierKeys
         (0x5C, HotkeyModifiers.Windows),
     ];
 
+    private readonly Lock _sync = new();
     private readonly HashSet<uint> _down = [];
+
+    /// <summary>True when at least one modifier key is currently tracked as physically down.</summary>
+    public bool HasAny
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _down.Count > 0;
+            }
+        }
+    }
+
+    /// <summary>Clears all tracked modifier down state (used on session lock, suspend, or capture).</summary>
+    public void Clear()
+    {
+        lock (_sync)
+        {
+            _down.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Removes any tracked modifier keys that <paramref name="stateSaysDown"/> reports as physically released,
+    /// returning the released virtual keys alongside the updated active modifier flags.
+    /// </summary>
+    public IReadOnlyList<uint> Reconcile(Func<uint, bool> stateSaysDown, out HotkeyModifiers observedModifiers)
+    {
+        ArgumentNullException.ThrowIfNull(stateSaysDown);
+
+        lock (_sync)
+        {
+            List<uint>? released = null;
+            foreach (var key in _down)
+            {
+                if (!stateSaysDown(key))
+                {
+                    released ??= [];
+                    released.Add(key);
+                }
+            }
+
+            if (released is not null)
+            {
+                foreach (var key in released)
+                {
+                    _down.Remove(key);
+                }
+            }
+
+            observedModifiers = BuildFlagsLocked(movingKey: null, isKeyDown: false, stateSaysDown);
+            return (IReadOnlyList<uint>?)released ?? [];
+        }
+    }
 
     /// <summary>Takes one key event in and answers which modifiers are held once it has happened.</summary>
     /// <param name="virtualKey">The key this event is about.</param>
@@ -45,22 +100,30 @@ public sealed class HeldModifierKeys
     {
         ArgumentNullException.ThrowIfNull(stateSaysDown);
         var key = Canonical(virtualKey);
-        if (IsModifier(key))
+        lock (_sync)
         {
-            if (isKeyDown)
+            if (IsModifier(key))
             {
-                _down.Add(key);
+                if (isKeyDown)
+                {
+                    _down.Add(key);
+                }
+                else
+                {
+                    _down.Remove(key);
+                }
             }
-            else
-            {
-                _down.Remove(key);
-            }
-        }
 
+            return BuildFlagsLocked(key, isKeyDown, stateSaysDown);
+        }
+    }
+
+    private HotkeyModifiers BuildFlagsLocked(uint? movingKey, bool isKeyDown, Func<uint, bool> stateSaysDown)
+    {
         var held = HotkeyModifiers.None;
         foreach (var (sided, flag) in Sided)
         {
-            var down = sided == key ? isKeyDown : _down.Contains(sided) && stateSaysDown(sided);
+            var down = movingKey == sided ? isKeyDown : _down.Contains(sided) && stateSaysDown(sided);
             if (down)
             {
                 held |= flag;

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace EnviousWispr.Audio;
 
@@ -39,6 +40,14 @@ public static class AudioSampleConverter
             return new AudioConversionResult([], Peak: 0, RootMeanSquare: 0);
         }
 
+        if (BitConverter.IsLittleEndian &&
+            format.Encoding == AudioSampleEncoding.Ieee754Single &&
+            format.Channels == 1 &&
+            format.SampleRate == TargetSampleRate)
+        {
+            return ConvertNativeMono16KhzFloat(MemoryMarshal.Cast<byte, float>(source));
+        }
+
         var mono = new float[frameCount];
         double sumSquares = 0;
         var peak = 0f;
@@ -63,6 +72,25 @@ public static class AudioSampleConverter
             Resample(mono, format.SampleRate),
             peak,
             rms);
+    }
+
+    private static AudioConversionResult ConvertNativeMono16KhzFloat(ReadOnlySpan<float> source)
+    {
+        var samples = new float[source.Length];
+        double sumSquares = 0;
+        var peak = 0f;
+        for (var index = 0; index < source.Length; index++)
+        {
+            var sample = Math.Clamp(source[index], -1f, 1f);
+            samples[index] = sample;
+            peak = Math.Max(peak, Math.Abs(sample));
+            sumSquares += sample * sample;
+        }
+
+        return new AudioConversionResult(
+            samples,
+            peak,
+            (float)Math.Sqrt(sumSquares / source.Length));
     }
 
     private static float[] Resample(float[] source, int sourceSampleRate)
