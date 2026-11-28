@@ -481,15 +481,69 @@ public sealed class OnboardingFlowTests
     }
 
     [Fact]
-    public void WizardStepNumbersMatchTotalMilestonesCleanly()
+    public void WizardStepNumbersMatchSixMilestonesCleanly()
     {
+        Assert.Equal(6, OnboardingFlow.PrimaryStepCount);
+
         foreach (var step in Enum.GetValues<OnboardingStep>())
         {
             var number = OnboardingFlow.PrimaryStepNumberFor(step);
             Assert.InRange(number, 1, OnboardingFlow.PrimaryStepCount);
         }
 
-        Assert.Equal("Step 11 of 11", OnboardingCopy.StepOf(OnboardingStep.Closing));
+        // Hidden-strip screens
+        Assert.False(OnboardingFlow.ShowsProgressStrip(OnboardingStep.Welcome));
+        Assert.False(OnboardingFlow.ShowsProgressStrip(OnboardingStep.Closing));
+        Assert.False(OnboardingFlow.ShowsProgressStrip(OnboardingStep.Done));
+        Assert.Null(OnboardingFlow.MilestoneIndexFor(OnboardingStep.Welcome));
+        Assert.Null(OnboardingFlow.MilestoneIndexFor(OnboardingStep.Closing));
+        Assert.Null(OnboardingFlow.MilestoneIndexFor(OnboardingStep.Done));
+
+        // 6 milestone segments matching macOS Setup
+        Assert.Equal(0, OnboardingFlow.MilestoneIndexFor(OnboardingStep.Language));
+        Assert.Equal(1, OnboardingFlow.MilestoneIndexFor(OnboardingStep.SpeechPick));
+        Assert.Equal(1, OnboardingFlow.MilestoneIndexFor(OnboardingStep.SpeechCompare));
+        Assert.Equal(2, OnboardingFlow.MilestoneIndexFor(OnboardingStep.PolishIntro));
+        Assert.Equal(2, OnboardingFlow.MilestoneIndexFor(OnboardingStep.PolishPick));
+        Assert.Equal(2, OnboardingFlow.MilestoneIndexFor(OnboardingStep.PolishSeeAll));
+        Assert.Equal(2, OnboardingFlow.MilestoneIndexFor(OnboardingStep.Downloads));
+        Assert.Equal(3, OnboardingFlow.MilestoneIndexFor(OnboardingStep.Permissions));
+        Assert.Equal(4, OnboardingFlow.MilestoneIndexFor(OnboardingStep.Key));
+        Assert.Equal(5, OnboardingFlow.MilestoneIndexFor(OnboardingStep.GettingReady));
+        Assert.Equal(5, OnboardingFlow.MilestoneIndexFor(OnboardingStep.Practice));
+
+        Assert.Equal("Step 1 of 6: Language", OnboardingCopy.MilestoneLabel(OnboardingStep.Language));
+        Assert.Equal("Step 2 of 6: Speech model", OnboardingCopy.MilestoneLabel(OnboardingStep.SpeechCompare));
+        Assert.Equal("Step 3 of 6: AI polish", OnboardingCopy.MilestoneLabel(OnboardingStep.Downloads));
+        Assert.Equal("Step 4 of 6: Permissions", OnboardingCopy.MilestoneLabel(OnboardingStep.Permissions));
+        Assert.Equal("Step 5 of 6: Your key", OnboardingCopy.MilestoneLabel(OnboardingStep.Key));
+        Assert.Equal("Step 6 of 6: First dictation", OnboardingCopy.MilestoneLabel(OnboardingStep.Practice));
+    }
+
+    [Fact]
+    public void RevampedWindowsNativeCopyContractsHold()
+    {
+        Assert.Equal(4, OnboardingCopy.WelcomeValueRows.Count);
+        Assert.Contains(
+            OnboardingCopy.WelcomeValueRows,
+            row => row.Body == "Runs locally on GPU or CPU. Works offline once models download.");
+
+        Assert.Equal("One quick permission", OnboardingCopy.PermissionsHeadline(microphoneAllowed: false));
+        Assert.Equal("Microphone is ready", OnboardingCopy.PermissionsHeadline(microphoneAllowed: true));
+        Assert.DoesNotContain("Accessibility", OnboardingCopy.PermissionsCardBody, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal("Um, I think we should, uh, meet tomorrow morning.", OnboardingCopy.PracticePrompt);
+        Assert.Equal(
+            "Dictation worked",
+            OnboardingCopy.PracticeHeadline(OnboardingPracticeState.Worked, succeeded: true, polishSkippedOrFailed: true));
+        Assert.Equal("Basic cleanup for now", OnboardingCopy.PracticeBasicCleanupTitle);
+        Assert.Equal(
+            "AI polish keeps downloading while EnviousWispr is open and turns on by itself when it is done.",
+            OnboardingCopy.GatePolishDownloadingNotice);
+        Assert.Contains(
+            "AI polish keeps downloading while EnviousWispr is open and turns on by itself when it is done.",
+            OnboardingCopy.GateSlowPolishBody,
+            StringComparison.Ordinal);
     }
 
     [Theory]
@@ -509,6 +563,15 @@ public sealed class OnboardingFlowTests
     {
         List<string> sentences =
         [
+            OnboardingCopy.WelcomeTitle,
+            OnboardingCopy.WelcomeSubtitle,
+            OnboardingCopy.WelcomePrimaryCta,
+            OnboardingCopy.WelcomeFooterNote,
+            OnboardingCopy.PermissionsTitle,
+            OnboardingCopy.PermissionsReadyTitle,
+            OnboardingCopy.PermissionsSubtitle,
+            OnboardingCopy.PermissionsCardTitle,
+            OnboardingCopy.PermissionsCardBody,
             OnboardingCopy.SetupPaused,
             OnboardingCopy.TrySetupAgain,
             OnboardingCopy.Retry,
@@ -526,9 +589,18 @@ public sealed class OnboardingFlowTests
             OnboardingCopy.WarmingSkipAfterFailure,
             OnboardingCopy.GateTitle,
             OnboardingCopy.GateSkipAhead,
+            OnboardingCopy.GateKeepWaiting,
             OnboardingCopy.GateContinueWithoutPolish,
+            OnboardingCopy.GateSlowPolishTitle,
+            OnboardingCopy.GateSlowPolishBody,
             OnboardingCopy.GatePolishDownloadingNotice,
             OnboardingCopy.GatePolishFailedNotice,
+            OnboardingCopy.PracticePrompt,
+            OnboardingCopy.PracticeWorkedWithoutPolishHeadline,
+            OnboardingCopy.PracticeWorkedWithoutPolishSubhead("Ctrl+Win", DictationRecordingMode.PushToTalk),
+            OnboardingCopy.PracticeWorkedWithoutPolishSubhead("F8", DictationRecordingMode.Toggle),
+            OnboardingCopy.PracticeBasicCleanupTitle,
+            OnboardingCopy.PracticeBasicCleanupBody,
             OnboardingCopy.PracticeFootnote,
             OnboardingCopy.PracticeSkip,
             OnboardingCopy.PracticeBusy,
@@ -538,9 +610,16 @@ public sealed class OnboardingFlowTests
             OnboardingCopy.KeyUsage(DictationRecordingMode.Toggle),
         ];
 
+        foreach (var row in OnboardingCopy.WelcomeValueRows)
+        {
+            sentences.Add(row.Title);
+            sentences.Add(row.Body);
+        }
+
         foreach (var step in Enum.GetValues<OnboardingStep>())
         {
             sentences.Add(OnboardingCopy.StepOf(step));
+            sentences.Add(OnboardingCopy.MilestoneLabel(step));
         }
 
         foreach (var beat in OnboardingCopy.ClosingBeats)

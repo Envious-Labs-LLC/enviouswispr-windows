@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -94,6 +95,90 @@ public sealed record WindowsSetupRules(
     private static readonly Lazy<WindowsSetupRules> CachedCurrent = new(LoadDefaultOrFallback);
 
     public static WindowsSetupRules Current => CachedCurrent.Value;
+
+    /// <summary>
+    /// Formats a download byte count cleanly: sizes &gt;= 1000 MB display in 1-decimal GB
+    /// (e.g. "3.0 GB", "1.4 GB") while sizes &lt; 1000 MB display as whole megabytes (e.g. "638 MB").
+    /// </summary>
+    public static string FormatDownloadLabel(long bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "0 MB";
+        }
+
+        const long bytesPerMiB = 1024L * 1024L;
+        var mebibytes = (bytes + bytesPerMiB - 1L) / bytesPerMiB;
+        if (mebibytes < 1000L)
+        {
+            return $"{mebibytes.ToString(CultureInfo.InvariantCulture)} MB";
+        }
+
+        const double bytesPerGiB = 1024d * 1024d * 1024d;
+        var gigabytes = Math.Max(1.0, Math.Ceiling((bytes / bytesPerGiB) * 10d) / 10d);
+        return $"{gigabytes.ToString("0.0", CultureInfo.InvariantCulture)} GB";
+    }
+
+    /// <summary>
+    /// Formats a megabyte count cleanly: values &gt;= 1000 MB display in 1-decimal GB
+    /// instead of raw four-digit MB strings such as "3015 MB" or "1388 MB".
+    /// </summary>
+    public static string FormatDownloadMegabytes(long megabytes)
+    {
+        if (megabytes <= 0)
+        {
+            return "0 MB";
+        }
+
+        if (megabytes < 1000L)
+        {
+            return $"{megabytes.ToString(CultureInfo.InvariantCulture)} MB";
+        }
+
+        var gigabytes = Math.Max(1.0, Math.Ceiling((megabytes / 1024d) * 10d) / 10d);
+        return $"{gigabytes.ToString("0.0", CultureInfo.InvariantCulture)} GB";
+    }
+
+    /// <summary>
+    /// Normalizes a catalog or manifest size label into 1-decimal GB when &gt;= 1000 MB
+    /// or whole MB when &lt; 1000 MB, falling back to <paramref name="fallbackBytes"/> if blank.
+    /// </summary>
+    public static string FormatDownloadLabel(string? rawLabel, long fallbackBytes = 0)
+    {
+        if (string.IsNullOrWhiteSpace(rawLabel))
+        {
+            return fallbackBytes > 0 ? FormatDownloadLabel(fallbackBytes) : "0 MB";
+        }
+
+        var trimmed = rawLabel.Trim();
+        if (trimmed.EndsWith(" MB", StringComparison.OrdinalIgnoreCase) &&
+            double.TryParse(
+                trimmed[..^3].Trim(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var mbValue))
+        {
+            if (mbValue >= 1000d)
+            {
+                return FormatDownloadMegabytes((long)Math.Ceiling(mbValue));
+            }
+
+            return $"{Math.Max(0L, (long)Math.Ceiling(mbValue)).ToString(CultureInfo.InvariantCulture)} MB";
+        }
+
+        if (trimmed.EndsWith(" GB", StringComparison.OrdinalIgnoreCase) &&
+            double.TryParse(
+                trimmed[..^3].Trim(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var gbValue))
+        {
+            var rounded = Math.Round(gbValue, 1, MidpointRounding.ToEven);
+            return $"{rounded.ToString("0.0", CultureInfo.InvariantCulture)} GB";
+        }
+
+        return fallbackBytes > 0 ? FormatDownloadLabel(fallbackBytes) : trimmed;
+    }
 
     public static WindowsSetupRules LoadEmbeddedStrict()
     {

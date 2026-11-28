@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="EnviousWispr.App.Controls.OnboardingKeyboardVisualControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.AccessibilityView="Raw">
+    <StackPanel Spacing="{StaticResource BrandSpacingS}">
+        <Border
+            x:Name="KeyboardTrayBorder"
+            Padding="10"
+            Background="{ThemeResource BrandPageBgBrush}"
+            BorderBrush="{ThemeResource BrandDividerBrush}"
+            BorderThickness="1"
+            CornerRadius="12">
+            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="52" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="52" />
+                </Grid.ColumnDefinitions>
+
+                <Border
+                    x:Name="LeftCtrlKey"
+                    Grid.Column="0"
+                    Height="40"
+                    Background="{ThemeResource BrandCardBgBrush}"
+                    BorderBrush="{ThemeResource BrandControlBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="LeftCtrlTranslate" Y="0" />
+                    </Border.RenderTransform>
+                    <TextBlock
+                        x:Name="LeftCtrlText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="Ctrl" />
+                </Border>
+
+                <Border
+                    x:Name="WinKey"
+                    Grid.Column="1"
+                    Height="40"
+                    Background="{ThemeResource BrandCardBgBrush}"
+                    BorderBrush="{ThemeResource BrandControlBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="WinTranslate" Y="0" />
+                    </Border.RenderTransform>
+                    <TextBlock
+                        x:Name="WinText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="Win" />
+                </Border>
+
+                <Border
+                    x:Name="LeftAltKey"
+                    Grid.Column="2"
+                    Height="40"
+                    Background="{ThemeResource BrandCardBgBrush}"
+                    BorderBrush="{ThemeResource BrandControlBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="LeftAltTranslate" Y="0" />
+                    </Border.RenderTransform>
+                    <TextBlock
+                        x:Name="LeftAltText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="Alt" />
+                </Border>
+
+                <Border
+                    x:Name="SpaceKey"
+                    Grid.Column="3"
+                    Height="40"
+                    Background="{ThemeResource BrandCardBgBrush}"
+                    BorderBrush="{ThemeResource BrandControlBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="SpaceTranslate" Y="0" />
+                    </Border.RenderTransform>
+                    <TextBlock
+                        x:Name="SpaceText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextSecondaryBrush}"
+                        Text="Space" />
+                </Border>
+
+                <Border
+                    x:Name="RightAltKey"
+                    Grid.Column="4"
+                    Height="40"
+                    Background="{ThemeResource BrandCardBgBrush}"
+                    BorderBrush="{ThemeResource BrandControlBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="RightAltTranslate" Y="0" />
+                    </Border.RenderTransform>
+                    <TextBlock
+                        x:Name="RightAltText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="Alt" />
+                </Border>
+
+                <Border
+                    x:Name="RightCtrlKey"
+                    Grid.Column="5"
+                    Height="40"
+                    Background="{ThemeResource BrandCardBgBrush}"
+                    BorderBrush="{ThemeResource BrandControlBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="RightCtrlTranslate" Y="0" />
+                    </Border.RenderTransform>
+                    <TextBlock
+                        x:Name="RightCtrlText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource BrandTextPrimaryBrush}"
+                        Text="Ctrl" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border
+            x:Name="ExtraKeyBadge"
+            HorizontalAlignment="Center"
+            Style="{StaticResource BrandAccentChipStyle}"
+            Visibility="Collapsed">
+            <TextBlock
+                x:Name="ExtraKeyText"
+                Style="{StaticResource BrandAccentChipTextStyle}"
+                Text="" />
+        </Border>
+    </StackPanel>
+</UserControl>

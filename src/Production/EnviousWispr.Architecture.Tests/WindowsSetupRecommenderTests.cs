@@ -75,15 +75,42 @@ public sealed class WindowsSetupRecommenderTests
     }
 
     [Fact]
-    public void SpeechRecommendationsCoverAll101PickerLanguagesPlusAuto()
+    public void FormatDownloadLabelRendersGigabytesAt1000MbAndKeepsMegabytesBelow()
+    {
+        Assert.Equal("638 MB", WindowsSetupRules.FormatDownloadLabel(667_974_615L));
+        Assert.Equal("548 MB", WindowsSetupRules.FormatDownloadLabel(574_041_195L));
+        Assert.Equal("517 MB", WindowsSetupRules.FormatDownloadLabel(541_898_336L));
+        Assert.Equal("1.4 GB", WindowsSetupRules.FormatDownloadLabel(1_454_782_528L));
+        Assert.Equal("3.0 GB", WindowsSetupRules.FormatDownloadLabel(3_161_421_632L));
+        Assert.Equal("3.1 GB", WindowsSetupRules.FormatDownloadLabel(3_328_599_654L));
+
+        Assert.Equal("3.0 GB", WindowsSetupRules.FormatDownloadMegabytes(3015));
+        Assert.Equal("1.4 GB", WindowsSetupRules.FormatDownloadMegabytes(1388));
+        Assert.Equal("1.0 GB", WindowsSetupRules.FormatDownloadMegabytes(1000));
+        Assert.Equal("638 MB", WindowsSetupRules.FormatDownloadMegabytes(638));
+        Assert.Equal("542 MB", WindowsSetupRules.FormatDownloadMegabytes(542));
+
+        Assert.Equal("3.0 GB", WindowsSetupRules.FormatDownloadLabel("3015 MB"));
+        Assert.Equal("1.4 GB", WindowsSetupRules.FormatDownloadLabel("1388 MB"));
+        Assert.Equal("3.1 GB", WindowsSetupRules.FormatDownloadLabel("3.12 GB"));
+        Assert.Equal("1.4 GB", WindowsSetupRules.FormatDownloadLabel("1.45 GB"));
+        Assert.Equal("542 MB", WindowsSetupRules.FormatDownloadLabel("542 MB"));
+    }
+
+    [Fact]
+    public void SpeechRecommendationsCoverAll101PickerLanguagesPlusAutoAndExcludeGreekFromParakeetAdvice()
     {
         var nvidiaSnapshot = CreateSnapshot(ramGb: 32, gpu: GpuAccelerationKind.NvidiaCuda, vramGb: 12, cores: 12, cudaInstalled: true);
         var cpuSnapshot = CreateSnapshot(ramGb: 16, gpu: GpuAccelerationKind.None, vramGb: null, cores: 8, cudaInstalled: false);
 
+        Assert.Contains("el", WindowsSetupRecommender.ParakeetAdviceExclusions);
+        Assert.Contains("el", LanguageCatalog.ParakeetSupportedCodes);
+
         foreach (var entry in LanguageCatalog.PickerEntries)
         {
             var rec = WindowsSetupRecommender.Recommend(nvidiaSnapshot with { SelectedLanguageCode = entry.Code });
-            var expectParakeet = LanguageCatalog.ParakeetSupportedCodes.Contains(entry.LockCode);
+            var isAdviceExcluded = WindowsSetupRecommender.ParakeetAdviceExclusions.Contains(entry.LockCode);
+            var expectParakeet = LanguageCatalog.ParakeetSupportedCodes.Contains(entry.LockCode) && !isAdviceExcluded;
 
             if (expectParakeet)
             {
@@ -92,6 +119,8 @@ public sealed class WindowsSetupRecommenderTests
                 Assert.Equal("638 MB", rec.Speech.PrimarySizeLabel);
                 Assert.True(rec.Speech.IsParakeetAvailable);
                 Assert.Null(rec.Speech.ParakeetUnavailableReason);
+                Assert.Equal("< 0.5 sec", rec.Speech.HeroTimeText);
+                Assert.Equal("Runs on your NVIDIA GPU", rec.Speech.HardwareBadgeText);
             }
             else
             {
@@ -99,15 +128,34 @@ public sealed class WindowsSetupRecommenderTests
                 Assert.Equal(FinalAsrEngine.Whisper, rec.Speech.PrimaryEngine);
                 Assert.Equal("548 MB", rec.Speech.PrimarySizeLabel);
                 Assert.False(rec.Speech.IsParakeetAvailable);
-                Assert.Equal($"Doesn't support {entry.EnglishName}", rec.Speech.ParakeetUnavailableReason);
+                Assert.Equal(
+                    isAdviceExcluded
+                        ? $"Whisper is more accurate for {entry.EnglishName}"
+                        : $"Doesn't support {entry.EnglishName}",
+                    rec.Speech.ParakeetUnavailableReason);
+                Assert.Equal("~0.8 sec", rec.Speech.HeroTimeText);
+                Assert.Equal("Runs on your NVIDIA GPU", rec.Speech.HardwareBadgeText);
             }
 
+            Assert.Equal("For 30 seconds of speech on this PC.", rec.Speech.HeroSubtext);
             Assert.Contains("NVIDIA GPU", rec.Speech.WhisperSpeedNote, StringComparison.Ordinal);
             Assert.DoesNotContain('\u2014', rec.Speech.WhisperSpeedNote);
             Assert.DoesNotContain('\u2013', rec.Speech.WhisperSpeedNote);
         }
 
-        // Auto mode follows OS UI language when Whisper-only, otherwise recommends Parakeet.
+        // CPU speed estimates and badges reflect local CPU execution cleanly.
+        var cpuEnglish = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "en" });
+        Assert.Equal("~1.2 sec", cpuEnglish.Speech.HeroTimeText);
+        Assert.Equal("~1.2 sec", cpuEnglish.Speech.ParakeetHeroTimeText);
+        Assert.Equal("~3 sec", cpuEnglish.Speech.WhisperHeroTimeText);
+        Assert.Equal("Runs locally on your CPU", cpuEnglish.Speech.HardwareBadgeText);
+
+        var cpuGreek = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "el" });
+        Assert.Equal(FinalAsrEngine.Whisper, cpuGreek.Speech.PrimaryEngine);
+        Assert.Equal("~3 sec", cpuGreek.Speech.HeroTimeText);
+        Assert.Equal("Runs locally on your CPU", cpuGreek.Speech.HardwareBadgeText);
+
+        // Auto mode follows OS UI language when Whisper-only or Greek, otherwise recommends Parakeet.
         var autoParakeet = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "auto", SystemLanguageCode = "de-DE" });
         Assert.Equal(ParakeetModelIds.Final, autoParakeet.Speech.PrimaryModelId);
         Assert.Contains("CPU", autoParakeet.Speech.WhisperSpeedNote, StringComparison.Ordinal);
@@ -120,6 +168,11 @@ public sealed class WindowsSetupRecommenderTests
         Assert.Equal(WhisperModelIds.Final, autoJapanese.Speech.PrimaryModelId);
         Assert.False(autoJapanese.Speech.IsParakeetAvailable);
         Assert.Equal("Doesn't support Japanese", autoJapanese.Speech.ParakeetUnavailableReason);
+
+        var autoGreek = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "auto", SystemLanguageCode = "el-GR" });
+        Assert.Equal(WhisperModelIds.Final, autoGreek.Speech.PrimaryModelId);
+        Assert.False(autoGreek.Speech.IsParakeetAvailable);
+        Assert.Equal("Whisper is more accurate for Greek", autoGreek.Speech.ParakeetUnavailableReason);
     }
 
     [Fact]
@@ -130,8 +183,10 @@ public sealed class WindowsSetupRecommenderTests
             CreateSnapshot(ramGb: 24, gpu: GpuAccelerationKind.NvidiaCuda, vramGb: 6, cores: 8));
         Assert.Equal(1, tier1.Polish.Tier);
         Assert.Equal(EgOneModelCatalog.FullId, tier1.Polish.PrimaryModelId);
+        Assert.Equal("3.1 GB", tier1.Polish.PrimarySizeLabel);
         Assert.Equal("Recommended for your PC", tier1.Polish.PrimaryTag);
         Assert.Equal(EgOneModelCatalog.MiniId, tier1.Polish.SecondaryModelId);
+        Assert.Equal("1.4 GB", tier1.Polish.SecondarySizeLabel);
         Assert.Equal("Smaller download", tier1.Polish.SecondaryTag);
         Assert.True(tier1.Polish.ParallelDownloads);
         Assert.False(tier1.Polish.LowSpecPolishAdvisory);
