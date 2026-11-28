@@ -19,8 +19,20 @@ public partial class App
         // ONE AT A TIME, READ OFF THE TASK ITSELF: a delivery still running refuses a second request;
         // one that has ended - including one that refused synchronously because a dictation was in
         // flight - does not, so "finish the current dictation, then download" can be followed.
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        if (Leaving)
         {
+            return;
+        }
+
+        if (_modelDelivery is { IsCompleted: false } existing)
+        {
+            if (!_isSilentParakeetUpgrade)
+            {
+                return;
+            }
+
+            _modelDownload?.Cancel();
+            _modelDelivery = RunAfterExistingDeliveryAsync(existing, DeliverModelsAsync);
             return;
         }
 

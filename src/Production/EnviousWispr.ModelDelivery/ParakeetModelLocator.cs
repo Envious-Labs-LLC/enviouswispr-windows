@@ -88,7 +88,14 @@ public static class ParakeetModelLocator
 
         if (await IsUltraInstalledInStoreOrDataAsync(store, storeRoot, cancellationToken).ConfigureAwait(false))
         {
-            return ParakeetUpgradeAction.RetireLegacyV3;
+            return await HasRetirableLegacyPackageInStoreOrDataAsync(
+                    store,
+                    storeRoot,
+                    developmentLegacyDirectory,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ? ParakeetUpgradeAction.RetireLegacyV3
+                : ParakeetUpgradeAction.None;
         }
 
         var resolution = await ResolveAsync(
@@ -309,10 +316,31 @@ public static class ParakeetModelLocator
             Directory.Exists(legacyDataDir);
     }
 
+    private static async Task<bool> HasRetirableLegacyPackageInStoreOrDataAsync(
+        ModelStore store,
+        string storeRoot,
+        string? developmentLegacyDirectory,
+        CancellationToken cancellationToken)
+    {
+        if ((await store.ListInstalledAsync(ParakeetModelIds.LegacyV3, cancellationToken).ConfigureAwait(false)).Count > 0)
+        {
+            return true;
+        }
+
+        return TryGetSafeLegacyDataDirectory(storeRoot, developmentLegacyDirectory, out var legacyDataDir) &&
+            Directory.Exists(legacyDataDir) &&
+            !IsHandCopiedFullPrecisionLegacyData(legacyDataDir);
+    }
+
+    private static bool IsHandCopiedFullPrecisionLegacyData(string directory) =>
+        Directory.Exists(directory) &&
+        new LocalParakeetModelProbe().Probe(directory).Fp32Complete;
+
     /// <summary>
-    /// Retires store-managed and data-folder <see cref="ParakeetModelIds.LegacyV3"/> files once
-    /// <see cref="ParakeetModelIds.Final"/> is verified installed in the store or data folder.
-    /// Never deletes a checkout development directory.
+    /// Retires store-managed and INT8-only data-folder <see cref="ParakeetModelIds.LegacyV3"/> files
+    /// once <see cref="ParakeetModelIds.Final"/> is verified installed in the store or data folder.
+    /// Preserves hand-copied full-precision FP32 legacy packs so CUDA setups keep their GPU model,
+    /// and never deletes a checkout development directory.
     /// </summary>
     public static async Task<ModelPackageRemovalOutcome> RetireLegacyV3AfterUltraInstalledAsync(
         ModelStore store,
@@ -330,24 +358,40 @@ public static class ParakeetModelLocator
             return new ModelPackageRemovalOutcome(false, ModelDeliveryFailure.VersionNotInstalled);
         }
 
-        return await RemoveLegacyV3FromStoreOrDataAsync(
+        return await RemoveLegacyV3CoreAsync(
             store,
             storeRoot,
             unloadEnginesAsync,
             developmentLegacyDirectory,
+            preserveFullPrecisionLegacyData: true,
             cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Removes store-managed and data-folder <see cref="ParakeetModelIds.LegacyV3"/> files
-    /// (used both after Ultra upgrade and when the user explicitly removes Parakeet).
+    /// (used when the user explicitly removes Parakeet).
     /// </summary>
-    public static async Task<ModelPackageRemovalOutcome> RemoveLegacyV3FromStoreOrDataAsync(
+    public static Task<ModelPackageRemovalOutcome> RemoveLegacyV3FromStoreOrDataAsync(
         ModelStore store,
         string storeRoot,
         Func<Task> unloadEnginesAsync,
         string? developmentLegacyDirectory = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RemoveLegacyV3CoreAsync(
+            store,
+            storeRoot,
+            unloadEnginesAsync,
+            developmentLegacyDirectory,
+            preserveFullPrecisionLegacyData: false,
+            cancellationToken);
+
+    private static async Task<ModelPackageRemovalOutcome> RemoveLegacyV3CoreAsync(
+        ModelStore store,
+        string storeRoot,
+        Func<Task> unloadEnginesAsync,
+        string? developmentLegacyDirectory,
+        bool preserveFullPrecisionLegacyData,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentException.ThrowIfNullOrWhiteSpace(storeRoot);
@@ -358,8 +402,9 @@ public static class ParakeetModelLocator
             return new ModelPackageRemovalOutcome(true);
         }
 
-        var hasLegacyStore = (await store.ListInstalledAsync(ParakeetModelIds.LegacyV3, cancellationToken)
-            .ConfigureAwait(false)).Count > 0;
+        var installedVersions = await store.ListInstalledAsync(ParakeetModelIds.LegacyV3, cancellationToken)
+            .ConfigureAwait(false);
+        var hasLegacyStore = installedVersions.Count > 0;
         var hasLegacyDir = Directory.Exists(legacyDataDir);
         if (!hasLegacyStore && !hasLegacyDir)
         {
@@ -369,6 +414,31 @@ public static class ParakeetModelLocator
         if (hasLegacyDir && IsReparsePoint(legacyDataDir))
         {
             return new ModelPackageRemovalOutcome(false, ModelDeliveryFailure.StorageUnavailable);
+        }
+
+        if (preserveFullPrecisionLegacyData && IsHandCopiedFullPrecisionLegacyData(legacyDataDir))
+        {
+            if (!hasLegacyStore)
+            {
+                return new ModelPackageRemovalOutcome(true);
+            }
+
+            await unloadEnginesAsync().ConfigureAwait(false);
+            foreach (var installed in installedVersions)
+            {
+                var removal = await store.RemoveVersionAsync(installed.ModelId, installed.Version, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!removal.Succeeded && removal.Failure != ModelDeliveryFailure.VersionNotInstalled)
+                {
+                    return new ModelPackageRemovalOutcome(false, removal.Failure);
+                }
+            }
+
+            var cleanup = await store.CleanupAsync(ParakeetModelIds.LegacyV3, inactiveVersionsToKeep: 0, cancellationToken)
+                .ConfigureAwait(false);
+            return cleanup.Succeeded
+                ? new ModelPackageRemovalOutcome(true)
+                : new ModelPackageRemovalOutcome(false, cleanup.Failure);
         }
 
         return await ModelPackageCleaner.RemoveAsync(

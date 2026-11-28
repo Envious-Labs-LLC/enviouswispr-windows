@@ -619,6 +619,38 @@ public sealed class ModelProvisioningTests
             Assert.Equal(
                 ParakeetUpgradeAction.RetireLegacyV3,
                 await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+
+            // Hand-copied FP32 legacy v3 sidecar (encoder-model.onnx + decoder_joint-model.onnx) is preserved during
+            // automatic post-Ultra retirement so CUDA users keep their GPU model, while store legacy versions are still
+            // retired and explicit RemoveLegacyV3FromStoreOrDataAsync still removes the folder cleanly.
+            var fp32DonorDir = Directory.CreateDirectory(donorLegacyDataDir).FullName;
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "nemo128.onnx"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "vocab.txt"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "encoder-model.onnx"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "encoder-model.onnx.data"), [1, 2, 3, 4]);
+            File.WriteAllBytes(Path.Combine(fp32DonorDir, "decoder_joint-model.onnx"), [1, 2, 3, 4]);
+            Assert.True((await store.InstallAsync(SignedParakeetEnvelope(key, ParakeetModelIds.LegacyV3, payloadBytes))).Succeeded);
+            Assert.Equal(
+                ParakeetUpgradeAction.RetireLegacyV3,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+            var fp32Retire = await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.True(fp32Retire.Succeeded);
+            Assert.Empty(await store.ListInstalledAsync(ParakeetModelIds.LegacyV3));
+            Assert.True(File.Exists(Path.Combine(fp32DonorDir, "encoder-model.onnx")));
+            Assert.Equal(
+                ParakeetUpgradeAction.None,
+                await ParakeetModelLocator.EvaluateUpgradeActionAsync(store, storeRoot, null, developmentUltraDirectory: null, devLegacyDir));
+            var explicitRemoval = await ParakeetModelLocator.RemoveLegacyV3FromStoreOrDataAsync(
+                store,
+                storeRoot,
+                unloadEnginesAsync: () => Task.CompletedTask,
+                developmentLegacyDirectory: devLegacyDir);
+            Assert.True(explicitRemoval.Succeeded);
+            Assert.False(Directory.Exists(fp32DonorDir));
         }
         finally
         {

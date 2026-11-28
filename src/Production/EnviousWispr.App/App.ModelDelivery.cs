@@ -736,8 +736,20 @@ public partial class App
     /// </remarks>
     private void OnTranscriptionRetryRequested()
     {
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        if (Leaving)
         {
+            return;
+        }
+
+        if (_modelDelivery is { IsCompleted: false } existing)
+        {
+            if (!_isSilentParakeetUpgrade)
+            {
+                return;
+            }
+
+            _modelDownload?.Cancel();
+            _modelDelivery = RunAfterExistingDeliveryAsync(existing, RetryTranscriptionAsync);
             return;
         }
 
