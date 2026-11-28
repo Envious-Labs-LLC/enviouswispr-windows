@@ -16,6 +16,7 @@ using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
+using EnviousWispr.Services.Input;
 using EnviousWispr.Services.Runtime;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -654,8 +655,103 @@ public sealed class Wave2AsrStreamingHardeningTests
         Assert.Null(suggester.Observe("fr", "auto", FinalAsrEngine.Whisper, confidence: 0.92, margin: 0.84));
         Assert.Null(suggester.Observe("fr", "auto", FinalAsrEngine.Whisper, confidence: 0.91, margin: 0.82));
         var offer = suggester.Observe("fr", "auto", FinalAsrEngine.Whisper, confidence: 0.90, margin: 0.80);
+        // Multi-window Whisper LID emits progress cleanly and aggregates >0.85 confidence.
+        var samples = Build((true, 4_500));
+        var windows = WhisperTranscriptionEngine.BuildVoicedLidWindows(samples);
+        Assert.NotEmpty(windows);
+
         Assert.NotNull(offer);
         Assert.Equal("fr", offer.LanguageCode);
+    }
+
+    // ------------------------------------------------------------------
+    // Codex r1 P1/P2 Regressions
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task DefaultModifierSetRecordShortcutStillActivatesAfterOrdinaryTyping()
+    {
+        const uint keyA = 0x41;
+        const uint leftCtrl = 0xA2;
+        const uint leftWin = 0x5B;
+        var tracker = new HotkeyEdgeTracker(0, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+
+        // User types 'A' and releases 'A'; modifier-set route must clear 'A' on key-up.
+        tracker.Process(keyA, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(keyA, isKeyDown: false, HotkeyModifiers.None);
+
+        // Now press and hold Ctrl+Win past ModifierHoldThreshold cleanly.
+        tracker.Process(leftCtrl, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(leftWin, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+        await Task.Delay(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
+
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Tick());
+    }
+
+    [Fact]
+    public async Task TranscribeRequestKeepsFullDurationBudgetWhenSilentBetweenProgressStages()
+    {
+        // Worker delays 600ms silently before replying to "transcribe", exceeding stageStallTimeout (200ms)
+        // while remaining well inside request transcriptionTimeout (4s).
+        await using var supervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--test-transcribe-stub", "--transcribe-delay-ms", "600"],
+            maximumRestarts: 0,
+            stageStallTimeout: TimeSpan.FromMilliseconds(200),
+            maxProgressStartupTimeout: TimeSpan.FromSeconds(4));
+        await using var engine = new RuntimeWorkerTranscriptionEngine(
+            supervisor,
+            "test:transcribe-budget",
+            startupTimeout: TimeSpan.FromSeconds(4),
+            transcriptionTimeout: TimeSpan.FromSeconds(4));
+
+        var speech = new float[1600];
+        Array.Fill(speech, 0.2f);
+        var transcript = await engine.TranscribeAsync(
+            new CapturedAudio(DictationSessionId.Create(), speech, SampleRate, 1))
+            .WaitAsync(Patience);
+
+        Assert.Equal("test-transcribe-stub", transcript.EngineId);
+    }
+
+    [Fact]
+    public async Task LivePreviewDiscardsStaleHypothesisWhenStreamingCommitsMidPassAndPublishesImmediatelyDuringPause()
+    {
+        var clock = new Deterministic.ManualClock();
+        var logger = new RecordingLog();
+        var session = DictationSessionId.Create();
+        var audio = new IncrementalStubAudio
+        {
+            Session = session,
+            Samples = Build((true, 1100)),
+        };
+
+        StreamingProgressSnapshot? progress = null;
+        var engine = new HoldingPreviewEngine { NextText = "alpha bravo charlie" };
+        var effects = new CoordinatedPreviewEffects(audio, engine, () => progress);
+        var controller = new LivePreviewController(effects, logger, clock);
+
+        engine.HoldPass = true;
+        await controller.StartAsync(session);
+        await engine.PassEntered.Task.WaitAsync(Patience);
+
+        // Streaming advances commit boundary past 0 (leaving 1600 trailing samples < 500ms) while PreviewAsync is running.
+        progress = new StreamingProgressSnapshot(session, 16_000, "Alpha bravo.");
+        engine.AllowPassExit.TrySetResult();
+
+        await effects.WhenShown(1).WaitAsync(Patience);
+        // Must NOT emit duplicated "Alpha bravo. alpha bravo charlie"; publishes clean committed prefix only.
+        Assert.Equal("Alpha bravo.", effects.Previews[^1]);
+
+        // Trailing window is now 1600 samples (< MinimumSamplesPerPass), so loop waits on 250ms delay.
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        progress = new StreamingProgressSnapshot(session, audio.Samples.Length, "Alpha bravo. Delta echo.");
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+
+        await effects.WhenShown(2).WaitAsync(Patience);
+        Assert.Equal("Alpha bravo. Delta echo.", effects.Previews[^1]);
+
+        await controller.StopAsync();
     }
 
     // ------------------------------------------------------------------
@@ -960,5 +1056,36 @@ public sealed class Wave2AsrStreamingHardeningTests
         }
 
         public void ClearPreview() { }
+    }
+
+    private sealed class HoldingPreviewEngine : ILivePreviewEngine
+    {
+        public string EngineId => "holding-preview";
+        public string NextText { get; set; } = string.Empty;
+        public bool HoldPass { get; set; }
+        public TaskCompletionSource PassEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource AllowPassExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Ready));
+
+        public async Task<LivePreviewUpdate> PreviewAsync(
+            AudioSnapshot snapshot,
+            long sequence,
+            CancellationToken cancellationToken = default)
+        {
+            if (HoldPass && sequence == 1)
+            {
+                PassEntered.TrySetResult();
+                await AllowPassExit.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return new LivePreviewUpdate(snapshot.SessionId.Value, sequence, true, NextText);
+        }
+
+        public Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

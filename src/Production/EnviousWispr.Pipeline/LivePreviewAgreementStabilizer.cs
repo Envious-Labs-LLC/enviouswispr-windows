@@ -33,6 +33,8 @@ public sealed class LivePreviewAgreementStabilizer
 
     public string AnchoredPrefix => _anchoredPrefix;
 
+    public int LastAnchoredSample => _lastAnchoredSample;
+
     /// <summary>
     /// Advances stabilization with a newly decoded trailing hypothesis and optional committed-prefix mark.
     /// </summary>

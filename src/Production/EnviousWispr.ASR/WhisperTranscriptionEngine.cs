@@ -165,13 +165,13 @@ public sealed class WhisperTranscriptionEngine : IProgressReportingTranscription
                 _language = requestedLanguage;
             }
 
+            _activeProgressCallback = onProgress;
             (string? Language, double? Confidence, double? Margin) lidResult = (null, null, null);
             if (string.Equals(_language, AutomaticLanguage, StringComparison.Ordinal))
             {
                 lidResult = DetectMultiWindowLanguage(audio.Samples.Span, audio.SampleRate, cancellationToken);
             }
 
-            _activeProgressCallback = onProgress;
             var text = new StringBuilder();
             var timings = new List<TranscriptTokenTiming>();
             var pendingTrailingWhitespace = false;
@@ -258,6 +258,7 @@ public sealed class WhisperTranscriptionEngine : IProgressReportingTranscription
         foreach (var (start, length) in ranges)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            _activeProgressCallback?.Invoke("LidWindow", null);
             try
             {
                 var slice = samples.Slice(start, length).ToArray();

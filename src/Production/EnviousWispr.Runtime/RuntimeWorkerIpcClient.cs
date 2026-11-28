@@ -83,8 +83,15 @@ public sealed partial class RuntimeWorkerSupervisor
                     return null;
                 }
 
-                var waitBudget = TimeSpan.FromTicks(
-                    Math.Min(sawProgress ? remaining.Ticks : timeout.Ticks, perStageTimeout.Ticks));
+                // For startup ("health"): cap initial silent wedge at _stageStallTimeout (12s), then once
+                // progress begins give each heavy native init stage up to max(perStageTimeout, timeout)
+                // bounded by overallMaxTimeout (120s). For "transcribe": keep the duration/provider-scaled
+                // request timeout intact so long native encoder or CPU decode stages do not stall prematurely.
+                var waitBudget = allowProgressExtension
+                    ? sawProgress
+                        ? TimeSpan.FromTicks(Math.Min(remaining.Ticks, Math.Max(perStageTimeout.Ticks, timeout.Ticks)))
+                        : TimeSpan.FromTicks(Math.Min(timeout.Ticks, perStageTimeout.Ticks))
+                    : remaining;
 
                 var line = await process.StandardOutput.ReadLineAsync(cancellationToken)
                     .AsTask()

@@ -283,13 +283,19 @@ public sealed class LivePreviewController : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var streamingProgress = _effects.StreamingProgress;
-                var hasStreamingPrefix = streamingProgress is not null &&
+                var snapshotBaseSample = streamingProgress is not null &&
                     streamingProgress.SessionId == sessionId &&
-                    streamingProgress.CommittedThroughSample > 0;
+                    streamingProgress.CommittedThroughSample > 0
+                    ? streamingProgress.CommittedThroughSample
+                    : 0;
+                var snapshotPrefix = streamingProgress is not null &&
+                    streamingProgress.SessionId == sessionId
+                    ? streamingProgress.CommittedPrefix
+                    : string.Empty;
                 AudioSnapshot? snapshot;
-                if (hasStreamingPrefix && audio is IAudioIncrementalSnapshotSource incremental)
+                if (snapshotBaseSample > 0 && audio is IAudioIncrementalSnapshotSource incremental)
                 {
-                    var inc = incremental.GetSnapshotFrom(streamingProgress!.CommittedThroughSample);
+                    var inc = incremental.GetSnapshotFrom(snapshotBaseSample);
                     if (inc is null || inc.SessionId != sessionId)
                     {
                         snapshot = null;
@@ -316,6 +322,38 @@ public sealed class LivePreviewController : IAsyncDisposable
 
                 if (snapshot is null || snapshot.Samples.Length < MinimumSamplesPerPass)
                 {
+                    if (streamingProgress is not null &&
+                        streamingProgress.SessionId == sessionId &&
+                        streamingProgress.CommittedThroughSample > stabilizer.LastAnchoredSample &&
+                        !string.IsNullOrWhiteSpace(streamingProgress.CommittedPrefix) &&
+                        Volatile.Read(ref _closure) == closure)
+                    {
+                        var committedOnlyText = stabilizer.Stabilize(
+                            string.Empty,
+                            streamingProgress.CommittedPrefix,
+                            streamingProgress.CommittedThroughSample);
+                        var formattedCommitted = LivePreviewTextFormatter.Format(
+                            committedOnlyText,
+                            wordCorrectionEnabled,
+                            customWords,
+                            englishSpelling,
+                            detectedLanguage: null,
+                            recognitionLanguage: null,
+                            engine.EngineId,
+                            enabledVocabularyPackIds: enabledVocabularyPackIds,
+                            excludeLearnedAliases: !fixLearnedWordsEnabled,
+                            vocabularyPackOverrides: vocabularyPackOverrides);
+                        if (!string.IsNullOrWhiteSpace(formattedCommitted) &&
+                            !string.Equals(formattedCommitted, lastPublishedText, StringComparison.Ordinal))
+                        {
+                            lastPublishedText = formattedCommitted;
+                            _effects.ShowPreview(new LivePreviewFrame(
+                                sessionId,
+                                formattedCommitted,
+                                () => Volatile.Read(ref _closure) == closure));
+                        }
+                    }
+
                     // NOT THE CADENCE, BECAUSE THIS IS NOT AN UPDATE. There is not yet enough audio to
                     // transcribe, and waiting the full interval to re-ask is what made a person watch
                     // "Listening..." for four seconds. Half the threshold this guard enforces, so the
@@ -350,19 +388,32 @@ public sealed class LivePreviewController : IAsyncDisposable
                 // THE CLOSURE IS CHECKED AGAIN AT THE DISPATCH, not only at the start. A stop that
                 // ran out of patience left this loop inside the engine; when the engine answers at
                 // last, the screen this was for has been closed, and its words must not reach it.
+                var commitBoundaryAdvanced = false;
                 if (update.SessionId == sessionId.Value && Volatile.Read(ref _closure) == closure)
                 {
-                    var currentProgress = _effects.StreamingProgress;
-                    var anchoredPrefix = currentProgress is not null && currentProgress.SessionId == sessionId
-                        ? currentProgress.CommittedPrefix
-                        : null;
-                    var anchoredSample = currentProgress is not null && currentProgress.SessionId == sessionId
-                        ? currentProgress.CommittedThroughSample
-                        : 0;
-                    var stabilizedText = stabilizer.Stabilize(
-                        update.Text,
-                        anchoredPrefix,
-                        anchoredSample);
+                    var postProgress = _effects.StreamingProgress;
+                    commitBoundaryAdvanced = postProgress is not null &&
+                        postProgress.SessionId == sessionId &&
+                        postProgress.CommittedThroughSample > snapshotBaseSample;
+                    string stabilizedText;
+                    if (commitBoundaryAdvanced)
+                    {
+                        // Streaming finalized additional audio while PreviewAsync ran on the pre-commit snapshot:
+                        // drop the overlapping raw tail hypothesis instead of duplicating words after the new prefix,
+                        // publish the committed prefix immediately, and advance straight into the fresh trailing window.
+                        stabilizedText = stabilizer.Stabilize(
+                            string.Empty,
+                            postProgress!.CommittedPrefix,
+                            postProgress.CommittedThroughSample);
+                    }
+                    else
+                    {
+                        stabilizedText = stabilizer.Stabilize(
+                            update.Text,
+                            snapshotPrefix,
+                            snapshotBaseSample);
+                    }
+
                     var displayText = LivePreviewTextFormatter.Format(
                         stabilizedText,
                         wordCorrectionEnabled,
@@ -383,6 +434,11 @@ public sealed class LivePreviewController : IAsyncDisposable
                             displayText,
                             () => Volatile.Read(ref _closure) == closure));
                     }
+                }
+
+                if (commitBoundaryAdvanced)
+                {
+                    continue;
                 }
 
                 // A FLOOR, NOT AN ADDITION. A pass slower than the interval waits nothing and the next

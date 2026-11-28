@@ -544,10 +544,10 @@ internal sealed class HotkeyEdgeTracker
                 _modifierSetEngaged = complete;
                 outcome = gesture.Process(ModifierSetSentinel, complete, _clock.Elapsed);
             }
-            else if (isKeyDown && (!IsModifierKey(virtualKey) || (ModifierSuppliedBy(virtualKey) & _recordModifierSet) == 0))
+            else if (!IsModifierKey(virtualKey) || (ModifierSuppliedBy(virtualKey) & _recordModifierSet) == 0)
             {
                 nonBoundKeyEvent = true;
-                outcome = gesture.Process(virtualKey, isKeyDown: true, _clock.Elapsed);
+                outcome = gesture.Process(virtualKey, isKeyDown, _clock.Elapsed);
             }
             else
             {
