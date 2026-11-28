@@ -7,6 +7,11 @@ namespace EnviousWispr.Services.Input;
 internal static class WindowsTargetWindowNative
 {
     private const uint MonitorDefaultToNearest = 2;
+    private const uint WmGetObject = 0x003D;
+    private const uint SmtoAbortIfHung = 0x0002;
+    private const uint WakeTimeoutMilliseconds = 50;
+    private static readonly nint ObjidClient = unchecked((nint)(-4));
+    private static readonly nint UiaRootObjectId = unchecked((nint)(-25));
     private const int VkShift = 0x10;
     private const int VkControl = 0x11;
     private const int VkMenu = 0x12;
@@ -93,6 +98,36 @@ internal static class WindowsTargetWindowNative
             windowRect.Bottom >= info.Monitor.Bottom;
     }
 
+    /// <summary>
+    /// Issues a bounded <c>WM_GETOBJECT</c> UIA/MSAA accessibility wake nudge so cold
+    /// Chromium/Electron hosts activate their accessibility tree before a focused-element retry.
+    /// </summary>
+    internal static bool TryWakeAccessibilityTree(nint window)
+    {
+        if (window == 0 || !IsWindow(window))
+        {
+            return false;
+        }
+
+        var wokeUia = SendMessageTimeout(
+            window,
+            WmGetObject,
+            0,
+            UiaRootObjectId,
+            SmtoAbortIfHung,
+            WakeTimeoutMilliseconds,
+            out _) != 0;
+        var wokeMsaa = SendMessageTimeout(
+            window,
+            WmGetObject,
+            0,
+            ObjidClient,
+            SmtoAbortIfHung,
+            WakeTimeoutMilliseconds,
+            out _) != 0;
+        return wokeUia || wokeMsaa;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
     {
@@ -134,4 +169,14 @@ internal static class WindowsTargetWindowNative
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint SendMessageTimeout(
+        nint window,
+        uint message,
+        nuint wParam,
+        nint lParam,
+        uint flags,
+        uint timeoutMilliseconds,
+        out nuint result);
 }

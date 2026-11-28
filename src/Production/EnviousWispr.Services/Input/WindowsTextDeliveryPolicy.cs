@@ -190,10 +190,27 @@ internal static class WindowsTextDeliveryPolicy
             expected.RightReachedDocumentEnd == actual.RightReachedDocumentEnd &&
             string.Equals(expected.Right, actual.Right, StringComparison.Ordinal)));
 
+    internal static bool IsChromiumWindowClass(string? className) =>
+        !string.IsNullOrWhiteSpace(className) &&
+        className.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal);
+
     internal static bool ShouldRetryColdChromiumFocus(WindowsTextTargetAdapter.FocusedElementFacts? focus) =>
         focus is not null &&
         !focus.HasKeyboardFocus &&
-        focus.ClassName.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal);
+        IsChromiumWindowClass(focus.ClassName);
+
+    internal static bool ShouldRetryColdChromiumFocus(
+        WindowsTextTargetAdapter.FocusedElementFacts? focus,
+        string? targetWindowClassName)
+    {
+        if (focus is null)
+        {
+            return IsChromiumWindowClass(targetWindowClassName);
+        }
+
+        return !focus.HasKeyboardFocus &&
+            (IsChromiumWindowClass(focus.ClassName) || IsChromiumWindowClass(targetWindowClassName));
+    }
 
     internal static TextDeliveryRefusalReason CompatibilityRefusal(
         TextTargetKind targetKind,

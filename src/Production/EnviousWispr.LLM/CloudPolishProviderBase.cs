@@ -73,7 +73,11 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
     internal static IReadOnlyList<(string Text, string SeparatorAfter)> SplitForPolish(
         string text,
         int maxChunkCharacters = MaximumChunkCharacters) =>
-        PolishChunker.Split(text, maxChunkCharacters)
+        PolishChunker.Split(
+                text,
+                maxChunkCharacters,
+                PolishChunker.MaximumCloudWordsPerChunk,
+                PolishChunker.MaximumUtf8BytesPerChunk)
             .Select(piece => (piece.Text, piece.SeparatorAfter))
             .ToArray();
 
@@ -118,7 +122,9 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
                 canRetry: false);
         }
 
-        if (request.Input.Text.Length <= ChunkedPolishThresholdCharacters)
+        if (request.Input.Text.Length <= ChunkedPolishThresholdCharacters &&
+            PolishChunker.CountWords(request.Input.Text.AsSpan()) <= PolishChunker.MaximumCloudWordsPerChunk &&
+            System.Text.Encoding.UTF8.GetByteCount(request.Input.Text) <= PolishChunker.MaximumUtf8BytesPerChunk)
         {
             var singleResult = await PolishSegmentAsync(
                 keyResult.Value,

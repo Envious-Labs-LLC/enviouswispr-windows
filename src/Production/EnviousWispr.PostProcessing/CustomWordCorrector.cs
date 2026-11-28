@@ -121,15 +121,20 @@ public static partial class CustomWordCorrector
         // different places are not a tie and are not treated as one.
         var claimed = new List<Span>();
         Match[]? tokens = null;
-        List<Proposal> proposals;
-        if (index.HasPhrases)
+        var proposals = new List<Proposal>();
+
+        // Pass 0 (#3893): N-gram compound canonical matching ("Chat G P T" -> "ChatGPT") across
+        // whitespace-only boundaries, guarding against stopwords unless spelling out initials.
+        if (index.HasNoSpaceCanonicals)
         {
             tokens = WordTokenRegex().Matches(text).ToArray();
-            proposals = PhraseProposals(text, tokens, index, claimed);
+            CompoundNgramProposals(text, tokens, index, claimed, proposals);
         }
-        else
+
+        if (index.HasPhrases)
         {
-            proposals = new List<Proposal>();
+            tokens ??= WordTokenRegex().Matches(text).ToArray();
+            proposals.AddRange(PhraseProposals(text, tokens, index, claimed));
         }
 
         // SINGLE WORDS AFTERWARDS, both exact and near, over whatever the phrases left. A rule that
@@ -492,6 +497,127 @@ public static partial class CustomWordCorrector
         return inflected == 1;
     }
 
+    /// <summary>Pass 0 (#3893): joins adjacent whitespace-separated tokens matching a non-pack no-space canonical.</summary>
+    private static void CompoundNgramProposals(
+        string text,
+        Match[] tokens,
+        CompiledWordIndex index,
+        List<Span> claimed,
+        List<Proposal> proposals)
+    {
+        for (var wordIndex = 0; wordIndex < tokens.Length; wordIndex++)
+        {
+            var maxRun = Math.Min(4, tokens.Length - wordIndex);
+            for (var run = maxRun; run >= 2; run--)
+            {
+                if (!TryBuildWhitespaceSpan(text, claimed, tokens, wordIndex, run, out var start, out var length, out var words))
+                {
+                    continue;
+                }
+
+                // Restrict 4-token Pass 0 joins to spelled-letter sequences (e.g., "Chat G P T" -> "ChatGPT")
+                // so ordinary 4-word prose is never speculatively glued into a custom word.
+                if (run == 4 && !HasSpelledInitials(words))
+                {
+                    continue;
+                }
+
+                var concat = string.Concat(words);
+                if (concat.Length < 3 || !index.NoSpaceCanonicals.TryGetValue(concat, out var canonical))
+                {
+                    continue;
+                }
+
+                if (JoinsThroughStopword(words, canonical))
+                {
+                    continue;
+                }
+
+                if (MemoryExtensions.Equals(text.AsSpan(start, length), canonical.AsSpan(), StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                proposals.Add(new Proposal(start, length, canonical));
+                claimed.Add(new Span(start, length));
+                wordIndex += run - 1;
+                break;
+            }
+        }
+    }
+
+    private static bool HasSpelledInitials(string[] words)
+    {
+        var singleCharCount = 0;
+        for (var i = 0; i < words.Length; i++)
+        {
+            if (words[i].Length == 1)
+            {
+                singleCharCount++;
+            }
+        }
+
+        return singleCharCount >= 2;
+    }
+
+    /// <summary>#3893: true when a multi-token run contains an unspelled stopword.</summary>
+    internal static bool WordsContainStopword(IReadOnlyList<string> words)
+    {
+        if (words.Count <= 1)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < words.Count; i++)
+        {
+            var word = words[i];
+            if (!PhraseStopWords.Contains(word))
+            {
+                continue;
+            }
+
+            if (word.Length == 1)
+            {
+                var spelledNeighbour =
+                    (i > 0 && words[i - 1].Length == 1) ||
+                    (i + 1 < words.Count && words[i + 1].Length == 1);
+                if (spelledNeighbour)
+                {
+                    continue;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>#3893: Pass 0 refusal when joining across a stopword unless the tokens already say the canonical's words.</summary>
+    internal static bool JoinsThroughStopword(IReadOnlyList<string> words, string canonical)
+    {
+        if (!WordsContainStopword(words))
+        {
+            return false;
+        }
+
+        var canonicalWords = CollapseSpaces(canonical).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (canonicalWords.Length != words.Count)
+        {
+            return true;
+        }
+
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (!string.Equals(words[i], canonicalWords[i], StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool Reachable(
         string text,
         CompiledWordIndex index,
@@ -506,16 +632,34 @@ public static partial class CustomWordCorrector
         rivals = [];
         exactMap = null;
         found = default;
-        if (!index.PhrasesByLength.TryGetValue(run, out var bucket))
+        if (!index.PhrasesByLength.TryGetValue(run, out var bucket) ||
+            !TryBuildWhitespaceSpan(text, claimed, tokens, wordIndex, run, out var start, out var length, out var words))
         {
             return false;
         }
 
+        rivals = bucket.Candidates;
+        exactMap = bucket.ExactBySurface;
+        found = new Run(start, length, string.Join(' ', words), words);
+        return true;
+    }
+
+    private static bool TryBuildWhitespaceSpan(
+        string text,
+        List<Span> claimed,
+        Match[] tokens,
+        int wordIndex,
+        int run,
+        out int start,
+        out int length,
+        out string[] words)
+    {
         var slice = tokens.AsSpan(wordIndex, run);
-        var start = slice[0].Index;
-        var length = slice[run - 1].Index + slice[run - 1].Length - start;
+        start = slice[0].Index;
+        length = slice[run - 1].Index + slice[run - 1].Length - start;
         if (IsClaimed(claimed, start, length))
         {
+            words = [];
             return false;
         }
 
@@ -529,26 +673,25 @@ public static partial class CustomWordCorrector
                 var ch = text[pos];
                 if (ch != ' ' && ch != '\t')
                 {
+                    words = [];
                     return false;
                 }
             }
         }
 
-        var words = new string[run];
+        words = new string[run];
         for (var word = 0; word < run; word++)
         {
             var tokenValue = slice[word].Value;
             if (ReservedTriggerWords.Contains(tokenValue))
             {
+                words = [];
                 return false;
             }
 
             words[word] = tokenValue;
         }
 
-        rivals = bucket.Candidates;
-        exactMap = bucket.ExactBySurface;
-        found = new Run(start, length, string.Join(' ', words), words);
         return true;
     }
 
@@ -984,6 +1127,8 @@ public static partial class CustomWordCorrector
 
     private sealed class CompiledWordIndex
     {
+        public Dictionary<string, string> NoSpaceCanonicals { get; }
+
         public Dictionary<string, Candidate> ExactAlnumSingleWords { get; }
 
         public AhoCorasickMatcher? ExactComplexMatcher { get; }
@@ -1018,6 +1163,8 @@ public static partial class CustomWordCorrector
 
         public int MaxPackCanonicalFuzzyRuneLength { get; }
 
+        public bool HasNoSpaceCanonicals => NoSpaceCanonicals.Count > 0;
+
         public bool HasPhrases => PhrasesByLength.Count > 0;
 
         public bool HasSingleWords => ExactAlnumSingleWords.Count > 0 || ExactComplexMatcher is not null;
@@ -1026,9 +1173,10 @@ public static partial class CustomWordCorrector
 
         public bool HasFuzzyCandidates => FuzzyPoolSize > 0 || HasPackFuzzyCandidates;
 
-        public bool IsEmpty => !HasPhrases && !HasSingleWords && !HasFuzzyCandidates;
+        public bool IsEmpty => !HasNoSpaceCanonicals && !HasPhrases && !HasSingleWords && !HasFuzzyCandidates;
 
         private CompiledWordIndex(
+            Dictionary<string, string> noSpaceCanonicals,
             Dictionary<string, Candidate> exactAlnumSingleWords,
             AhoCorasickMatcher? exactComplexMatcher,
             Dictionary<int, PhraseBucket> phrasesByLength,
@@ -1047,6 +1195,7 @@ public static partial class CustomWordCorrector
             int minPackCanonicalFuzzyRuneLength,
             int maxPackCanonicalFuzzyRuneLength)
         {
+            NoSpaceCanonicals = noSpaceCanonicals;
             ExactAlnumSingleWords = exactAlnumSingleWords;
             ExactComplexMatcher = exactComplexMatcher;
             PhrasesByLength = phrasesByLength;
@@ -1274,7 +1423,55 @@ public static partial class CustomWordCorrector
                 phraseBuckets[wordCount] = new PhraseBucket(fuzzyList, exactMap);
             }
 
+            // No-space compound namespace (non-pack only, macOS WordCorrector Pass 0):
+            // Canonical is unconditional and last-writer wins; aliases gap-fill empty slots (first-wins).
+            var noSpaceCanonicals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in customWords)
+            {
+                if (entry is null || !IsUsable(entry) || (excludeLearnedAliases && entry.IsPureAutoLearned))
+                {
+                    continue;
+                }
+
+                var canonicalSurface = CollapseSpaces(entry.Replacement);
+                if (ContainsReservedTrigger(canonicalSurface))
+                {
+                    continue;
+                }
+
+                var canonicalNoSpace = canonicalSurface.Replace(" ", string.Empty, StringComparison.Ordinal);
+                if (canonicalNoSpace.Length >= 3)
+                {
+                    noSpaceCanonicals[canonicalNoSpace] = canonicalSurface;
+                }
+
+                var effectiveLearned = excludeLearnedAliases ? entry.EffectiveLearnedAliases() : [];
+                HashSet<string>? learnedAliases = effectiveLearned.Count > 0
+                    ? effectiveLearned.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    : null;
+                foreach (var alias in entry.Aliases)
+                {
+                    if (learnedAliases is not null && learnedAliases.Contains(alias))
+                    {
+                        continue;
+                    }
+
+                    var aliasSurface = CollapseSpaces(alias);
+                    if (ContainsReservedTrigger(aliasSurface) ||
+                        aliasSurface.Contains(' ', StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (aliasSurface.Length >= 3)
+                    {
+                        noSpaceCanonicals.TryAdd(aliasSurface, canonicalSurface);
+                    }
+                }
+            }
+
             return new CompiledWordIndex(
+                noSpaceCanonicals,
                 exactAlnum,
                 exactComplex.Count > 0 ? AhoCorasickMatcher.Build(exactComplex) : null,
                 phraseBuckets,

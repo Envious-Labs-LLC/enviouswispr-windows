@@ -51,13 +51,13 @@ public sealed class TranscriptFinalizerTests
         var (finalizer, effects, _) = Build();
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
 
         Assert.Equal("Hello, world.", finalized.Processed.Output.Text);
-        Assert.Equal("hello world", finalized.Processed.DeterministicText);
+        Assert.Equal("hello world today now", finalized.Processed.DeterministicText);
         Assert.True(finalized.WasPolished);
         Assert.Equal(
-            ["DeterministicProcessingStarted", "StageReceipts:main", "SaveRecovery:hello world", "PolishStarted:fake", "PolishFinished:fake:Polished:local=False", "SaveRecovery:Hello, world.", "StageReceipts:restoration", "DeterministicProcessingFinished:degraded=False"],
+            ["DeterministicProcessingStarted", "StageReceipts:main", "SaveRecovery:hello world today now", "PolishStarted:fake", "PolishFinished:fake:Polished:local=False", "SaveRecovery:Hello, world.", "StageReceipts:restoration", "DeterministicProcessingFinished:degraded=False"],
             effects.Trace);
     }
 
@@ -70,9 +70,9 @@ public sealed class TranscriptFinalizerTests
         var (finalizer, effects, _) = Build();
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
 
-        Assert.Equal("hello world", finalized.Processed.Output.Text);
+        Assert.Equal("hello world today now", finalized.Processed.Output.Text);
         Assert.NotEqual(PolishOutputVerdict.Accepted, finalized.PolishVerdict);
         Assert.False(finalized.WasPolished);
         Assert.Contains("PolishRefused", effects.Trace);
@@ -87,7 +87,7 @@ public sealed class TranscriptFinalizerTests
         provider.Admission = admission;
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Accelerator), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Accelerator), CancellationToken.None);
 
         Assert.True(finalized.WasPolished);
         Assert.Equal([RuntimeResourceKind.Accelerator], admission.Requested);
@@ -106,9 +106,9 @@ public sealed class TranscriptFinalizerTests
         admission.Refuse = true;
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
 
-        Assert.Equal("hello world", finalized.Processed.Output.Text);
+        Assert.Equal("hello world today now", finalized.Processed.Output.Text);
         Assert.Equal(PolishAttemptStatus.Unavailable, finalized.Polish?.Status);
         Assert.Equal(AppErrorCode.RuntimeResourceBusy, finalized.Polish?.Error?.Code);
         Assert.Equal(0, provider.Calls);
@@ -139,14 +139,14 @@ public sealed class TranscriptFinalizerTests
         var (finalizer, _, _) = Build(() => words);
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("envy wisper is here"),
+            Spoken("envy wisper is always here"),
             words,
             AllOn,
             SnippetVocabulary.Empty,
             new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu),
             CancellationToken.None);
 
-        Assert.Equal("EnviousWispr is here", finalized.Processed.DeterministicText);
+        Assert.Equal("EnviousWispr is always here", finalized.Processed.DeterministicText);
         Assert.Equal(["EnviousWispr"], provider.LastVocabulary);
         Assert.True(finalized.WasPolished);
     }
@@ -183,7 +183,7 @@ public sealed class TranscriptFinalizerTests
         admission.BeforeGranting = () => words = [new CustomWordEntry("hello", "Hello")];
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
 
         Assert.True(finalized.WasPolished);
         Assert.Equal(["Hello"], provider.LastVocabulary);
@@ -198,7 +198,7 @@ public sealed class TranscriptFinalizerTests
         admission.Refuse = true;
 
         await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
 
         Assert.Equal(0, reads);
     }
@@ -210,7 +210,7 @@ public sealed class TranscriptFinalizerTests
         var (finalizer, effects, _) = Build();
 
         var finalized = await finalizer.FinalizeAsync(
-            Spoken("hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
 
         Assert.True(finalized.WasPolished);
         Assert.Equal("Hello, world.", finalized.Processed.Output.Text);
@@ -225,7 +225,7 @@ public sealed class TranscriptFinalizerTests
         var (finalizer, effects, _) = Build();
 
         await finalizer.FinalizeAsync(
-            Spoken("um hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
+            Spoken("um hello world today now"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
 
         Assert.Equal(
             [DeterministicTextStage.SnippetExpansion, DeterministicTextStage.CustomWords, DeterministicTextStage.FillerAndFalseStarts, DeterministicTextStage.SpokenEmoji, DeterministicTextStage.InverseTextNormalization, DeterministicTextStage.EnglishSpelling, DeterministicTextStage.EnglishSpellingAfterPolish, DeterministicTextStage.EmojiRestoration, DeterministicTextStage.CasualEnding],

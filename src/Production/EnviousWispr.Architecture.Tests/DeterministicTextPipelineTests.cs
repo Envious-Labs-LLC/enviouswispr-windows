@@ -292,12 +292,18 @@ public sealed class DeterministicTextPipelineTests
 
             // CAUSAL PRECONDITION (#273): wait until the worker is running inside the step AND the
             // executor has armed the exact production deadline timer before advancing the clock.
+            var expectedTimeout = production.GetTimeout(new DeterministicTextContext(
+                request.Transcript,
+                afterPolish ? polished : spoken,
+                request.CustomWords,
+                request.Options,
+                afterPolish ? polished : null));
             await entered.Task.WaitAsync(Patience);
             await clock.WhenRegistered(1).WaitAsync(Patience);
-            Assert.Equal(production.Timeout, clock.NextDue);
+            Assert.Equal(expectedTimeout, clock.NextDue);
             worker = GetOutstandingInvocation(pipeline, overrunning);
 
-            clock.Advance(production.Timeout - TimeSpan.FromTicks(1));
+            clock.Advance(expectedTimeout - TimeSpan.FromTicks(1));
             Assert.False(pending.IsCompleted);
             Assert.False(release.IsSet);
 
@@ -309,7 +315,7 @@ public sealed class DeterministicTextPipelineTests
             Assert.Equal(lastValid, result.Output.Text);
             Assert.True(result.IsDegraded);
             Assert.False(release.IsSet);
-            Assert.Equal((long)production.Timeout.TotalMilliseconds, receipt.ElapsedMilliseconds);
+            Assert.Equal((long)expectedTimeout.TotalMilliseconds, receipt.ElapsedMilliseconds);
         }
         finally
         {
@@ -388,19 +394,25 @@ public sealed class DeterministicTextPipelineTests
             lastValid = spoken;
         }
 
+        var expectedTimeout = production.GetTimeout(new DeterministicTextContext(
+            request.Transcript,
+            afterPolish ? polished : spoken,
+            request.CustomWords,
+            request.Options,
+            afterPolish ? polished : null));
         await scheduler.WhenQueued(queuedBefore + 1).WaitAsync(Patience);
         await clock.WhenRegistered(registeredBefore + 1).WaitAsync(Patience);
-        Assert.Equal(production.Timeout, clock.NextDue);
+        Assert.Equal(expectedTimeout, clock.NextDue);
         Assert.False(entered.Task.IsCompleted);
 
-        clock.Advance(production.Timeout);
+        clock.Advance(expectedTimeout);
         var result = await pending.WaitAsync(Patience);
 
         var receipt = result.Receipts.Single(candidate => candidate.Stage == stage);
         Assert.Equal(DeterministicStageStatus.TimedOut, receipt.Status);
         Assert.Equal(lastValid, result.Output.Text);
         Assert.True(result.IsDegraded);
-        Assert.Equal((long)production.Timeout.TotalMilliseconds, receipt.ElapsedMilliseconds);
+        Assert.Equal((long)expectedTimeout.TotalMilliseconds, receipt.ElapsedMilliseconds);
         Assert.False(entered.Task.IsCompleted);
         Assert.False(finished.Task.IsCompleted);
 
@@ -1115,6 +1127,8 @@ public sealed class DeterministicTextPipelineTests
 
         public TimeSpan Timeout => production.Timeout;
 
+        public TimeSpan GetTimeout(DeterministicTextContext context) => production.GetTimeout(context);
+
         public bool IsEnabled(DeterministicTextContext context) => production.IsEnabled(context);
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
@@ -1138,6 +1152,8 @@ public sealed class DeterministicTextPipelineTests
         public DeterministicTextStage Stage => production.Stage;
 
         public TimeSpan Timeout => production.Timeout;
+
+        public TimeSpan GetTimeout(DeterministicTextContext context) => production.GetTimeout(context);
 
         public bool IsEnabled(DeterministicTextContext context) => production.IsEnabled(context);
 

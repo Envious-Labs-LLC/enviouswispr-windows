@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace EnviousWispr.Core.Dictation;
 
 /// <summary>Why a polish result was refused, or that it was accepted.</summary>
@@ -39,6 +41,12 @@ public enum PolishOutputVerdict
     /// it twice, so the whole polish goes and the cleaned text with the snippet in place is delivered.
     /// </remarks>
     RefusedSnippetLost,
+
+    /// <summary>The model turned a dictated question into an answer or statement (ref: macOS question_flip).</summary>
+    RefusedQuestionFlip,
+
+    /// <summary>The model dropped or altered a slash or backslash token that was present in the input (ref: macOS #3038).</summary>
+    RefusedSymbolDrop,
 }
 
 /// <summary>What the guard decided, and the text to use if it accepted.</summary>
@@ -73,7 +81,7 @@ public readonly record struct PolishOutputReview(PolishOutputVerdict Verdict, st
 /// said it. The thresholds are therefore deliberately loose: they catch a model that has plainly
 /// come off the rails, not one that was merely wordier than expected.
 /// </remarks>
-public static class PolishOutputGuard
+public static partial class PolishOutputGuard
 {
     /// <summary>
     /// How many times a phrase must repeat consecutively before the output is refused.
@@ -212,6 +220,43 @@ public static class PolishOutputGuard
         @"^\s*for\s+\w+\s+in\s+.*:$",
     ];
 
+    private static readonly HashSet<string> QuestionFillers = new(StringComparer.Ordinal)
+    {
+        "um", "uh", "so", "like", "well", "okay", "ok",
+    };
+
+    private static readonly HashSet<string> QuestionAuxiliaryStarts = new(StringComparer.Ordinal)
+    {
+        "should", "can", "do", "does", "did", "is", "are", "could", "would", "has", "have", "will",
+    };
+
+    private static readonly HashSet<string> QuestionWhWords = new(StringComparer.Ordinal)
+    {
+        "how", "what", "where", "when", "who", "why",
+    };
+
+    private static readonly HashSet<string> QuestionWhQuantifiers = new(StringComparer.Ordinal)
+    {
+        "many", "much", "long", "often",
+    };
+
+    private static readonly string[] IndirectQuestionPreambles =
+    [
+        "i was wondering if",
+        "i'm wondering if",
+        "wondering if",
+        "whether we should",
+        "do you know if",
+        "is there a",
+        "are we",
+    ];
+
+    [GeneratedRegex(@"[/\\]+[^\s/\\,.;:!?)\]}""'\u2018\u2019\u201C\u201D\u00AB\u00BB`*]+", RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex SymbolTokenRegex();
+
+    public static PolishOutputReview Review(string input, string output) =>
+        Review(input, output, inferQuestionFromOpening: true);
+
     /// <summary>
     /// Whether to use the polished text, and if not, why not.
     /// </summary>
@@ -225,7 +270,11 @@ public static class PolishOutputGuard
     /// </remarks>
     /// <param name="input">The cleaned transcript that was sent to the model.</param>
     /// <param name="output">What came back.</param>
-    public static PolishOutputReview Review(string input, string output)
+    /// <param name="inferQuestionFromOpening">Whether opening English auxiliaries/wh-words imply a question when no question mark is present.</param>
+    public static PolishOutputReview Review(
+        string input,
+        string output,
+        bool inferQuestionFromOpening)
     {
         ArgumentNullException.ThrowIfNull(input);
 
@@ -277,7 +326,135 @@ public static class PolishOutputGuard
             return Refuse(PolishOutputVerdict.RefusedGutted, input);
         }
 
+        if (LooksLikeQuestion(said, inferQuestionFromOpening) &&
+            !LooksLikeQuestion(wrote, inferQuestionFromOpening))
+        {
+            return Refuse(PolishOutputVerdict.RefusedQuestionFlip, input);
+        }
+
+        if (HasMissingSymbolTokens(said, wrote))
+        {
+            return Refuse(PolishOutputVerdict.RefusedSymbolDrop, input);
+        }
+
         return new PolishOutputReview(PolishOutputVerdict.Accepted, wrote);
+    }
+
+    internal static bool LooksLikeQuestion(string text, bool inferFromOpening = true)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        if (text.Contains('?') || text.Contains('\uFF1F'))
+        {
+            return true;
+        }
+
+        if (!inferFromOpening)
+        {
+            return false;
+        }
+
+        var normalized = text.Trim().Replace('\u2019', '\'').ToLowerInvariant();
+        if (normalized.Length == 0)
+        {
+            return false;
+        }
+
+        var tokens = normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var start = 0;
+        while (start < tokens.Length && QuestionFillers.Contains(TrimOuterPunctuation(tokens[start])))
+        {
+            start++;
+        }
+
+        if (start >= tokens.Length)
+        {
+            return false;
+        }
+
+        var firstWord = tokens[start];
+        if (QuestionAuxiliaryStarts.Contains(firstWord))
+        {
+            return true;
+        }
+
+        if (QuestionWhWords.Contains(firstWord))
+        {
+            var secondWord = start + 1 < tokens.Length ? tokens[start + 1] : string.Empty;
+            if (QuestionAuxiliaryStarts.Contains(secondWord) || QuestionWhQuantifiers.Contains(secondWord))
+            {
+                return true;
+            }
+        }
+
+        var prefixCount = Math.Min(5, tokens.Length - start);
+        var joined = string.Join(' ', tokens, start, prefixCount);
+        foreach (var preamble in IndirectQuestionPreambles)
+        {
+            if (joined.StartsWith(preamble, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static IReadOnlyDictionary<string, int> CountSymbolTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return new Dictionary<string, int>(StringComparer.Ordinal);
+        }
+
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (Match match in SymbolTokenRegex().Matches(text))
+        {
+            var key = match.Value.ToLowerInvariant();
+            counts[key] = counts.TryGetValue(key, out var existing) ? existing + 1 : 1;
+        }
+
+        return counts;
+    }
+
+    private static bool HasMissingSymbolTokens(string input, string output)
+    {
+        var expected = CountSymbolTokens(input);
+        if (expected.Count == 0)
+        {
+            return false;
+        }
+
+        var actual = CountSymbolTokens(output);
+        foreach (var (token, count) in expected)
+        {
+            if (!actual.TryGetValue(token, out var surviving) || surviving < count)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string TrimOuterPunctuation(string token)
+    {
+        var start = 0;
+        while (start < token.Length && char.IsPunctuation(token[start]))
+        {
+            start++;
+        }
+
+        var end = token.Length;
+        while (end > start && char.IsPunctuation(token[end - 1]))
+        {
+            end--;
+        }
+
+        return token[start..end];
     }
 
     private static PolishOutputReview Refuse(PolishOutputVerdict verdict, string input) =>

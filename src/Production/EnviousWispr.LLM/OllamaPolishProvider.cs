@@ -160,105 +160,212 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                     timer);
             }
 
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(_requestTimeout);
-            try
-            {
-                for (var attempt = 0; ; attempt++)
-                {
-                    try
-                    {
-                        var output = await SendOnceAsync(
-                            request.Input.Text,
-                            request.Vocabulary,
-                            request.RecognitionLanguage,
-                            request.TargetAppName,
-                            readiness.Model,
-                            timeout.Token).ConfigureAwait(false);
-                        if (LooksLikeCodeOutput(output))
-                        {
-                            return Fallback(
-                                request.Input,
-                                PolishAttemptStatus.Failed,
-                                AppErrorCode.PolishFailed,
-                                timer,
-                                canRetry: false);
-                        }
+            var maxWords = readiness.Model.IsRemote
+                ? PolishChunker.MaximumCloudWordsPerChunk
+                : PolishChunker.MaximumLocalWordsPerChunk;
+            var maxUtf8Bytes = PolishChunker.MaximumBytesForWords(maxWords);
+            var pieces = PolishChunker.SplitByBudget(request.Input.Text, maxWords, maxUtf8Bytes);
+            var expectedLanguage = request.DetectedLanguage ?? request.RecognitionLanguage;
+            using var attemptTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            attemptTimeout.CancelAfter(_requestTimeout);
 
-                        output = CleanOutput(output);
-                        if (output is null || !EgOnePolishProvider.IsSafeOutput(request.Input.Text, output))
-                        {
-                            return Fallback(
-                                request.Input,
-                                PolishAttemptStatus.Failed,
-                                AppErrorCode.PolishEmptyResponse,
-                                timer,
-                                canRetry: false);
-                        }
-
-                        timer.Stop();
-                        return new PolishResult(
-                            new ProcessedText(request.Input.SessionId, output),
-                            string.Equals(request.Input.Text, output, StringComparison.Ordinal)
-                                ? PolishAttemptStatus.Unchanged
-                                : PolishAttemptStatus.Polished,
-                            ElapsedMilliseconds: timer.ElapsedMilliseconds);
-                    }
-                    catch (OllamaPolishException exception) when (
-                        exception.CanRetry && attempt < RetryDelays.Length)
-                    {
-                        await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
-                    }
-                    catch (Exception exception) when (
-                        exception is HttpRequestException or IOException &&
-                        attempt < RetryDelays.Length)
-                    {
-                        await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
-                    }
-                    catch (OllamaPolishException exception)
-                    {
-                        return Fallback(
-                            request.Input,
-                            StatusFor(exception.ErrorCode),
-                            exception.ErrorCode,
-                            timer,
-                            exception.CanRetry);
-                    }
-                    catch (Exception exception) when (exception is HttpRequestException or IOException)
-                    {
-                        return Fallback(
-                            request.Input,
-                            PolishAttemptStatus.Unavailable,
-                            AppErrorCode.PolishProviderUnavailable,
-                            timer);
-                    }
-                }
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            if (pieces.Count <= 1)
             {
-                return Fallback(
+                var singleResult = await PolishSegmentAsync(
                     request.Input,
-                    PolishAttemptStatus.TimedOut,
-                    AppErrorCode.PolishTimedOut,
-                    timer);
+                    request.Vocabulary,
+                    request.RecognitionLanguage,
+                    request.TargetAppName,
+                    expectedLanguage,
+                    readiness.Model,
+                    timer,
+                    applyLeadingMarkerRepair: true,
+                    attemptTimeout.Token,
+                    cancellationToken).ConfigureAwait(false);
+                timer.Stop();
+                return singleResult;
             }
-            catch (OperationCanceledException)
+
+            var assembled = new System.Text.StringBuilder(request.Input.Text.Length);
+            foreach (var piece in pieces)
             {
-                throw;
+                if (string.IsNullOrWhiteSpace(piece.Text))
+                {
+                    assembled.Append(piece.Text).Append(piece.SeparatorAfter);
+                    continue;
+                }
+
+                var pieceInput = new ProcessedText(request.Input.SessionId, piece.Text);
+                var pieceResult = await PolishSegmentAsync(
+                    pieceInput,
+                    request.Vocabulary,
+                    request.RecognitionLanguage,
+                    request.TargetAppName,
+                    expectedLanguage,
+                    readiness.Model,
+                    timer,
+                    applyLeadingMarkerRepair: false,
+                    attemptTimeout.Token,
+                    cancellationToken).ConfigureAwait(false);
+                if (pieceResult.UsedFallback)
+                {
+                    return Fallback(
+                        request.Input,
+                        pieceResult.Status,
+                        pieceResult.Error?.Code ?? AppErrorCode.PolishFailed,
+                        timer,
+                        pieceResult.Error?.CanRetry ?? true);
+                }
+
+                assembled.Append(pieceResult.Output.Text).Append(piece.SeparatorAfter);
             }
-            catch (JsonException)
+
+            var finalText = LeadingMarkerRepair.Repair(
+                request.Input.Text,
+                assembled.ToString(),
+                expectedLanguage);
+            if (!EgOnePolishProvider.IsSafeOutput(request.Input.Text, finalText))
             {
                 return Fallback(
                     request.Input,
                     PolishAttemptStatus.Failed,
-                    AppErrorCode.PolishBadRequest,
+                    AppErrorCode.PolishEmptyResponse,
                     timer,
                     canRetry: false);
             }
+
+            timer.Stop();
+            return new PolishResult(
+                new ProcessedText(request.Input.SessionId, finalText),
+                string.Equals(request.Input.Text, finalText, StringComparison.Ordinal)
+                    ? PolishAttemptStatus.Unchanged
+                    : PolishAttemptStatus.Polished,
+                ElapsedMilliseconds: timer.ElapsedMilliseconds);
         }
         finally
         {
             _requestGate.Release();
+        }
+    }
+
+    private async Task<PolishResult> PolishSegmentAsync(
+        ProcessedText segmentInput,
+        IReadOnlyList<string>? vocabulary,
+        string? recognitionLanguage,
+        string? targetAppName,
+        string? expectedLanguage,
+        OllamaModelInfo model,
+        Stopwatch timer,
+        bool applyLeadingMarkerRepair,
+        CancellationToken timeoutToken,
+        CancellationToken callerCancellationToken)
+    {
+        try
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    var output = await SendOnceAsync(
+                        segmentInput.Text,
+                        vocabulary,
+                        recognitionLanguage,
+                        targetAppName,
+                        model,
+                        timeoutToken).ConfigureAwait(false);
+                    if (LooksLikeCodeOutput(output))
+                    {
+                        return Fallback(
+                            segmentInput,
+                            PolishAttemptStatus.Failed,
+                            AppErrorCode.PolishFailed,
+                            timer,
+                            canRetry: false);
+                    }
+
+                    output = CleanOutput(output);
+                    if (output is null)
+                    {
+                        return Fallback(
+                            segmentInput,
+                            PolishAttemptStatus.Failed,
+                            AppErrorCode.PolishEmptyResponse,
+                            timer,
+                            canRetry: false);
+                    }
+
+                    if (applyLeadingMarkerRepair)
+                    {
+                        output = LeadingMarkerRepair.Repair(segmentInput.Text, output, expectedLanguage);
+                    }
+
+                    if (!EgOnePolishProvider.IsSafeOutput(segmentInput.Text, output))
+                    {
+                        return Fallback(
+                            segmentInput,
+                            PolishAttemptStatus.Failed,
+                            AppErrorCode.PolishEmptyResponse,
+                            timer,
+                            canRetry: false);
+                    }
+
+                    return new PolishResult(
+                        new ProcessedText(segmentInput.SessionId, output),
+                        string.Equals(segmentInput.Text, output, StringComparison.Ordinal)
+                            ? PolishAttemptStatus.Unchanged
+                            : PolishAttemptStatus.Polished,
+                        ElapsedMilliseconds: timer.ElapsedMilliseconds);
+                }
+                catch (OllamaPolishException exception) when (
+                    exception.CanRetry && attempt < RetryDelays.Length)
+                {
+                    await _delay(RetryDelays[attempt], timeoutToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (
+                    exception is HttpRequestException or IOException &&
+                    attempt < RetryDelays.Length)
+                {
+                    await _delay(RetryDelays[attempt], timeoutToken).ConfigureAwait(false);
+                }
+                catch (OllamaPolishException exception)
+                {
+                    return Fallback(
+                        segmentInput,
+                        StatusFor(exception.ErrorCode),
+                        exception.ErrorCode,
+                        timer,
+                        exception.CanRetry);
+                }
+                catch (Exception exception) when (exception is HttpRequestException or IOException)
+                {
+                    return Fallback(
+                        segmentInput,
+                        PolishAttemptStatus.Unavailable,
+                        AppErrorCode.PolishProviderUnavailable,
+                        timer);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!callerCancellationToken.IsCancellationRequested)
+        {
+            return Fallback(
+                segmentInput,
+                PolishAttemptStatus.TimedOut,
+                AppErrorCode.PolishTimedOut,
+                timer);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (JsonException)
+        {
+            return Fallback(
+                segmentInput,
+                PolishAttemptStatus.Failed,
+                AppErrorCode.PolishBadRequest,
+                timer,
+                canRetry: false);
         }
     }
 

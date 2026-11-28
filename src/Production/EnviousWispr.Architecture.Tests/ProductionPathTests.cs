@@ -359,13 +359,13 @@ public sealed class ProductionPathTests
         // on the production token; the deterministic pass's words - the last good text, written to
         // the recovery copy before the polish was tried - are what survive: nothing polished is
         // invented, and the words are on Home for the next launch.
-        var world = ComposedSessionWorld.Create("um hello world");
+        var world = ComposedSessionWorld.Create("um hello world today now");
         var polish = new HeldPolish();
         world.Polish = new PolishSetup(polish, UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
         await world.PressAsync();
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
         await polish.Entered.Task.WaitAsync(Patience);
-        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
+        Assert.Equal(["hello world today now"], world.RecoveryStore.Saved);
 
         var locked = world.Coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
 
@@ -375,7 +375,7 @@ public sealed class ProductionPathTests
         // The cut polish ended the release before the lock's turn came; the lock then found no
         // dictation to interrupt and was ignored - its work was the cancel, already done.
         Assert.Equal(SessionCommandDisposition.Ignored, lockResult.Disposition);
-        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
+        Assert.Equal(["hello world today now"], world.RecoveryStore.Saved);
         Assert.True(world.Persistence.HasPendingRecovery, "the last good text waits on Home");
         Assert.DoesNotContain(world.Delivery.Requests, request => request.Text.Text.Contains("polished", StringComparison.Ordinal));
         Assert.DoesNotContain(world.HistoryStore.Added, entry => entry.Text.Contains("polished", StringComparison.Ordinal));

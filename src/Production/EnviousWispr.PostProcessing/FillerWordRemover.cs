@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.PostProcessing;
 
@@ -11,9 +12,25 @@ public static partial class FillerWordRemover
             ["nl"] = new(["er"], StringComparer.OrdinalIgnoreCase),
             ["da"] = new(["er"], StringComparer.OrdinalIgnoreCase),
             ["no"] = new(["er"], StringComparer.OrdinalIgnoreCase),
+            ["pt"] = new(["um"], StringComparer.OrdinalIgnoreCase),
+            ["sv"] = new(["er"], StringComparer.OrdinalIgnoreCase),
+            ["sl"] = new(["um"], StringComparer.OrdinalIgnoreCase),
+            ["hr"] = new(["um"], StringComparer.OrdinalIgnoreCase),
         };
 
-    public static string Remove(string text, string? detectedLanguage)
+    private static readonly HashSet<string> AllLanguageProtectedTokens =
+        ProtectedByLanguage.Values.Aggregate(
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            static (union, tokens) =>
+            {
+                union.UnionWith(tokens);
+                return union;
+            });
+
+    public static string Remove(string text, string? detectedLanguage) =>
+        Remove(text, detectedLanguage, englishVetoed: false);
+
+    public static string Remove(string text, string? detectedLanguage, bool englishVetoed)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (text.Length == 0)
@@ -21,13 +38,21 @@ public static partial class FillerWordRemover
             return text;
         }
 
-        var language = NormalizeLanguage(detectedLanguage);
-        ProtectedByLanguage.TryGetValue(language, out var protectedWords);
+        var protectedWords = englishVetoed
+            ? AllLanguageProtectedTokens
+            : NormalizeLanguage(detectedLanguage) is { } baseCode &&
+              ProtectedByLanguage.TryGetValue(baseCode, out var tokens)
+                ? tokens
+                : null;
+
         var result = FillerRegex().Replace(text, match =>
         {
             var word = match.Groups["filler"].Value;
-            return protectedWords?.Contains(word) == true ? match.Value : string.Empty;
+            return protectedWords is not null && protectedWords.Contains(word)
+                ? match.Value
+                : string.Empty;
         });
+
         result = RepeatedWordRegex().Replace(result, match => match.Groups["word"].Value);
         result = FragmentRestartRegex().Replace(result, match =>
         {
@@ -37,23 +62,25 @@ public static partial class FillerWordRemover
                 ? completed
                 : match.Value;
         });
+
         return RepeatedWhitespaceRegex().Replace(result, " ").Trim();
     }
 
-    private static string NormalizeLanguage(string? language)
+    private static string? NormalizeLanguage(string? language)
     {
-        var normalized = language?.Trim().ToLowerInvariant() ?? string.Empty;
-        var separator = normalized.IndexOfAny(['-', '_']);
-        if (separator >= 0)
+        var baseCode = SpokenPunctuationRules.BaseCode(language);
+        if (baseCode is null)
         {
-            normalized = normalized[..separator];
+            return null;
         }
 
-        return normalized is "nb" or "nn" ? "no" : normalized;
+        return baseCode is "nb" or "nn" ? "no" : baseCode;
     }
 
+    // Two alternatives (#2728): mm/ah are refused after digits (bare, space, or hyphen) so "10 mm",
+    // "10mm", "5-mm", and "200 ah" stay intact while "give me 3 um copies" still strips "um".
     [GeneratedRegex(
-        @"(?:^|\s*)\b(?<filler>um|umm|uh|uhh|hmm|mm|mhm|mmm|ah|er)\b[-.,!?\u2026:;\u2014]*(?=\s|$)",
+        @"(?:^|\s*)(?<filler>\b(?:um|umm|uh|uhh|hmm|mhm|mmm|er)\b|(?<![0-9])(?<![0-9] )(?<![0-9]-)\b(?:mm|ah)\b)[-.,!?\u2026:;\u2014]*(?=\s|$)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FillerRegex();
 

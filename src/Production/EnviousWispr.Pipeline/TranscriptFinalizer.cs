@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
@@ -215,7 +216,7 @@ public sealed class TranscriptFinalizer
             var checkOutcome = await _learnedWordCheck.ProcessAsync(
                 processed.Output.Text,
                 customWords,
-                transcript.DetectedLanguage ?? transcript.RecognitionLanguage,
+                processed.LearnLanguage ?? processed.CleanupLanguage ?? transcript.DetectedLanguage ?? transcript.RecognitionLanguage,
                 cancellationToken).ConfigureAwait(false);
             if (checkOutcome.Flagged > 0)
             {
@@ -240,14 +241,18 @@ public sealed class TranscriptFinalizer
             .ConfigureAwait(false);
 
         // A TAKE THAT IS NOTHING BUT SNIPPETS HAS NOTHING TO POLISH. A model handed a bare sentinel can
-        // only return it or lose it, so it is not asked - macOS reaches the same outcome through its
-        // short-text bypass, which this app does not have.
+        // only return it or lose it, so it is not asked.
+        //
+        // NOR DOES AN ULTRA-SHORT TAKE (<= 3 words, or < 10 non-whitespace chars for unsegmented scripts):
+        // LLMs hallucinate or treat 1-3 word dictations as prompts rather than text to clean (#1022).
         //
         // NOR DOES A TAKE WHOSE SNIPPET STAGE STOOD DOWN OR WAS ROLLED BACK. Its text still carries the
         // keyword and the trigger as spoken, so a snippet may have been meant - and without a mask, a
         // polish would send those words to the model and could rewrite them. The cleaned spoken text
         // is delivered instead, the stage's own floor.
+        var resolvedLanguage = processed.CleanupLanguage ?? processed.TextLanguage ?? transcript.DetectedLanguage;
         var polishSetup = expansion.IsDegraded || rolledBack ||
+            !HasMinimumPolishLength(processed.Output.Text, resolvedLanguage) ||
             (records.Count > 0 && !HasWordsOutsideSentinels(processed.Output.Text, records))
             ? null
             : polish;
@@ -255,14 +260,14 @@ public sealed class TranscriptFinalizer
             .TryPolishAsync(
                 polishSetup,
                 processed.Output,
-                transcript.DetectedLanguage,
+                resolvedLanguage,
                 targetAppName,
                 transcript.RecognitionLanguage,
                 cancellationToken)
             .ConfigureAwait(false);
         var polishReview = polishResult is null || polishResult.UsedFallback
             ? new PolishOutputReview(PolishOutputVerdict.Accepted, string.Empty)
-            : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text);
+            : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text, inferQuestionFromOpening: true);
         var polishVerdict = polishReview.Verdict;
         if (polishVerdict != PolishOutputVerdict.Accepted)
         {
@@ -325,6 +330,61 @@ public sealed class TranscriptFinalizer
         {
             SnippetsExpanded = records.Count,
         };
+    }
+
+    private const int MinimumWordsForPolish = 3;
+    private const int MinimumUnsegmentedCharsForPolish = 10;
+
+    private static readonly HashSet<string> UnsegmentedLanguages = new(
+        ["ja", "zh", "yue", "th", "lo"],
+        StringComparer.OrdinalIgnoreCase);
+
+    internal static bool HasMinimumPolishLength(string text, string? language)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var baseLang = SpokenPunctuationRules.BaseCode(language);
+        if (baseLang is not null && UnsegmentedLanguages.Contains(baseLang))
+        {
+            var nonWhitespaceRunes = 0;
+            foreach (var rune in text.EnumerateRunes())
+            {
+                if (!Rune.IsWhiteSpace(rune))
+                {
+                    nonWhitespaceRunes++;
+                    if (nonWhitespaceRunes >= MinimumUnsegmentedCharsForPolish)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        var words = 0;
+        var inWord = false;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (Rune.IsWhiteSpace(rune))
+            {
+                inWord = false;
+            }
+            else if (!inWord)
+            {
+                inWord = true;
+                words++;
+                if (words > MinimumWordsForPolish)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Whether anything a model could improve is left once every sentinel is taken out.</summary>

@@ -609,20 +609,58 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 null);
         }
 
-        var element = Automation(static () => AutomationElement.FocusedElement);
-        var focus = ReadFocusedElementFacts(element);
-        if (WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(focus) && budget.TryAdmit())
+        try
         {
-            Thread.Sleep(15);
-            var retriedElement = Automation(static () => AutomationElement.FocusedElement);
-            var retriedFocus = ReadFocusedElementFacts(retriedElement);
-            return CaptureFromFocusedElement(
+            return CaptureFocusedElementAttempt(
                 target,
                 options,
                 budget,
                 win32ChildFocusId,
-                retriedElement,
-                retriedFocus);
+                allowColdChromiumRetry: true);
+        }
+        catch (AutomationRefusalException) when (
+            WindowsTextDeliveryPolicy.IsChromiumWindowClass(WindowsWindowIdentity.TryGetClassName(target.Value)) &&
+            budget.TryAdmit())
+        {
+            WakeColdChromiumAccessibilityTree(target.Value);
+            Thread.Sleep(15);
+            return CaptureFocusedElementAttempt(
+                target,
+                options,
+                budget,
+                win32ChildFocusId,
+                allowColdChromiumRetry: false);
+        }
+    }
+
+    private static (TargetContextResult Result, FocusedElementFacts? Focus) CaptureFocusedElementAttempt(
+        TargetWindowId target,
+        TextDeliveryOptions options,
+        UiaPreparationBudget budget,
+        string? win32ChildFocusId,
+        bool allowColdChromiumRetry)
+    {
+        var element = Automation(static () => AutomationElement.FocusedElement);
+        var focus = ReadFocusedElementFacts(element);
+        if (allowColdChromiumRetry)
+        {
+            var targetWindowClassName = focus is null || !focus.HasKeyboardFocus
+                ? WindowsWindowIdentity.TryGetClassName(target.Value)
+                : null;
+            if (WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(focus, targetWindowClassName) && budget.TryAdmit())
+            {
+                WakeColdChromiumAccessibilityTree(target.Value);
+                Thread.Sleep(15);
+                var retriedElement = Automation(static () => AutomationElement.FocusedElement);
+                var retriedFocus = ReadFocusedElementFacts(retriedElement);
+                return CaptureFromFocusedElement(
+                    target,
+                    options,
+                    budget,
+                    win32ChildFocusId,
+                    retriedElement,
+                    retriedFocus);
+            }
         }
 
         return CaptureFromFocusedElement(
@@ -632,6 +670,22 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             win32ChildFocusId,
             element,
             focus);
+    }
+
+    internal static void WakeColdChromiumAccessibilityTree(nint windowHandle)
+    {
+        _ = WindowsTargetWindowNative.TryWakeAccessibilityTree(windowHandle);
+        try
+        {
+            _ = Automation(() =>
+            {
+                var root = AutomationElement.FromHandle(windowHandle);
+                return root is not null && !string.IsNullOrEmpty(root.Current.ClassName);
+            });
+        }
+        catch (Exception exception) when (IsExpectedAutomationFailure(exception))
+        {
+        }
     }
 
     private static (TargetContextResult Result, FocusedElementFacts? Focus) CaptureFromFocusedElement(

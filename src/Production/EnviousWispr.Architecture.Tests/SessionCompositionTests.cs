@@ -482,7 +482,7 @@ public sealed class SessionCompositionTests
 
         // RECORDING THREE, PREVIEW ON: streaming stands down (no engine call before the release), the
         // preview samples the replaced capture, history is off, the taught word reaches the polish.
-        var thirdEngine = new FakeEngine("envy wisper is here");
+        var thirdEngine = new FakeEngine("envy wisper is always here");
         var polish = new FailingPolish();
         world.LivePreviewEnabled = true;
         world.EngineRef = thirdEngine;
@@ -498,7 +498,7 @@ public sealed class SessionCompositionTests
         Assert.Equal(0, thirdEngine.Calls);
         await world.SubmitAsync(PushToTalkSignal.Released);
 
-        Assert.Equal("EnviousWispr is here", world.Delivery.Requests[^1].Text.Text);
+        Assert.Equal("EnviousWispr is always here", world.Delivery.Requests[^1].Text.Text);
         Assert.Equal(1, thirdEngine.Calls);
         Assert.Equal(firstCaptureSnapshots, world.Capture.Snapshots);
         Assert.Equal(2, world.HistoryStore.Added.Count);
@@ -518,7 +518,7 @@ public sealed class SessionCompositionTests
         // THE POLISH PROVIDER IS OFFLINE. The deterministic pass's words are the recovery copy, written
         // through the composed persistence owner before the polish is tried, and they are what is
         // delivered; a failed polish loses nothing.
-        var world = ComposedSessionWorld.Create("um hello world");
+        var world = ComposedSessionWorld.Create("um hello world today now");
         var polish = new FailingPolish { Trace = world.Trace };
         world.Polish = new PolishSetup(polish, UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
 
@@ -527,13 +527,13 @@ public sealed class SessionCompositionTests
 
         // The provider was asked, with the deterministic words, and answered that it was unavailable;
         // the recovery copy of those words was already written when it was asked.
-        Assert.Equal("hello world", Assert.Single(polish.Requests).Input.Text);
-        Assert.Equal(["SaveRecovery:hello world", "Polish:hello world"], world.Trace);
+        Assert.Equal("hello world today now", Assert.Single(polish.Requests).Input.Text);
+        Assert.Equal(["SaveRecovery:hello world today now", "Polish:hello world today now"], world.Trace);
         Assert.Contains(world.Log.Events, code => code == AppEventCode.PolishDegraded);
-        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
-        Assert.Equal("hello world", world.Delivery.Requests.Single().Text.Text);
+        Assert.Equal(["hello world today now"], world.RecoveryStore.Saved);
+        Assert.Equal("hello world today now", world.Delivery.Requests.Single().Text.Text);
         var entry = world.HistoryStore.Added.Single();
-        Assert.Equal("hello world", entry.Text);
+        Assert.Equal("hello world today now", entry.Text);
         Assert.False(entry.WasPolished);
         Assert.True(entry.WasDelivered);
         Assert.Equal(1, world.RuntimeView.HistoryChanges);

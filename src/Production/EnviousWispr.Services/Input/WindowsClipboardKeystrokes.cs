@@ -12,11 +12,57 @@ internal static partial class WindowsClipboardPaste
     internal static int NativeKeyboardFlagsOffset =>
         Marshal.OffsetOf<NativeKeyboardInput>(nameof(NativeKeyboardInput.Flags)).ToInt32();
 
+    internal static readonly TimeSpan SyntheticPasteKeyHoldDuration = TimeSpan.FromMilliseconds(20);
+
     private static bool SendCtrlC() => SendInputs(BuildCtrlCInputs());
 
-    private static bool SendCtrlV() => SendInputs(BuildCtrlVInputs());
+    private static bool SendCtrlV() =>
+        SendHoldAndReleaseChord(BuildCtrlVInputs(), SyntheticPasteKeyHoldDuration, SendInputs, PumpingWait);
 
-    private static bool SendShiftInsert() => SendInputs(BuildShiftInsertInputs());
+    private static bool SendShiftInsert() =>
+        SendHoldAndReleaseChord(BuildShiftInsertInputs(), SyntheticPasteKeyHoldDuration, SendInputs, PumpingWait);
+
+    /// <summary>
+    /// #3978: Dispatch key-down, hold on the STA clipboard thread without sleeping via
+    /// <see cref="PumpingWait"/>, then release key-up so Chromium/Electron/TinyMCE editors
+    /// observe a distinct key press rather than a zero-duration chord.
+    /// </summary>
+    internal static bool SendHoldAndReleaseChord(
+        NativeInput[] fullChord,
+        TimeSpan holdDuration,
+        Func<NativeInput[], bool> send,
+        Action<TimeSpan> wait)
+    {
+        if (fullChord.Length < 2 || fullChord.Length % 2 != 0)
+        {
+            return send(fullChord);
+        }
+
+        var mid = fullChord.Length / 2;
+        var down = fullChord[..mid];
+        var up = fullChord[mid..];
+        if (!send(down))
+        {
+            _ = send(up);
+            return false;
+        }
+
+        var released = false;
+        try
+        {
+            wait(holdDuration);
+            var ok = send(up);
+            released = ok;
+            return ok;
+        }
+        finally
+        {
+            if (!released)
+            {
+                _ = send(up);
+            }
+        }
+    }
 
     internal static NativeInput[] BuildCtrlCInputs() =>
     [
