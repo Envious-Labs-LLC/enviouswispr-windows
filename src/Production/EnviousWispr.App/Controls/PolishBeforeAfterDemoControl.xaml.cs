@@ -147,9 +147,22 @@ public sealed partial class PolishBeforeAfterDemoControl : UserControl
         StopTransitionLoop();
     }
 
+    private bool IsEffectivelyVisible()
+    {
+        for (DependencyObject? current = this; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is UIElement element && element.Visibility != Visibility.Visible)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private void OnVisibilityChanged(DependencyObject sender, DependencyProperty dp)
     {
-        if (Visibility != Visibility.Visible)
+        if (!IsEffectivelyVisible())
         {
             _cycleTimer.Stop();
             StopTransitionLoop();
@@ -182,7 +195,7 @@ public sealed partial class PolishBeforeAfterDemoControl : UserControl
 
     private void OnCycleTimerTick(object? sender, object e)
     {
-        if (!_isLoaded || Visibility != Visibility.Visible || ReduceMotion || _isPointerOver || _userInteracted)
+        if (!_isLoaded || !IsEffectivelyVisible() || ReduceMotion || _isPointerOver || _userInteracted)
         {
             _cycleTimer.Stop();
             return;
@@ -194,7 +207,7 @@ public sealed partial class PolishBeforeAfterDemoControl : UserControl
     private void SyncAutoCycleTimer()
     {
         var shouldRun = _isLoaded
-            && Visibility == Visibility.Visible
+            && IsEffectivelyVisible()
             && AutoCycle
             && !ReduceMotion
             && !_isPointerOver
@@ -216,7 +229,7 @@ public sealed partial class PolishBeforeAfterDemoControl : UserControl
     private void StartCrossfadeTo(double target)
     {
         _blendTarget = target;
-        if (ReduceMotion || !_isLoaded || Visibility != Visibility.Visible)
+        if (ReduceMotion || !_isLoaded || !IsEffectivelyVisible())
         {
             StopTransitionLoop();
             _blend = target;

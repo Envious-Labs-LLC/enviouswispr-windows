@@ -100,10 +100,11 @@ public static class WindowsSetupRecommender
             SetupLanguageMetadata.ResolveSystemLanguageCode(snapshot.SystemLanguageCode));
         var isParakeetAdviceExcluded = effectiveEntry is not null &&
             ParakeetAdviceExclusions.Contains(effectiveEntry.LockCode);
-        var effectiveInParakeet = effectiveEntry is null ||
-            (LanguageCatalog.ParakeetSupportedCodes.Contains(effectiveEntry.LockCode) && !isParakeetAdviceExcluded);
+        var isParakeetSupported = effectiveEntry is null ||
+            LanguageCatalog.ParakeetSupportedCodes.Contains(effectiveEntry.LockCode);
+        var recommendParakeet = isParakeetSupported && !isParakeetAdviceExcluded;
 
-        var speech = EvaluateSpeech(snapshot, activeRules, effectiveEntry, effectiveInParakeet, isParakeetAdviceExcluded);
+        var speech = EvaluateSpeech(snapshot, activeRules, effectiveEntry, isParakeetSupported, recommendParakeet, isParakeetAdviceExcluded);
         var polish = EvaluatePolish(snapshot, activeRules, isLockedNonEnglish);
 
         return new WindowsSetupRecommendation(
@@ -118,11 +119,11 @@ public static class WindowsSetupRecommender
     public static string EstimateSpeechHeroTime(FinalAsrEngine engine, SetupHardwareSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var hasNvidiaCuda = snapshot.GpuKind == GpuAccelerationKind.NvidiaCuda;
+        var usesNvidiaCuda = snapshot.GpuKind == GpuAccelerationKind.NvidiaCuda && snapshot.CudaRuntimeInstalled;
         return engine switch
         {
-            FinalAsrEngine.Whisper => hasNvidiaCuda ? "~0.8 sec" : "~3 sec",
-            _ => hasNvidiaCuda ? "< 0.5 sec" : "~1.2 sec",
+            FinalAsrEngine.Whisper => usesNvidiaCuda ? "~0.8 sec" : "~3 sec",
+            _ => usesNvidiaCuda ? "< 0.5 sec" : "~1.2 sec",
         };
     }
 
@@ -130,7 +131,8 @@ public static class WindowsSetupRecommender
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         _ = engine;
-        return snapshot.GpuKind == GpuAccelerationKind.NvidiaCuda
+        var usesNvidiaCuda = snapshot.GpuKind == GpuAccelerationKind.NvidiaCuda && snapshot.CudaRuntimeInstalled;
+        return usesNvidiaCuda
             ? "Runs on your NVIDIA GPU"
             : "Runs locally on your CPU";
     }
@@ -150,10 +152,11 @@ public static class WindowsSetupRecommender
         SetupHardwareSnapshot snapshot,
         WindowsSetupRules rules,
         LanguageEntry? effectiveEntry,
-        bool effectiveInParakeet,
+        bool isParakeetSupported,
+        bool recommendParakeet,
         bool isParakeetAdviceExcluded)
     {
-        var rule = rules.SpeechRules.FirstOrDefault(candidate => candidate.EffectiveLanguageInParakeet == effectiveInParakeet)
+        var rule = rules.SpeechRules.FirstOrDefault(candidate => candidate.EffectiveLanguageInParakeet == recommendParakeet)
             ?? rules.SpeechRules[0];
         var languageDisplay = effectiveEntry?.EnglishName ?? "your language";
 
@@ -205,7 +208,7 @@ public static class WindowsSetupRecommender
                 ? null
                 : WindowsSetupRules.FormatDownloadLabel(secondaryCatalog.SizeLabel, secondaryCatalog.SizeBytes),
             SecondarySizeBytes: secondaryCatalog?.SizeBytes,
-            IsParakeetAvailable: effectiveInParakeet,
+            IsParakeetAvailable: isParakeetSupported,
             ParakeetUnavailableReason: parakeetUnavailableReason,
             ParakeetSpeedNote: parakeetSpeedNote,
             WhisperSpeedNote: whisperSpeedNote,

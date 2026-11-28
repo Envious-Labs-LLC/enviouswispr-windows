@@ -258,8 +258,8 @@ public static class OnboardingCopy
 
     public static string PracticeWorkedWithoutPolishSubhead(string shortcut, DictationRecordingMode mode) =>
         mode == DictationRecordingMode.Toggle
-            ? $"AI polish did not run on this one. Press {shortcut} and say the line again to see it."
-            : $"AI polish did not run on this one. Hold {shortcut} and say the line again to see it.";
+            ? $"Basic cleanup ran while AI polish finishes downloading. Once it is ready, press {shortcut} to try it, or continue now."
+            : $"Basic cleanup ran while AI polish finishes downloading. Once it is ready, hold {shortcut} to try it, or continue now.";
 
     /// <param name="shortcut">The recording key as the Ready screen showed it, so the two never disagree about its name.</param>
     public static string PracticeSubhead(

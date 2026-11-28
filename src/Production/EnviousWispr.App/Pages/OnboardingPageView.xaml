@@ -405,7 +405,7 @@
 
                     <!-- 5. POLISH INTRO -->
                     <StackPanel x:Name="OnboardingPolishIntroPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
-                        <controls:PolishBeforeAfterDemoControl x:Name="OnboardingPolishDemo" x:FieldModifier="internal" />
+                        <controls:PolishBeforeAfterDemoControl x:Name="OnboardingPolishDemo" x:FieldModifier="internal" Visibility="Collapsed" />
 
                         <Grid ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingS}">
                             <Grid.ColumnDefinitions>
@@ -877,7 +877,8 @@
                         <controls:OnboardingClosingFilmControl
                             x:Name="OnboardingClosingFilm"
                             x:FieldModifier="internal"
-                            ShowBuiltInControls="False" />
+                            ShowBuiltInControls="False"
+                            Visibility="Collapsed" />
 
                         <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
                             <Grid.ColumnDefinitions>

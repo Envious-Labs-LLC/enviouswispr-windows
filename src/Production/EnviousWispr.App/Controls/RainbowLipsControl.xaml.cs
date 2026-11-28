@@ -234,10 +234,23 @@ public sealed partial class RainbowLipsControl : UserControl
         StopRendering();
     }
 
+    private bool IsEffectivelyVisible()
+    {
+        for (DependencyObject? current = this; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is UIElement element && element.Visibility != Visibility.Visible)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private void OnVisibilityChanged(DependencyObject sender, DependencyProperty dp)
     {
         SyncRenderingSubscription();
-        if (Visibility == Visibility.Visible)
+        if (IsEffectivelyVisible())
         {
             RenderCurrentFrame();
         }
@@ -263,7 +276,7 @@ public sealed partial class RainbowLipsControl : UserControl
     private void SyncRenderingSubscription()
     {
         var shouldRun = _isLoaded
-            && Visibility == Visibility.Visible
+            && IsEffectivelyVisible()
             && !ReduceMotion
             && !ExternalClockSeconds.HasValue;
 
@@ -301,7 +314,7 @@ public sealed partial class RainbowLipsControl : UserControl
 
     private void OnCompositionTargetRendering(object? sender, object e)
     {
-        if (!_isLoaded || Visibility != Visibility.Visible || ReduceMotion || ExternalClockSeconds.HasValue)
+        if (!_isLoaded || !IsEffectivelyVisible() || ReduceMotion || ExternalClockSeconds.HasValue)
         {
             StopRendering();
             return;

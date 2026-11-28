@@ -305,7 +305,7 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
 
     private void OnVisibilityChanged(DependencyObject sender, DependencyProperty dp)
     {
-        if (Visibility != Visibility.Visible)
+        if (!IsEffectivelyVisible())
         {
             _anchorFilmSeconds = CurrentFilmSeconds;
             _anchorWallSeconds = _clock.Elapsed.TotalSeconds;
@@ -350,10 +350,23 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
         WatchAgainRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private bool IsEffectivelyVisible()
+    {
+        for (DependencyObject? current = this; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is UIElement element && element.Visibility != Visibility.Visible)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private void SyncRenderingSubscription()
     {
         var shouldRun = _isLoaded
-            && Visibility == Visibility.Visible
+            && IsEffectivelyVisible()
             && !_isPaused
             && !ReduceMotion;
 
@@ -384,7 +397,7 @@ public sealed partial class OnboardingClosingFilmControl : UserControl
 
     private void OnCompositionTargetRendering(object? sender, object e)
     {
-        if (!_isLoaded || Visibility != Visibility.Visible || _isPaused || ReduceMotion)
+        if (!_isLoaded || !IsEffectivelyVisible() || _isPaused || ReduceMotion)
         {
             StopRendering();
             return;

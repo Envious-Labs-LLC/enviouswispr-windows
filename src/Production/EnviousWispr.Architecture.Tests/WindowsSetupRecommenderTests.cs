@@ -110,7 +110,8 @@ public sealed class WindowsSetupRecommenderTests
         {
             var rec = WindowsSetupRecommender.Recommend(nvidiaSnapshot with { SelectedLanguageCode = entry.Code });
             var isAdviceExcluded = WindowsSetupRecommender.ParakeetAdviceExclusions.Contains(entry.LockCode);
-            var expectParakeet = LanguageCatalog.ParakeetSupportedCodes.Contains(entry.LockCode) && !isAdviceExcluded;
+            var isParakeetSupported = LanguageCatalog.ParakeetSupportedCodes.Contains(entry.LockCode);
+            var expectParakeet = isParakeetSupported && !isAdviceExcluded;
 
             if (expectParakeet)
             {
@@ -127,7 +128,7 @@ public sealed class WindowsSetupRecommenderTests
                 Assert.Equal(WhisperModelIds.Final, rec.Speech.PrimaryModelId);
                 Assert.Equal(FinalAsrEngine.Whisper, rec.Speech.PrimaryEngine);
                 Assert.Equal("548 MB", rec.Speech.PrimarySizeLabel);
-                Assert.False(rec.Speech.IsParakeetAvailable);
+                Assert.Equal(isParakeetSupported, rec.Speech.IsParakeetAvailable);
                 Assert.Equal(
                     isAdviceExcluded
                         ? $"Whisper is more accurate for {entry.EnglishName}"
@@ -171,8 +172,23 @@ public sealed class WindowsSetupRecommenderTests
 
         var autoGreek = WindowsSetupRecommender.Recommend(cpuSnapshot with { SelectedLanguageCode = "auto", SystemLanguageCode = "el-GR" });
         Assert.Equal(WhisperModelIds.Final, autoGreek.Speech.PrimaryModelId);
-        Assert.False(autoGreek.Speech.IsParakeetAvailable);
+        Assert.True(autoGreek.Speech.IsParakeetAvailable);
         Assert.Equal("Whisper is more accurate for Greek", autoGreek.Speech.ParakeetUnavailableReason);
+
+        // NVIDIA GPU without CUDA runtime pack installed falls back to CPU execution estimates and badge.
+        var nvidiaWithoutCuda = CreateSnapshot(ramGb: 32, gpu: GpuAccelerationKind.NvidiaCuda, vramGb: 12, cores: 12, cudaInstalled: false);
+        var noCudaParakeet = WindowsSetupRecommender.Recommend(nvidiaWithoutCuda with { SelectedLanguageCode = "en" });
+        Assert.Equal("~1.2 sec", noCudaParakeet.Speech.HeroTimeText);
+        Assert.Equal("~1.2 sec", noCudaParakeet.Speech.ParakeetHeroTimeText);
+        Assert.Equal("~3 sec", noCudaParakeet.Speech.WhisperHeroTimeText);
+        Assert.Equal("Runs locally on your CPU", noCudaParakeet.Speech.HardwareBadgeText);
+        Assert.Equal("Runs locally on your CPU", noCudaParakeet.Speech.ParakeetHardwareBadgeText);
+        Assert.Equal("Runs locally on your CPU", noCudaParakeet.Speech.WhisperHardwareBadgeText);
+
+        var withCudaParakeet = WindowsSetupRecommender.Recommend(nvidiaSnapshot with { SelectedLanguageCode = "en" });
+        Assert.Equal("< 0.5 sec", withCudaParakeet.Speech.HeroTimeText);
+        Assert.Equal("~0.8 sec", withCudaParakeet.Speech.WhisperHeroTimeText);
+        Assert.Equal("Runs on your NVIDIA GPU", withCudaParakeet.Speech.HardwareBadgeText);
     }
 
     [Fact]

@@ -76,10 +76,12 @@ public sealed partial class MainWindow
         if (step is OnboardingStep.Closing or OnboardingStep.Done)
         {
             OnboardingRainbowLipsContainer.Visibility = Visibility.Collapsed;
+            OnboardingRainbowLips.Visibility = Visibility.Collapsed;
             return;
         }
 
         OnboardingRainbowLipsContainer.Visibility = Visibility.Visible;
+        OnboardingRainbowLips.Visibility = Visibility.Visible;
         OnboardingRainbowLips.ReduceMotion = !ShouldAnimateMotion();
         UpdateOnboardingLipsSize(step);
 
@@ -334,14 +336,29 @@ public sealed partial class MainWindow
         _onboardingSlowDownloadTimer.Stop();
         CancelOnboardingKeyCapture();
 
-        if (_onboardingClosingFilmWired && OnboardingClosingFilm is not null)
+        if (OnboardingRainbowLips is not null)
         {
-            _onboardingClosingFilmWired = false;
-            OnboardingClosingFilm.FrameEvaluated -= OnOnboardingClosingFilmFrameEvaluated;
-            OnboardingClosingFilm.SceneChanged -= OnOnboardingClosingFilmSceneChanged;
-            OnboardingClosingFilm.PlaybackStateChanged -= OnOnboardingClosingFilmPlaybackStateChanged;
-            OnboardingClosingFilm.SceneAnnounced = null;
+            OnboardingRainbowLips.Visibility = Visibility.Collapsed;
+        }
+
+        if (OnboardingPolishDemo is not null)
+        {
+            OnboardingPolishDemo.Visibility = Visibility.Collapsed;
+        }
+
+        if (OnboardingClosingFilm is not null)
+        {
+            if (_onboardingClosingFilmWired)
+            {
+                _onboardingClosingFilmWired = false;
+                OnboardingClosingFilm.FrameEvaluated -= OnOnboardingClosingFilmFrameEvaluated;
+                OnboardingClosingFilm.SceneChanged -= OnOnboardingClosingFilmSceneChanged;
+                OnboardingClosingFilm.PlaybackStateChanged -= OnOnboardingClosingFilmPlaybackStateChanged;
+                OnboardingClosingFilm.SceneAnnounced = null;
+            }
+
             OnboardingClosingFilm.Pause();
+            OnboardingClosingFilm.Visibility = Visibility.Collapsed;
         }
 
         foreach (var dot in _onboardingClosingDotButtons)

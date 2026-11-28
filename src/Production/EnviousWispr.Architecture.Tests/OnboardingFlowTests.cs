@@ -544,6 +544,15 @@ public sealed class OnboardingFlowTests
             "AI polish keeps downloading while EnviousWispr is open and turns on by itself when it is done.",
             OnboardingCopy.GateSlowPolishBody,
             StringComparison.Ordinal);
+
+        var deferredHoldSubhead = OnboardingCopy.PracticeWorkedWithoutPolishSubhead("Ctrl+Win", DictationRecordingMode.PushToTalk);
+        var deferredToggleSubhead = OnboardingCopy.PracticeWorkedWithoutPolishSubhead("F8", DictationRecordingMode.Toggle);
+        Assert.Contains("Once it is ready, hold Ctrl+Win to try it", deferredHoldSubhead, StringComparison.Ordinal);
+        Assert.Contains("Once it is ready, press F8 to try it", deferredToggleSubhead, StringComparison.Ordinal);
+        Assert.DoesNotContain('\u2014', deferredHoldSubhead);
+        Assert.DoesNotContain('\u2013', deferredHoldSubhead);
+        Assert.DoesNotContain('\u2014', deferredToggleSubhead);
+        Assert.DoesNotContain('\u2013', deferredToggleSubhead);
     }
 
     [Theory]

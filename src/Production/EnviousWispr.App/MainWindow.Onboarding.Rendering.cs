@@ -244,6 +244,10 @@ public sealed partial class MainWindow
         OnboardingSpeechPickPanel.Visibility = step == OnboardingStep.SpeechPick ? Visibility.Visible : Visibility.Collapsed;
         OnboardingSpeechComparePanel.Visibility = step == OnboardingStep.SpeechCompare ? Visibility.Visible : Visibility.Collapsed;
         OnboardingPolishIntroPanel.Visibility = step == OnboardingStep.PolishIntro ? Visibility.Visible : Visibility.Collapsed;
+        if (OnboardingPolishDemo is not null)
+        {
+            OnboardingPolishDemo.Visibility = step == OnboardingStep.PolishIntro ? Visibility.Visible : Visibility.Collapsed;
+        }
         OnboardingPolishPickPanel.Visibility = step == OnboardingStep.PolishPick ? Visibility.Visible : Visibility.Collapsed;
         OnboardingPolishSeeAllPanel.Visibility = step == OnboardingStep.PolishSeeAll ? Visibility.Visible : Visibility.Collapsed;
         OnboardingDownloadsPanel.Visibility = step == OnboardingStep.Downloads ? Visibility.Visible : Visibility.Collapsed;
@@ -252,6 +256,14 @@ public sealed partial class MainWindow
         OnboardingGettingReadyPanel.Visibility = step == OnboardingStep.GettingReady ? Visibility.Visible : Visibility.Collapsed;
         OnboardingPracticePanel.Visibility = step == OnboardingStep.Practice ? Visibility.Visible : Visibility.Collapsed;
         OnboardingClosingPanel.Visibility = step == OnboardingStep.Closing ? Visibility.Visible : Visibility.Collapsed;
+        if (OnboardingClosingFilm is not null)
+        {
+            OnboardingClosingFilm.Visibility = step == OnboardingStep.Closing ? Visibility.Visible : Visibility.Collapsed;
+            if (step != OnboardingStep.Closing)
+            {
+                OnboardingClosingFilm.Pause();
+            }
+        }
     }
 
     private void DrawOnboardingLanguage()
@@ -281,7 +293,7 @@ public sealed partial class MainWindow
 
         var rec = _onboardingRecommendation ?? ComputeOnboardingRecommendation(code);
         _onboardingRecommendation = rec;
-        var parakeetRecommended = isAuto || rec.Speech.IsParakeetAvailable;
+        var parakeetRecommended = isAuto || rec.Speech.PrimaryEngine == FinalAsrEngine.Parakeet;
         OnboardingLanguageEngineBadgeText.Text = parakeetRecommended
             ? "Parakeet \u00B7 25 languages"
             : "Whisper \u00B7 99+ languages";
@@ -290,7 +302,7 @@ public sealed partial class MainWindow
         OnboardingLanguageEngineDot.Fill = ResolveWindowThemeBrush(
             parakeetRecommended ? "BrandAccentBrush" : "BrandTextSecondaryBrush");
 
-        if (!isAuto && !rec.Speech.IsParakeetAvailable && !string.IsNullOrWhiteSpace(rec.Speech.ParakeetUnavailableReason))
+        if (!isAuto && rec.Speech.PrimaryEngine == FinalAsrEngine.Whisper && !string.IsNullOrWhiteSpace(rec.Speech.ParakeetUnavailableReason))
         {
             OnboardingLanguageAdviceCard.Visibility = Visibility.Visible;
             OnboardingLanguageAdviceText.Text = $"{rec.Speech.ParakeetUnavailableReason}. EnviousWispr will recommend Whisper on the next step.";
@@ -419,7 +431,8 @@ public sealed partial class MainWindow
         OnboardingParakeetCompareTimeText.Text = rec.Speech.ParakeetHeroTimeText;
         OnboardingWhisperCompareTimeText.Text = rec.Speech.WhisperHeroTimeText;
 
-        var parakeetStatusText = !parakeetAllowed
+        var hasParakeetAdvisory = !parakeetAllowed || !string.IsNullOrWhiteSpace(rec.Speech.ParakeetUnavailableReason);
+        var parakeetStatusText = hasParakeetAdvisory
             ? (rec.Speech.ParakeetUnavailableReason ?? $"Doesn't support {rec.EffectiveLanguageEntry?.DisplayName ?? "this language"}")
             : _parakeetModelState.IsInstalled
                 ? "Installed \u00B7 25 languages"
@@ -427,10 +440,10 @@ public sealed partial class MainWindow
         OnboardingParakeetCompareStatusBadgeText.Text = parakeetStatusText;
         ApplyOnboardingStyle(
             OnboardingParakeetCompareStatusBadge,
-            !parakeetAllowed ? "BrandWarningChipStyle" : _parakeetModelState.IsInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
+            hasParakeetAdvisory ? "BrandWarningChipStyle" : _parakeetModelState.IsInstalled ? "BrandSuccessChipStyle" : "BrandNeutralChipStyle");
         ApplyOnboardingStyle(
             OnboardingParakeetCompareStatusBadgeText,
-            !parakeetAllowed ? "BrandWarningChipTextStyle" : _parakeetModelState.IsInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
+            hasParakeetAdvisory ? "BrandWarningChipTextStyle" : _parakeetModelState.IsInstalled ? "BrandSuccessChipTextStyle" : "BrandNeutralChipTextStyle");
 
         var parakeetSize = FormatSpeechBundleSize(FinalAsrEngine.Parakeet, _parakeetModelState.BundleSizeText);
         OnboardingParakeetCompareSizeText.Text = _parakeetModelState.IsInstalled
