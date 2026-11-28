@@ -20,7 +20,15 @@ var testTranscribeStub = args.Contains("--test-transcribe-stub", StringComparer.
 var transcribeDelayMilliseconds = ReadIntegerArgument(args, "--transcribe-delay-ms", defaultValue: 0);
 // Test-only: a shutdown request that takes this long to honour, so a slow teardown can be staged.
 var shutdownDelayMilliseconds = ReadIntegerArgument(args, "--shutdown-delay-ms", defaultValue: 0);
-if (parentProcessId <= 0 || healthDelayMilliseconds < 0 || transcribeDelayMilliseconds < 0 || shutdownDelayMilliseconds < 0)
+// Test-only: emit startup or decode progress heartbeats spaced by this delay without loading a model.
+var testStartupProgressMilliseconds = ReadIntegerArgument(args, "--test-startup-progress-ms", defaultValue: 0);
+var testDecodeProgressMilliseconds = ReadIntegerArgument(args, "--test-decode-progress-ms", defaultValue: 0);
+if (parentProcessId <= 0 ||
+    healthDelayMilliseconds < 0 ||
+    transcribeDelayMilliseconds < 0 ||
+    shutdownDelayMilliseconds < 0 ||
+    testStartupProgressMilliseconds < 0 ||
+    testDecodeProgressMilliseconds < 0)
 {
     return 2;
 }
@@ -36,133 +44,185 @@ catch (ArgumentException)
 }
 
 var phaseJournal = UatRuntimePhaseJournal.FromEnvironment(parentProcessId);
-TranscriptionEngineCreation? engineCreation;
+var writeGate = new SemaphoreSlim(1, 1);
+TranscriptionEngineCreation? engineCreation = null;
+
 try
 {
-    engineCreation = CreateTranscriptionEngine(args);
-}
-catch (TranscriptionEngineException)
-{
-    return 4;
-}
-
-using (parent)
-using (engineCreation?.Engine as IDisposable)
-{
-    parent.EnableRaisingEvents = true;
-    parent.Exited += (_, _) => Environment.Exit(24);
-
-    while (await Console.In.ReadLineAsync() is { } line)
+    using (parent)
     {
-        RuntimeWorkerRequest? request;
-        try
-        {
-            request = JsonSerializer.Deserialize<RuntimeWorkerRequest>(line);
-        }
-        catch (JsonException)
-        {
-            await WriteResponseAsync(new RuntimeWorkerResponse(
-                protocolVersion,
-                RequestId: Guid.Empty,
-                Status: "invalid"));
-            continue;
-        }
+        parent.EnableRaisingEvents = true;
+        parent.Exited += (_, _) => Environment.Exit(24);
 
-        if (request is null ||
-            request.ProtocolVersion != protocolVersion ||
-            request.RequestId == Guid.Empty)
+        while (await Console.In.ReadLineAsync() is { } line)
         {
-            await WriteResponseAsync(new RuntimeWorkerResponse(
-                protocolVersion,
-                request?.RequestId ?? Guid.Empty,
-                Status: "invalid"));
-            continue;
-        }
-
-        if (string.Equals(request.Command, "health", StringComparison.Ordinal))
-        {
-            if (healthDelayMilliseconds > 0)
-            {
-                await Task.Delay(healthDelayMilliseconds);
-            }
-
-            await WriteResponseAsync(new RuntimeWorkerResponse(
-                protocolVersion,
-                request.RequestId,
-                Status: "ready"));
-            continue;
-        }
-
-        if (string.Equals(request.Command, "transcribe", StringComparison.Ordinal))
-        {
-            if (testTranscribeStub && transcribeDelayMilliseconds > 0)
-            {
-                await Task.Delay(transcribeDelayMilliseconds);
-            }
-
-            var response = testTranscribeStub && request.Transcription is { } transcription
-                ? new RuntimeWorkerResponse(
-                    protocolVersion,
-                    request.RequestId,
-                    Status: "complete",
-                    new RuntimeWorkerTranscript(
-                        transcription.SessionId,
-                        string.Empty,
-                        "test-transcribe-stub",
-                        [],
-                        UsedFallback: false,
-                        // ECHOED, so a test can read which language the request carried.
-                        RecognitionLanguage: transcription.Language))
-                : await TranscribeAsync(request, engineCreation, phaseJournal);
+            RuntimeWorkerRequest? request;
             try
             {
-                await WriteResponseAsync(response);
+                request = JsonSerializer.Deserialize<RuntimeWorkerRequest>(line);
             }
-            catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
+            catch (JsonException)
             {
-                if (!testTranscribeStub)
+                await WriteResponseAsync(
+                    writeGate,
+                    new RuntimeWorkerResponse(
+                        protocolVersion,
+                        RequestId: Guid.Empty,
+                        Status: "invalid"));
+                continue;
+            }
+
+            if (request is null ||
+                request.ProtocolVersion != protocolVersion ||
+                request.RequestId == Guid.Empty)
+            {
+                await WriteResponseAsync(
+                    writeGate,
+                    new RuntimeWorkerResponse(
+                        protocolVersion,
+                        request?.RequestId ?? Guid.Empty,
+                        Status: "invalid"));
+                continue;
+            }
+
+            if (string.Equals(request.Command, "health", StringComparison.Ordinal))
+            {
+                if (healthDelayMilliseconds > 0)
                 {
-                    phaseJournal?.Record(UatRuntimePhase.ResponsePublicationFailed, request.Transcription?.SessionId, request.RequestId);
+                    await Task.Delay(healthDelayMilliseconds);
                 }
 
-                throw;
+                if (testTranscribeStub && testStartupProgressMilliseconds > 0)
+                {
+                    string[] stages = ["ModelInitStarted", "WeightsMapped", "ExecutionProviderReady"];
+                    foreach (var stage in stages)
+                    {
+                        await WriteProgressAsync(writeGate, protocolVersion, request.RequestId, stage, progress: null);
+                        await Task.Delay(testStartupProgressMilliseconds);
+                    }
+                }
+                else if (!testTranscribeStub && engineCreation is null)
+                {
+                    try
+                    {
+                        engineCreation = await Task.Run(() => CreateTranscriptionEngine(
+                            args,
+                            stage => EmitProgressSync(writeGate, protocolVersion, request.RequestId, stage, null)));
+                    }
+                    catch (TranscriptionEngineException exception)
+                    {
+                        await WriteResponseAsync(
+                            writeGate,
+                            new RuntimeWorkerResponse(
+                                protocolVersion,
+                                request.RequestId,
+                                Status: "failed",
+                                Error: exception.Error));
+                        return 4;
+                    }
+                }
+
+                await WriteResponseAsync(
+                    writeGate,
+                    new RuntimeWorkerResponse(
+                        protocolVersion,
+                        request.RequestId,
+                        Status: "ready"));
+                continue;
             }
 
-            if (!testTranscribeStub && engineCreation is not null && request.Transcription is { SampleCount: > 0 } published)
+            if (string.Equals(request.Command, "transcribe", StringComparison.Ordinal))
             {
-                phaseJournal?.Record(
-                    response.Status == "complete" ? UatRuntimePhase.ResponsePublished : UatRuntimePhase.ResponseFailedPublished,
-                    published.SessionId,
-                    request.RequestId);
+                if (testTranscribeStub && testDecodeProgressMilliseconds > 0)
+                {
+                    await WriteProgressAsync(writeGate, protocolVersion, request.RequestId, "DecodeStarted", 0.0);
+                    await Task.Delay(testDecodeProgressMilliseconds);
+                    await WriteProgressAsync(writeGate, protocolVersion, request.RequestId, "DecodeStep", 0.5);
+                    await Task.Delay(testDecodeProgressMilliseconds);
+                }
+                else if (testTranscribeStub && transcribeDelayMilliseconds > 0)
+                {
+                    await Task.Delay(transcribeDelayMilliseconds);
+                }
+
+                var response = testTranscribeStub && request.Transcription is { } transcription
+                    ? new RuntimeWorkerResponse(
+                        protocolVersion,
+                        request.RequestId,
+                        Status: "complete",
+                        new RuntimeWorkerTranscript(
+                            transcription.SessionId,
+                            string.Empty,
+                            "test-transcribe-stub",
+                            [],
+                            UsedFallback: false,
+                            // ECHOED, so a test can read which language the request carried.
+                            RecognitionLanguage: transcription.Language))
+                    : await TranscribeAsync(
+                        request,
+                        engineCreation,
+                        phaseJournal,
+                        (stage, progress) => EmitProgressSync(writeGate, protocolVersion, request.RequestId, stage, progress));
+                try
+                {
+                    await WriteResponseAsync(writeGate, response);
+                }
+                catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
+                {
+                    if (!testTranscribeStub)
+                    {
+                        phaseJournal?.Record(UatRuntimePhase.ResponsePublicationFailed, request.Transcription?.SessionId, request.RequestId);
+                    }
+
+                    throw;
+                }
+
+                if (!testTranscribeStub && engineCreation is not null && request.Transcription is { SampleCount: > 0 } published)
+                {
+                    phaseJournal?.Record(
+                        response.Status == "complete" ? UatRuntimePhase.ResponsePublished : UatRuntimePhase.ResponseFailedPublished,
+                        published.SessionId,
+                        request.RequestId);
+                }
+
+                continue;
             }
 
-            continue;
-        }
-
-        if (string.Equals(request.Command, "shutdown", StringComparison.Ordinal))
-        {
-            if (shutdownDelayMilliseconds > 0)
+            if (string.Equals(request.Command, "shutdown", StringComparison.Ordinal))
             {
-                await Task.Delay(shutdownDelayMilliseconds);
+                if (shutdownDelayMilliseconds > 0)
+                {
+                    await Task.Delay(shutdownDelayMilliseconds);
+                }
+
+                await WriteResponseAsync(
+                    writeGate,
+                    new RuntimeWorkerResponse(
+                        protocolVersion,
+                        request.RequestId,
+                        Status: "stopping"));
+                return 0;
             }
 
-            await WriteResponseAsync(new RuntimeWorkerResponse(
-                protocolVersion,
-                request.RequestId,
-                Status: "stopping"));
-            return 0;
+            await WriteResponseAsync(
+                writeGate,
+                new RuntimeWorkerResponse(
+                    protocolVersion,
+                    request.RequestId,
+                    Status: "unsupported"));
         }
-
-        await WriteResponseAsync(new RuntimeWorkerResponse(
-            protocolVersion,
-            request.RequestId,
-            Status: "unsupported"));
     }
+}
+finally
+{
+    (engineCreation?.Engine as IDisposable)?.Dispose();
 }
 
 return 0;
 
-static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments)
+static TranscriptionEngineCreation? CreateTranscriptionEngine(
+    string[] arguments,
+    Action<string>? onStage = null)
 {
     var modelDirectory = ReadStringArgument(arguments, "--asr-model-directory");
     if (modelDirectory is null)
@@ -208,7 +268,8 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
             provider,
             intraOpThreads,
             fallbackThreads,
-            cardUnreachable);
+            cardUnreachable,
+            onStage);
     }
 
     if (engineKind != FinalAsrEngine.Parakeet ||
@@ -229,7 +290,8 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
         interOpThreads,
         maximumTokensPerStep,
         CudaRuntimeDirectory: cudaRuntimeDirectory,
-        AllowFullPrecisionFallback: allowFullPrecisionFallback);
+        AllowFullPrecisionFallback: allowFullPrecisionFallback,
+        OnInitStage: onStage);
     var fallback = provider == RuntimeProviderKind.Cpu
         ? null
         : new ParakeetEngineOptions(
@@ -241,7 +303,8 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
             fallbackThreads,
             InterOpThreads: 1,
             maximumTokensPerStep,
-            AllowFullPrecisionFallback: allowFullPrecisionFallback);
+            AllowFullPrecisionFallback: allowFullPrecisionFallback,
+            OnInitStage: onStage);
     if (cardUnreachable)
     {
         return OnTheProcessor(new ParakeetEngineFactory().Create(fallback!).Engine);
@@ -260,7 +323,8 @@ static TranscriptionEngineCreation CreateWhisperEngine(
     RuntimeProviderKind provider,
     int threadCount,
     int fallbackThreads,
-    bool cardUnreachable)
+    bool cardUnreachable,
+    Action<string>? onStage = null)
 {
     var packText = ReadStringArgument(arguments, "--asr-whisper-model-pack") ?? "quantized";
     if (!Enum.TryParse<WhisperModelPack>(packText, ignoreCase: true, out var pack))
@@ -277,7 +341,8 @@ static TranscriptionEngineCreation CreateWhisperEngine(
         provider,
         pack,
         threadCount,
-        language);
+        language,
+        OnInitStage: onStage);
     WhisperEngineOptions? fallback = null;
     if (provider != RuntimeProviderKind.Cpu)
     {
@@ -291,7 +356,8 @@ static TranscriptionEngineCreation CreateWhisperEngine(
             fallbackPack,
             fallbackThreads,
             language,
-            UseFlashAttention: false);
+            UseFlashAttention: false,
+            OnInitStage: onStage);
     }
 
     if (cardUnreachable)
@@ -314,7 +380,8 @@ static TranscriptionEngineCreation OnTheProcessor(ITranscriptionEngine engine) =
 static async Task<RuntimeWorkerResponse> TranscribeAsync(
     RuntimeWorkerRequest request,
     TranscriptionEngineCreation? engineCreation,
-    UatRuntimePhaseJournal? phaseJournal)
+    UatRuntimePhaseJournal? phaseJournal,
+    Action<string, double?>? onProgress = null)
 {
     if (engineCreation is null || request.Transcription is not { SampleCount: > 0 } transcription)
     {
@@ -350,10 +417,13 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
             return Failure(request.RequestId, AppErrorCode.TranscriptionFailed);
         }
 
-        var transcript = language is not null &&
-            engineCreation.Engine is ILanguageSelectableTranscriptionEngine selectable
-            ? await selectable.TranscribeAsync(audio, language)
-            : await engineCreation.Engine.TranscribeAsync(audio);
+        onProgress?.Invoke("DecodeStarted", 0.0);
+        var transcript = engineCreation.Engine is IProgressReportingTranscriptionEngine progressEngine
+            ? await progressEngine.TranscribeAsync(audio, language, onProgress)
+            : language is not null &&
+              engineCreation.Engine is ILanguageSelectableTranscriptionEngine selectable
+                ? await selectable.TranscribeAsync(audio, language)
+                : await engineCreation.Engine.TranscribeAsync(audio);
         var usedFallback = engineCreation.UsedFallback || transcript.UsedFallback;
         var degradedError = transcript.DegradedError ?? engineCreation.DegradedError;
         return new RuntimeWorkerResponse(
@@ -368,7 +438,9 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
                 usedFallback,
                 degradedError,
                 transcript.DetectedLanguage,
-                transcript.RecognitionLanguage));
+                transcript.RecognitionLanguage,
+                transcript.DetectedLanguageConfidence,
+                transcript.DetectedLanguageMargin));
     }
     catch (TranscriptionEngineException exception)
     {
@@ -409,10 +481,51 @@ static string? ReadStringArgument(string[] arguments, string name)
     return index >= 0 && index + 1 < arguments.Length ? arguments[index + 1] : null;
 }
 
-static async Task WriteResponseAsync(RuntimeWorkerResponse response)
+static void EmitProgressSync(
+    SemaphoreSlim writeGate,
+    int version,
+    Guid requestId,
+    string stage,
+    double? progress)
 {
-    await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response));
-    await Console.Out.FlushAsync();
+    WriteProgressAsync(writeGate, version, requestId, stage, progress).GetAwaiter().GetResult();
+}
+
+static async Task WriteProgressAsync(
+    SemaphoreSlim writeGate,
+    int version,
+    Guid requestId,
+    string stage,
+    double? progress)
+{
+    try
+    {
+        await WriteResponseAsync(
+            writeGate,
+            new RuntimeWorkerResponse(
+                version,
+                requestId,
+                Status: "progress",
+                Stage: stage,
+                Progress: progress));
+    }
+    catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
+    {
+    }
+}
+
+static async Task WriteResponseAsync(SemaphoreSlim writeGate, RuntimeWorkerResponse response)
+{
+    await writeGate.WaitAsync().ConfigureAwait(false);
+    try
+    {
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response)).ConfigureAwait(false);
+        await Console.Out.FlushAsync().ConfigureAwait(false);
+    }
+    finally
+    {
+        writeGate.Release();
+    }
 }
 
 internal sealed record TranscriptionEngineCreation(

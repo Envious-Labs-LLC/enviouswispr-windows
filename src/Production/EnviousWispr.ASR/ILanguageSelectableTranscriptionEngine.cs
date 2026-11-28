@@ -17,3 +17,12 @@ public interface ILanguageSelectableTranscriptionEngine : ITranscriptionEngine
         string? language,
         CancellationToken cancellationToken = default);
 }
+
+public interface IProgressReportingTranscriptionEngine : ILanguageSelectableTranscriptionEngine
+{
+    Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
+        Action<string, double?>? onProgress,
+        CancellationToken cancellationToken = default);
+}

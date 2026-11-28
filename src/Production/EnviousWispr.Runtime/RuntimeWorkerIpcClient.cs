@@ -67,29 +67,59 @@ public sealed partial class RuntimeWorkerSupervisor
                 RecordGeneration(UatRuntimePhase.ParentRequestIssued, observedGeneration, process, identity);
             }
 
-            var line = await process.StandardOutput.ReadLineAsync(cancellationToken)
-                .AsTask()
-                .WaitAsync(timeout, cancellationToken)
-                .ConfigureAwait(false);
-            if (line is null)
-            {
-                return null;
-            }
+            var perStageTimeout = _stageStallTimeout;
+            var allowProgressExtension = string.Equals(command, "health", StringComparison.Ordinal);
+            var overallMaxTimeout = allowProgressExtension
+                ? TimeSpan.FromTicks(Math.Max(timeout.Ticks, _maxProgressStartupTimeout.Ticks))
+                : timeout;
+            var deadline = DateTimeOffset.UtcNow + overallMaxTimeout;
+            var sawProgress = false;
 
-            var response = JsonSerializer.Deserialize<RuntimeWorkerResponse>(line);
-            var validated = response is not null &&
-                response.ProtocolVersion == ProtocolVersion &&
-                response.RequestId == requestId;
-            if (validated && identity is not null && observedGeneration is not null)
+            while (true)
             {
-                RecordGeneration(
-                    ConsumptionPhase(response!, identity.SessionId),
-                    observedGeneration,
-                    process,
-                    identity);
-            }
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    return null;
+                }
 
-            return validated ? response : null;
+                var waitBudget = TimeSpan.FromTicks(
+                    Math.Min(sawProgress ? remaining.Ticks : timeout.Ticks, perStageTimeout.Ticks));
+
+                var line = await process.StandardOutput.ReadLineAsync(cancellationToken)
+                    .AsTask()
+                    .WaitAsync(waitBudget, cancellationToken)
+                    .ConfigureAwait(false);
+                if (line is null)
+                {
+                    return null;
+                }
+
+                var response = JsonSerializer.Deserialize<RuntimeWorkerResponse>(line);
+                if (response is null ||
+                    response.ProtocolVersion != ProtocolVersion ||
+                    response.RequestId != requestId)
+                {
+                    return null;
+                }
+
+                if (string.Equals(response.Status, "progress", StringComparison.Ordinal))
+                {
+                    sawProgress = true;
+                    continue;
+                }
+
+                if (identity is not null && observedGeneration is not null)
+                {
+                    RecordGeneration(
+                        ConsumptionPhase(response, identity.SessionId),
+                        observedGeneration,
+                        process,
+                        identity);
+                }
+
+                return response;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

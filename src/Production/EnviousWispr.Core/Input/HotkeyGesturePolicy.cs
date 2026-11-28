@@ -103,11 +103,20 @@ public sealed class HotkeyGesturePolicy
     /// </remarks>
     public static readonly TimeSpan MultiTapWindow = TimeSpan.FromMilliseconds(300);
 
+    /// <summary>
+    /// Window after another key press during which an unconfirmed bare-modifier press must satisfy
+    /// <see cref="ModifierHoldThreshold"/> before activating capture (<c>startWhileTyping</c>).
+    /// </summary>
+    public static readonly TimeSpan OtherKeyDismissalWindow = TimeSpan.FromSeconds(1);
+
     private readonly uint _boundKey;
     private readonly TimeSpan _holdThreshold;
     private readonly bool _toggleMode;
+    private readonly HashSet<uint> _heldOtherKeys = [];
 
     private TimeSpan? _pressedAt;
+    private TimeSpan? _lastOtherKeyDownAt;
+    private bool _deferredStartWhileTyping;
     private bool _pressDisqualified;
     private bool _holding;
     private bool _holdConfirmed;
@@ -192,6 +201,15 @@ public sealed class HotkeyGesturePolicy
             // Key-UP is ignored so lift order never affects shortcut safety.
             if (isKeyDown)
             {
+                _heldOtherKeys.Add(virtualKey);
+                _lastOtherKeyDownAt = now;
+                if (_deferredStartWhileTyping)
+                {
+                    _pressDisqualified = true;
+                    _deferredStartWhileTyping = false;
+                    return HotkeyGestureOutcome.Nothing;
+                }
+
                 var holdConfirmed = _holdConfirmed ||
                     (_pressedAt is { } heldSince && now - heldSince >= _holdThreshold);
                 if (_toggleMode && _pressedAt is null && _tentativeRecording)
@@ -224,6 +242,10 @@ public sealed class HotkeyGesturePolicy
                     _pressDisqualified = true;
                 }
             }
+            else
+            {
+                _heldOtherKeys.Remove(virtualKey);
+            }
 
             return HotkeyGestureOutcome.Nothing;
         }
@@ -242,6 +264,7 @@ public sealed class HotkeyGesturePolicy
         {
             if (!_holdConfirmed && !_pressDisqualified && now - pressed >= _holdThreshold)
             {
+                _deferredStartWhileTyping = false;
                 _holdConfirmed = true;
                 _tapCount = 0;
                 _lastTapAt = null;
@@ -293,12 +316,15 @@ public sealed class HotkeyGesturePolicy
     {
         _pressedAt = null;
         _pressDisqualified = false;
+        _deferredStartWhileTyping = false;
         _holding = false;
         _holdConfirmed = false;
         _tentativeRecording = false;
         _startedToggleOnPress = false;
         _tapCount = 0;
         _lastTapAt = null;
+        _heldOtherKeys.Clear();
+        _lastOtherKeyDownAt = null;
     }
 
     private HotkeyGestureOutcome PressDown(TimeSpan now)
@@ -312,6 +338,7 @@ public sealed class HotkeyGesturePolicy
 
         _pressedAt = now;
         _pressDisqualified = false;
+        _deferredStartWhileTyping = false;
 
         // An ordinary key has no shortcut to be confused with, so it holds immediately and the
         // common path pays nothing for a feature it does not use.
@@ -331,6 +358,23 @@ public sealed class HotkeyGesturePolicy
         // releases (< ModifierHoldThreshold) stay inside the multi-tap window so double-tap keeps
         // early words or a lone stray tap cleanly discards without committing.
         _holdConfirmed = false;
+        if (!_toggleRecording && !_tentativeRecording && _tapCount == 0)
+        {
+            if (_heldOtherKeys.Count > 0)
+            {
+                _pressDisqualified = true;
+                return HotkeyGestureOutcome.Nothing;
+            }
+
+            if (_lastOtherKeyDownAt is { } recentOther &&
+                now >= recentOther &&
+                now - recentOther < OtherKeyDismissalWindow)
+            {
+                _deferredStartWhileTyping = true;
+                return HotkeyGestureOutcome.Nothing;
+            }
+        }
+
         if (!_toggleRecording)
         {
             _holding = true;
@@ -355,15 +399,17 @@ public sealed class HotkeyGesturePolicy
 
         var wasHolding = _holding;
         var disqualified = _pressDisqualified;
+        var deferredStartWhileTyping = _deferredStartWhileTyping;
         var wasHoldConfirmed = _holdConfirmed || now - pressed >= _holdThreshold;
         var startedToggleOnPress = _startedToggleOnPress;
         _pressedAt = null;
         _pressDisqualified = false;
+        _deferredStartWhileTyping = false;
         _holding = false;
         _holdConfirmed = false;
         _startedToggleOnPress = false;
 
-        if (disqualified)
+        if (disqualified || deferredStartWhileTyping)
         {
             return HotkeyGestureOutcome.Nothing;
         }

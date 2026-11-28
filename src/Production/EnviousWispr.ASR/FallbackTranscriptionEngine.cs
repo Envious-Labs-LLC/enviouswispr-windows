@@ -3,7 +3,7 @@ using EnviousWispr.Core.Errors;
 
 namespace EnviousWispr.ASR;
 
-public sealed class FallbackTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IDisposable
+public sealed class FallbackTranscriptionEngine : IProgressReportingTranscriptionEngine, IDisposable
 {
     private readonly ITranscriptionEngine _primary;
     private readonly Func<ITranscriptionEngine> _fallbackFactory;
@@ -28,29 +28,45 @@ public sealed class FallbackTranscriptionEngine : ILanguageSelectableTranscripti
     public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
         CancellationToken cancellationToken = default) =>
-        TranscribeCoreAsync(audio, language: null, languageGiven: false, cancellationToken);
+        TranscribeCoreAsync(audio, language: null, languageGiven: false, onProgress: null, cancellationToken);
 
     /// <summary>The take's language goes to whichever engine runs it, the fallback included.</summary>
     public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
         string? language,
         CancellationToken cancellationToken = default) =>
-        TranscribeCoreAsync(audio, language, languageGiven: true, cancellationToken);
+        TranscribeCoreAsync(audio, language, languageGiven: true, onProgress: null, cancellationToken);
+
+    public Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
+        Action<string, double?>? onProgress,
+        CancellationToken cancellationToken = default) =>
+        TranscribeCoreAsync(audio, language, languageGiven: language is not null, onProgress, cancellationToken);
 
     private static Task<Transcript> On(
         ITranscriptionEngine engine,
         CapturedAudio audio,
         string? language,
         bool languageGiven,
-        CancellationToken cancellationToken) =>
-        languageGiven && engine is ILanguageSelectableTranscriptionEngine selectable
+        Action<string, double?>? onProgress,
+        CancellationToken cancellationToken)
+    {
+        if (onProgress is not null && engine is IProgressReportingTranscriptionEngine progressEngine)
+        {
+            return progressEngine.TranscribeAsync(audio, languageGiven ? language : null, onProgress, cancellationToken);
+        }
+
+        return languageGiven && engine is ILanguageSelectableTranscriptionEngine selectable
             ? selectable.TranscribeAsync(audio, language, cancellationToken)
             : engine.TranscribeAsync(audio, cancellationToken);
+    }
 
     private async Task<Transcript> TranscribeCoreAsync(
         CapturedAudio audio,
         string? language,
         bool languageGiven,
+        Action<string, double?>? onProgress,
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -60,20 +76,20 @@ public sealed class FallbackTranscriptionEngine : ILanguageSelectableTranscripti
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_fallbackActive)
             {
-                return MarkFallback(await On(GetFallback(), audio, language, languageGiven, cancellationToken)
+                return MarkFallback(await On(GetFallback(), audio, language, languageGiven, onProgress, cancellationToken)
                     .ConfigureAwait(false));
             }
 
             try
             {
-                return await On(_primary, audio, language, languageGiven, cancellationToken).ConfigureAwait(false);
+                return await On(_primary, audio, language, languageGiven, onProgress, cancellationToken).ConfigureAwait(false);
             }
             catch (TranscriptionEngineException exception) when (
                 exception.Error.CanRetry && !cancellationToken.IsCancellationRequested)
             {
                 _primaryError = exception.Error;
                 _fallbackActive = true;
-                return MarkFallback(await On(GetFallback(), audio, language, languageGiven, cancellationToken)
+                return MarkFallback(await On(GetFallback(), audio, language, languageGiven, onProgress, cancellationToken)
                     .ConfigureAwait(false));
             }
         }

@@ -84,13 +84,15 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
             {
                 var transport = ClassifyEndpoint(device);
                 var isMuted = TryReadEndpointMute(device);
+                var channels = TryReadNativeChannelCount(device);
                 result.Add(new AudioDeviceInfo(
                     new AudioDeviceId(device.ID),
                     device.FriendlyName,
                     string.Equals(device.ID, defaultDeviceId, StringComparison.Ordinal),
                     IsActive: true,
                     Transport: transport,
-                    IsMuted: isMuted));
+                    IsMuted: isMuted,
+                    Channels: channels));
             }
         }
 
@@ -239,6 +241,20 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         catch
         {
             return false;
+        }
+    }
+
+    private static int TryReadNativeChannelCount(MMDevice device)
+    {
+        try
+        {
+            using var audioClient = device.CreateAudioClient();
+            var channels = audioClient?.MixFormat?.Channels ?? 1;
+            return Math.Clamp(channels, 1, 32);
+        }
+        catch
+        {
+            return 1;
         }
     }
 

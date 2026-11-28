@@ -18,7 +18,7 @@ public sealed class AudioSampleConverterTests
     }
 
     [Fact]
-    public void StereoFloatIsMixedClippedAndDownsampled()
+    public void StereoFloatExtractsSelectedChannelClipsAndDownsamples()
     {
         var bytes = new byte[480 * 2 * sizeof(float)];
         for (var frame = 0; frame < 480; frame++)
@@ -27,14 +27,24 @@ public sealed class AudioSampleConverterTests
             WriteSingle(bytes.AsSpan((frame * 8) + 4, 4), 0.5f);
         }
 
-        var result = AudioSampleConverter.ConvertToMono16Khz(
+        var defaultChannelResult = AudioSampleConverter.ConvertToMono16Khz(
             bytes,
             new AudioBufferFormat(48_000, 2, AudioSampleEncoding.Ieee754Single));
 
-        Assert.Equal(160, result.Samples.Length);
-        Assert.All(result.Samples, sample => Assert.Equal(0.75f, sample, precision: 5));
-        Assert.Equal(0.75f, result.Peak, precision: 5);
-        Assert.Equal(0.75f, result.RootMeanSquare, precision: 5);
+        Assert.Equal(160, defaultChannelResult.Samples.Length);
+        Assert.All(defaultChannelResult.Samples, sample => Assert.Equal(1f, sample, precision: 5));
+        Assert.Equal(1f, defaultChannelResult.Peak, precision: 5);
+        Assert.Equal(1f, defaultChannelResult.RootMeanSquare, precision: 5);
+
+        var secondChannelResult = AudioSampleConverter.ConvertToMono16Khz(
+            bytes,
+            new AudioBufferFormat(48_000, 2, AudioSampleEncoding.Ieee754Single),
+            selectedChannelIndex: 1);
+
+        Assert.Equal(160, secondChannelResult.Samples.Length);
+        Assert.All(secondChannelResult.Samples, sample => Assert.Equal(0.5f, sample, precision: 5));
+        Assert.Equal(0.5f, secondChannelResult.Peak, precision: 5);
+        Assert.Equal(0.5f, secondChannelResult.RootMeanSquare, precision: 5);
     }
 
     [Fact]

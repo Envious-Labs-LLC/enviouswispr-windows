@@ -62,12 +62,34 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
             DateTimeOffset.UtcNow,
             AppEventCode.DictationTranscriptionStarted));
 
-    public void RecordTranscriptionFinished(Transcript transcript, long elapsedMilliseconds) =>
+    private sealed record LanguageQualityObservation(string? Language, double? Confidence, double? Margin);
+
+    private readonly object _languageQualityLock = new();
+    private LanguageQualityObservation? _lastLanguageObservation;
+    private DictationSessionId? _loggedEmptyAsrSessionId;
+
+    public void RecordTranscriptionFinished(Transcript transcript, long elapsedMilliseconds)
+    {
+        var isEmptyClean = !transcript.UsedFallback && string.IsNullOrWhiteSpace(transcript.Text);
+        lock (_languageQualityLock)
+        {
+            _lastLanguageObservation = transcript.DetectedLanguage is not null
+                ? new LanguageQualityObservation(
+                    transcript.DetectedLanguage,
+                    transcript.DetectedLanguageConfidence,
+                    transcript.DetectedLanguageMargin)
+                : null;
+            if (isEmptyClean)
+            {
+                _loggedEmptyAsrSessionId = transcript.SessionId;
+            }
+        }
+
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             transcript.UsedFallback
                 ? AppEventCode.DictationTranscriptionDegraded
-                : string.IsNullOrWhiteSpace(transcript.Text)
+                : isEmptyClean
                     ? AppEventCode.DictationTranscriptionEmpty
                     : AppEventCode.DictationTranscriptionCompleted,
             transcript.UsedFallback
@@ -78,6 +100,7 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
             elapsedMilliseconds,
             ErrorCode: transcript.UsedFallback ? transcript.DegradedError?.Code : null,
             RecognitionLanguage: DiagnosticRecognitionLanguages.From(transcript.RecognitionLanguage)));
+    }
 
     public void RecordTranscriptionFailed(AppError? failure, long elapsedMilliseconds) =>
         _logger.Write(new AppLogEntry(
@@ -150,8 +173,24 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
         }
     }
 
-    public void ReportDelivery(DeliveryResult delivery, string? language) =>
-        _view.ReportDelivery(DeliveryReport.For(delivery), language);
+    public void ReportDelivery(DeliveryResult delivery, string? language)
+    {
+        LanguageQualityObservation? observation;
+        lock (_languageQualityLock)
+        {
+            observation = _lastLanguageObservation;
+            _lastLanguageObservation = null;
+        }
+
+        var matches = observation is not null &&
+            string.Equals(language, observation.Language, StringComparison.OrdinalIgnoreCase);
+        _view.ReportDelivery(
+            DeliveryReport.For(
+                delivery,
+                matches ? observation!.Confidence : null,
+                matches ? observation!.Margin : null),
+            language);
+    }
 
     public void NotifyPasteCompleted(PasteCompletedEvent paste) =>
         parts.Shell.OnPasteCompleted?.Invoke(paste);
@@ -212,6 +251,41 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
         var recoveryOnly = report.Outcome == FinalizationOutcome.EscapeRecovery;
         var undoOffered = Interlocked.Exchange(ref _escapeRecoveryUndoOffered, 0) == 1 && recoveryOnly;
         var cloudProvider = parts.Shell.CloudPolishProviderName();
+        var isEmptyOutcome = processed is null || string.IsNullOrWhiteSpace(processed.Output.Text);
+        if (isEmptyOutcome && transcript is not null)
+        {
+            var isMuted = parts.Capture is EnviousWispr.Core.Audio.ISilentMicSampleSource
+            {
+                LastCaptureWasEndpointMuted: true,
+            };
+            if (!isMuted)
+            {
+                // #1920 (.asrEmptyDespiteAudio): working mic produced non-zero audio that decoded empty;
+                // ensure the empty-ASR observation is logged once and finish silently without a noisy alert.
+                bool shouldLogObservation;
+                lock (_languageQualityLock)
+                {
+                    shouldLogObservation = _loggedEmptyAsrSessionId != transcript.SessionId;
+                    if (shouldLogObservation)
+                    {
+                        _loggedEmptyAsrSessionId = transcript.SessionId;
+                    }
+                }
+
+                if (shouldLogObservation)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.DictationTranscriptionEmpty,
+                        AppFailureCategory.None,
+                        RecognitionLanguage: DiagnosticRecognitionLanguages.From(transcript.RecognitionLanguage)));
+                }
+
+                _view.ShowStatus(DictationStatus.Quiet("Idle"));
+                return;
+            }
+        }
+
         DictationStatus status = processed is null || string.IsNullOrWhiteSpace(processed.Output.Text)
                 ? DictationStatus.Quiet("No speech detected")
                 : undoOffered

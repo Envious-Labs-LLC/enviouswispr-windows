@@ -29,11 +29,18 @@ public sealed class DeliveryReport
 {
     private readonly DeliveryResult _result;
 
-    private DeliveryReport(DeliveryResult result, DeliveryLanding landing, bool invitesLanguageOffer)
+    private DeliveryReport(
+        DeliveryResult result,
+        DeliveryLanding landing,
+        bool invitesLanguageOffer,
+        double? detectedLanguageConfidence = null,
+        double? detectedLanguageMargin = null)
     {
         _result = result;
         Landing = landing;
         InvitesLanguageOffer = invitesLanguageOffer;
+        DetectedLanguageConfidence = detectedLanguageConfidence;
+        DetectedLanguageMargin = detectedLanguageMargin;
     }
 
     /// <summary>Where the words ended up.</summary>
@@ -45,8 +52,17 @@ public sealed class DeliveryReport
     /// </summary>
     public bool InvitesLanguageOffer { get; }
 
+    /// <summary>Optional multi-window LID confidence in [0, 1].</summary>
+    public double? DetectedLanguageConfidence { get; }
+
+    /// <summary>Optional top-vs-runner-up LID probability margin in [0, 1].</summary>
+    public double? DetectedLanguageMargin { get; }
+
     /// <summary>The report for one delivery.</summary>
-    public static DeliveryReport For(DeliveryResult result)
+    public static DeliveryReport For(
+        DeliveryResult result,
+        double? detectedLanguageConfidence = null,
+        double? detectedLanguageMargin = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         var landing = result switch
@@ -59,7 +75,9 @@ public sealed class DeliveryReport
         return new DeliveryReport(
             result,
             landing,
-            invitesLanguageOffer: result is { Delivered: true, ClipboardUncertain: false });
+            invitesLanguageOffer: result is { Delivered: true, ClipboardUncertain: false },
+            detectedLanguageConfidence,
+            detectedLanguageMargin);
     }
 
     /// <summary>The sentence for the status line, and the pill when one is due.</summary>

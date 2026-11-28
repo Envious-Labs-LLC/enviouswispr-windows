@@ -52,6 +52,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private TextDeliveryOptions? _inFlightPressOptions;
+    private (DictationSessionId SessionId, DateTimeOffset StartedAt)? _admittedHoldStart;
     private bool _disposed;
 
     public PushToTalkSessionController(
@@ -173,6 +174,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                 CanRetry: true));
         }
 
+        var admittedStartedAt = _timeProvider.GetUtcNow();
         var sessionId = DictationSessionId.Create();
         // Hold the press's frozen delivery options across audio startup so an early release sees them
         // even before CurrentSession exists.
@@ -204,6 +206,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                     CanRetry: true));
             }
 
+            _admittedHoldStart = (sessionId, admittedStartedAt);
             CurrentSession = DictationSessionSnapshot.Start(
                 sessionId,
                 _timeProvider.GetUtcNow(),
@@ -286,7 +289,11 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
 
             if (!allowShortHold && _minimumHoldDuration > TimeSpan.Zero)
             {
-                var heldFor = _timeProvider.GetUtcNow() - CurrentSession.StartedAt;
+                var holdStartedAt = _admittedHoldStart is { } admitted &&
+                    admitted.SessionId == CurrentSession.Id
+                    ? admitted.StartedAt
+                    : CurrentSession.StartedAt;
+                var heldFor = _timeProvider.GetUtcNow() - holdStartedAt;
                 if (heldFor < _minimumHoldDuration)
                 {
                     await _audioCapture.CancelAsync(cancellationToken).ConfigureAwait(false);

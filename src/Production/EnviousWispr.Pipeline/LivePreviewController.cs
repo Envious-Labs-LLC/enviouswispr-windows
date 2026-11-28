@@ -52,6 +52,9 @@ public interface ILivePreviewEffects
     /// <summary>The user's English spelling preference for display-only preview text (#127).</summary>
     EnglishSpelling EnglishSpelling => EnglishSpelling.American;
 
+    /// <summary>Committed streaming progress so preview anchors finalized chunks and only decodes the trailing window.</summary>
+    StreamingProgressSnapshot? StreamingProgress => null;
+
     /// <summary>Words for the screen, tagged with the dictation they belong to and with whether their screen is still open.</summary>
     /// <remarks>
     /// THE FRAME CARRIES ITS OWN VALIDITY. Rendering happens on another thread, later; a frame that
@@ -270,6 +273,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             // close: a startup that was cancelled or refused never started, and says nothing more.
             _started = true;
             _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewStarted));
+            var stabilizer = new LivePreviewAgreementStabilizer();
             string? lastPublishedText = null;
             while (true)
             {
@@ -278,12 +282,38 @@ public sealed class LivePreviewController : IAsyncDisposable
                 // dictation that is over and put its words on a screen the stop is about to clear.
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // THE WAIT MOVED TO THE FAR SIDE OF THE WORK, WHICH IS THE WHOLE FIX. It used to sit
-                // here, so the period was the interval PLUS the cost of a pass rather than the larger
-                // of the two, and nothing could reach the screen before both had elapsed however fast
-                // the engine became. On the measured 7.9-second take that bought exactly one update
-                // and the second was not slow but impossible. Ref: #99 and `LivePreviewCadence`.
-                var snapshot = audio.GetSnapshot(MaximumWindow);
+                var streamingProgress = _effects.StreamingProgress;
+                var hasStreamingPrefix = streamingProgress is not null &&
+                    streamingProgress.SessionId == sessionId &&
+                    streamingProgress.CommittedThroughSample > 0;
+                AudioSnapshot? snapshot;
+                if (hasStreamingPrefix && audio is IAudioIncrementalSnapshotSource incremental)
+                {
+                    var inc = incremental.GetSnapshotFrom(streamingProgress!.CommittedThroughSample);
+                    if (inc is null || inc.SessionId != sessionId)
+                    {
+                        snapshot = null;
+                    }
+                    else
+                    {
+                        var sampleRate = inc.SampleRate > 0 ? inc.SampleRate : AudioQuietCut.DefaultSampleRate;
+                        var maxSamples = (int)Math.Min(inc.Samples.Length, (long)(MaximumWindow.TotalSeconds * sampleRate));
+                        var trailing = inc.Samples.Length > maxSamples
+                            ? inc.Samples.Slice(inc.Samples.Length - maxSamples, maxSamples)
+                            : inc.Samples;
+                        snapshot = new AudioSnapshot(inc.SessionId, trailing, inc.SampleRate, 1);
+                    }
+                }
+                else
+                {
+                    // THE WAIT MOVED TO THE FAR SIDE OF THE WORK, WHICH IS THE WHOLE FIX. It used to sit
+                    // here, so the period was the interval PLUS the cost of a pass rather than the larger
+                    // of the two, and nothing could reach the screen before both had elapsed however fast
+                    // the engine became. On the measured 7.9-second take that bought exactly one update
+                    // and the second was not slow but impossible. Ref: #99 and `LivePreviewCadence`.
+                    snapshot = audio.GetSnapshot(MaximumWindow);
+                }
+
                 if (snapshot is null || snapshot.Samples.Length < MinimumSamplesPerPass)
                 {
                     // NOT THE CADENCE, BECAUSE THIS IS NOT AN UPDATE. There is not yet enough audio to
@@ -322,8 +352,19 @@ public sealed class LivePreviewController : IAsyncDisposable
                 // last, the screen this was for has been closed, and its words must not reach it.
                 if (update.SessionId == sessionId.Value && Volatile.Read(ref _closure) == closure)
                 {
-                    var displayText = LivePreviewTextFormatter.Format(
+                    var currentProgress = _effects.StreamingProgress;
+                    var anchoredPrefix = currentProgress is not null && currentProgress.SessionId == sessionId
+                        ? currentProgress.CommittedPrefix
+                        : null;
+                    var anchoredSample = currentProgress is not null && currentProgress.SessionId == sessionId
+                        ? currentProgress.CommittedThroughSample
+                        : 0;
+                    var stabilizedText = stabilizer.Stabilize(
                         update.Text,
+                        anchoredPrefix,
+                        anchoredSample);
+                    var displayText = LivePreviewTextFormatter.Format(
+                        stabilizedText,
                         wordCorrectionEnabled,
                         customWords,
                         englishSpelling,

@@ -100,7 +100,8 @@ internal sealed class ParakeetTdtRecipe
         ParakeetTranscriptionEngine.IParakeetRunContext runContext,
         CancellationToken cancellationToken,
         SinglePassBlankRescue? singlePassBlankRescue = null,
-        Func<float[], (bool HasVoicedSpeech, int TrimmedStartSample, int TrimmedLength)>? voicedTrimLocator = null)
+        Func<float[], (bool HasVoicedSpeech, int TrimmedStartSample, int TrimmedLength)>? voicedTrimLocator = null,
+        Action<string, double?>? onProgress = null)
     {
         ArgumentNullException.ThrowIfNull(samples);
         ArgumentNullException.ThrowIfNull(runContext);
@@ -120,11 +121,13 @@ internal sealed class ParakeetTdtRecipe
                 aligned.Length,
                 runContext,
                 cancellationToken);
+            onProgress?.Invoke("PreprocessorComplete", 0.15);
             var (encodedRaw, encodedLength) = _backend.Encode(
                 features,
                 featureLength,
                 runContext,
                 cancellationToken);
+            onProgress?.Invoke("EncoderComplete", 0.45);
             IReadOnlyList<DecodedToken> singlePass = DecodeEncoded(
                 encodedRaw,
                 encodedLength,
@@ -136,7 +139,8 @@ internal sealed class ParakeetTdtRecipe
                 allowedTokenMask,
                 blockedTokenMask,
                 runContext,
-                cancellationToken);
+                cancellationToken,
+                onDecodeProgress: fraction => onProgress?.Invoke("DecodeStep", 0.45 + (fraction * 0.55)));
 
             var startSampleOffset = 0;
             if (singlePass.Count == 0 && singlePassBlankRescue is not null)
@@ -187,6 +191,7 @@ internal sealed class ParakeetTdtRecipe
             var contextStart = start - Math.Max(warmup, context);
             var segment = samples.AsSpan(contextStart, audioEnd - contextStart);
             windowRanges.Add((start, audioEnd));
+            onProgress?.Invoke("DecodeWindow", Math.Clamp((double)start / Math.Max(1, effectiveTotal), 0.0, 0.99));
             if (warmup > 0)
             {
                 outputs.Add(DecodeWindow(
@@ -417,7 +422,8 @@ internal sealed class ParakeetTdtRecipe
         ParakeetTranscriptionEngine.IParakeetRunContext runContext,
         CancellationToken cancellationToken,
         int? emitAfterFrame = null,
-        int? startFrame = null)
+        int? startFrame = null,
+        Action<double>? onDecodeProgress = null)
     {
         var encoderDimension = _backend.EncoderDimension;
         if (encodedLength <= 0 ||
@@ -451,10 +457,17 @@ internal sealed class ParakeetTdtRecipe
         var atFrame = 0;
         var count = 0;
         var tokenLimit = TokenLimit(frames);
+        var lastReportedFrame = t - 16;
 
         while (t < frames)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (onDecodeProgress is not null && t - lastReportedFrame >= 16)
+            {
+                lastReportedFrame = t;
+                onDecodeProgress((double)t / frames);
+            }
+
             Array.Copy(encoded, t * encoderDimension, encoderFrame, 0, encoderDimension);
             target[0] = lastHistoryToken ?? blankIndex;
 

@@ -11,4 +11,5 @@ public sealed record ParakeetEngineOptions(
     int MaximumTokensPerStep = 10,
     int CudaDeviceId = 0,
     string? CudaRuntimeDirectory = null,
-    bool AllowFullPrecisionFallback = true);
+    bool AllowFullPrecisionFallback = true,
+    Action<string>? OnInitStage = null);

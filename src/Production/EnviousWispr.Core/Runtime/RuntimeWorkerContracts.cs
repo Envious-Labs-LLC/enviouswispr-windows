@@ -110,7 +110,9 @@ public sealed record RuntimeWorkerResponse(
     Guid RequestId,
     string Status,
     RuntimeWorkerTranscript? Transcript = null,
-    AppError? Error = null);
+    AppError? Error = null,
+    string? Stage = null,
+    double? Progress = null);
 
 public sealed record RuntimeWorkerTranscriptionRequest(
     Guid SessionId,
@@ -126,4 +128,6 @@ public sealed record RuntimeWorkerTranscript(
     bool UsedFallback,
     AppError? DegradedError = null,
     string? DetectedLanguage = null,
-    string? RecognitionLanguage = null);
+    string? RecognitionLanguage = null,
+    double? DetectedLanguageConfidence = null,
+    double? DetectedLanguageMargin = null);

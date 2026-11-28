@@ -40,7 +40,9 @@ internal sealed class StreamingTranscriptionEffects(RuntimeShell shell) : IStrea
 }
 
 /// <summary>The shell's half of live preview: what it built, what it can sample, and the surface.</summary>
-internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffects
+internal sealed class LivePreviewEffects(
+    RuntimeShell shell,
+    Func<StreamingProgressSnapshot?>? streamingProgress = null) : ILivePreviewEffects
 {
     public bool Enabled => shell.LivePreviewEnabled();
 
@@ -51,6 +53,8 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
     public IAudioSnapshotSource? Audio => shell.Audio();
 
     public DictationSessionId? RecordingSessionId => shell.RecordingSessionId();
+
+    public StreamingProgressSnapshot? StreamingProgress => streamingProgress?.Invoke();
 
     public bool WordCorrectionEnabled => shell.Dictation?.Invoke().WordCorrectionEnabled ?? false;
 

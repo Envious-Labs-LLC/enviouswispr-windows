@@ -37,7 +37,9 @@ public sealed record Transcript(
     bool UsedFallback = false,
     AppError? DegradedError = null,
     string? DetectedLanguage = null,
-    string? RecognitionLanguage = null);
+    string? RecognitionLanguage = null,
+    double? DetectedLanguageConfidence = null,
+    double? DetectedLanguageMargin = null);
 
 public sealed record ProcessedText(DictationSessionId SessionId, string Text);
 

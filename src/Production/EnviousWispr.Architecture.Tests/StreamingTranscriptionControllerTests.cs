@@ -201,7 +201,7 @@ public sealed class StreamingTranscriptionControllerTests
     }
 
     [Fact]
-    public async Task WithLivePreviewOnStreamingStandsDownAndTheReleaseTranscribesEverything()
+    public async Task WithLivePreviewOnStreamingCoordinatesInsteadOfStandingDown()
     {
         var world = World.Build();
         world.Effects.LivePreviewEnabled = true;
@@ -209,19 +209,21 @@ public sealed class StreamingTranscriptionControllerTests
 
         world.Controller.Start(world.Session);
 
-        Assert.False(world.Controller.IsRunning);
-        Assert.Null(world.Clock.NextDue);
+        Assert.True(world.Controller.IsRunning);
+        await world.Clock.WhenRegistered(1).WaitAsync(Patience);
+        world.Engine.NextText = "first";
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
         await world.Controller.StopAsync();
-        world.Engine.NextText = "everything";
+        world.Engine.NextText = "rest";
         var whole = world.Audio.Samples;
         var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
             world.Engine, new CapturedAudio(world.Session, whole, SampleRate, 1), CancellationToken.None);
 
-        var request = Assert.Single(world.Engine.Requests);
-        Assert.Equal(0, request.From);
-        Assert.Equal(whole.Length, request.Length);
-        Assert.Equal("everything", transcript.Text);
-        Assert.Empty(world.Log.Entries);
+        Assert.Equal(2, world.Engine.Requests.Length);
+        Assert.Equal("first rest", transcript.Text);
+        Assert.Contains(AppEventCode.StreamingSegmentCommitted, world.Log.Codes);
+        Assert.Contains(AppEventCode.StreamingHeadStartUsed, world.Log.Codes);
     }
 
     [Fact]

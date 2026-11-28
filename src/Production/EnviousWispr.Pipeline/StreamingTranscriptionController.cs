@@ -35,11 +35,8 @@ public interface IStreamingTranscriptionEffects
 /// SO THERE IS NO SETTING. A change that cannot make things worse does not need one, and every switch
 /// added is a thing a user has to understand before they benefit.
 ///
-/// IT DOES NOT RUN WITH LIVE PREVIEW ON. Both transcribe during the recording and both use the same
-/// worker, so together they would queue behind each other and make the release SLOWER than doing
-/// nothing. Live Preview is the user's explicit choice and is display-only; this is invisible and
-/// makes the real text faster. Turning off the thing they chose would be wrong, so the invisible one
-/// stands down.
+/// COORDINATED WITH LIVE PREVIEW. When Live Preview is enabled, streaming keeps anchoring finished
+/// quiet-valley chunks into the committed prefix so preview only decodes the trailing uncommitted window.
 ///
 /// ONE OWNER FOR THE BUFFER AND THE JOIN. The committed text, the sample the commits reach, and the
 /// usable flag are written by the loop and read by the release; they live together so the release
@@ -61,6 +58,7 @@ public sealed class StreamingTranscriptionController
     private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly StreamingTranscriptAccumulator _streamed = new();
     private readonly object _ownership = new();
+    private readonly object _progressSync = new();
     private StreamingWork? _work;
 
     private sealed class StreamingWork
@@ -124,7 +122,24 @@ public sealed class StreamingTranscriptionController
         }
     }
 
-    /// <summary>Forgets the last take and, unless streaming stands down, starts committing this one.</summary>
+    /// <summary>Returns a thread-safe snapshot of committed streaming progress for preview coordination.</summary>
+    public StreamingProgressSnapshot? SnapshotProgress()
+    {
+        lock (_progressSync)
+        {
+            if (_sessionId is not { } sessionId)
+            {
+                return null;
+            }
+
+            return new StreamingProgressSnapshot(
+                sessionId.Value,
+                _streamedThroughSample,
+                _streamed.ToString());
+        }
+    }
+
+    /// <summary>Forgets the last take and starts committing this one when engine and capture are available.</summary>
     public void Start(DictationSessionId sessionId)
     {
         lock (_ownership)
@@ -140,15 +155,18 @@ public sealed class StreamingTranscriptionController
                 return;
             }
 
-            _streamed.Clear();
-            _lastCommittedTranscript = null;
-            _streamedThroughSample = 0;
+            lock (_progressSync)
+            {
+                _streamed.Clear();
+                _lastCommittedTranscript = null;
+                _streamedThroughSample = 0;
+                _sessionId = sessionId;
+            }
+
             _lastSnapshotSamples = 0;
             _hadEmptySegment = false;
-            _sessionId = sessionId;
             _usable = false;
-            if (_effects.LivePreviewEnabled ||
-                _effects.Engine is not { } engine ||
+            if (_effects.Engine is not { } engine ||
                 _effects.Audio is not { } snapshots)
             {
                 return;
@@ -325,20 +343,34 @@ public sealed class StreamingTranscriptionController
                 }
 
                 var segmentElapsedMs = (long)_clock.GetElapsedTime(segmentStarted).TotalMilliseconds;
+                var sliceBelowVoicedFloor = AudioQuietCut.IsBelowVoicedFloor(slice.Span);
                 var isSegmentEmpty = string.IsNullOrWhiteSpace(transcript.Text);
-                if (isSegmentEmpty)
+                lock (_progressSync)
                 {
-                    _hadEmptySegment = true;
-                }
-                else
-                {
-                    _streamed.Append(transcript.Text);
-                    _lastCommittedTranscript = _lastCommittedTranscript is { UsedFallback: true } prior && !transcript.UsedFallback
-                        ? transcript with { UsedFallback = true, DegradedError = prior.DegradedError }
-                        : transcript;
+                    if (isSegmentEmpty)
+                    {
+                        // Only invalidate head-start when a voiced slice blanks or a degraded error occurred.
+                        // Quiet/below-voiced-floor slices that decode empty cleanly must preserve committed chunks (F11).
+                        if (transcript.DegradedError is not null || !sliceBelowVoicedFloor)
+                        {
+                            _hadEmptySegment = true;
+                        }
+                        else
+                        {
+                            _lastCommittedTranscript ??= transcript;
+                        }
+                    }
+                    else
+                    {
+                        _streamed.Append(transcript.Text);
+                        _lastCommittedTranscript = _lastCommittedTranscript is { UsedFallback: true } prior && !transcript.UsedFallback
+                            ? transcript with { UsedFallback = true, DegradedError = prior.DegradedError }
+                            : transcript;
+                    }
+
+                    _streamedThroughSample = range.EndSample;
                 }
 
-                _streamedThroughSample = range.EndSample;
                 _lastSnapshotSamples = totalCapturedSamples;
                 _phaseJournal?.Record(
                     UatRuntimePhase.StreamingSegmentReturned,
@@ -812,7 +844,9 @@ public sealed class StreamingTranscriptionController
                         audio,
                         segmenter,
                         _streamedThroughSample,
-                        cancellationToken)
+                        cancellationToken,
+                        applyShortQuietFloorGate: false,
+                        allowDegradedLeadSalvage: false)
                     .ConfigureAwait(false);
             }
             catch (Exception) when (cancellationToken.IsCancellationRequested)
@@ -857,7 +891,9 @@ public sealed class StreamingTranscriptionController
         CapturedAudio audio,
         SpeechSegmenter? segmenter,
         int coveredSamples,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool applyShortQuietFloorGate = true,
+        bool allowDegradedLeadSalvage = true)
     {
         using var dictation = DictationScope.Begin(audio.SessionId.Value);
         var wholeCoverage = segmenter?.MeasureCoverage(audio.Samples.Span, 0, audio.Samples.Length)
@@ -874,8 +910,49 @@ public sealed class StreamingTranscriptionController
             speechSamples: wholeCoverage.SpeechSamples,
             silenceSamples: wholeCoverage.SilenceSamples,
             sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
-        var transcript = await TranscribePossiblyLongAudioAsync(engine, audio, cancellationToken)
-            .ConfigureAwait(false);
+
+        Transcript? transcript = null;
+        TranscriptionEngineException? initialFailure = null;
+        try
+        {
+            transcript = await TranscribePossiblyLongAudioAsync(
+                    engine,
+                    audio,
+                    cancellationToken,
+                    applyShortQuietFloorGate)
+                .ConfigureAwait(false);
+        }
+        catch (TranscriptionEngineException exception) when (
+            allowDegradedLeadSalvage &&
+            !cancellationToken.IsCancellationRequested &&
+            exception.Error.Code != AppErrorCode.RuntimeResourceBusy)
+        {
+            initialFailure = exception;
+        }
+
+        if (allowDegradedLeadSalvage &&
+            !audio.Samples.IsEmpty &&
+            !cancellationToken.IsCancellationRequested &&
+            (transcript is null || string.IsNullOrWhiteSpace(transcript.Text)))
+        {
+            var salvaged = await AttemptDegradedLeadSalvageAsync(engine, audio, cancellationToken)
+                .ConfigureAwait(false);
+            if (salvaged is not null)
+            {
+                transcript = initialFailure is not null && !salvaged.UsedFallback
+                    ? salvaged with { UsedFallback = true, DegradedError = initialFailure.Error }
+                    : salvaged;
+            }
+        }
+
+        if (transcript is null)
+        {
+            throw initialFailure ?? new TranscriptionEngineException(new AppError(
+                AppErrorCode.TranscriptionFailed,
+                AppErrorStage.FinalAsr,
+                CanRetry: true));
+        }
+
         _phaseJournal?.Record(
             UatRuntimePhase.FinalWholeAudioReturned,
             audio.SessionId.Value,
@@ -890,16 +967,73 @@ public sealed class StreamingTranscriptionController
         return transcript;
     }
 
-    private static async Task<Transcript> TranscribePossiblyLongAudioAsync(
+    private static async Task<Transcript?> AttemptDegradedLeadSalvageAsync(
         ITranscriptionEngine engine,
         CapturedAudio audio,
         CancellationToken cancellationToken)
     {
         using var dictation = DictationScope.Begin(audio.SessionId.Value);
         var sampleRate = audio.SampleRate > 0 ? audio.SampleRate : AudioQuietCut.DefaultSampleRate;
+        var candidates = AudioQuietCut.FindDegradedLeadTrimCandidates(audio.Samples.Span, sampleRate);
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var trimOffset in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (trimOffset <= 0 || trimOffset >= audio.Samples.Length)
+            {
+                continue;
+            }
+
+            var trimmed = audio with { Samples = audio.Samples[trimOffset..] };
+            try
+            {
+                var attempt = await TranscribePossiblyLongAudioAsync(
+                        engine,
+                        trimmed,
+                        cancellationToken,
+                        applyShortQuietFloorGate: false)
+                    .ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(attempt.Text))
+                {
+                    return attempt;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TranscriptionEngineException)
+            {
+                // Try the next ladder offset cleanly.
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<Transcript> TranscribePossiblyLongAudioAsync(
+        ITranscriptionEngine engine,
+        CapturedAudio audio,
+        CancellationToken cancellationToken,
+        bool applyShortQuietFloorGate = false)
+    {
+        using var dictation = DictationScope.Begin(audio.SessionId.Value);
+        var sampleRate = audio.SampleRate > 0 ? audio.SampleRate : AudioQuietCut.DefaultSampleRate;
         var maxPieceSamples = checked(sampleRate * AudioQuietCut.MaximumPieceSeconds);
         if (audio.Samples.Length <= maxPieceSamples)
         {
+            if (applyShortQuietFloorGate &&
+                !audio.Samples.IsEmpty &&
+                AudioQuietCut.IsBelowVoicedFloor(audio.Samples.Span) &&
+                !AudioQuietCut.EvaluateTailPreserve(audio.Samples.Span, sampleRate).ShouldPreserve)
+            {
+                return new Transcript(audio.SessionId, string.Empty, engine.EngineId);
+            }
+
             return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
         }
 

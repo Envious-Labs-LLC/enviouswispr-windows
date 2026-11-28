@@ -22,7 +22,8 @@ public sealed record AudioDeviceInfo(
     bool IsDefault,
     bool IsActive,
     AudioDeviceTransport Transport = AudioDeviceTransport.Unknown,
-    bool IsMuted = false)
+    bool IsMuted = false,
+    int Channels = 1)
 {
     public bool IsVirtualOrLoopback => Transport == AudioDeviceTransport.Virtual;
 }
@@ -43,7 +44,8 @@ public sealed record AudioDeviceChange(
 public sealed record AudioCaptureRequest(
     DictationSessionId SessionId,
     AudioDeviceId? DeviceId = null,
-    bool IsBluetooth = false);
+    bool IsBluetooth = false,
+    int SelectedChannelIndex = 0);
 
 public sealed record AudioCaptureStopped(
     DictationSessionId SessionId,
