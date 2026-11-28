@@ -723,15 +723,25 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
-    /// <summary>Forgets every held key, modifier, and gesture press in progress.</summary>
-    public void ResetHeldKeys()
+    /// <summary>Forgets held key, modifier, and gesture presses in progress.</summary>
+    public void ResetHeldKeys(bool preserveActiveRecording = false)
     {
         lock (_sync)
         {
-            _recordHeld = false;
+            var keepRecording = preserveActiveRecording &&
+                (_recordHeld || _ownsActiveRecording || (_recordGesture?.IsRecordingHandsFree ?? false));
+            if (!keepRecording)
+            {
+                _recordHeld = false;
+                _cancelledUntilRecordRelease = false;
+                _altMaskSentForPress = false;
+                _modifierSetEngaged = false;
+                _ownsActiveRecording = false;
+                _recordGesture?.Reset();
+            }
+
             _cancelHeld = false;
             _quickAddHeld = false;
-            _cancelledUntilRecordRelease = false;
             _typingKey = NoKey;
             _oneShotKeyPresses.Clear();
             if (_pasteLast is not null)
@@ -744,11 +754,7 @@ internal sealed class HotkeyEdgeTracker
                 _copyLast.Held = false;
             }
 
-            _altMaskSentForPress = false;
-            _modifierSetEngaged = false;
-            _ownsActiveRecording = false;
             _heldOrdinaryKeys.Clear();
-            _recordGesture?.Reset();
         }
     }
 

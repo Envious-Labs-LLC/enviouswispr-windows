@@ -123,7 +123,11 @@ public partial class App
     private void OnKeybindCaptureActiveChanged(bool active)
     {
         _keybindCaptureActive = active;
-        _pushToTalkHook?.ResetHeldKeys();
+        var preserveActiveRecording = _sessionController?.CurrentSession is
+        {
+            State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
+        };
+        _pushToTalkHook?.ResetHeldKeys(preserveActiveRecording);
         _pushToTalkHook?.SetCapturingKeybind(active);
     }
 

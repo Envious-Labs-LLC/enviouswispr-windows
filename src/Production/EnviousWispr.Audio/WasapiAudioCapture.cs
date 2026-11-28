@@ -19,7 +19,6 @@ public sealed class WasapiAudioCapture :
     public static readonly TimeSpan BluetoothFirstPacketTimeout = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan BluetoothSettlingProbeDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan BluetoothColdStartSettlingDelay = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan WarmRecentPacketWindow = TimeSpan.FromSeconds(2);
     private const int PreRollCapacitySamples = 8_000;
     private const int MuteProbeIntervalSamples = 8_000;
 
@@ -73,6 +72,7 @@ public sealed class WasapiAudioCapture :
     private volatile bool _clientRequestedStop;
     private volatile bool _backendStopped;
     private volatile bool _unexpectedStop;
+    private bool _suppressUnexpectedStopEvent;
     private int _backstopTriggered;
     private int _backstopSignalled;
     private bool _disposed;
@@ -421,7 +421,6 @@ public sealed class WasapiAudioCapture :
             if (_state == CaptureState.WarmIdle)
             {
                 var reusedWarm = false;
-                var hadRecentWarmPacket = false;
                 IAudioRecorderSession? warmRecorder = null;
                 long attemptGeneration = 0;
                 lock (_bufferGate)
@@ -448,12 +447,11 @@ public sealed class WasapiAudioCapture :
                         _request = request;
                         _clientRequestedStop = false;
                         _unexpectedStop = false;
+                        _suppressUnexpectedStopEvent = false;
                         Volatile.Write(ref _backstopTriggered, 0);
                         Volatile.Write(ref _backstopSignalled, 0);
                         _warmGeneration++;
                         attemptGeneration = ++_captureAttemptGeneration;
-                        hadRecentWarmPacket = _lastWarmPacketTimestamp is { } lastWarmTimestamp &&
-                            _timeProvider.GetElapsedTime(lastWarmTimestamp) <= WarmRecentPacketWindow;
                         _state = CaptureState.Capturing;
                         _isCapturing = true;
                         warmRecorder = _recorder;
@@ -464,15 +462,14 @@ public sealed class WasapiAudioCapture :
                 if (reusedWarm)
                 {
                     Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(warmRecorder));
-                    if (!hadRecentWarmPacket)
-                    {
-                        ArmFirstPacketWatchdog(
-                            attemptGeneration,
-                            isBluetooth ? BluetoothFirstPacketTimeout : WiredFirstPacketTimeout,
-                            request,
-                            isBluetooth,
-                            allowBluetoothRetry: false);
-                    }
+                    // Always watch for a live packet on the new take even if warm idle recently saw audio,
+                    // because _packets was reset for this recording and a dead stream at handoff must fail fast.
+                    ArmFirstPacketWatchdog(
+                        attemptGeneration,
+                        isBluetooth ? BluetoothFirstPacketTimeout : WiredFirstPacketTimeout,
+                        request,
+                        isBluetooth,
+                        allowBluetoothRetry: false);
 
                     _lastDeviceOpenMilliseconds = 0;
                     _lastStreamStartMilliseconds = 0;
@@ -549,6 +546,7 @@ public sealed class WasapiAudioCapture :
                     _clientRequestedStop = false;
                     _backendStopped = false;
                     _unexpectedStop = false;
+                    _suppressUnexpectedStopEvent = isBluetooth && attempt + 1 < maxAttempts;
                     Volatile.Write(ref _backstopTriggered, 0);
                     Volatile.Write(ref _backstopSignalled, 0);
                     attemptGeneration = ++_captureAttemptGeneration;
@@ -575,6 +573,32 @@ public sealed class WasapiAudioCapture :
                         await Task.Delay(BluetoothColdStartSettlingDelay, _timeProvider, cancellationToken)
                             .ConfigureAwait(false);
                         continue;
+                    }
+
+                    DictationSessionId? deferredStopSession = null;
+                    lock (_bufferGate)
+                    {
+                        if (_suppressUnexpectedStopEvent)
+                        {
+                            _suppressUnexpectedStopEvent = false;
+                            if (_unexpectedStop && _state == CaptureState.Capturing && _request is { } stoppedReq)
+                            {
+                                _isCapturing = false;
+                                deferredStopSession = stoppedReq.SessionId;
+                            }
+                        }
+                    }
+
+                    if (deferredStopSession is { } missedSession)
+                    {
+                        UnexpectedStop?.Invoke(
+                            this,
+                            new AudioCaptureStopped(
+                                missedSession,
+                                new AppError(
+                                    AppErrorCode.AudioDeviceLost,
+                                    AppErrorStage.AudioCapture,
+                                    CanRetry: true)));
                     }
 
                     Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(recorder));
@@ -1449,7 +1473,9 @@ public sealed class WasapiAudioCapture :
                 _unexpectedStop = true;
                 _isCapturing = false;
                 drainToSignal = _warmDrainTcs;
-                if (_state == CaptureState.Capturing && _request is { } activeRequest)
+                if (!_suppressUnexpectedStopEvent &&
+                    _state == CaptureState.Capturing &&
+                    _request is { } activeRequest)
                 {
                     unexpectedSessionId = activeRequest.SessionId;
                 }
@@ -2001,6 +2027,7 @@ public sealed class WasapiAudioCapture :
             _clientRequestedStop = false;
             _backendStopped = false;
             _unexpectedStop = false;
+            _suppressUnexpectedStopEvent = false;
             _stallErrorCode = null;
             _isEndpointMuted = false;
             _warmGeneration++;

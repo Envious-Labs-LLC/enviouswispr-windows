@@ -91,7 +91,7 @@ public partial class App
         if (change.AffectsCapture &&
             change.Kind is AudioDeviceChangeKind.DefaultChanged or AudioDeviceChangeKind.Removed or AudioDeviceChangeKind.StateChanged)
         {
-            _ = HandleCaptureTopologyChangedAsync();
+            _ = Task.Run(HandleCaptureTopologyChangedAsync);
         }
     }
 

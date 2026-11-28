@@ -861,7 +861,7 @@ public sealed class WasapiAudioCaptureTests
     }
 
     [Fact]
-    public async Task WiredCaptureWithFirstPacketOrRecentWarmPacketDoesNotStallWatchdog()
+    public async Task WiredCaptureWithFirstPacketAfterWarmReuseDoesNotStallWatchdogWhileSilentWarmReuseStalls()
     {
         var clock = new Deterministic.ManualClock();
         var recorder = new FakeRecorderSession();
@@ -879,19 +879,58 @@ public sealed class WasapiAudioCaptureTests
         recorder.Emit(0.05f);
         await capture.StopAsync();
 
-        // Warm callback sets _lastWarmPacketTimestamp and seeds pre-roll; starting within 2s must skip stall watchdog.
+        // Warm callback seeds pre-roll; new take still arms watchdog until a live packet arrives for THIS take.
         recorder.Emit(0.15f);
         clock.Advance(TimeSpan.FromMilliseconds(500));
 
         var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
         Assert.True(started.Succeeded);
+        recorder.Emit(0.25f);
 
         clock.Advance(TimeSpan.FromMilliseconds(2000));
         Assert.Equal(0, Volatile.Read(ref unexpectedCalls));
 
         var result = await capture.StopAsync();
         Assert.Equal(AudioCaptureOutcome.Completed, result.Outcome);
-        Assert.Equal([0.15f], result.Samples.ToArray());
+        Assert.Equal([0.15f, 0.25f], result.Samples.ToArray());
+
+        // Now verify warm reuse that delivers zero live packets for the new take still triggers stall watchdog.
+        recorder.Emit(0.35f);
+        var stalledStart = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        Assert.True(stalledStart.Succeeded);
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(WasapiAudioCapture.WiredFirstPacketTimeout + TimeSpan.FromMilliseconds(5));
+        Assert.Equal(1, Volatile.Read(ref unexpectedCalls));
+    }
+
+    [Fact]
+    public async Task BluetoothFirstAttemptImmediateStopSuppressesUnexpectedStopAndRetriesCleanly()
+    {
+        var clock = new Deterministic.ManualClock();
+        var count = 0;
+        var factory = new FakeRecorderFactory(_ =>
+        {
+            count++;
+            return new FakeRecorderSession { InterruptWhenStarted = count == 1 };
+        });
+        await using var capture = new WasapiAudioCapture(
+            factory,
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => true);
+
+        var unexpectedCalls = 0;
+        capture.UnexpectedStop += (_, _) => Interlocked.Increment(ref unexpectedCalls);
+
+        var startTask = capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create(), IsBluetooth: true));
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        var started = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(started.Succeeded);
+        Assert.Equal(2, factory.CreateCount);
+        Assert.Equal(0, Volatile.Read(ref unexpectedCalls));
+        await capture.CancelAsync();
     }
 
     [Fact]

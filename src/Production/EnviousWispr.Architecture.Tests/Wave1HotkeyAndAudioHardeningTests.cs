@@ -70,7 +70,8 @@ public sealed class Wave1HotkeyAndAudioHardeningTests
     [Fact]
     public void PhysicalReconciliationPurgesOrphanedUnconsumedModifiersAndKeysWhilePreservingLiveHolds()
     {
-        var held = new HeldModifierKeys();
+        var clock = new Deterministic.ManualClock();
+        var held = new HeldModifierKeys(clock);
         var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
 
         held.Observe(LeftControl, isKeyDown: true, _ => false);
@@ -78,19 +79,40 @@ public sealed class Wave1HotkeyAndAudioHardeningTests
         tracker.Process(LetterC, isKeyDown: true, HotkeyModifiers.Control);
         Assert.True(tracker.HasHeldState);
 
-        // Negative guard: while GetAsyncKeyState says all tracked keys are still physically down, reconcile keeps them.
+        // Within 100ms grace period right after key-down, even false GetAsyncKeyState must NOT purge modifier.
+        clock.Advance(TimeSpan.FromMilliseconds(40));
+        Assert.Empty(held.Reconcile(_ => false, out _));
+
+        // Negative guard: while GetAsyncKeyState says all tracked keys are still physically down after grace, keep them.
+        clock.Advance(TimeSpan.FromMilliseconds(80));
         var noneMissingMods = held.Reconcile(_ => true, out _);
         Assert.Empty(noneMissingMods);
         tracker.ReconcileHeldKeys(_ => true);
         Assert.True(tracker.HasHeldState);
 
-        // Now simulate lost WM_KEYUP: only Shift remains down; Control and ordinary 'C' are physically up.
+        // Now simulate lost WM_KEYUP past grace period: only Shift remains down; Control and ordinary 'C' are physically up.
         var purgedModifiers = held.Reconcile(vk => vk == LeftShift, out var observedMods);
         Assert.Equal([LeftControl], purgedModifiers);
         Assert.Equal(HotkeyModifiers.Shift, observedMods);
 
         tracker.ReconcileHeldKeys(vk => vk == LeftShift);
         Assert.False(tracker.HasHeldState);
+    }
+
+    [Fact]
+    public void ResetHeldKeysCanPreserveActiveRecordingWhenKeybindCaptureBegins()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+        var pressed = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, pressed.Signal);
+
+        tracker.Process(LetterC, isKeyDown: true, HotkeyModifiers.None);
+        tracker.ResetHeldKeys(preserveActiveRecording: true);
+
+        // Orphaned non-recording state is cleared while active F8 recording still emits Released on key-up.
+        Assert.False(tracker.HasHeldState);
+        var released = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Released, released.Signal);
     }
 
     [Fact]

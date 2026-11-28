@@ -349,11 +349,15 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     public void SetCapturingKeybind(bool capturing) => _edgeTracker.SetCapturingKeybind(capturing);
 
-    /// <summary>Clears all held key and modifier tracking state (for suspend/lock/unlock/capture).</summary>
-    public void ResetHeldKeys()
+    /// <summary>Clears held key and modifier tracking state (for suspend/lock/unlock/capture).</summary>
+    public void ResetHeldKeys(bool preserveActiveRecording = false)
     {
-        _heldModifiers.Clear();
-        _edgeTracker.ResetHeldKeys();
+        if (!preserveActiveRecording)
+        {
+            _heldModifiers.Clear();
+        }
+
+        _edgeTracker.ResetHeldKeys(preserveActiveRecording);
         UpdateGestureTimer();
     }
 

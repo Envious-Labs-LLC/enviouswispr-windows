@@ -23,6 +23,8 @@ namespace EnviousWispr.Services.Input;
 /// </remarks>
 public sealed class HeldModifierKeys
 {
+    public static readonly TimeSpan ReconcileGracePeriod = TimeSpan.FromMilliseconds(100);
+
     private static readonly (uint Key, HotkeyModifiers Flag)[] Sided =
     [
         (0xA0, HotkeyModifiers.Shift),
@@ -35,8 +37,15 @@ public sealed class HeldModifierKeys
         (0x5C, HotkeyModifiers.Windows),
     ];
 
+    private readonly TimeProvider _timeProvider;
     private readonly Lock _sync = new();
     private readonly HashSet<uint> _down = [];
+    private readonly Dictionary<uint, long> _downTimestamps = [];
+
+    public HeldModifierKeys(TimeProvider? timeProvider = null)
+    {
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     /// <summary>True when at least one modifier key is currently tracked as physically down.</summary>
     public bool HasAny
@@ -56,12 +65,14 @@ public sealed class HeldModifierKeys
         lock (_sync)
         {
             _down.Clear();
+            _downTimestamps.Clear();
         }
     }
 
     /// <summary>
-    /// Removes any tracked modifier keys that <paramref name="stateSaysDown"/> reports as physically released,
-    /// returning the released virtual keys alongside the updated active modifier flags.
+    /// Removes any tracked modifier keys that <paramref name="stateSaysDown"/> reports as physically released
+    /// once <see cref="ReconcileGracePeriod"/> has elapsed since key-down, returning the released virtual
+    /// keys alongside the updated active modifier flags.
     /// </summary>
     public IReadOnlyList<uint> Reconcile(Func<uint, bool> stateSaysDown, out HotkeyModifiers observedModifiers)
     {
@@ -72,6 +83,12 @@ public sealed class HeldModifierKeys
             List<uint>? released = null;
             foreach (var key in _down)
             {
+                if (_downTimestamps.TryGetValue(key, out var downAt) &&
+                    _timeProvider.GetElapsedTime(downAt) < ReconcileGracePeriod)
+                {
+                    continue;
+                }
+
                 if (!stateSaysDown(key))
                 {
                     released ??= [];
@@ -84,6 +101,7 @@ public sealed class HeldModifierKeys
                 foreach (var key in released)
                 {
                     _down.Remove(key);
+                    _downTimestamps.Remove(key);
                 }
             }
 
@@ -106,11 +124,15 @@ public sealed class HeldModifierKeys
             {
                 if (isKeyDown)
                 {
-                    _down.Add(key);
+                    if (_down.Add(key))
+                    {
+                        _downTimestamps[key] = _timeProvider.GetTimestamp();
+                    }
                 }
                 else
                 {
                     _down.Remove(key);
+                    _downTimestamps.Remove(key);
                 }
             }
 
