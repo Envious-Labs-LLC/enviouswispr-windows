@@ -695,6 +695,176 @@ public sealed class Wave2RecoveryAndDeliveryTests
         Assert.Equal(secondId, kept.SessionId);
     }
 
+    [Fact]
+    public async Task Round2P1WriteFailureSettlesCompletionsDiscardRevertsHistoryAndHomeCopySurvives()
+    {
+        // 1. Failing underlying stream settles FlushAsync & MarkFinalizingAsync without hanging AND FlushAndFinalize catches cleanly.
+        using var temp = new TempFolder();
+        var spoolDir = Path.Combine(temp.Path, "fail-spools");
+        var failingStream = new FailingWriteStream(failOnFlushCount: 1);
+        var store = new RecoverySpoolStore(
+            spoolDir,
+            path => new WrappedFailingFileStream(path, failingStream));
+        var sessionId = DictationSessionId.Create();
+        var writer = await store.OpenSessionAsync(
+            new RecoverySpoolHeader(sessionId, 16_000, 1, "en", AutoLanguageDetection: false, DateTimeOffset.UtcNow),
+            canPersistRecovery: true);
+        Assert.NotNull(writer);
+
+        writer!.EnqueueSamples(CreateSineSamples(4_000, 0.25f));
+        await Assert.ThrowsAsync<IOException>(() => writer.MarkFinalizingAsync().WaitAsync(TestTimeout));
+        await Assert.ThrowsAsync<IOException>(() => writer.FlushAsync().WaitAsync(TestTimeout));
+        await writer.DisposeAsync().AsTask().WaitAsync(TestTimeout);
+
+        // Verify SessionPersistence.FlushAndFinalizeAudioSpoolAsync isolates write failure without crashing release.
+        var logger = new TestLogger();
+        var history = new GatedFakeHistoryStore();
+        var failPersistence = new SessionPersistence(
+            new InMemoryRecoveryTextStore(),
+            history,
+            logger,
+            TimeProvider.System,
+            () => HistoryPreferences.Default,
+            new NullPersistenceEffects(),
+            audioArchive: null,
+            recoverySpoolStore: store);
+        var id2 = DictationSessionId.Create();
+        failingStream.Reset(failOnFlushCount: 1);
+        await failPersistence.CommitOrOpenAudioSpoolAsync(id2, DictationPreferences.Default, canPersistRecovery: true);
+        await failPersistence.FlushAndFinalizeAudioSpoolAsync(id2).WaitAsync(TestTimeout);
+        Assert.Contains(AppEventCode.RecoveryTextUnavailable, logger.Codes);
+
+        // 2. Discard during an in-flight History save reverts/suppresses the committed entry & deletes the spool.
+        var replayDir = Path.Combine(temp.Path, "discard-race");
+        var replayStore = new RecoverySpoolStore(replayDir);
+        var discardId = await WriteOrphanSpoolAsync(replayStore, sampleCount: 16_000, "en");
+        var gatedHistory = new GatedFakeHistoryStore();
+        var racePersistence = CreatePersistence(gatedHistory, logger, temp.Path, replayStore);
+        var fastEngine = new CountingEngine("raced transcript");
+        var finalizer = new TranscriptFinalizer(
+            new DeterministicTextPipeline(),
+            new PolishExecutor(new NullAdmission(), new NullFinalizationEffects(), () => []),
+            new NullFinalizationEffects(),
+            new SnippetExpansionStage(new SnippetExpander(), TimeProvider.System, () => System.Globalization.CultureInfo.InvariantCulture, _ => Task.FromResult<string?>(null), TimeSpan.FromSeconds(1)));
+        var discardCoordinator = new StartupRecoveryReplayCoordinator(
+            new CrossProcessSimSpoolStore(replayStore.DirectoryPath),
+            () => fastEngine,
+            finalizer,
+            racePersistence,
+            () => new FinalizationOptions([], DeterministicTextOptions.From(DictationPreferences.Default), SnippetVocabulary.Empty, null),
+            () => HistoryPreferences.Default,
+            () => DictationPreferences.Default,
+            logger,
+            TimeProvider.System,
+            RecoveryReplayStatusCallbacks.FromStatusSink(_ => { }),
+            () => false,
+            RecoverySpoolConstants.MinimumSpokenSamples);
+
+        gatedHistory.BlockNextAdd();
+        var replayTask = discardCoordinator.ReplayPendingSpoolsAsync();
+        await gatedHistory.AddEntered.Task.WaitAsync(TestTimeout);
+        Assert.True(await discardCoordinator.DiscardActiveOrNextAsync().WaitAsync(TestTimeout));
+        gatedHistory.ReleaseNextAdd();
+
+        var discardSummary = await replayTask.WaitAsync(TestTimeout);
+        Assert.Equal(1, discardSummary.DiscardedCount);
+        Assert.Equal(0, discardSummary.SavedCount);
+        Assert.Empty(gatedHistory.Added);
+        Assert.Empty(new RecoverySpoolStore(replayDir).ListOrphanSpools());
+        _ = discardId;
+
+        // 3. When History is disabled AND Home already holds pending recovery, replay preserves BOTH Home copy and orphan spool.
+        var homeDir = Path.Combine(temp.Path, "home-preserve");
+        var homeStore = new RecoverySpoolStore(homeDir);
+        var homeOrphanId = await WriteOrphanSpoolAsync(homeStore, sampleCount: 16_000, "en");
+        var recoveryTextStore = new InMemoryRecoveryTextStore();
+        var priorHome = new RecoveryTextRecord(DictationSessionId.Create(), DateTimeOffset.UtcNow, "earlier unsaved dictation");
+        await recoveryTextStore.SaveAsync(priorHome);
+        var disabledHistory = new GatedFakeHistoryStore();
+        var homePersistence = new SessionPersistence(
+            recoveryTextStore,
+            disabledHistory,
+            logger,
+            TimeProvider.System,
+            () => HistoryPreferences.Default with { IsEnabled = false },
+            new NullPersistenceEffects(),
+            audioArchive: null,
+            recoverySpoolStore: homeStore);
+        homePersistence.AdoptStartupRecovery(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, priorHome));
+
+        var homeCoordinator = new StartupRecoveryReplayCoordinator(
+            new CrossProcessSimSpoolStore(homeStore.DirectoryPath),
+            () => fastEngine,
+            finalizer,
+            homePersistence,
+            () => new FinalizationOptions([], DeterministicTextOptions.From(DictationPreferences.Default), SnippetVocabulary.Empty, null),
+            () => HistoryPreferences.Default with { IsEnabled = false },
+            () => DictationPreferences.Default,
+            logger,
+            TimeProvider.System,
+            RecoveryReplayStatusCallbacks.FromStatusSink(_ => { }),
+            () => false,
+            RecoverySpoolConstants.MinimumSpokenSamples);
+        var homeSummary = await homeCoordinator.ReplayPendingSpoolsAsync().WaitAsync(TestTimeout);
+        Assert.Equal(0, homeSummary.SavedCount);
+        Assert.Equal("earlier unsaved dictation", homePersistence.PendingRecord?.Text);
+        Assert.Equal("earlier unsaved dictation", (await recoveryTextStore.LoadAsync()).Record?.Text);
+        var untouched = Assert.Single(new RecoverySpoolStore(homeDir).ListOrphanSpools());
+        Assert.Equal(homeOrphanId, untouched.SessionId);
+    }
+
+    private sealed class FailingWriteStream(int failOnFlushCount) : Stream
+    {
+        private int _flushCalls;
+        private int _failAt = failOnFlushCount;
+        public void Reset(int failOnFlushCount)
+        {
+            _flushCalls = 0;
+            _failAt = failOnFlushCount;
+        }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => 0;
+        public override long Position { get => 0; set { } }
+        public override void Flush()
+        {
+            if (Interlocked.Increment(ref _flushCalls) > _failAt)
+            {
+                throw new IOException("Simulated spool write failure.");
+            }
+        }
+        public override int Read(byte[] buffer, int offset, int count) => 0;
+        public override long Seek(long offset, SeekOrigin origin) => 0;
+        public override void SetLength(long value) { }
+        public override void Write(byte[] buffer, int offset, int count) { }
+    }
+
+    private sealed class WrappedFailingFileStream(string path, FailingWriteStream faultOracle) : Stream
+    {
+        private readonly MemoryStream _inner = new();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => _inner.Position = value; }
+        public override void Flush() => faultOracle.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => 0;
+        public override long Seek(long offset, SeekOrigin origin) => 0;
+        public override void SetLength(long value) => _inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _ = path;
+                _inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
     private static TextCommitRequest DummyCommitRequest(TextTargetKind targetKind, bool isScreenDerived) => new(
         new ProcessedText(DictationSessionId.Create(), "dictated words"),
         new ProcessedText(DictationSessionId.Create(), "dictated words"),
@@ -1146,7 +1316,15 @@ public sealed class Wave2RecoveryAndDeliveryTests
         }
 
         public Task<HistoryOperationResult> KeepAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(new HistoryOperationResult(true));
-        public Task<HistoryOperationResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(new HistoryOperationResult(true));
+        public Task<HistoryOperationResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+        {
+            lock (Added)
+            {
+                Added.RemoveAll(e => e.Id == id);
+            }
+
+            return Task.FromResult(new HistoryOperationResult(true));
+        }
         public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) => Task.FromResult(new HistoryOperationResult(true));
     }
 

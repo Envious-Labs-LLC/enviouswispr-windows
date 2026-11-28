@@ -329,7 +329,21 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
                         continue;
                     }
 
-                    // NEVER auto-paste recovered startup spools: store in History (or Home recovery if History is off).
+                    if (WasDiscarded(orphan.FilePath))
+                    {
+                        await _spoolStore.DeleteFileAsync(orphan.FilePath).ConfigureAwait(false);
+                        discarded++;
+                        continue;
+                    }
+
+                    var historyEnabled = _historyPreferencesAccessor().IsEnabled;
+                    if (!historyEnabled && _persistence.HasPendingRecovery)
+                    {
+                        // Preserve any existing pending Home recovery copy without deleting the encrypted spool.
+                        break;
+                    }
+
+                    // NEVER auto-paste recovered startup spools: store in History (or empty Home recovery if History is off).
                     var language = DeliveryLanguagePolicy.For(transcript) ?? read.Header.LanguageCode;
                     var savedEntryId = await _persistence.SaveHistoryAsync(
                         transcript,
@@ -339,10 +353,23 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
                         languageCode: language,
                         polishProviderId: finalized.WasPolished ? opts.Polish?.Provider.ProviderId : null,
                         polishModelId: finalized.WasPolished ? opts.Polish?.ModelId : null,
-                        audio: audio).ConfigureAwait(false);
+                        audio: audio,
+                        cancellationToken: itemCts.Token).ConfigureAwait(false);
+
+                    if (WasDiscarded(orphan.FilePath))
+                    {
+                        if (savedEntryId is { } committedId)
+                        {
+                            await _persistence.DeleteHistoryEntryAsync(committedId).ConfigureAwait(false);
+                        }
+
+                        await _spoolStore.DeleteFileAsync(orphan.FilePath).ConfigureAwait(false);
+                        discarded++;
+                        continue;
+                    }
 
                     var persisted = savedEntryId is not null;
-                    if (!persisted && !_historyPreferencesAccessor().IsEnabled)
+                    if (!persisted && !_historyPreferencesAccessor().IsEnabled && !_persistence.HasPendingRecovery)
                     {
                         if (await _persistence.TrySaveRecoveryTextAsync(finalized.Processed.Output, CancellationToken.None).ConfigureAwait(false))
                         {

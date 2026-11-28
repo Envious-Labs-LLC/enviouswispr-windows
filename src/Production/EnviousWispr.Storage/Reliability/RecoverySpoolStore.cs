@@ -41,6 +41,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
 
     private readonly string _directoryPath;
     private readonly Func<string, long?>? _availableDiskBytesProvider;
+    private readonly Func<string, Stream>? _openWriteStreamForTesting;
     private readonly ConcurrentDictionary<string, byte> _inProcessOwnedFiles = new(StringComparer.OrdinalIgnoreCase);
 
     public RecoverySpoolStore(
@@ -51,6 +52,14 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             ? DefaultDirectoryPath()
             : Path.GetFullPath(directoryPath);
         _availableDiskBytesProvider = availableDiskBytesProvider;
+    }
+
+    internal RecoverySpoolStore(
+        string? directoryPath,
+        Func<string, Stream> openWriteStreamForTesting)
+        : this(directoryPath, availableDiskBytesProvider: null)
+    {
+        _openWriteStreamForTesting = openWriteStreamForTesting;
     }
 
     public string DirectoryPath => _directoryPath;
@@ -699,7 +708,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         private readonly RecoverySpoolStore _owner;
         private readonly RecoverySpoolHeader _header;
         private readonly byte[] _aesKey;
-        private readonly FileStream _stream;
+        private readonly Stream _stream;
         private readonly AesGcm _aesGcm;
         private readonly Channel<WriterCommand> _commands;
         private readonly Task _writerLoop;
@@ -707,6 +716,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         private long _samplesEnqueued;
         private long _samplesWritten;
         private uint _chunkIndex;
+        private Exception? _failure;
         private bool _stopped;
         private bool _deleted;
         private bool _disposed;
@@ -716,7 +726,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             RecoverySpoolHeader header,
             string filePath,
             byte[] aesKey,
-            FileStream stream)
+            Stream stream)
         {
             _owner = owner;
             _header = header;
@@ -746,16 +756,17 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             byte[] wrappedKey,
             CancellationToken cancellationToken)
         {
-            FileStream? stream = null;
+            Stream? stream = null;
             try
             {
-                stream = new FileStream(
-                    filePath,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.ReadWrite,
-                    bufferSize: 64 * 1024,
-                    FileOptions.None);
+                stream = owner._openWriteStreamForTesting?.Invoke(filePath)
+                    ?? new FileStream(
+                        filePath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.ReadWrite,
+                        bufferSize: 64 * 1024,
+                        FileOptions.None);
 
                 using var aes = new AesGcm(aesKey, TagLengthBytes);
                 var headerPlain = JsonSerializer.SerializeToUtf8Bytes(header, JsonOptions);
@@ -791,7 +802,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
                 headerCipher.CopyTo(prelude.AsSpan(offset));
 
                 await stream.WriteAsync(prelude, cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
+                FlushStream(stream);
 
                 var writer = new EncryptedSpoolWriter(owner, header, filePath, aesKey, stream);
                 stream = null;
@@ -822,7 +833,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
 
             lock (_stateLock)
             {
-                if (_stopped || _disposed)
+                if (_failure is not null || _stopped || _disposed)
                 {
                     return;
                 }
@@ -852,6 +863,11 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_stateLock)
             {
+                if (_failure is { } failure)
+                {
+                    return Task.FromException(failure);
+                }
+
                 if (_stopped || _disposed)
                 {
                     return Task.CompletedTask;
@@ -868,6 +884,11 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             TaskCompletionSource? completion = null;
             lock (_stateLock)
             {
+                if (_failure is { } failure)
+                {
+                    throw failure;
+                }
+
                 if (_disposed)
                 {
                     return;
@@ -960,6 +981,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             var nonce = new byte[NonceLengthBytes];
             var tag = new byte[TagLengthBytes];
 
+            TaskCompletionSource? activeCompletion = null;
             try
             {
                 while (await _commands.Reader.WaitToReadAsync().ConfigureAwait(false))
@@ -1008,22 +1030,30 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
                                 return;
                             }
 
+                            activeCompletion = pendingControl.Completion;
                             WriteAudioBatch(batch, totalSamples, framePrefix, nonce, tag, aad);
-                            _stream.Flush(flushToDisk: true);
+                            FlushStream(_stream);
 
                             if (sawControl)
                             {
                                 HandleControlCommand(pendingControl, framePrefix, nonce, tag, aad);
+                                activeCompletion = null;
                                 if (pendingControl.Kind == CommandKind.MarkFinalizing)
                                 {
                                     return;
                                 }
                             }
+                            else
+                            {
+                                activeCompletion = null;
+                            }
 
                             continue;
                         }
 
+                        activeCompletion = command.Completion;
                         HandleControlCommand(command, framePrefix, nonce, tag, aad);
+                        activeCompletion = null;
                         if (command.Kind == CommandKind.MarkFinalizing)
                         {
                             return;
@@ -1033,7 +1063,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or CryptographicException)
             {
-                DrainFailedCommands(ex);
+                DrainFailedCommands(ex, activeCompletion);
             }
             finally
             {
@@ -1053,14 +1083,26 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         {
             if (command.Kind == CommandKind.Flush)
             {
-                _stream.Flush(flushToDisk: true);
+                FlushStream(_stream);
                 command.Completion?.TrySetResult();
             }
             else if (command.Kind == CommandKind.MarkFinalizing)
             {
                 WriteControlFrame(FrameTypeFinalizing, framePrefix, nonce, tag, aad);
-                _stream.Flush(flushToDisk: true);
+                FlushStream(_stream);
                 command.Completion?.TrySetResult();
+            }
+        }
+
+        private static void FlushStream(Stream stream)
+        {
+            if (stream is FileStream fs)
+            {
+                fs.Flush(flushToDisk: true);
+            }
+            else
+            {
+                stream.Flush();
             }
         }
 
@@ -1078,8 +1120,16 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             }
         }
 
-        private void DrainFailedCommands(Exception exception)
+        private void DrainFailedCommands(Exception exception, TaskCompletionSource? activeCompletion)
         {
+            lock (_stateLock)
+            {
+                _failure ??= exception;
+                _stopped = true;
+                _commands.Writer.TryComplete();
+            }
+
+            activeCompletion?.TrySetException(exception);
             while (_commands.Reader.TryRead(out var leftover))
             {
                 if (leftover.Samples is { } arr)

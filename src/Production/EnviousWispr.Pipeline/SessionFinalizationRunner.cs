@@ -526,7 +526,8 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     languageCode: DeliveryLanguagePolicy.For(transcript),
                     polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
                     polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
-                    audio: recoveryOnly ? null : audio)
+                    audio: recoveryOnly ? null : audio,
+                    cancellationToken: CancellationToken.None)
                 .ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(processed.Output.Text))
             {

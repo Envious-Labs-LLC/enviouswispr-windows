@@ -334,10 +334,12 @@ public sealed class SessionPersistence : ISessionRecoveryState
         string? languageCode = null,
         string? polishProviderId = null,
         string? polishModelId = null,
-        CapturedAudio? audio = null)
+        CapturedAudio? audio = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(transcript);
         ArgumentNullException.ThrowIfNull(intent);
+        cancellationToken.ThrowIfCancellationRequested();
         var preferences = _historyPreferences();
         if ((!preferences.IsEnabled && !intent.Force) || string.IsNullOrWhiteSpace(text))
         {
@@ -353,7 +355,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
         {
             archivedAudio = await Task.Run(
                     () => _audioArchive.SaveForEntry(entryId, audio),
-                    CancellationToken.None)
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -371,10 +373,20 @@ public sealed class SessionPersistence : ISessionRecoveryState
             PolishModelId: polishModelId,
             AudioFileName: archivedAudio?.FileName,
             AudioDurationMs: archivedAudio?.DurationMs);
-        var result = await _history.AddAsync(
-            entry,
-            preferences.RetentionDays,
-            _clock.GetUtcNow()).ConfigureAwait(false);
+        HistoryOperationResult result;
+        try
+        {
+            result = await _history.AddAsync(
+                entry,
+                preferences.RetentionDays,
+                _clock.GetUtcNow(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _audioArchive?.DeleteFile(archivedAudio?.FileName);
+            throw;
+        }
         if (!result.Succeeded)
         {
             _audioArchive?.DeleteFile(archivedAudio?.FileName);
@@ -388,6 +400,21 @@ public sealed class SessionPersistence : ISessionRecoveryState
 
         _effects.NotifyHistoryChanged();
         return entry.Id;
+    }
+
+    /// <summary>Deletes a persisted History entry (e.g., if a background replay item was discarded mid-commit).</summary>
+    public async Task DeleteHistoryEntryAsync(Guid entryId)
+    {
+        if (entryId == Guid.Empty)
+        {
+            return;
+        }
+
+        var deleted = await _history.DeleteAsync(entryId, CancellationToken.None).ConfigureAwait(false);
+        if (deleted.Succeeded)
+        {
+            _effects.NotifyHistoryChanged();
+        }
     }
 
     public bool IsExitPreservationActive => _exitPreservationMode;
@@ -524,6 +551,18 @@ public sealed class SessionPersistence : ISessionRecoveryState
             await writer.MarkFinalizingAsync(cancellationToken).ConfigureAwait(false);
             await UpdateRunStateSpoolAsync(sessionId.Value, RecoverySpoolStatus.Finalizing, CancellationToken.None)
                 .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException or UnauthorizedAccessException)
+        {
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.RecoveryTextUnavailable,
+                AppFailureCategory.Recovery,
+                ErrorCode: AppErrorCode.StorageUnavailable));
         }
         finally
         {
