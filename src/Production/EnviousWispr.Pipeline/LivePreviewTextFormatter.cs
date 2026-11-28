@@ -42,7 +42,7 @@ public static class LivePreviewTextFormatter
         }
 
         var activeCustomWords = wordCorrectionEnabled && customWords is { Count: > 0 }
-            ? customWords
+            ? (excludeLearnedAliases ? customWords : ExcludeBuiltinCheckerAliases(customWords))
             : [];
         var activePackWords = wordCorrectionEnabled
             ? VocabularyPacks.ResolveEntries(enabledVocabularyPackIds)
@@ -77,6 +77,46 @@ public static class LivePreviewTextFormatter
         }
 
         return bounded;
+    }
+
+    private static IReadOnlyList<CustomWordEntry> ExcludeBuiltinCheckerAliases(IReadOnlyList<CustomWordEntry> entries)
+    {
+        var hasBuiltinChecker = false;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (entries[i].Origin == CustomWordOrigin.Builtin && entries[i].HasCheckerAliases)
+            {
+                hasBuiltinChecker = true;
+                break;
+            }
+        }
+
+        if (!hasBuiltinChecker)
+        {
+            return entries;
+        }
+
+        var filtered = new List<CustomWordEntry>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (entry.Origin != CustomWordOrigin.Builtin || !entry.HasCheckerAliases)
+            {
+                filtered.Add(entry);
+                continue;
+            }
+
+            var checkerSet = entry.EffectiveLearnedAliases().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var remainingAliases = entry.Aliases.Where(alias => !checkerSet.Contains(alias)).ToArray();
+            filtered.Add(new CustomWordEntry(
+                remainingAliases,
+                entry.Replacement,
+                entry.Strictness,
+                entry.Category,
+                entry.Id,
+                origin: entry.Origin));
+        }
+
+        return filtered.ToArray();
     }
 
     public static bool IsEnglishPreview(

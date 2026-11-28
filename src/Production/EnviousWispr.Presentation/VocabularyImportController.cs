@@ -74,17 +74,22 @@ public sealed class VocabularyImportController
         return _vocabulary.ChangeAsync(data =>
         {
             var effective = data.EffectiveCustomWords();
+            ReusableUserData? projectedData = null;
             var (next, outcome) = CustomWordAppImport.Commit(
                 effective,
                 baselineCopy,
                 entriesCopy,
-                currentStoredCount: data.CustomWords.Count);
+                projectStoredCount: additions =>
+                {
+                    projectedData = ApplyAdditionsWithBuiltinAwareness(data, additions);
+                    return projectedData.CustomWords.Count;
+                });
             if (next is null)
             {
                 return (data, outcome);
             }
 
-            var updatedData = ApplyAdditionsWithBuiltinAwareness(data, outcome.Plan.Additions);
+            var updatedData = projectedData ?? ApplyAdditionsWithBuiltinAwareness(data, outcome.Plan.Additions);
             return (updatedData, outcome with { Current = updatedData.EffectiveCustomWords() });
         });
     }
@@ -195,7 +200,7 @@ public sealed class VocabularyImportController
         }
 
         return data.WithCustomWordsAndDeletedBuiltins(
-            CustomWordEntry.NormalizeLegacyEntries(nextUserWords),
+            nextUserWords.ToArray(),
             nextDeleted);
     }
 }

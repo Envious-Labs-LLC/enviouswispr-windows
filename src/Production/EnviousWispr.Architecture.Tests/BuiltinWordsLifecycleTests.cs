@@ -347,6 +347,41 @@ public sealed class BuiltinWordsLifecycleTests
         Assert.Contains(settings.Current.UserData.CustomWords, e => e.Replacement == "NewWord");
     }
 
+    [Fact]
+    public void EffectiveCustomWordsPreservesSnapshotReferenceAcrossRepeatedReads()
+    {
+        var data = AppSettings.FreshInstall.UserData;
+        Assert.Same(data.EffectiveCustomWords(), data.EffectiveCustomWords());
+    }
+
+    [Fact]
+    public async Task CommitFromAppChecksCapacityAfterCoalescingMultipleAliasesOntoOneBuiltin()
+    {
+        var existingUserWords = Enumerable.Range(0, AppSettingsValidator.MaximumCustomWords - 1)
+            .Select(i => new CustomWordEntry($"spoken{i}", $"Canonical{i}"))
+            .ToArray();
+        var seed = AppSettings.FreshInstall with
+        {
+            UserData = AppSettings.FreshInstall.UserData.WithCustomWords(existingUserWords),
+        };
+        var store = new RecordingStore();
+        var settings = new SettingsPresenter(store, seed);
+        var vocab = new VocabularyPresenter(settings);
+        var importer = new VocabularyImportController(vocab);
+
+        var baseline = settings.Current.UserData.EffectiveCustomWords();
+        CustomWordEntry[] additions =
+        [
+            new("git hub extra", "GitHub"),
+            new("git hub second", "GitHub"),
+        ];
+
+        var commit = await importer.CommitFromAppAsync(baseline, additions).WaitAsync(Patience);
+        Assert.True(commit.Saved);
+        Assert.Equal(WordImportCommitKind.Committed, commit.Value!.Kind);
+        Assert.Equal(AppSettingsValidator.MaximumCustomWords, settings.Current.UserData.CustomWords.Count);
+    }
+
     private static (VocabularyPresenter Vocab, SettingsPresenter Settings, RecordingStore Store) Build()
     {
         var store = new RecordingStore();

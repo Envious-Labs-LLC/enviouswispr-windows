@@ -1,4 +1,6 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing;
 using EnviousWispr.PostProcessing.Learning;
 
@@ -226,5 +228,18 @@ public sealed class BuiltinDictionaryCorrectionTests
         Assert.Equal("Claude", claudeCandidate.Canonical);
         Assert.Equal(["clod", "clawed"], claudeCandidate.ObservedMisspellings);
         Assert.Single(Shipped, entry => entry.HasCheckerAliases);
+    }
+
+    [Fact]
+    public void LivePreviewExcludesBuiltinCheckerOnlyAliasesWhenFixLearnedWordsEnabled()
+    {
+        var preview = LivePreviewTextFormatter.Format(
+            "a clod of earth and envious whisper",
+            wordCorrectionEnabled: true,
+            BuiltinWords.Merge([], []),
+            EnglishSpelling.American,
+            excludeLearnedAliases: false);
+
+        Assert.Equal("a clod of earth and EnviousWispr", preview);
     }
 }

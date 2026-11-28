@@ -549,9 +549,20 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// <summary>Stable IDs of shipped built-in words the user explicitly deleted so they never resurface.</summary>
     public IReadOnlyList<string> DeletedBuiltinWordIds { get; }
 
+    private IReadOnlyList<CustomWordEntry>? _effectiveCustomWords;
+
     /// <summary>Returns the live two-tier dictionary: active shipped built-ins plus user-authored words and overrides.</summary>
-    public IReadOnlyList<CustomWordEntry> EffectiveCustomWords() =>
-        BuiltinWords.Merge(CustomWords, DeletedBuiltinWordIds);
+    public IReadOnlyList<CustomWordEntry> EffectiveCustomWords()
+    {
+        var cached = Volatile.Read(ref _effectiveCustomWords);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        var computed = BuiltinWords.Merge(CustomWords, DeletedBuiltinWordIds);
+        return Interlocked.CompareExchange(ref _effectiveCustomWords, computed, null) ?? computed;
+    }
 
     /// <summary>The same data with other words, keeping the snippets, keyword, packs, seeding flag, and deleted built-in tombstones.</summary>
     public ReusableUserData WithCustomWords(IReadOnlyList<CustomWordEntry> customWords) =>
