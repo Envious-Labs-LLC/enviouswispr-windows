@@ -31,7 +31,7 @@ public static class LearnedWordCandidates
         var result = new List<LearnedWord>();
         foreach (var entry in customWords)
         {
-            if (entry is null || !entry.IsAutoLearned || string.IsNullOrWhiteSpace(entry.Replacement))
+            if (entry is null || !entry.HasCheckerAliases || string.IsNullOrWhiteSpace(entry.Replacement))
             {
                 continue;
             }

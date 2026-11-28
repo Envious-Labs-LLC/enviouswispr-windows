@@ -86,7 +86,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var existing = _settings.UserData.CustomWords
+        var existing = _settings.UserData.EffectiveCustomWords()
             .Where(entry => string.Equals(entry.Replacement, term, StringComparison.OrdinalIgnoreCase))
             .Select(entry => entry.SpokenForm)
             .ToArray();
@@ -310,7 +310,9 @@ public sealed partial class MainWindow
     internal bool IsClosing => _session.Closing;
 
     internal IReadOnlyList<CustomWordEntry> CurrentCustomWords =>
-        _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
+        _settings?.UserData?.EffectiveCustomWords() ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
+
+    internal int CurrentUserWordCount => _settings?.UserData?.CustomWords.Count ?? 0;
 
     /// <summary>Removes every selected word, asking first when it is more than one.</summary>
     /// <remarks>
@@ -607,6 +609,15 @@ public sealed partial class MainWindow
 
     internal async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_settings.UserData.CustomWords.Count == 0)
+        {
+            ShowMessage(
+                "No personal words to export",
+                "Built-in words are already included automatically. Add or edit a word first to export your own list.",
+                InfoBarSeverity.Informational);
+            return;
+        }
+
         var picker = new FileSavePicker
         {
             SuggestedFileName = "EnviousWispr-words",

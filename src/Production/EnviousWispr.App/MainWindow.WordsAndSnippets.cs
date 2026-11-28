@@ -558,7 +558,7 @@ public sealed partial class MainWindow
                 }
 
                 PublishSettings();
-                if (existing is { LearnedAliases.Count: > 0 })
+                if (existing is { IsAutoLearned: true, LearnedAliases.Count: > 0 })
                 {
                     var remainingAliases = aliases.ToHashSet(StringComparer.OrdinalIgnoreCase);
                     var removedLearned = existing.LearnedAliases

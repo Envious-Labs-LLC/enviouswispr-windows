@@ -125,7 +125,7 @@ public static partial class CustomWordCorrector
         if (index.HasPhrases)
         {
             tokens = WordTokenRegex().Matches(text).ToArray();
-            proposals = PhraseProposals(tokens, index, claimed);
+            proposals = PhraseProposals(text, tokens, index, claimed);
         }
         else
         {
@@ -299,6 +299,7 @@ public static partial class CustomWordCorrector
 
     /// <summary>Finds runs of words close enough to a custom phrase to be that phrase.</summary>
     private static List<Proposal> PhraseProposals(
+        string text,
         Match[] tokens,
         CompiledWordIndex index,
         List<Span> claimed)
@@ -314,7 +315,7 @@ public static partial class CustomWordCorrector
             var settled = false;
             for (var run = Math.Min(longest, tokens.Length - wordIndex); run >= 2 && !settled; run--)
             {
-                if (!Reachable(index, claimed, tokens, wordIndex, run, out var rivals, out var exactMap, out var here))
+                if (!Reachable(text, index, claimed, tokens, wordIndex, run, out var rivals, out var exactMap, out var here))
                 {
                     continue;
                 }
@@ -341,7 +342,7 @@ public static partial class CustomWordCorrector
 
             for (var run = Math.Min(longest, tokens.Length - wordIndex); run >= 2; run--)
             {
-                if (!Reachable(index, claimed, tokens, wordIndex, run, out var rivals, out _, out var found) ||
+                if (!Reachable(text, index, claimed, tokens, wordIndex, run, out var rivals, out _, out var found) ||
                     rivals.Length == 0)
                 {
                     continue;
@@ -428,6 +429,14 @@ public static partial class CustomWordCorrector
                     continue;
                 }
 
+                // Inflected English phrases (e.g. "envious whispering" vs alias "envious whisper")
+                // are not mishearings; checked after ambiguity so the excluded candidate still competes
+                // for the margin against other rivals (matching macOS #3339).
+                if (IsInflection(phraseLower, best.SurfaceLower))
+                {
+                    continue;
+                }
+
                 claimed.Add(new Span(start, length));
                 proposals.Add(new Proposal(start, length, best.Replacement));
                 wordIndex += run - 1;
@@ -438,7 +447,53 @@ public static partial class CustomWordCorrector
         return proposals;
     }
 
+    private static readonly string[] InflectionEndings = ["ing", "ers", "er", "ed", "es", "s"];
+
+    internal static bool IsInflection(string heardPhraseLower, string candidateSurfaceLower)
+    {
+        var heardTokens = heardPhraseLower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var knownTokens = candidateSurfaceLower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (heardTokens.Length != knownTokens.Length ||
+            heardTokens.SequenceEqual(knownTokens, StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        var inflected = 0;
+        for (var i = 0; i < heardTokens.Length; i++)
+        {
+            var heard = heardTokens[i];
+            var known = knownTokens[i];
+            if (string.Equals(heard, known, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var matchedEnding = false;
+            foreach (var ending in InflectionEndings)
+            {
+                if (heard.Length == known.Length + ending.Length &&
+                    heard.StartsWith(known, StringComparison.Ordinal) &&
+                    heard.EndsWith(ending, StringComparison.Ordinal))
+                {
+                    matchedEnding = true;
+                    break;
+                }
+            }
+
+            if (!matchedEnding)
+            {
+                return false;
+            }
+
+            inflected++;
+        }
+
+        return inflected == 1;
+    }
+
     private static bool Reachable(
+        string text,
         CompiledWordIndex index,
         List<Span> claimed,
         Match[] tokens,
@@ -462,6 +517,21 @@ public static partial class CustomWordCorrector
         if (IsClaimed(claimed, start, length))
         {
             return false;
+        }
+
+        // Never join words across punctuation or line breaks (#3893): "open. AI" must not become "OpenAI".
+        for (var w = 0; w < run - 1; w++)
+        {
+            var gapStart = slice[w].Index + slice[w].Length;
+            var gapEnd = slice[w + 1].Index;
+            for (var pos = gapStart; pos < gapEnd; pos++)
+            {
+                var ch = text[pos];
+                if (ch != ' ' && ch != '\t')
+                {
+                    return false;
+                }
+            }
         }
 
         var words = new string[run];
@@ -784,7 +854,7 @@ public static partial class CustomWordCorrector
         HashSet<string>? reserved = null;
         foreach (var entry in entries)
         {
-            if (entry is null || !IsUsable(entry) || !entry.IsAutoLearned)
+            if (entry is null || !IsUsable(entry) || !entry.HasCheckerAliases)
             {
                 continue;
             }
@@ -1230,6 +1300,7 @@ public static partial class CustomWordCorrector
             var runes = TextSimilarity.ToRuneArray(surfaceLower);
             return new CompiledCandidate(
                 candidate.Surface,
+                surfaceLower,
                 candidate.Replacement,
                 candidate.Strictness,
                 runes,
@@ -1418,6 +1489,7 @@ public static partial class CustomWordCorrector
 
     private sealed record CompiledCandidate(
         string Surface,
+        string SurfaceLower,
         string Replacement,
         MatchStrictness Strictness,
         Rune[] SurfaceRunes,

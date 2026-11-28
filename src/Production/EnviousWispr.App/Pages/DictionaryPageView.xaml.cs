@@ -125,7 +125,7 @@ public sealed partial class DictionaryPageView : UserControl
                 selectedWords > 1 ? $"{selectedWords} selected" : string.Empty,
                 selectedWords > 1 ? Visibility.Visible : Visibility.Collapsed);
 
-            ExportWordsButton.IsEnabled = totalWordCount > 0;
+            ExportWordsButton.IsEnabled = Host.CurrentUserWordCount > 0;
         }
     }
 
@@ -425,10 +425,14 @@ public sealed partial class DictionaryPageView : UserControl
         }
         else
         {
-            allRows = new DictionaryWordRow[allWords.Count];
-            for (var i = 0; i < allWords.Count; i++)
+            var sorted = allWords
+                .OrderBy(entry => entry.Replacement, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(entry => entry.Id, StringComparer.Ordinal)
+                .ToArray();
+            allRows = new DictionaryWordRow[sorted.Length];
+            for (var i = 0; i < sorted.Length; i++)
             {
-                allRows[i] = new DictionaryWordRow(allWords[i]);
+                allRows[i] = new DictionaryWordRow(sorted[i]);
             }
 
             nextCache = (allWords, allRows);
@@ -452,21 +456,17 @@ public sealed partial class DictionaryPageView : UserControl
             return (allRows, nextCache);
         }
 
-        var byEntry = new Dictionary<CustomWordEntry, DictionaryWordRow>(allRows.Length, ReferenceEqualityComparer.Instance);
+        var matchingSet = new HashSet<CustomWordEntry>(matching, ReferenceEqualityComparer.Instance);
+        var result = new List<DictionaryWordRow>(matching.Count);
         for (var i = 0; i < allRows.Length; i++)
         {
-            byEntry[allRows[i].Entry] = allRows[i];
+            if (matchingSet.Contains(allRows[i].Entry))
+            {
+                result.Add(allRows[i]);
+            }
         }
 
-        var result = new DictionaryWordRow[matching.Count];
-        for (var i = 0; i < matching.Count; i++)
-        {
-            result[i] = byEntry.TryGetValue(matching[i], out var row)
-                ? row
-                : new DictionaryWordRow(matching[i]);
-        }
-
-        return (result, nextCache);
+        return (result.ToArray(), nextCache);
     }
 
     private void ApplyFilteredDictionaryRows(DictionaryWordRow[] rows, int totalCount)

@@ -341,10 +341,10 @@ public sealed class WordImportFromAppsTests : IDisposable
     public async Task ACommitAddsTheNewPairsInOneWriteAndLeavesConflictsForThePerson()
     {
         var existing = new[] { new CustomWordEntry("anthropic", "Anthropic Inc") };
-        var (controller, store) = Build(existing);
+        var (controller, store, baseline) = Build(existing);
 
         var result = await controller.CommitFromAppAsync(
-            existing,
+            baseline,
             [new CustomWordEntry("anthropic", "Anthropic"), new CustomWordEntry("zed", "Zed")]).WaitAsync(Patience);
 
         Assert.True(result.Saved);
@@ -359,14 +359,14 @@ public sealed class WordImportFromAppsTests : IDisposable
     [Fact]
     public async Task AListThatChangedDuringTheReviewIsRefusedAndNothingIsWritten()
     {
-        var reviewed = new[] { new CustomWordEntry("a", "A") };
+        var reviewed = BuiltinWords.Merge([new CustomWordEntry("a", "A")], []);
         var now = new[] { new CustomWordEntry("a", "A"), new CustomWordEntry("zed", "Zed") };
-        var (controller, store) = Build(now);
+        var (controller, store, effectiveNow) = Build(now);
 
         var result = await controller.CommitFromAppAsync(reviewed, [new CustomWordEntry("zed", "Zed"), new CustomWordEntry("b", "B")]).WaitAsync(Patience);
 
         Assert.Equal(WordImportCommitKind.Stale, result.Value.Kind);
-        Assert.Equal(now, result.Value.Current);
+        Assert.Equal(effectiveNow, result.Value.Current);
         // The next review is drawn against the list as it now stands.
         Assert.Equal([ImportedWordOutcome.AlreadyPresent, ImportedWordOutcome.Added], result.Value.Plan.Lines.Select(line => line.Outcome));
         Assert.Equal(0, store.Saves);
@@ -376,8 +376,8 @@ public sealed class WordImportFromAppsTests : IDisposable
     [Fact]
     public async Task AChangedStrictnessIsAChangedList()
     {
-        var reviewed = new[] { new CustomWordEntry("a", "A") };
-        var (controller, store) = Build([new CustomWordEntry("a", "A", MatchStrictness.Strict)]);
+        var reviewed = BuiltinWords.Merge([new CustomWordEntry("a", "A")], []);
+        var (controller, store, _) = Build([new CustomWordEntry("a", "A", MatchStrictness.Strict)]);
 
         var result = await controller.CommitFromAppAsync(reviewed, [new CustomWordEntry("b", "B")]).WaitAsync(Patience);
 
@@ -389,9 +389,9 @@ public sealed class WordImportFromAppsTests : IDisposable
     public async Task NothingNewWritesNothing()
     {
         var existing = new[] { new CustomWordEntry("a", "A") };
-        var (controller, store) = Build(existing);
+        var (controller, store, baseline) = Build(existing);
 
-        var result = await controller.CommitFromAppAsync(existing, [new CustomWordEntry("a", "A")]).WaitAsync(Patience);
+        var result = await controller.CommitFromAppAsync(baseline, [new CustomWordEntry("a", "A")]).WaitAsync(Patience);
 
         Assert.Equal(WordImportCommitKind.NothingNew, result.Value.Kind);
         Assert.Equal(0, store.Saves);
@@ -401,9 +401,9 @@ public sealed class WordImportFromAppsTests : IDisposable
     public async Task AnImportThatWouldOverfillTheListIsRefused()
     {
         var existing = Enumerable.Range(0, AppSettingsValidator.MaximumCustomWords).Select(index => new CustomWordEntry($"w{index}", "x")).ToArray();
-        var (controller, store) = Build(existing);
+        var (controller, store, baseline) = Build(existing);
 
-        var result = await controller.CommitFromAppAsync(existing, [new CustomWordEntry("one more", "x")]).WaitAsync(Patience);
+        var result = await controller.CommitFromAppAsync(baseline, [new CustomWordEntry("one more", "x")]).WaitAsync(Patience);
 
         Assert.Equal(WordImportCommitKind.WouldExceedStore, result.Value.Kind);
         Assert.Equal(0, store.Saves);
@@ -413,8 +413,7 @@ public sealed class WordImportFromAppsTests : IDisposable
     [Fact]
     public async Task ConcurrentCommitsAgainstOneReviewHaveExactlyOneWinner()
     {
-        var baseline = new[] { new CustomWordEntry("base", "B") };
-        var (controller, store) = Build(baseline);
+        var (controller, store, baseline) = Build([new CustomWordEntry("base", "B")]);
 
         var attempts = Enumerable.Range(0, 24)
             .Select(index => Task.Run(() => controller.CommitFromAppAsync(baseline, [new CustomWordEntry($"t{index}", $"x{index}")])))
@@ -516,11 +515,14 @@ public sealed class WordImportFromAppsTests : IDisposable
             file => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file))) + "@" + File.GetLastWriteTimeUtc(file).Ticks),
         StringComparer.Ordinal);
 
-    private static (VocabularyImportController Controller, RecordingStore Store) Build(IReadOnlyList<CustomWordEntry> words)
+    private static (VocabularyImportController Controller, RecordingStore Store, IReadOnlyList<CustomWordEntry> Effective) Build(IReadOnlyList<CustomWordEntry> words)
     {
         var store = new RecordingStore();
         var settings = AppSettings.Default with { UserData = new ReusableUserData(words, []) };
-        return (new VocabularyImportController(new VocabularyPresenter(new SettingsPresenter(store, settings))), store);
+        return (
+            new VocabularyImportController(new VocabularyPresenter(new SettingsPresenter(store, settings))),
+            store,
+            settings.UserData.EffectiveCustomWords());
     }
 
     private sealed class RecordingStore : ISettingsStore

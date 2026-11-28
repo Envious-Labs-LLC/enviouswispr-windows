@@ -175,10 +175,13 @@ public static class AppSettingsValidator
         userData.CustomWords is not null &&
         userData.Snippets is not null &&
         userData.EnabledVocabularyPackIds is not null &&
+        userData.DeletedBuiltinWordIds is not null &&
         userData.CustomWords.Count <= MaximumCustomWords &&
         userData.Snippets.Count <= MaximumSnippets &&
         userData.EnabledVocabularyPackIds.Count <= 32 &&
         userData.EnabledVocabularyPackIds.All(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 64) &&
+        userData.DeletedBuiltinWordIds.Count <= BuiltinWords.MaximumDeletedBuiltinIds &&
+        userData.DeletedBuiltinWordIds.All(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 128) &&
         IsValidPackOverrides(userData.VocabularyPackOverrides) &&
         userData.CustomWords.All(entry =>
             entry is not null &&

@@ -129,7 +129,7 @@ public partial class App
 
         var latest = presentation.Settings.Current;
         _settings = latest;
-        _customWords = latest.UserData.CustomWords;
+        _customWords = latest.UserData.EffectiveCustomWords();
         _enabledVocabularyPackIds = latest.UserData.EnabledVocabularyPackIds;
         _vocabularyPackOverrides = latest.UserData.VocabularyPackOverrides;
         _snippetVocabulary = Core.Settings.SnippetVocabulary.From(latest.UserData);

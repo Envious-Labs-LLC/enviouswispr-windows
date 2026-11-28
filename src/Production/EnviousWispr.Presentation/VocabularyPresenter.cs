@@ -42,7 +42,8 @@ public enum LearnedSaveStatus
 public readonly record struct LearnedSaveOutcome(
     LearnedSaveStatus Status,
     CustomWordEntry? Before,
-    CustomWordEntry? After);
+    CustomWordEntry? After,
+    bool RedeleteBuiltinOnUndo = false);
 
 public enum LearnedUndoWriteStatus
 {
@@ -74,6 +75,21 @@ public sealed class VocabularyPresenter
 
         return ChangeAsync(data =>
         {
+            var nextDeleted = data.DeletedBuiltinWordIds;
+            var matchedBuiltin = BuiltinWords.FindByCanonical(word.Replacement);
+            var wasTombstonedBuiltin = matchedBuiltin is not null &&
+                nextDeleted.Contains(matchedBuiltin.BuiltinId, StringComparer.OrdinalIgnoreCase);
+            var activeBuiltin = matchedBuiltin is not null &&
+                !wasTombstonedBuiltin &&
+                !data.CustomWords.Any(entry =>
+                    string.Equals(entry.Replacement, matchedBuiltin.Entry.Replacement, StringComparison.OrdinalIgnoreCase))
+                ? matchedBuiltin
+                : null;
+            if (wasTombstonedBuiltin)
+            {
+                nextDeleted = BuiltinWords.WithoutTombstone(nextDeleted, matchedBuiltin!.BuiltinId);
+            }
+
             var next = new List<CustomWordEntry>(data.CustomWords.Count + 1);
             foreach (var entry in data.CustomWords)
             {
@@ -104,14 +120,31 @@ public sealed class VocabularyPresenter
                         entry.Replacement,
                         entry.Strictness,
                         entry.Category,
-                        entry.Id));
+                        entry.Id,
+                        entry.LearnedAliases,
+                        entry.LearnedAt));
                 }
             }
 
-            next.Add(word);
-            return data.WithCustomWords(
+            var incomingAliases = word.Aliases.Count > 0 ? word.Aliases : [word.SpokenForm];
+            var builtinSource = activeBuiltin ?? (wasTombstonedBuiltin ? matchedBuiltin : null);
+            var toAdd = builtinSource is not null
+                ? new CustomWordEntry(
+                    CustomWordEntry.NormalizeAliases(incomingAliases.Concat(builtinSource.Entry.Aliases)),
+                    builtinSource.Entry.Replacement,
+                    word.Strictness != MatchStrictness.Default ? word.Strictness : builtinSource.Entry.Strictness,
+                    word.Category != WordCategory.General ? word.Category : builtinSource.Entry.Category,
+                    id: builtinSource.Entry.Id,
+                    learnedAliases: builtinSource.Entry.LearnedAliases,
+                    learnedAt: null,
+                    origin: CustomWordOrigin.User)
+                : word.OwnedByUser();
+
+            next.Add(toAdd);
+            return data.WithCustomWordsAndDeletedBuiltins(
                 next.OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-                    .ToArray());
+                    .ToArray(),
+                nextDeleted);
         });
     }
 
@@ -140,14 +173,45 @@ public sealed class VocabularyPresenter
         var trimmedReplacement = replacement.Trim();
         return ChangeAsync(data =>
         {
-            if (FindAliasClash(data.CustomWords, normalizedAliases, excludeIndex: -1) is { } aliasClash)
+            var effective = data.EffectiveCustomWords();
+            if (FindAliasClash(effective, normalizedAliases, excludeIndex: -1) is { } aliasClash)
             {
                 return (data, new WordEditOutcome(WordEditRefusal.DuplicateSpokenForm, aliasClash));
             }
 
-            if (FindCanonicalClash(data.CustomWords, trimmedReplacement, strictness, category, excludeIndex: -1) is { } canonicalClash)
+            if (FindCanonicalClash(effective, trimmedReplacement, strictness, category, excludeIndex: -1) is { } canonicalClash)
             {
                 return (data, new WordEditOutcome(WordEditRefusal.DuplicateReplacement, canonicalClash));
+            }
+
+            var tombstonedBuiltin = BuiltinWords.FindByCanonical(trimmedReplacement) is { } builtin &&
+                data.DeletedBuiltinWordIds.Contains(builtin.BuiltinId, StringComparer.OrdinalIgnoreCase)
+                ? builtin
+                : null;
+            if (tombstonedBuiltin is not null)
+            {
+                var nextDeleted = BuiltinWords.WithoutTombstone(data.DeletedBuiltinWordIds, tombstonedBuiltin.BuiltinId);
+                if (normalizedAliases.Count == 0 &&
+                    strictness == tombstonedBuiltin.Entry.Strictness &&
+                    category == tombstonedBuiltin.Entry.Category)
+                {
+                    return (data.WithDeletedBuiltinWordIds(nextDeleted), new WordEditOutcome(null, null));
+                }
+
+                var restoredOverride = new CustomWordEntry(
+                    normalizedAliases,
+                    tombstonedBuiltin.Entry.Replacement,
+                    strictness,
+                    category,
+                    id: tombstonedBuiltin.Entry.Id,
+                    origin: CustomWordOrigin.User);
+                var updatedList = data.CustomWords
+                    .Append(restoredOverride)
+                    .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                    .ToArray();
+                return (
+                    data.WithCustomWordsAndDeletedBuiltins(updatedList, nextDeleted),
+                    new WordEditOutcome(null, null));
             }
 
             var created = new CustomWordEntry(
@@ -209,27 +273,51 @@ public sealed class VocabularyPresenter
             category,
             original.Id,
             preservedLearned,
-            preservedLearnedAt);
+            preservedLearnedAt,
+            CustomWordOrigin.User);
         return ChangeAsync(data =>
         {
-            var originalIndex = FindWordIndex(data.CustomWords, original);
+            var effective = data.EffectiveCustomWords();
+            var originalIndex = FindWordIndex(effective, original);
             if (originalIndex < 0)
             {
                 return (data, new WordEditOutcome(WordEditRefusal.TargetMissing, null));
             }
 
-            if (FindAliasClash(data.CustomWords, normalizedAliases, originalIndex) is { } aliasClash)
+            if (FindAliasClash(effective, normalizedAliases, originalIndex) is { } aliasClash)
             {
                 return (data, new WordEditOutcome(WordEditRefusal.DuplicateSpokenForm, aliasClash));
             }
 
-            if (FindCanonicalClash(data.CustomWords, trimmedReplacement, strictness, category, originalIndex) is { } canonicalClash)
+            if (FindCanonicalClash(effective, trimmedReplacement, strictness, category, originalIndex) is { } canonicalClash)
             {
                 return (data, new WordEditOutcome(WordEditRefusal.DuplicateReplacement, canonicalClash));
             }
 
+            var nextDeleted = data.DeletedBuiltinWordIds;
+            var currentEntry = effective[originalIndex];
+            if (BuiltinWords.FindByCanonical(currentEntry.Replacement) is { } previousBuiltin &&
+                !string.Equals(previousBuiltin.Entry.Replacement, trimmedReplacement, StringComparison.OrdinalIgnoreCase))
+            {
+                nextDeleted = BuiltinWords.WithTombstone(nextDeleted, previousBuiltin.BuiltinId);
+            }
+
+            if (BuiltinWords.FindByCanonical(trimmedReplacement) is { } newBuiltin &&
+                nextDeleted.Contains(newBuiltin.BuiltinId, StringComparer.OrdinalIgnoreCase))
+            {
+                nextDeleted = BuiltinWords.WithoutTombstone(nextDeleted, newBuiltin.BuiltinId);
+            }
+
+            var userIndex = FindWordIndex(data.CustomWords, original);
+            var nextWords = userIndex >= 0
+                ? ReplaceWord(data.CustomWords, data.CustomWords[userIndex], updated)
+                : data.CustomWords
+                    .Append(updated)
+                    .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                    .ToArray();
+
             return (
-                data.WithCustomWords(ReplaceWord(data.CustomWords, original, updated)),
+                data.WithCustomWordsAndDeletedBuiltins(nextWords, nextDeleted),
                 new WordEditOutcome(null, null));
         });
     }
@@ -472,9 +560,11 @@ public sealed class VocabularyPresenter
             }
 
             var other = words[i];
-            if (string.Equals(other.Replacement, replacement, StringComparison.Ordinal) &&
-                other.Strictness == strictness &&
-                other.Category == category)
+            if (other.Origin == CustomWordOrigin.Builtin
+                ? string.Equals(other.Replacement, replacement, StringComparison.OrdinalIgnoreCase)
+                : string.Equals(other.Replacement, replacement, StringComparison.Ordinal) &&
+                  other.Strictness == strictness &&
+                  other.Category == category)
             {
                 return other;
             }
@@ -558,22 +648,78 @@ public sealed class VocabularyPresenter
         ArgumentNullException.ThrowIfNull(selected);
         return ChangeAsync(data =>
         {
-            var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
-            return (data.WithCustomWords(remaining), data.CustomWords.Count - remaining.Count);
+            var (nextData, removed) = RemoveSelectedWords(data, selected);
+            return (nextData, removed.Length);
         });
     }
 
-    /// <summary>Removes the selected rows and returns the exact entries removed by reference identity.</summary>
+    /// <summary>Removes the selected rows and returns the exact entries removed by reference identity (or active built-in match).</summary>
     public Task<SettingsSaveResult<IReadOnlyList<CustomWordEntry>>> RemoveWordsAndReportAsync(IReadOnlyList<CustomWordEntry> selected)
     {
         ArgumentNullException.ThrowIfNull(selected);
-        return ChangeAsync<IReadOnlyList<CustomWordEntry>>(data =>
+        return ChangeAsync<IReadOnlyList<CustomWordEntry>>(data => RemoveSelectedWords(data, selected));
+    }
+
+    private static (ReusableUserData NextData, CustomWordEntry[] Removed) RemoveSelectedWords(
+        ReusableUserData data,
+        IReadOnlyList<CustomWordEntry> selected)
+    {
+        if (selected.Count == 0)
         {
-            var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
-            var remainingSet = new HashSet<CustomWordEntry>(remaining, ReferenceEqualityComparer.Instance);
-            var removed = data.CustomWords.Where(entry => !remainingSet.Contains(entry)).ToArray();
-            return (data.WithCustomWords(remaining), removed);
-        });
+            return (data, []);
+        }
+
+        var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
+        var remainingSet = new HashSet<CustomWordEntry>(remaining, ReferenceEqualityComparer.Instance);
+        var removedList = new List<CustomWordEntry>(selected.Count);
+        var nextDeleted = data.DeletedBuiltinWordIds;
+
+        foreach (var entry in data.CustomWords)
+        {
+            if (!remainingSet.Contains(entry))
+            {
+                removedList.Add(entry);
+                if (BuiltinWords.FindByCanonical(entry.Replacement) is { } builtin)
+                {
+                    nextDeleted = BuiltinWords.WithTombstone(nextDeleted, builtin.BuiltinId);
+                }
+            }
+        }
+
+        var effective = data.EffectiveCustomWords();
+        foreach (var candidate in selected)
+        {
+            if (candidate is null || candidate.Origin != CustomWordOrigin.Builtin)
+            {
+                continue;
+            }
+
+            if (BuiltinWords.FindByEntryId(candidate.Id) is not { } builtin)
+            {
+                continue;
+            }
+
+            var liveBuiltin = effective.FirstOrDefault(e =>
+                e.Origin == CustomWordOrigin.Builtin &&
+                string.Equals(e.Id, builtin.Entry.Id, StringComparison.Ordinal));
+            if (liveBuiltin is null || !HasSameContent(liveBuiltin, candidate))
+            {
+                continue;
+            }
+
+            if (!nextDeleted.Contains(builtin.BuiltinId, StringComparer.OrdinalIgnoreCase))
+            {
+                nextDeleted = BuiltinWords.WithTombstone(nextDeleted, builtin.BuiltinId);
+                removedList.Add(liveBuiltin);
+            }
+        }
+
+        if (removedList.Count == 0)
+        {
+            return (data, []);
+        }
+
+        return (data.WithCustomWordsAndDeletedBuiltins(remaining, nextDeleted), removedList.ToArray());
     }
 
     /// <summary>
@@ -608,13 +754,19 @@ public sealed class VocabularyPresenter
 
             var data = current.UserData;
             var liveWords = data.CustomWords;
-            var userTarget = liveWords.FirstOrDefault(w =>
+            var effectiveWords = data.EffectiveCustomWords();
+            var userOrBuiltinTarget = effectiveWords.FirstOrDefault(w =>
                 string.Equals(Core.Learning.CorrectionPairKey.Normalise(w.Replacement), correctedKey, StringComparison.Ordinal));
-            var packTarget = userTarget is null
+            var tombstonedBuiltin = userOrBuiltinTarget is null
+                ? BuiltinWords.All.FirstOrDefault(b =>
+                    data.DeletedBuiltinWordIds.Contains(b.BuiltinId, StringComparer.OrdinalIgnoreCase) &&
+                    string.Equals(Core.Learning.CorrectionPairKey.Normalise(b.Entry.Replacement), correctedKey, StringComparison.Ordinal))
+                : null;
+            var packTarget = userOrBuiltinTarget is null && tombstonedBuiltin is null
                 ? packTerms.FirstOrDefault(w =>
                     string.Equals(Core.Learning.CorrectionPairKey.Normalise(w.Replacement), correctedKey, StringComparison.Ordinal))
                 : null;
-            var target = userTarget ?? packTarget;
+            var target = userOrBuiltinTarget ?? packTarget;
 
             if (expectedTarget is Core.Learning.LearnTargetState.ExistingWord expected)
             {
@@ -632,7 +784,7 @@ public sealed class VocabularyPresenter
             }
 
             // Verify neither the original trigger nor corrected replacement is owned by another entry.
-            foreach (var entry in liveWords.Concat(packTerms))
+            foreach (var entry in effectiveWords.Concat(packTerms))
             {
                 if (target is not null && string.Equals(entry.Id, target.Id, StringComparison.Ordinal))
                 {
@@ -655,7 +807,7 @@ public sealed class VocabularyPresenter
                 }
             }
 
-            if (userTarget is not null)
+            if (userOrBuiltinTarget is { Origin: CustomWordOrigin.User } userTarget)
             {
                 var nextAliases = CustomWordEntry.NormalizeAliases(userTarget.Aliases.Append(trimmedOriginal));
                 var nextLearned = CustomWordEntry.NormalizeLearnedAliases(
@@ -669,6 +821,55 @@ public sealed class VocabularyPresenter
                 };
                 var nextList = ReplaceWord(liveWords, userTarget, updated);
                 return (current with { UserData = data.WithCustomWords(nextList) }, new LearnedSaveOutcome(LearnedSaveStatus.Saved, userTarget, updated));
+            }
+
+            if (userOrBuiltinTarget is { Origin: CustomWordOrigin.Builtin } activeBuiltin)
+            {
+                var nextAliases = CustomWordEntry.NormalizeAliases(activeBuiltin.Aliases.Append(trimmedOriginal));
+                var nextLearned = CustomWordEntry.NormalizeLearnedAliases(
+                    activeBuiltin.LearnedAliases.Append(trimmedOriginal),
+                    nextAliases);
+                var overrideEntry = new CustomWordEntry(
+                    nextAliases,
+                    activeBuiltin.Replacement,
+                    activeBuiltin.Strictness,
+                    activeBuiltin.Category,
+                    id: activeBuiltin.Id,
+                    learnedAliases: nextLearned,
+                    learnedAt: null,
+                    origin: CustomWordOrigin.User);
+                var addedOverride = liveWords
+                    .Append(overrideEntry)
+                    .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                    .ToArray();
+                return (
+                    current with { UserData = data.WithCustomWords(addedOverride) },
+                    new LearnedSaveOutcome(LearnedSaveStatus.Saved, activeBuiltin, overrideEntry));
+            }
+
+            if (tombstonedBuiltin is not null)
+            {
+                var nextAliases = CustomWordEntry.NormalizeAliases(tombstonedBuiltin.Entry.Aliases.Append(trimmedOriginal));
+                var nextLearned = CustomWordEntry.NormalizeLearnedAliases(
+                    tombstonedBuiltin.Entry.LearnedAliases.Append(trimmedOriginal),
+                    nextAliases);
+                var restoredEntry = new CustomWordEntry(
+                    nextAliases,
+                    tombstonedBuiltin.Entry.Replacement,
+                    tombstonedBuiltin.Entry.Strictness,
+                    tombstonedBuiltin.Entry.Category,
+                    id: tombstonedBuiltin.Entry.Id,
+                    learnedAliases: nextLearned,
+                    learnedAt: null,
+                    origin: CustomWordOrigin.User);
+                var nextDeleted = BuiltinWords.WithoutTombstone(data.DeletedBuiltinWordIds, tombstonedBuiltin.BuiltinId);
+                var restoredList = liveWords
+                    .Append(restoredEntry)
+                    .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                    .ToArray();
+                return (
+                    current with { UserData = data.WithCustomWordsAndDeletedBuiltins(restoredList, nextDeleted) },
+                    new LearnedSaveOutcome(LearnedSaveStatus.Saved, null, restoredEntry, RedeleteBuiltinOnUndo: true));
             }
 
             var category = packTarget?.Category ?? WordCategoryFormatting.Classify(trimmedCorrected);
@@ -710,7 +911,8 @@ public sealed class VocabularyPresenter
     /// </summary>
     public Task<SettingsSaveResult<LearnedUndoWriteStatus>> UndoLearnedWordAsync(
         CustomWordEntry expectedPostSave,
-        CustomWordEntry? restorePreSave)
+        CustomWordEntry? restorePreSave,
+        bool redeleteBuiltinOnUndo = false)
     {
         ArgumentNullException.ThrowIfNull(expectedPostSave);
 
@@ -722,7 +924,17 @@ public sealed class VocabularyPresenter
                 return (data, LearnedUndoWriteStatus.NotApplied);
             }
 
-            if (restorePreSave is null)
+            if (redeleteBuiltinOnUndo)
+            {
+                var remaining = CustomWordRemoval.Without(data.CustomWords, [live]);
+                var builtin = BuiltinWords.FindByEntryId(live.Id) ?? BuiltinWords.FindByCanonical(live.Replacement);
+                var nextDeleted = builtin is not null
+                    ? BuiltinWords.WithTombstone(data.DeletedBuiltinWordIds, builtin.BuiltinId)
+                    : data.DeletedBuiltinWordIds;
+                return (data.WithCustomWordsAndDeletedBuiltins(remaining, nextDeleted), LearnedUndoWriteStatus.Applied);
+            }
+
+            if (restorePreSave is null || restorePreSave.Origin == CustomWordOrigin.Builtin)
             {
                 var remaining = CustomWordRemoval.Without(data.CustomWords, [live]);
                 return (data.WithCustomWords(remaining), LearnedUndoWriteStatus.Applied);
