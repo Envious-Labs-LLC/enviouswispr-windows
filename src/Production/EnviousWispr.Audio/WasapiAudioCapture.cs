@@ -114,6 +114,8 @@ public sealed class WasapiAudioCapture :
 
     internal Action? BeforeDataConversionForTesting { get; set; }
 
+    internal Action? BeforeAnyDataConversionForTesting { get; set; }
+
     public int LastPacketCount => Volatile.Read(ref _packets);
 
     public int LastSilentPacketCount => Volatile.Read(ref _silentPackets);
@@ -880,6 +882,7 @@ public sealed class WasapiAudioCapture :
 
         try
         {
+            BeforeAnyDataConversionForTesting?.Invoke();
             if (enteredDuringCapture)
             {
                 BeforeDataConversionForTesting?.Invoke();
@@ -894,17 +897,24 @@ public sealed class WasapiAudioCapture :
             {
                 if (!enteredDuringCapture)
                 {
-                    if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm &&
-                        !_backendStopped &&
-                        !_unexpectedStop)
+                    if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm)
                     {
-                        AppendPreRollLocked(converted.Samples);
+                        if (!_backendStopped && !_unexpectedStop)
+                        {
+                            AppendPreRollLocked(converted.Samples);
+                        }
+
+                        return;
                     }
 
-                    return;
+                    if (_state != CaptureState.Capturing ||
+                        _request is null ||
+                        Volatile.Read(ref _backstopTriggered) != 0)
+                    {
+                        return;
+                    }
                 }
-
-                if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
+                else if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
                     _request is null ||
                     Volatile.Read(ref _backstopTriggered) != 0)
                 {

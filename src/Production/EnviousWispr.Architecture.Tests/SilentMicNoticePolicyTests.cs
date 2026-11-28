@@ -87,6 +87,16 @@ public sealed class SilentMicNoticePolicyTests
             out var preRollIsWholeZero);
         Assert.True(preRollIsWholeZero);
         Assert.True(preRollWholeZeroResult.IsEmpty);
+
+        // Warm pre-roll alone (0 post-preroll samples arrived) is insufficient evidence of silence -> preserve pre-roll.
+        var preRollOnly = new float[800];
+        preRollOnly[10] = 0.5f;
+        var preRollOnlyResult = SilentMicNoticePolicy.TrimTrailingExactZeros(
+            preRollOnly,
+            drainedPreRollSampleCount: 800,
+            out var preRollOnlyIsWholeZero);
+        Assert.False(preRollOnlyIsWholeZero);
+        Assert.Equal(800, preRollOnlyResult.Length);
     }
 
     [Fact]

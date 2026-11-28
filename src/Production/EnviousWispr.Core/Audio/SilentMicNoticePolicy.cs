@@ -48,8 +48,8 @@ public static class SilentMicNoticePolicy
         var postPreRoll = samples.Span[preRoll..];
         if (postPreRoll.IsEmpty)
         {
-            isWholeZero = preRoll > 0;
-            return isWholeZero ? ReadOnlyMemory<float>.Empty : samples;
+            isWholeZero = false;
+            return samples;
         }
 
         var trailingZeros = 0;

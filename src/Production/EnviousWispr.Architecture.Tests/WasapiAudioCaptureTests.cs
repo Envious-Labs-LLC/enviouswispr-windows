@@ -689,6 +689,40 @@ public sealed class WasapiAudioCaptureTests
         Assert.Empty(nextAudio.Samples.ToArray());
     }
 
+    [Fact]
+    public async Task StartAsyncPreservesInFlightWarmPacketConvertingAcrossStartBoundary()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = new WasapiAudioCapture(new FakeRecorderFactory(recorder), TimeSpan.FromSeconds(2));
+        await capture.SetWarmPolicyAsync(MicrophoneWarmPolicy.Seconds30);
+
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        recorder.Emit(0.1f);
+        await capture.StopAsync();
+
+        // Simulate a warm packet entering OnDataAvailable before StartAsync drains pre-roll and finishing conversion after StartAsync enters Capturing.
+        using var warmEntered = new ManualResetEventSlim(false);
+        using var allowWarmToFinish = new ManualResetEventSlim(false);
+        capture.BeforeAnyDataConversionForTesting = () =>
+        {
+            warmEntered.Set();
+            allowWarmToFinish.Wait(TimeSpan.FromSeconds(2));
+        };
+
+        var emitTask = Task.Run(() => recorder.Emit(0.35f, -0.45f));
+        Assert.True(warmEntered.Wait(TimeSpan.FromSeconds(2)));
+
+        var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        Assert.True(started.Succeeded);
+
+        capture.BeforeAnyDataConversionForTesting = null;
+        allowWarmToFinish.Set();
+        await emitTask;
+
+        var audio = await capture.StopAsync();
+        Assert.Equal(new[] { 0.35f, -0.45f }, audio.Samples.ToArray());
+    }
+
     private static WasapiAudioCapture CreateCapture(FakeRecorderSession recorder) =>
         new(new FakeRecorderFactory(recorder), TestTimeout);
 
