@@ -60,10 +60,7 @@ public partial class App
             Stage: SpeechModelDelivery.Downloading));
         try
         {
-            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
-            var provisioner = new ModelProvisioner(
-                CreateModelStore(),
-                modelId => BundledModelManifests.Load(modelId, verifier));
+            var provisioner = CreateBundledProvisioner();
             foreach (var modelId in wanted)
             {
                 _activeDownloadModelId = modelId;
@@ -154,15 +151,160 @@ public partial class App
 
     private void OnModelDownloadCancelRequested() => _modelDownload?.Cancel();
 
-    private void OnSpeechEngineDownloadRequested(FinalAsrEngine engine)
+    private ModelProvisioner CreateBundledProvisioner()
     {
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+        return new ModelProvisioner(CreateModelStore(), id => BundledModelManifests.Load(id, verifier));
+    }
+
+    private bool TryScheduleModelDeliveryTask(Func<Task> start)
+    {
+        if (Leaving)
         {
-            return;
+            return false;
         }
 
-        _modelDelivery = DeliverSpeechEngineModelAsync(engine);
+        var existing = _modelDelivery;
+        if (existing is { IsCompleted: false })
+        {
+            if (!_isSilentParakeetUpgrade)
+            {
+                return false;
+            }
+
+            _modelDownload?.Cancel();
+            _modelDelivery = RunAfterExistingDeliveryAsync(existing, start);
+            return true;
+        }
+
+        _modelDelivery = start();
+        return true;
     }
+
+    private async Task RunAfterExistingDeliveryAsync(Task existing, Func<Task> next)
+    {
+        try
+        {
+            await existing.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        if (!Leaving)
+        {
+            await next().ConfigureAwait(true);
+        }
+    }
+
+    private async Task RunSilentParakeetUpgradeAsync()
+    {
+        try
+        {
+            if (IsSpeechEngineBusy || Leaving)
+            {
+                _silentParakeetUpgradePending = true;
+                _silentParakeetUpgradeAttemptedThisSession = false;
+                return;
+            }
+
+            var resolution = await ResolveParakeetModelAsync().ConfigureAwait(true);
+            if (Leaving || !resolution.ShouldTriggerSilentUpgrade || BundledModelManifests.TryRead(ParakeetModelIds.Final) is null)
+            {
+                return;
+            }
+
+            using var download = new CancellationTokenSource();
+            _modelDownload = download;
+            _activeDownloadModelId = ParakeetModelIds.Final;
+            _isSilentParakeetUpgrade = true;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryStarted));
+            try
+            {
+                var result = await CreateBundledProvisioner()
+                    .ProvisionAsync(ParakeetModelIds.Final, download.Token).ConfigureAwait(true);
+                if (!result.Succeeded)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryFailed, AppFailureCategory.ModelDelivery, clock.ElapsedMilliseconds));
+                    return;
+                }
+
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryCompleted, ElapsedMilliseconds: clock.ElapsedMilliseconds));
+            }
+            finally
+            {
+                _modelDownload = null;
+                _activeDownloadModelId = null;
+                _isSilentParakeetUpgrade = false;
+            }
+
+            if (Leaving)
+            {
+                return;
+            }
+
+            var needsFinal = IsConfiguredTranscriptionUsingLegacyV3() ||
+                _settings.Preferences.Dictation.FinalEngine == FinalAsrEngine.Parakeet;
+            var needsPreview = !needsFinal && _settings.Preferences.LivePreviewEnabled && _previewEngine is not null;
+            _retireLegacyParakeetPending = true;
+            if (needsFinal)
+            {
+                if (IsSpeechEngineBusy || !await TryReconfigureTranscriptionUnderHoldAsync().ConfigureAwait(true))
+                {
+                    _transcriptionReconfigurePending = true;
+                    return;
+                }
+            }
+            else if (needsPreview)
+            {
+                var outcome = IsSpeechEngineBusy
+                    ? PreviewReconfigureOutcome.Busy
+                    : await ReconfigureLivePreviewOnlyAsync().ConfigureAwait(true);
+                if (Leaving || outcome == PreviewReconfigureOutcome.Closed)
+                {
+                    return;
+                }
+
+                if (outcome == PreviewReconfigureOutcome.Busy)
+                {
+                    _livePreviewReconfigurePending = true;
+                    return;
+                }
+            }
+
+            if (Leaving)
+            {
+                return;
+            }
+
+            if (!IsSpeechEngineBusy && !IsConfiguredTranscriptionUsingLegacyV3())
+            {
+                _retireLegacyParakeetPending = false;
+                await ParakeetModelLocator.RetireLegacyV3AfterUltraInstalledAsync(
+                    OfflineModelStore, ModelStoreRoot, () => Task.CompletedTask, DevelopmentModelDirectory(ParakeetModelIds.LegacyV3)).ConfigureAwait(true);
+            }
+
+            if (!Leaving)
+            {
+                PresentGraphicsRuntime();
+                await PresentModelDeliveryAsync().ConfigureAwait(true);
+            }
+        }
+        finally
+        {
+            if (!Leaving && !IsSpeechEngineBusy &&
+                (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending || _retireLegacyParakeetPending))
+            {
+                PostToLiveWindow(_ => TrySchedulePendingModelRefresh());
+            }
+        }
+    }
+
+    private void OnSpeechEngineDownloadRequested(FinalAsrEngine engine) =>
+        _ = TryScheduleModelDeliveryTask(() => DeliverSpeechEngineModelAsync(engine));
 
     private async Task DeliverSpeechEngineModelAsync(FinalAsrEngine engine)
     {
@@ -183,12 +325,25 @@ public partial class App
             return;
         }
 
-        var existingDirectory = await ResolveModelDirectoryAsync(modelId).ConfigureAwait(true);
-        if (existingDirectory is not null && ModelIsComplete(modelId, existingDirectory))
+        if (engine == FinalAsrEngine.Parakeet)
         {
-            _speechEngineDeliveries.Remove(modelId);
-            await PresentModelDeliveryAsync().ConfigureAwait(true);
-            return;
+            var resolution = await ResolveParakeetModelAsync().ConfigureAwait(true);
+            if (resolution.IsUltra)
+            {
+                _speechEngineDeliveries.Remove(modelId);
+                await PresentModelDeliveryAsync().ConfigureAwait(true);
+                return;
+            }
+        }
+        else
+        {
+            var existingDirectory = await ResolveModelDirectoryAsync(modelId).ConfigureAwait(true);
+            if (existingDirectory is not null && ModelIsComplete(modelId, existingDirectory))
+            {
+                _speechEngineDeliveries.Remove(modelId);
+                await PresentModelDeliveryAsync().ConfigureAwait(true);
+                return;
+            }
         }
 
         if (BundledModelManifests.TryRead(modelId) is null)
@@ -221,11 +376,7 @@ public partial class App
 
         try
         {
-            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
-            var provisioner = new ModelProvisioner(
-                CreateModelStore(),
-                id => BundledModelManifests.Load(id, verifier));
-            var result = await provisioner.ProvisionAsync(modelId, download.Token).ConfigureAwait(true);
+            var result = await CreateBundledProvisioner().ProvisionAsync(modelId, download.Token).ConfigureAwait(true);
             if (!result.Succeeded)
             {
                 _logger.Write(new AppLogEntry(
@@ -316,12 +467,7 @@ public partial class App
             return;
         }
 
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
-        {
-            return;
-        }
-
-        _modelDelivery = RemoveSpeechEngineModelAsync(engine);
+        _ = TryScheduleModelDeliveryTask(() => RemoveSpeechEngineModelAsync(engine));
     }
 
     private async Task RemoveSpeechEngineModelAsync(FinalAsrEngine engine)
@@ -359,6 +505,18 @@ public partial class App
                     modelId,
                     Path.Combine(ModelStoreRoot, modelId),
                     TeardownTranscriptionAsync).ConfigureAwait(true);
+                if (!Leaving && engine == FinalAsrEngine.Parakeet)
+                {
+                    var legacyOutcome = await ParakeetModelLocator.RemoveLegacyV3FromStoreOrDataAsync(
+                        OfflineModelStore,
+                        ModelStoreRoot,
+                        () => Task.CompletedTask,
+                        DevelopmentModelDirectory(ParakeetModelIds.LegacyV3)).ConfigureAwait(true);
+                    if (!legacyOutcome.Succeeded && removalOutcome.Succeeded)
+                    {
+                        removalOutcome = legacyOutcome;
+                    }
+                }
             }
             finally
             {
@@ -388,15 +546,8 @@ public partial class App
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
-    private void OnEgOneModelDownloadRequested(string modelId)
-    {
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
-        {
-            return;
-        }
-
-        _modelDelivery = DeliverEgOneModelAsync(modelId);
-    }
+    private void OnEgOneModelDownloadRequested(string modelId) =>
+        _ = TryScheduleModelDeliveryTask(() => DeliverEgOneModelAsync(modelId));
 
     private async Task DeliverEgOneModelAsync(string modelId)
     {
@@ -444,11 +595,7 @@ public partial class App
 
         try
         {
-            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
-            var provisioner = new ModelProvisioner(
-                CreateModelStore(),
-                id => BundledModelManifests.Load(id, verifier));
-            var result = await provisioner.ProvisionAsync(normalizedId, download.Token).ConfigureAwait(true);
+            var result = await CreateBundledProvisioner().ProvisionAsync(normalizedId, download.Token).ConfigureAwait(true);
             if (!result.Succeeded)
             {
                 _logger.Write(new AppLogEntry(
@@ -525,12 +672,7 @@ public partial class App
             return;
         }
 
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
-        {
-            return;
-        }
-
-        _modelDelivery = RemoveEgOneModelAsync(modelId);
+        _ = TryScheduleModelDeliveryTask(() => RemoveEgOneModelAsync(modelId));
     }
 
     private async Task RemoveEgOneModelAsync(string modelId)
@@ -597,15 +739,8 @@ public partial class App
         await RefreshEgOneInventoryAsync().ConfigureAwait(true);
     }
 
-    private void OnPreviewModelDownloadRequested()
-    {
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
-        {
-            return;
-        }
-
-        _modelDelivery = DeliverPreviewModelAsync();
-    }
+    private void OnPreviewModelDownloadRequested() =>
+        _ = TryScheduleModelDeliveryTask(DeliverPreviewModelAsync);
 
     private async Task DeliverPreviewModelAsync()
     {
@@ -639,11 +774,7 @@ public partial class App
             Stage: SpeechModelDelivery.Downloading));
         try
         {
-            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
-            var provisioner = new ModelProvisioner(
-                CreateModelStore(),
-                modelId => BundledModelManifests.Load(modelId, verifier));
-            var result = await provisioner.ProvisionAsync(previewModelId, download.Token).ConfigureAwait(true);
+            var result = await CreateBundledProvisioner().ProvisionAsync(previewModelId, download.Token).ConfigureAwait(true);
             if (!result.Succeeded)
             {
                 _logger.Write(new AppLogEntry(
@@ -687,15 +818,8 @@ public partial class App
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
-    private void OnPreviewModelRemoveRequested()
-    {
-        if (_modelDelivery is { IsCompleted: false } || Leaving)
-        {
-            return;
-        }
-
-        _modelDelivery = RemovePreviewModelAsync();
-    }
+    private void OnPreviewModelRemoveRequested() =>
+        _ = TryScheduleModelDeliveryTask(RemovePreviewModelAsync);
 
     private async Task RemovePreviewModelAsync()
     {
@@ -759,7 +883,7 @@ public partial class App
             // A LATE REPORT MUST NOT REDRAW A FINISHED DOWNLOAD, as the graphics runtime's already knows: reports
             // are queued to the window, and one that runs after a cancel or a failure would put the progress bar
             // back over the outcome - and tell the first-run checklist a stopped download is still running.
-            if (_modelDownload is not null)
+            if (_modelDownload is not null && !_isSilentParakeetUpgrade)
             {
                 var presentation = new ModelDeliveryPresentation(
                     $"Downloading… {completedMb} of {totalMb} MB, verified as it arrives.",
@@ -807,77 +931,5 @@ public partial class App
                 }
             }
         });
-    }
-
-    private static string DescribeModels(IReadOnlyList<string> modelIds)
-    {
-        var names = modelIds.Select(ModelDisplayName).ToArray();
-        return names.Length switch
-        {
-            1 => names[0],
-            2 => $"{names[0]} and {names[1]}",
-            _ => string.Join(", ", names[..^1]) + " and " + names[^1],
-        };
-    }
-
-    // LOWER CASE, BECAUSE A NAME SITS INSIDE SENTENCES. "Downloading The Whisper speech model" and "the Live
-    // Preview model is not installed" both came from mixed casing here; the sentence capitalises its start.
-    private static string SentenceStart(string text) =>
-        text.Length == 0 ? text : char.ToUpper(text[0], CultureInfo.CurrentCulture) + text[1..];
-
-    private static string ModelDisplayName(string modelId) => modelId switch
-    {
-        ParakeetTranscriptionEngine.ModelId => "the Parakeet speech model",
-        WhisperTranscriptionEngine.ModelId => "the Whisper speech model",
-        WhisperTranscriptionEngine.PreviewModelId => "the Live Preview model",
-        EgOneModelCatalog.FullId => "EG-1",
-        EgOneModelCatalog.MiniId => "EG-1 Mini",
-        EgOneModelCatalog.MicroId => "EG-1 Micro",
-        _ => modelId,
-    };
-
-    private static string Megabytes(long bytes) =>
-        ((bytes + (1024 * 1024) - 1) / (1024 * 1024)).ToString(CultureInfo.CurrentCulture);
-
-    /// <summary>
-    /// One sentence per failure, each naming what the person can do about it.
-    /// </summary>
-    private static string FailureSentence(ModelDeliveryResult result) => result.Failure switch
-    {
-        ModelDeliveryFailure.NetworkUnavailable =>
-            "Could not reach the model server. Check your connection and try again; the download resumes where it stopped.",
-        ModelDeliveryFailure.SourceRejected =>
-            "The model server refused the request. Try again later.",
-        ModelDeliveryFailure.InsufficientDisk =>
-            $"Not enough free disk space: about {Megabytes(result.RequiredBytes)} MB needed, {Megabytes(result.AvailableBytes)} MB free.",
-        ModelDeliveryFailure.IntegrityMismatch =>
-            "A downloaded file did not match its published checksum, so it was discarded. Try again.",
-        ModelDeliveryFailure.StorageUnavailable =>
-            "The model folder could not be written. Check that this PC's app data folder is not read-only.",
-        ModelDeliveryFailure.AppVersionTooOld =>
-            "This model needs a newer EnviousWispr. Check for updates first.",
-        ModelDeliveryFailure.Cancelled =>
-            "Download cancelled. It resumes from where it stopped when you try again.",
-        _ => "This build's model manifest is not valid. Reinstall EnviousWispr.",
-    };
-
-    private sealed class ModelDeliveryProgressObserver(Action<ModelDeliveryEvent> report) : IModelDeliveryObserver
-    {
-        private DateTimeOffset _lastReport = DateTimeOffset.MinValue;
-
-        public void Observe(ModelDeliveryEvent deliveryEvent)
-        {
-            // THE STORE REPORTS EVERY 128 KB CHUNK. A window repainted that often is a window doing
-            // nothing else, so progress reaches it about four times a second and on every milestone.
-            var milestone = deliveryEvent.Code is not ModelDeliveryEventCode.DownloadStarted;
-            var now = DateTimeOffset.UtcNow;
-            if (!milestone && now - _lastReport < TimeSpan.FromMilliseconds(250))
-            {
-                return;
-            }
-
-            _lastReport = now;
-            report(deliveryEvent);
-        }
     }
 }

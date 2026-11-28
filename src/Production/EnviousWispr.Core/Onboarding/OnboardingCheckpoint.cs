@@ -183,9 +183,7 @@ public static class OnboardingRestore
         }
 
         var engine = Enum.IsDefined(raw.SpeechEngine) ? raw.SpeechEngine : FinalAsrEngine.Parakeet;
-        var speechModelId = engine == FinalAsrEngine.Whisper
-            ? WhisperModelIds.Final
-            : ParakeetModelIds.Final;
+        var speechModelId = NormalizeSpeechModelId(engine, raw.SpeechModelId);
 
         var polishChoice = Enum.IsDefined(raw.PolishChoice)
             ? raw.PolishChoice
@@ -212,5 +210,21 @@ public static class OnboardingRestore
             CloudModelId: string.IsNullOrWhiteSpace(raw.CloudModelId) ? null : raw.CloudModelId.Trim(),
             RecordingMode: recordingMode,
             HotkeyGestureText: hotkeyText);
+    }
+
+    public static string NormalizeSpeechModelId(FinalAsrEngine engine, string? rawModelId)
+    {
+        if (engine == FinalAsrEngine.Whisper)
+        {
+            return WhisperModelIds.Final;
+        }
+
+        if (string.IsNullOrWhiteSpace(rawModelId) ||
+            string.Equals(rawModelId.Trim(), ParakeetModelIds.LegacyV3, StringComparison.OrdinalIgnoreCase))
+        {
+            return ParakeetModelIds.Final;
+        }
+
+        return ParakeetModelIds.Final;
     }
 }

@@ -6,7 +6,11 @@ using EnviousWispr.ModelDelivery;
 using EnviousWispr.Services.Runtime;
 
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
-var modelDirectory = Path.Combine(repositoryRoot, "models", "parakeet-tdt-0.6b-v3");
+var ultraDirectory = Path.Combine(repositoryRoot, "models", ParakeetModelIds.Final);
+var legacyDirectory = Path.Combine(repositoryRoot, "models", ParakeetModelIds.LegacyV3);
+var modelDirectory = ParakeetModelLocator.IsModelComplete(ultraDirectory)
+    ? ultraDirectory
+    : legacyDirectory;
 var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
 
 var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();

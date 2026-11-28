@@ -31,7 +31,8 @@ public static class TranscriptionEngineNames
 
         var modelId = engineId.Split(':', 2)[0];
 
-        if (string.Equals(modelId, ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(modelId, ParakeetModelIds.Final, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(modelId, ParakeetModelIds.LegacyV3, StringComparison.OrdinalIgnoreCase))
         {
             return Parakeet;
         }

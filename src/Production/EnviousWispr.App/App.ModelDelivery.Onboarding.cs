@@ -1,3 +1,4 @@
+using System.Globalization;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Onboarding;
@@ -135,12 +136,26 @@ public partial class App
 
         using var coordinator = new OnboardingDownloadCoordinator(
             plan,
-            provisionAsync: (modelId, observer, ct) =>
+            provisionAsync: async (modelId, observer, ct) =>
             {
+                if (string.Equals(modelId, ParakeetTranscriptionEngine.ModelId, StringComparison.Ordinal) &&
+                    _isSilentParakeetUpgrade &&
+                    _modelDelivery is { IsCompleted: false } silentUpgrade)
+                {
+                    _modelDownload?.Cancel();
+                    try
+                    {
+                        await silentUpgrade.ConfigureAwait(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                }
+
                 var provisioner = new ModelProvisioner(
                     CreateModelStore(observer),
                     id => BundledModelManifests.Load(id, verifier));
-                return provisioner.ProvisionAsync(modelId, ct);
+                return await provisioner.ProvisionAsync(modelId, ct).ConfigureAwait(true);
             },
             onSpeechInstalledAsync: ct => DispatchOnUiThreadAsync(async () =>
             {
@@ -565,5 +580,77 @@ public partial class App
         }
 
         return true;
+    }
+
+    private static string DescribeModels(IReadOnlyList<string> modelIds)
+    {
+        var names = modelIds.Select(ModelDisplayName).ToArray();
+        return names.Length switch
+        {
+            1 => names[0],
+            2 => $"{names[0]} and {names[1]}",
+            _ => string.Join(", ", names[..^1]) + " and " + names[^1],
+        };
+    }
+
+    // LOWER CASE, BECAUSE A NAME SITS INSIDE SENTENCES. "Downloading The Whisper speech model" and "the Live
+    // Preview model is not installed" both came from mixed casing here; the sentence capitalises its start.
+    private static string SentenceStart(string text) =>
+        text.Length == 0 ? text : char.ToUpper(text[0], CultureInfo.CurrentCulture) + text[1..];
+
+    private static string ModelDisplayName(string modelId) => modelId switch
+    {
+        ParakeetTranscriptionEngine.ModelId => "the Parakeet speech model",
+        WhisperTranscriptionEngine.ModelId => "the Whisper speech model",
+        WhisperTranscriptionEngine.PreviewModelId => "the Live Preview model",
+        EgOneModelCatalog.FullId => "EG-1",
+        EgOneModelCatalog.MiniId => "EG-1 Mini",
+        EgOneModelCatalog.MicroId => "EG-1 Micro",
+        _ => modelId,
+    };
+
+    private static string Megabytes(long bytes) =>
+        ((bytes + (1024 * 1024) - 1) / (1024 * 1024)).ToString(CultureInfo.CurrentCulture);
+
+    /// <summary>
+    /// One sentence per failure, each naming what the person can do about it.
+    /// </summary>
+    private static string FailureSentence(ModelDeliveryResult result) => result.Failure switch
+    {
+        ModelDeliveryFailure.NetworkUnavailable =>
+            "Could not reach the model server. Check your connection and try again; the download resumes where it stopped.",
+        ModelDeliveryFailure.SourceRejected =>
+            "The model server refused the request. Try again later.",
+        ModelDeliveryFailure.InsufficientDisk =>
+            $"Not enough free disk space: about {Megabytes(result.RequiredBytes)} MB needed, {Megabytes(result.AvailableBytes)} MB free.",
+        ModelDeliveryFailure.IntegrityMismatch =>
+            "A downloaded file did not match its published checksum, so it was discarded. Try again.",
+        ModelDeliveryFailure.StorageUnavailable =>
+            "The model folder could not be written. Check that this PC's app data folder is not read-only.",
+        ModelDeliveryFailure.AppVersionTooOld =>
+            "This model needs a newer EnviousWispr. Check for updates first.",
+        ModelDeliveryFailure.Cancelled =>
+            "Download cancelled. It resumes from where it stopped when you try again.",
+        _ => "This build's model manifest is not valid. Reinstall EnviousWispr.",
+    };
+
+    private sealed class ModelDeliveryProgressObserver(Action<ModelDeliveryEvent> report) : IModelDeliveryObserver
+    {
+        private DateTimeOffset _lastReport = DateTimeOffset.MinValue;
+
+        public void Observe(ModelDeliveryEvent deliveryEvent)
+        {
+            // THE STORE REPORTS EVERY 128 KB CHUNK. A window repainted that often is a window doing
+            // nothing else, so progress reaches it about four times a second and on every milestone.
+            var milestone = deliveryEvent.Code is not ModelDeliveryEventCode.DownloadStarted;
+            var now = DateTimeOffset.UtcNow;
+            if (!milestone && now - _lastReport < TimeSpan.FromMilliseconds(250))
+            {
+                return;
+            }
+
+            _lastReport = now;
+            report(deliveryEvent);
+        }
     }
 }
