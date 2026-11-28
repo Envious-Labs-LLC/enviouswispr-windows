@@ -76,6 +76,9 @@ public sealed class WasapiAudioCapture :
     private int _backstopTriggered;
     private int _backstopSignalled;
     private bool _disposed;
+    private Action<ReadOnlyMemory<float>>? _recoverySpoolSink;
+    private readonly object _spoolDispatchGate = new();
+    private float[]? _pendingWarmPreRollSpoolPacket;
     private long? _lastDeviceOpenMilliseconds;
     private long? _lastStreamStartMilliseconds;
     private int _packets;
@@ -91,6 +94,42 @@ public sealed class WasapiAudioCapture :
             TimeProvider.System,
             WasapiDeviceCatalog.IsBluetoothDevice)
     {
+    }
+
+    /// <summary>
+    /// Registers or clears an incremental mono 16 kHz PCM sink used to stream live capture audio into an
+    /// encrypted recovery spool without disturbing capture buffers or hot-path latencies.
+    /// </summary>
+    public void AttachRecoverySpoolSink(Action<ReadOnlyMemory<float>>? sink) =>
+        Volatile.Write(ref _recoverySpoolSink, sink);
+
+    private void PublishSpoolPacket(float[]? livePacket)
+    {
+        lock (_spoolDispatchGate)
+        {
+            float[]? preRoll;
+            lock (_bufferGate)
+            {
+                preRoll = _pendingWarmPreRollSpoolPacket;
+                _pendingWarmPreRollSpoolPacket = null;
+            }
+
+            var sink = Volatile.Read(ref _recoverySpoolSink);
+            if (sink is null)
+            {
+                return;
+            }
+
+            if (preRoll is { Length: > 0 })
+            {
+                sink(preRoll);
+            }
+
+            if (livePacket is { Length: > 0 })
+            {
+                sink(livePacket);
+            }
+        }
     }
 
     internal WasapiAudioCapture(
@@ -433,7 +472,8 @@ public sealed class WasapiAudioCapture :
                     {
                         _capturedBytes.SetLength(0);
                         _capturedBytes.Capacity = 0;
-                        DrainPreRollToCapturedBytesLocked();
+                        _pendingWarmPreRollSpoolPacket = DrainPreRollToCapturedBytesLocked(
+                            captureSpoolCopy: Volatile.Read(ref _recoverySpoolSink) is not null);
                         _packets = 0;
                         _silentPackets = 0;
                         _peak = 0f;
@@ -473,6 +513,8 @@ public sealed class WasapiAudioCapture :
 
                     _lastDeviceOpenMilliseconds = 0;
                     _lastStreamStartMilliseconds = 0;
+                    PublishSpoolPacket(null);
+
                     return new AudioOperationResult(Succeeded: true);
                 }
 
@@ -730,6 +772,7 @@ public sealed class WasapiAudioCapture :
                             ref _lastCaptureWasEndpointMuted,
                             isWholeZero && Volatile.Read(ref _isEndpointMuted));
                         _drainedPreRollSampleCount = 0;
+                        _pendingWarmPreRollSpoolPacket = null;
                         _exactZeroRunSamples = 0;
                         _exactZeroSinceTakeStart = true;
                         _sawNonZeroPostPreRoll = false;
@@ -939,6 +982,7 @@ public sealed class WasapiAudioCapture :
             _isCapturing = false;
             _warmDeviceId = null;
             _drainedPreRollSampleCount = 0;
+            _pendingWarmPreRollSpoolPacket = null;
             ClearPreRollRingLocked();
             _capturedBytes.SetLength(0);
             _capturedBytes.Capacity = 0;
@@ -1108,6 +1152,7 @@ public sealed class WasapiAudioCapture :
             var format = _recorder?.Format ?? CaptureFormat;
             var hitBackstop = false;
             var wroteAudio = false;
+            float[]? spoolPacket = null;
             var probeMute = false;
             IAudioRecorderSession? activeRecorderForMute = null;
             DictationSessionId backstopSession = default;
@@ -1178,6 +1223,11 @@ public sealed class WasapiAudioCapture :
                             WriteSilentBytesLocked(writeCount);
                             wroteAudio = true;
                             var writtenSamples = writeCount / sizeof(float);
+                            if (Volatile.Read(ref _recoverySpoolSink) is not null)
+                            {
+                                spoolPacket = new float[writtenSamples];
+                            }
+
                             var previousZero = _exactZeroRunSamples;
                             _exactZeroRunSamples += writtenSamples;
                             if (_exactZeroRunSamples / MuteProbeIntervalSamples != previousZero / MuteProbeIntervalSamples ||
@@ -1249,8 +1299,14 @@ public sealed class WasapiAudioCapture :
 
                         if (writeCount > 0)
                         {
-                            WriteClampedNativeFloatsLocked(nativeFloats[..(writeCount / sizeof(float))]);
+                            var nativeSlice = nativeFloats[..(writeCount / sizeof(float))];
+                            WriteClampedNativeFloatsLocked(nativeSlice);
                             wroteAudio = true;
+                            if (Volatile.Read(ref _recoverySpoolSink) is not null)
+                            {
+                                spoolPacket = CopyClampedFloats(nativeSlice);
+                            }
+
                             if (levelPeak > _peak)
                             {
                                 _peak = levelPeak;
@@ -1355,6 +1411,14 @@ public sealed class WasapiAudioCapture :
                     {
                         _capturedBytes.Write(bytes.AsSpan(0, writeCount));
                         wroteAudio = true;
+                        if (Volatile.Read(ref _recoverySpoolSink) is not null)
+                        {
+                            spoolPacket = args.IsSilent
+                                ? new float[converted.Samples.Length]
+                                : writeCount == bytes.Length
+                                    ? converted.Samples
+                                    : AudioSampleConverter.ConvertToMono16Khz(bytes.AsSpan(0, writeCount).ToArray(), format).Samples;
+                        }
 
                         if (converted.Peak > _peak)
                         {
@@ -1408,6 +1472,11 @@ public sealed class WasapiAudioCapture :
             if (wroteAudio && _state == CaptureState.Capturing)
             {
                 LevelChanged?.Invoke(this, new AudioLevel(levelPeak, levelRms));
+            }
+
+            if (spoolPacket is { Length: > 0 })
+            {
+                PublishSpoolPacket(spoolPacket);
             }
 
             if (hitBackstop && Interlocked.CompareExchange(ref _backstopSignalled, 1, 0) == 0)
@@ -1534,12 +1603,12 @@ public sealed class WasapiAudioCapture :
         _preRollCount = Math.Min(PreRollCapacitySamples, _preRollCount + samples.Length);
     }
 
-    private void DrainPreRollToCapturedBytesLocked()
+    private float[]? DrainPreRollToCapturedBytesLocked(bool captureSpoolCopy = false)
     {
         if (_preRollCount == 0)
         {
             _drainedPreRollSampleCount = 0;
-            return;
+            return null;
         }
 
         var maxSamples = (int)Math.Min(_preRollCount, _maxCapturedBytes / sizeof(float));
@@ -1547,20 +1616,34 @@ public sealed class WasapiAudioCapture :
         {
             ClearPreRollRingLocked();
             _drainedPreRollSampleCount = 0;
-            return;
+            return null;
         }
 
         var start = (_preRollWriteIndex - maxSamples + PreRollCapacitySamples) % PreRollCapacitySamples;
         var firstPart = Math.Min(maxSamples, PreRollCapacitySamples - start);
-        WriteSamplesAsLittleEndian(_preRollRing.AsSpan(start, firstPart));
+        var firstSpan = _preRollRing.AsSpan(start, firstPart);
+        WriteSamplesAsLittleEndian(firstSpan);
         var remaining = maxSamples - firstPart;
+        var secondSpan = remaining > 0 ? _preRollRing.AsSpan(0, remaining) : ReadOnlySpan<float>.Empty;
         if (remaining > 0)
         {
-            WriteSamplesAsLittleEndian(_preRollRing.AsSpan(0, remaining));
+            WriteSamplesAsLittleEndian(secondSpan);
+        }
+
+        float[]? copy = null;
+        if (captureSpoolCopy)
+        {
+            copy = new float[maxSamples];
+            firstSpan.CopyTo(copy.AsSpan(0, firstPart));
+            if (remaining > 0)
+            {
+                secondSpan.CopyTo(copy.AsSpan(firstPart, remaining));
+            }
         }
 
         _drainedPreRollSampleCount = maxSamples;
         ClearPreRollRingLocked();
+        return copy;
     }
 
     private void WriteSamplesAsLittleEndian(ReadOnlySpan<float> samples)
@@ -1739,6 +1822,17 @@ public sealed class WasapiAudioCapture :
             BinaryPrimitives.WriteInt32LittleEndian(scratch, BitConverter.SingleToInt32Bits(clamped));
             _capturedBytes.Write(scratch);
         }
+    }
+
+    private static float[] CopyClampedFloats(ReadOnlySpan<float> samples)
+    {
+        var copy = new float[samples.Length];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            copy[i] = Math.Clamp(samples[i], -1f, 1f);
+        }
+
+        return copy;
     }
 
     private void WriteSilentBytesLocked(int byteCount)
@@ -2020,6 +2114,7 @@ public sealed class WasapiAudioCapture :
             _request = null;
             _warmDeviceId = null;
             _drainedPreRollSampleCount = 0;
+            _pendingWarmPreRollSpoolPacket = null;
             ClearPreRollRingLocked();
             _exactZeroRunSamples = 0;
             _exactZeroSinceTakeStart = true;

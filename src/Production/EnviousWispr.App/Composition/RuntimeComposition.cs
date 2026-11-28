@@ -88,7 +88,11 @@ public sealed record RuntimeCompositionParts(
     RuntimeShell Shell,
     TimeProvider Clock,
     IDictationAudioArchive? AudioArchive = null,
-    LearnedWordCheckStep? LearnedWordCheck = null);
+    LearnedWordCheckStep? LearnedWordCheck = null,
+    IRecoverySpoolStore? RecoverySpoolStore = null,
+    IApplicationRunStateStore? RunStateStore = null,
+    Func<Guid?>? RunId = null,
+    Func<Action<Action<ReadOnlyMemory<float>>?>?>? AttachCaptureSpoolSink = null);
 
 /// <summary>The shared queue as the hook and the timers reach it: one method to submit a key, one for the watchdog's timeout.</summary>
 internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
@@ -228,7 +232,12 @@ public static class RuntimeComposition
             parts.Clock,
             parts.Shell.History,
             new SessionPersistenceEffects(parts.Shell.View),
-            parts.AudioArchive);
+            parts.AudioArchive,
+            parts.RecoverySpoolStore,
+            parts.RunStateStore,
+            parts.RunId,
+            parts.AttachCaptureSpoolSink,
+            parts.Shell.Dictation);
         var finalizationEffects = new TranscriptFinalizationEffects(parts.Logger, persistence);
         var polishExecutor = new PolishExecutor(
             parts.PolishAdmission,

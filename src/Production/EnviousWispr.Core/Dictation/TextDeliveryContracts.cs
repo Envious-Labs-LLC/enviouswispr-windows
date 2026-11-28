@@ -290,7 +290,8 @@ public sealed record TextCommitResult(
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None,
     bool ClipboardUncertain = false,
     PasteArrivalStatus ArrivalStatus = PasteArrivalStatus.NotAttempted,
-    int? ArrivalElapsedMilliseconds = null);
+    int? ArrivalElapsedMilliseconds = null,
+    bool ClipboardCleanupPending = false);
 
 /// <param name="Fault">The defect that stopped the delivery, for <see cref="TextDeliveryRefusalReason.DeliveryFaulted"/> and <see cref="TextDeliveryRefusalReason.DeliveryDisposed"/>; null otherwise.</param>
 /// <param name="ClipboardUncertain">Carried from <see cref="TextCommitResult.ClipboardUncertain"/>: the clipboard could not be given back, and the person is told.</param>
@@ -310,7 +311,8 @@ public sealed record DeliveryResult(
     string? DeliveredText = null,
     bool LowercasedFirst = false,
     CaseRepairDecision CaseDecision = CaseRepairDecision.None,
-    bool CandidateDeletesDictatedText = false);
+    bool CandidateDeletesDictatedText = false,
+    bool ClipboardCleanupPending = false);
 
 public interface ITextTargetAdapter
 {

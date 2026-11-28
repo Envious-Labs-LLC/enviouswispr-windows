@@ -54,6 +54,7 @@ internal static class MainWindowHostBinder
         {
             Subscribe(h => _window.RecoveryCleared += h, _history.RecoveryCleared);
             Subscribe(h => _window.RecoveryUndoRequested += h, _history.RecoveryUndoRequested);
+            Subscribe(h => _window.RecoveryDiscardRequested += h, _history.RecoveryDiscardRequested);
             Subscribe(h => _window.HistoryPasteRequested += h, _history.HistoryPasteRequested);
             _window.DictationRecordingsDirectory = _history.DictationRecordingsDirectory;
         }
@@ -147,6 +148,7 @@ internal static class MainWindowHostBinder
         {
             Unsubscribe(h => _window.RecoveryCleared -= h, _history.RecoveryCleared);
             Unsubscribe(h => _window.RecoveryUndoRequested -= h, _history.RecoveryUndoRequested);
+            Unsubscribe(h => _window.RecoveryDiscardRequested -= h, _history.RecoveryDiscardRequested);
             Unsubscribe(h => _window.HistoryPasteRequested -= h, _history.HistoryPasteRequested);
             _window.DictationRecordingsDirectory = null;
         }

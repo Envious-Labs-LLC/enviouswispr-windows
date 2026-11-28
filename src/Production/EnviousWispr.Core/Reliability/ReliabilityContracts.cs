@@ -114,6 +114,14 @@ public interface IApplicationRunStateStore
         DateTimeOffset timestamp,
         PublicationFence fence,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Records metadata about the currently active or finalizing encrypted recovery spool, or clears it.</summary>
+    Task<bool> SetActiveRecoverySpoolAsync(
+        Guid runId,
+        Guid? spoolSessionId,
+        RecoverySpoolStatus? spoolStatus,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken = default) => Task.FromResult(true);
 }
 
 public enum RecoveryTextLoadStatus

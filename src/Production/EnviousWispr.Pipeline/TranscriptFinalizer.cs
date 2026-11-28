@@ -154,6 +154,28 @@ public sealed class TranscriptFinalizer
             vocabularyPackOverrides: null,
             cancellationToken);
 
+    public Task<FinalizedTranscript> FinalizeAsync(
+        Transcript transcript,
+        IReadOnlyList<CustomWordEntry> customWords,
+        DeterministicTextOptions options,
+        SnippetVocabulary snippets,
+        PolishSetup? polish,
+        string? targetAppName,
+        IReadOnlyList<string>? enabledVocabularyPackIds,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides,
+        CancellationToken cancellationToken) =>
+        FinalizeAsync(
+            transcript,
+            customWords,
+            options,
+            snippets,
+            polish,
+            targetAppName,
+            enabledVocabularyPackIds,
+            vocabularyPackOverrides,
+            persistRecoveryText: true,
+            cancellationToken);
+
     public async Task<FinalizedTranscript> FinalizeAsync(
         Transcript transcript,
         IReadOnlyList<CustomWordEntry> customWords,
@@ -163,6 +185,7 @@ public sealed class TranscriptFinalizer
         string? targetAppName,
         IReadOnlyList<string>? enabledVocabularyPackIds,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides,
+        bool persistRecoveryText,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transcript);
@@ -237,8 +260,11 @@ public sealed class TranscriptFinalizer
         }
 
         var deterministic = SnippetFinalizer.Resolve(processed.DeterministicText, null, records).Text;
-        await _effects.SaveRecoveryTextAsync(processed.Output with { Text = deterministic }, cancellationToken)
-            .ConfigureAwait(false);
+        if (persistRecoveryText)
+        {
+            await _effects.SaveRecoveryTextAsync(processed.Output with { Text = deterministic }, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         // A TAKE THAT IS NOTHING BUT SNIPPETS HAS NOTHING TO POLISH. A model handed a bare sentinel can
         // only return it or lose it, so it is not asked.
@@ -298,8 +324,11 @@ public sealed class TranscriptFinalizer
             else
             {
                 delivered = resolution.PolishedText!;
-                await _effects.SaveRecoveryTextAsync(processed.Output with { Text = delivered }, cancellationToken)
-                    .ConfigureAwait(false);
+                if (persistRecoveryText)
+                {
+                    await _effects.SaveRecoveryTextAsync(processed.Output with { Text = delivered }, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
         }
 

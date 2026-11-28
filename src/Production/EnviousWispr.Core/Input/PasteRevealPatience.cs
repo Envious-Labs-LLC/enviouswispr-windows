@@ -8,7 +8,7 @@ namespace EnviousWispr.Core.Input;
 /// </summary>
 public sealed class PasteRevealPatience
 {
-    public const int CapMilliseconds = 1_200;
+    public const int CapMilliseconds = 2_500;
     public const int WarmUpSamples = 10;
     public const double Margin = 1.5;
     public const double ShrinkFactor = 0.9;

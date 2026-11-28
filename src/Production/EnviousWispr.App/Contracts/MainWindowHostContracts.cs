@@ -30,6 +30,7 @@ internal sealed record WindowDictationHost(
 internal sealed record WindowHistoryHost(
     Action? RecoveryCleared = null,
     Action? RecoveryUndoRequested = null,
+    Action? RecoveryDiscardRequested = null,
     Action<Guid>? HistoryPasteRequested = null,
     string? DictationRecordingsDirectory = null);
 

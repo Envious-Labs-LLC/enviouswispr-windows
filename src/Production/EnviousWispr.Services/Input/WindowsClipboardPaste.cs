@@ -63,50 +63,64 @@ internal static partial class WindowsClipboardPaste
     /// </remarks>
     public static Task<TextCommitResult> CopyRequestedAsync(
         string text,
-        CancellationToken cancellationToken) =>
-        RunStaAsync(
-            () =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return TrySetClipboardText(text)
-                    ? new TextCommitResult(
-                        TextDeliveryRoute.ClipboardOnly,
-                        Delivered: true,
-                        ClipboardFallback: false,
-                        ClipboardRestored: false,
-                        TextDeliveryRefusalReason.None)
-                    : new TextCommitResult(
-                        TextDeliveryRoute.None,
-                        Delivered: false,
-                        ClipboardFallback: false,
-                        ClipboardRestored: false,
-                        TextDeliveryRefusalReason.ClipboardUnavailable);
-            },
+        CancellationToken cancellationToken,
+        ClipboardBoardOwnership? boardOwnership = null) =>
+        CopyWithTakeoverAsync(
+            ClipboardBoardOwnershipOrShared(boardOwnership),
+            () => TrySetClipboardText(text)
+                ? new TextCommitResult(
+                    TextDeliveryRoute.ClipboardOnly,
+                    Delivered: true,
+                    ClipboardFallback: false,
+                    ClipboardRestored: false,
+                    TextDeliveryRefusalReason.None)
+                : new TextCommitResult(
+                    TextDeliveryRoute.None,
+                    Delivered: false,
+                    ClipboardFallback: false,
+                    ClipboardRestored: false,
+                    TextDeliveryRefusalReason.ClipboardUnavailable),
             cancellationToken);
 
     public static Task<TextCommitResult> CopyOnlyAsync(
         string text,
         TextDeliveryRefusalReason refusalReason,
-        CancellationToken cancellationToken) =>
-        RunStaAsync(
+        CancellationToken cancellationToken,
+        ClipboardBoardOwnership? boardOwnership = null) =>
+        CopyWithTakeoverAsync(
+            ClipboardBoardOwnershipOrShared(boardOwnership),
+            () => TrySetClipboardText(text)
+                ? new TextCommitResult(
+                    TextDeliveryRoute.ClipboardOnly,
+                    Delivered: false,
+                    ClipboardFallback: true,
+                    ClipboardRestored: false,
+                    refusalReason)
+                : new TextCommitResult(
+                    TextDeliveryRoute.None,
+                    Delivered: false,
+                    ClipboardFallback: false,
+                    ClipboardRestored: false,
+                    TextDeliveryRefusalReason.ClipboardUnavailable),
+            cancellationToken);
+
+    private static ClipboardBoardOwnership ClipboardBoardOwnershipOrShared(ClipboardBoardOwnership? boardOwnership) =>
+        boardOwnership ?? ClipboardBoardOwnership.Shared;
+
+    private static async Task<TextCommitResult> CopyWithTakeoverAsync(
+        ClipboardBoardOwnership boardOwnership,
+        Func<TextCommitResult> staWrite,
+        CancellationToken cancellationToken)
+    {
+        await using var takeover = await boardOwnership.BeginTakeoverAsync(cancellationToken).ConfigureAwait(false);
+        return await RunStaAsync(
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                return TrySetClipboardText(text)
-                    ? new TextCommitResult(
-                        TextDeliveryRoute.ClipboardOnly,
-                        Delivered: false,
-                        ClipboardFallback: true,
-                        ClipboardRestored: false,
-                        refusalReason)
-                    : new TextCommitResult(
-                        TextDeliveryRoute.None,
-                        Delivered: false,
-                        ClipboardFallback: false,
-                        ClipboardRestored: false,
-                        TextDeliveryRefusalReason.ClipboardUnavailable);
+                return staWrite();
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Asks the focused app for its selection with a synthetic Copy, and puts the clipboard back.
@@ -138,25 +152,31 @@ internal static partial class WindowsClipboardPaste
     /// WHY, deliberately: every reason has the same remedy, which is to tell the user to try again,
     /// and a caller branching on the reason would be inventing distinctions it cannot act on.
     /// </remarks>
-    public static Task<string?> TryReadSelectionAsync(CancellationToken cancellationToken) =>
-        TryReadSelectionAsync(SetTemporaryClipboardTextOrThrow, SendCtrlC, cancellationToken);
+    public static Task<string?> TryReadSelectionAsync(
+        CancellationToken cancellationToken,
+        ClipboardBoardOwnership? boardOwnership = null) =>
+        TryReadSelectionAsync(SetTemporaryClipboardTextOrThrow, SendCtrlC, cancellationToken, boardOwnership);
 
     /// <summary>The selection read with its clipboard writer and its Copy named: production passes the real ones; a test passes a writer that fails after changing the clipboard, and a Copy answered by a stand-in app.</summary>
     /// <remarks>
     /// THE WRITER AND THE KEYSTROKE, NOT THE GUARD. What decides whether the clipboard is ours to put
     /// back - the sequence number and the owner - is read here, never passed in.
     /// </remarks>
-    internal static Task<string?> TryReadSelectionAsync(
+    internal static async Task<string?> TryReadSelectionAsync(
         Action<string> writeText,
         Func<bool> sendCopy,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ClipboardBoardOwnership? boardOwnership = null)
     {
         ArgumentNullException.ThrowIfNull(writeText);
         ArgumentNullException.ThrowIfNull(sendCopy);
-        return RunStaAsync<string?>(
+        await using var takeover = await ClipboardBoardOwnershipOrShared(boardOwnership)
+            .BeginTakeoverAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await RunStaAsync<string?>(
             () => ReadSelectionOnSta(writeText, sendCopy, cancellationToken),
             onUnexpectedFailure: static _ => null,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>How long the app has to start answering the Copy; the macOS fallback's own wait.</summary>
@@ -322,6 +342,81 @@ internal static partial class WindowsClipboardPaste
         }
     }
 
+    internal sealed record DeferredPasteDispatch(
+        TextCommitResult Result,
+        ClipboardSnapshot? Snapshot,
+        uint? OwnedSequence,
+        string FallbackText);
+
+    public static async Task<DeferredPasteDispatch> PasteDeferredRestoreAsync(
+        string text,
+        string fallbackText,
+        bool restoreClipboard,
+        PasteKeystrokeKind keystroke,
+        Func<TextDeliveryRefusalReason> preflight,
+        CancellationToken cancellationToken,
+        Action? onPasteDispatched = null,
+        ClipboardBoardOwnership? boardOwnership = null)
+    {
+        ArgumentNullException.ThrowIfNull(preflight);
+        await using var takeover = await ClipboardBoardOwnershipOrShared(boardOwnership)
+            .BeginTakeoverAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await RunStaAsync<DeferredPasteDispatch>(
+            () => PasteCoreOnSta(
+                text,
+                fallbackText,
+                restoreClipboard,
+                preflight,
+                SetTemporaryClipboardTextOrThrow,
+                SetClipboardTextOrThrow,
+                keystroke == PasteKeystrokeKind.ShiftInsert ? SendShiftInsert : SendCtrlV,
+                settleDelay: TimeSpan.Zero,
+                onPasteDispatched,
+                deferRestore: true,
+                cancellationToken),
+            onUnexpectedFailure: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static Task<(bool Restored, bool Uncertain)> RestoreSnapshotOnStaAsync(
+        ClipboardSnapshot snapshot,
+        uint ourSequence,
+        CancellationToken cancellationToken = default) =>
+        RunStaAsync<(bool Restored, bool Uncertain)>(
+            () => GiveBack(snapshot, ourSequence),
+            onUnexpectedFailure: _ => (false, GetClipboardSequenceNumber() == ourSequence),
+            cancellationToken);
+
+    internal static Task<(bool Rewritten, bool SequenceMatched)> RewriteUnmarkedWhileOursOnStaAsync(
+        string text,
+        uint ourSequence,
+        CancellationToken cancellationToken = default) =>
+        RunStaAsync<(bool Rewritten, bool SequenceMatched)>(
+            () =>
+            {
+                if (GetClipboardSequenceNumber() != ourSequence)
+                {
+                    return (false, false);
+                }
+
+                try
+                {
+                    SetClipboardTextOrThrow(text);
+                    return (true, true);
+                }
+                catch (Exception exception) when (
+                    exception is ExternalException or ThreadStateException or ArgumentException)
+                {
+                    return (false, GetClipboardSequenceNumber() == ourSequence);
+                }
+            },
+            onUnexpectedFailure: static _ => (false, false),
+            cancellationToken);
+
+    internal static bool IsSequenceMatch(uint expectedSequence) =>
+        GetClipboardSequenceNumber() == expectedSequence;
+
     public static Task<TextCommitResult> PasteAsync(
         string text,
         string fallbackText,
@@ -386,7 +481,7 @@ internal static partial class WindowsClipboardPaste
         ArgumentNullException.ThrowIfNull(sendPaste);
         var fallbackWriter = writeFallbackText ?? writeText;
         return RunStaAsync(
-            () => PasteOnSta(
+            () => PasteCoreOnSta(
                 text,
                 fallbackText,
                 restoreClipboard,
@@ -396,11 +491,12 @@ internal static partial class WindowsClipboardPaste
                 sendPaste,
                 settleDelay ?? PasteSettle,
                 onPasteDispatched,
-                cancellationToken),
+                deferRestore: false,
+                cancellationToken).Result,
             cancellationToken);
     }
 
-    private static TextCommitResult PasteOnSta(
+    private static DeferredPasteDispatch PasteCoreOnSta(
         string text,
         string fallbackText,
         bool restoreClipboard,
@@ -410,6 +506,7 @@ internal static partial class WindowsClipboardPaste
         Func<bool> sendPaste,
         TimeSpan settleDelay,
         Action? onPasteDispatched,
+        bool deferRestore,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -419,12 +516,16 @@ internal static partial class WindowsClipboardPaste
             snapshot = TrySnapshotClipboard(cancellationToken);
             if (snapshot is null)
             {
-                return new TextCommitResult(
-                    TextDeliveryRoute.None,
-                    Delivered: false,
-                    ClipboardFallback: false,
-                    ClipboardRestored: false,
-                    TextDeliveryRefusalReason.ClipboardUnavailable);
+                return new DeferredPasteDispatch(
+                    new TextCommitResult(
+                        TextDeliveryRoute.None,
+                        Delivered: false,
+                        ClipboardFallback: false,
+                        ClipboardRestored: false,
+                        TextDeliveryRefusalReason.ClipboardUnavailable),
+                    Snapshot: null,
+                    OwnedSequence: null,
+                    fallbackText);
             }
         }
 
@@ -435,13 +536,17 @@ internal static partial class WindowsClipboardPaste
             // sets anything, and can fail after that. When the clipboard moved by our own hand it is
             // ours to put back; otherwise nothing of ours is on it and nothing is restored.
             var (writeRestored, writeUncertain) = GiveBack(snapshot, insertion.OwnedSequence);
-            return new TextCommitResult(
-                TextDeliveryRoute.None,
-                Delivered: false,
-                ClipboardFallback: false,
-                ClipboardRestored: writeRestored,
-                TextDeliveryRefusalReason.ClipboardUnavailable,
-                ClipboardUncertain: writeUncertain);
+            return new DeferredPasteDispatch(
+                new TextCommitResult(
+                    TextDeliveryRoute.None,
+                    Delivered: false,
+                    ClipboardFallback: false,
+                    ClipboardRestored: writeRestored,
+                    TextDeliveryRefusalReason.ClipboardUnavailable,
+                    ClipboardUncertain: writeUncertain),
+                Snapshot: null,
+                OwnedSequence: null,
+                fallbackText);
         }
 
         var ourSequence = insertion.OwnedSequence;
@@ -465,12 +570,16 @@ internal static partial class WindowsClipboardPaste
             var fallback = WriteClipboardText(fallbackText, writeFallbackText);
             if (fallback.Written)
             {
-                return new TextCommitResult(
-                    TextDeliveryRoute.ClipboardOnly,
-                    Delivered: false,
-                    ClipboardFallback: true,
-                    ClipboardRestored: false,
-                    refusal);
+                return new DeferredPasteDispatch(
+                    new TextCommitResult(
+                        TextDeliveryRoute.ClipboardOnly,
+                        Delivered: false,
+                        ClipboardFallback: true,
+                        ClipboardRestored: false,
+                        refusal),
+                    Snapshot: null,
+                    OwnedSequence: null,
+                    fallbackText);
             }
 
             // A REFUSED PASTE WHOSE FALLBACK COULD NOT BE WRITTEN STILL GIVES THE CLIPBOARD BACK (#242).
@@ -482,13 +591,17 @@ internal static partial class WindowsClipboardPaste
             // "Ours" is the failed fallback's own change when it made one (it emptied the clipboard
             // and then failed), and the insertion's otherwise.
             var (restored, uncertain) = GiveBack(snapshot, fallback.OwnedSequence ?? ourSequence);
-            return new TextCommitResult(
-                TextDeliveryRoute.None,
-                Delivered: false,
-                ClipboardFallback: false,
-                ClipboardRestored: restored,
-                TextDeliveryRefusalReason.ClipboardUnavailable,
-                ClipboardUncertain: uncertain);
+            return new DeferredPasteDispatch(
+                new TextCommitResult(
+                    TextDeliveryRoute.None,
+                    Delivered: false,
+                    ClipboardFallback: false,
+                    ClipboardRestored: restored,
+                    TextDeliveryRefusalReason.ClipboardUnavailable,
+                    ClipboardUncertain: uncertain),
+                Snapshot: null,
+                OwnedSequence: null,
+                fallbackText);
         }
 
         if (!sendPaste())
@@ -499,25 +612,47 @@ internal static partial class WindowsClipboardPaste
                 if (!unmarkedFallback.Written && unmarkedFallback.OwnedSequence is { } brokenSeq)
                 {
                     var (restored, uncertain) = GiveBack(snapshot, brokenSeq);
-                    return new TextCommitResult(
-                        TextDeliveryRoute.None,
-                        Delivered: false,
-                        ClipboardFallback: false,
-                        ClipboardRestored: restored,
-                        TextDeliveryRefusalReason.ClipboardUnavailable,
-                        ClipboardUncertain: uncertain);
+                    return new DeferredPasteDispatch(
+                        new TextCommitResult(
+                            TextDeliveryRoute.None,
+                            Delivered: false,
+                            ClipboardFallback: false,
+                            ClipboardRestored: restored,
+                            TextDeliveryRefusalReason.ClipboardUnavailable,
+                            ClipboardUncertain: uncertain),
+                        Snapshot: null,
+                        OwnedSequence: null,
+                        fallbackText);
                 }
             }
 
-            return new TextCommitResult(
-                TextDeliveryRoute.ClipboardOnly,
-                Delivered: false,
-                ClipboardFallback: true,
-                ClipboardRestored: false,
-                TextDeliveryRefusalReason.InputBlocked);
+            return new DeferredPasteDispatch(
+                new TextCommitResult(
+                    TextDeliveryRoute.ClipboardOnly,
+                    Delivered: false,
+                    ClipboardFallback: true,
+                    ClipboardRestored: false,
+                    TextDeliveryRefusalReason.InputBlocked),
+                Snapshot: null,
+                OwnedSequence: null,
+                fallbackText);
         }
 
         onPasteDispatched?.Invoke();
+
+        if (deferRestore)
+        {
+            return new DeferredPasteDispatch(
+                new TextCommitResult(
+                    TextDeliveryRoute.ClipboardPaste,
+                    Delivered: true,
+                    ClipboardFallback: false,
+                    ClipboardRestored: false,
+                    ClipboardCleanupPending: true),
+                snapshot,
+                ourSequence,
+                fallbackText);
+        }
 
         // PUMPING, BECAUSE THIS THREAD OWNS THE CLIPBOARD HERE: the target's paste needs nothing from us (the words were
         // flushed, so no format is rendered on request), but anybody who writes to the clipboard meanwhile - the person
@@ -525,12 +660,16 @@ internal static partial class WindowsClipboardPaste
         // until it ends, and then the give-back below can see the clipboard still ours and restore over it (#247).
         PumpingWait(settleDelay > TimeSpan.Zero ? settleDelay : TimeSpan.Zero);
         var (pastedRestored, pastedUncertain) = GiveBack(snapshot, ourSequence);
-        return new TextCommitResult(
-            TextDeliveryRoute.ClipboardPaste,
-            Delivered: true,
-            ClipboardFallback: false,
-            ClipboardRestored: pastedRestored,
-            ClipboardUncertain: pastedUncertain);
+        return new DeferredPasteDispatch(
+            new TextCommitResult(
+                TextDeliveryRoute.ClipboardPaste,
+                Delivered: true,
+                ClipboardFallback: false,
+                ClipboardRestored: pastedRestored,
+                ClipboardUncertain: pastedUncertain),
+            Snapshot: null,
+            OwnedSequence: null,
+            fallbackText);
     }
 
     /// <summary>Puts the snapshot back if the clipboard still holds our write; says whether it did, and whether a restore that was ours to make failed.</summary>

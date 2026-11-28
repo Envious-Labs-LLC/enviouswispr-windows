@@ -605,7 +605,8 @@ public partial class App
     private LifetimeParts LifetimeParts() => new(
         CloseAdmission: () =>
         {
-            _sessionCoordinator?.Close();
+            _sessionPersistence.SetExitPreservationMode(true);
+            _sessionCoordinator?.CloseForExitPreservation();
             // AFTER THE CLOSE, NOT BEFORE. An installing update keeps the session until the app leaves;
             // once admission is closed nothing can take it, and a hold still out would make the session's
             // shutdown wait its whole budget and report the exit unclean.
@@ -620,14 +621,16 @@ public partial class App
             _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         },
         AbortPolishRuntime: AbortPolishRuntime,
-        // THE EXIT POLICY: a transcription in flight is cut short rather than waited for, and so is the
-        // polish warm-up; the session's shutdown then waits for the cut to land. Cancellation is not
-        // quiescence - the shutdown's report says whether it landed.
+        // THE EXIT POLICY: a transcription in flight is cut short rather than waited for once the
+        // bounded preservation window ends, and so is the polish warm-up; the session's shutdown then
+        // waits for the cut to land. Cancellation is not quiescence - the shutdown's report says whether it landed.
         CancelProcessing: () =>
         {
+            _sessionCoordinator?.Close();
             _sessionCoordinator?.CancelProcessing();
             _polishLifetime.Cancel();
             _startupCancellation.Cancel();
+            _recoveryReplayCancellation.Cancel();
             _modelDownload?.Cancel();
             _graphicsRuntimeDownload?.Cancel();
             _onboardingDownloadCancellation?.Cancel();
@@ -666,6 +669,8 @@ public partial class App
             // escalates like any step. Both read Leaving after every await, so nothing is built once
             // the exit has begun.
             new LifetimeStep("startup", () => Join(Interlocked.Exchange(ref _startup, null))),
+            new LifetimeStep("recovery replay", () => Join(Interlocked.Exchange(ref _recoveryReplay, null))),
+            new LifetimeStep("history persistence", () => _sessionPersistence.DrainPendingHistoryAsync(TimeSpan.FromSeconds(5))),
             new LifetimeStep("model delivery", () => Join(Interlocked.Exchange(ref _modelDelivery, null))),
             new LifetimeStep("graphics runtime delivery", () => Join(Interlocked.Exchange(ref _graphicsRuntimeDelivery, null))),
             new LifetimeStep("onboarding model delivery", () => Join(Interlocked.Exchange(ref _onboardingDelivery, null))),
@@ -812,6 +817,9 @@ public partial class App
                     _sessionCoordinator = null;
                     await stopped.DisposeAsync().ConfigureAwait(true);
                 }
+
+                Interlocked.Exchange(ref _recoveryReplayCoordinator, null)?.Dispose();
+                _recoveryReplayCancellation.Dispose();
             }),
         ],
         // THE SINGLE-INSTANCE LOCK IS NOT RELEASED HERE, OR ANYWHERE: it is held to the process's end,
@@ -839,7 +847,26 @@ public partial class App
             _feedbackSender = null;
 
             await _logger.DisposeAsync().ConfigureAwait(false);
-        });
+        },
+        PreserveInFlightDictation: PreserveInFlightDictationOnExitAsync);
+
+    private async Task PreserveInFlightDictationOnExitAsync(TimeSpan window)
+    {
+        var started = TimeProvider.System.GetTimestamp();
+        if (_sessionCoordinator is { } coordinator)
+        {
+            await coordinator.WaitForInFlightOnExitAsync(window).ConfigureAwait(true);
+        }
+
+        var remaining = window - TimeProvider.System.GetElapsedTime(started);
+        var drainBudget = remaining > TimeSpan.Zero ? remaining : TimeSpan.FromSeconds(1);
+        if (_textTargetAdapter is { } adapter)
+        {
+            await adapter.DrainPendingCleanupAsync(drainBudget).ConfigureAwait(true);
+        }
+
+        await _sessionPersistence.DrainPendingHistoryAsync(drainBudget).ConfigureAwait(true);
+    }
 
     /// <summary>A tracked task's join for a lifetime step: taken once, its own ending swallowed - the exit only needs it over.</summary>
     private static async Task Join(Task? tracked)

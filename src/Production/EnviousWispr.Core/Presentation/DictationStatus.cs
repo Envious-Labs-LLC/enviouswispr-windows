@@ -45,6 +45,12 @@ public enum DictationOverlayState
 
     /// <summary>Floating theme-aware card inviting the user to finish AI polish setup.</summary>
     PolishSetupCard,
+
+    /// <summary>Replaying encrypted interrupted audio from a previous run into History.</summary>
+    Recovering,
+
+    /// <summary>Checked paste arrival was not observed; dictated text remains on the clipboard.</summary>
+    RetainedPaste,
 }
 
 /// <summary>Inline notice shown inside an active recording overlay surface.</summary>
@@ -98,6 +104,9 @@ public enum PillActionKind
 
     /// <summary>Undo an automatically learned correction from the Self-Learning Dictionary pill.</summary>
     UndoLearnedCorrection,
+
+    /// <summary>Discard the pending startup recovery spool rather than saving it to History.</summary>
+    DiscardRecovery,
 }
 
 /// <summary>The one button a notice may carry.</summary>
@@ -245,6 +254,18 @@ public readonly record struct DictationStatus(
             DictationOverlayState.PolishSetupCard,
             Action: new(buttonLabel, PillActionKind.OpenPolishSettings, "Open AI polish settings"),
             Subtitle: subtitle);
+
+    /// <summary>Replaying an orphaned recovery spool into History on startup, with a Discard action.</summary>
+    public static DictationStatus Recovering(string text = "Recovering last recording...") =>
+        new(
+            text,
+            DictationOverlayState.Recovering,
+            Action: new("Discard", PillActionKind.DiscardRecovery, "Discard last recording recovery"),
+            DwellSeconds: null);
+
+    /// <summary>Warning pill shown when a checked paste did not register and the text stayed on the clipboard.</summary>
+    public static DictationStatus RetainedPaste(string text = "Paste did not land. Text kept on clipboard. Press Ctrl+V") =>
+        new(text, DictationOverlayState.RetainedPaste, DwellSeconds: 4.5);
 
     /// <summary>The sentence, so a status can still be used where only words are wanted.</summary>
     public override string ToString() => Text;

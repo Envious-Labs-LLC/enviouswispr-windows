@@ -29,6 +29,7 @@ using EnviousWispr.Services.Lifecycle;
 using EnviousWispr.Services.Reliability;
 using EnviousWispr.Services.Runtime;
 using EnviousWispr.Services.Settings;
+using EnviousWispr.Storage.Reliability;
 using Microsoft.UI.Xaml;
 
 namespace EnviousWispr.App;
@@ -50,7 +51,11 @@ public partial class App : Application, IAsyncDisposable
     private readonly LocalDictationAudioArchive _dictationAudioArchive;
     private readonly JsonApplicationRunStateStore _runStateStore;
     private readonly WindowsRecoveryTextStore _recoveryTextStore;
+    private readonly RecoverySpoolStore _recoverySpoolStore;
     private readonly SessionPersistence _sessionPersistence;
+    private StartupRecoveryReplayCoordinator? _recoveryReplayCoordinator;
+    private Task? _recoveryReplay;
+    private readonly CancellationTokenSource _recoveryReplayCancellation = new();
     // THE SEAM THE SESSION IS COMPOSED THROUGH, HELD AS THE SEAM (plan-2 step 15). The executor asks
     // ISystemResourceProbe whether a recording may start; the shell constructs the Windows probe and
     // hands it over as the contract, not the class, so nothing here can reach for what the session
@@ -133,6 +138,7 @@ public partial class App : Application, IAsyncDisposable
             dictationRecordingsDirectory);
         _runStateStore = new JsonApplicationRunStateStore(Path.Combine(_dataDirectory, "run-state.json"));
         _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(_dataDirectory, "recovery.json"));
+        _recoverySpoolStore = new RecoverySpoolStore(Path.Combine(_dataDirectory, RecoverySpoolConstants.DirectoryName));
         // THE LONG-LIVED SESSION OWNERS ARE ONE COMPOSITION'S, SHARED WITH THE TESTS. The shell chooses
         // the stores and the pipeline and supplies leaf reads of its own state; RuntimeComposition
         // builds the persistence owner, the finaliser and the four background owners the same way
@@ -161,8 +167,38 @@ public partial class App : Application, IAsyncDisposable
                 Dictation: () => _settings.Preferences.Dictation),
             TimeProvider.System,
             _dictationAudioArchive,
-            EnsureLearnedWordCheckStep()));
+            EnsureLearnedWordCheckStep(),
+            _recoverySpoolStore,
+            _runStateStore,
+            () => _runId,
+            () => _audioCapture is WasapiAudioCapture wasapi ? wasapi.AttachRecoverySpoolSink : null));
         _sessionPersistence = _runtime.Persistence;
+        _recoveryReplayCoordinator = new StartupRecoveryReplayCoordinator(
+            _recoverySpoolStore,
+            () => _transcriptionEngine,
+            _runtime.Finalizer,
+            _sessionPersistence,
+            () => new FinalizationOptions(
+                _customWords,
+                _deterministicTextOptions,
+                _snippetVocabulary,
+                CurrentPolishSetup(),
+                _enabledVocabularyPackIds,
+                _vocabularyPackOverrides),
+            () => _settings.Preferences.History,
+            () => _settings.Preferences.Dictation,
+            _logger,
+            TimeProvider.System,
+            new RecoveryReplayStatusCallbacks(
+                ShowRecovering: () => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.Recovering())),
+                ShowRecovered: count => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.Success(
+                    count == 1
+                        ? "Recovered last recording to History"
+                        : $"Recovered {count} recordings to History"))),
+                ShowDiscarded: () => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.Quiet("Last recording recovery discarded"))),
+                ShowReady: () => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.Quiet("Ready")))),
+            () => Leaving,
+            applyLanguageSnapshot: prefs => Volatile.Write(ref _recoveryReplayLanguageOverride, prefs?.WhisperLanguage));
         _livePreview = _runtime.Preview;
         _streaming = _runtime.Streaming;
         _watchdog = _runtime.Watchdog;
@@ -501,6 +537,7 @@ public partial class App : Application, IAsyncDisposable
 
         ConfigurePushToTalk(settings.Preferences.Dictation);
         StartPolishWarmup();
+        StartStartupRecoveryReplay();
 
         ApplyOverlayUatState();
         StartSyntheticLevelRampIfRequested();
@@ -553,6 +590,7 @@ public partial class App : Application, IAsyncDisposable
             History: new WindowHistoryHost(
                 RecoveryCleared: OnRecoveryCleared,
                 RecoveryUndoRequested: OnRecoveryUndoRequested,
+                RecoveryDiscardRequested: OnRecoveryDiscardRequested,
                 HistoryPasteRequested: OnHistoryPasteRequested,
                 DictationRecordingsDirectory: _dictationAudioArchive.RecordingsDirectory),
             Vocabulary: BuildVocabularyHostContract(),

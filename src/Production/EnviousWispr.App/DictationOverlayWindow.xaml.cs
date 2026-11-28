@@ -914,9 +914,14 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         var isEscapeRecovery = state == DictationOverlayState.EscapeRecovery;
         var hasSubtitle = !string.IsNullOrWhiteSpace(status.Subtitle) && (isRichError || state == DictationOverlayState.ColdStart);
 
-        var showWheel = state is DictationOverlayState.Success or DictationOverlayState.ColdStart;
+        var showWheel = state is DictationOverlayState.Success
+            or DictationOverlayState.ColdStart
+            or DictationOverlayState.Recovering;
         var showDistressLips = state == DictationOverlayState.Distress;
-        var showWarningGlyph = !isSaveError && state is DictationOverlayState.Warning or DictationOverlayState.Busy;
+        var showWarningGlyph = !isSaveError
+            && state is DictationOverlayState.Warning
+                or DictationOverlayState.Busy
+                or DictationOverlayState.RetainedPaste;
         var showErrorCircle = !isSaveError && !isRichError && state == DictationOverlayState.Error;
         var showReadyCircle = state == DictationOverlayState.EngineReady;
         var showFontIcon = !isSaveError && !showWheel && !showDistressLips && !showWarningGlyph && !showErrorCircle && !showReadyCircle && !isRichError && !isEscapeRecovery;
