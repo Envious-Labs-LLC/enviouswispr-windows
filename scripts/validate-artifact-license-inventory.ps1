@@ -48,7 +48,9 @@ $requiredIds = @(
     'nvidia-cuda-runtime',
     'nvidia-cudnn-runtime',
     'minds14-public-uat-fixtures',
-    'british-spelling-table')
+    'british-spelling-table',
+    'seam-casing-hunspell-dictionaries',
+    'seam-casing-and-langid-models')
 $expectedEvidence = @{
     'parakeet-final-model' = @(
         'CC-BY-4.0',
@@ -77,6 +79,12 @@ $expectedEvidence = @{
     'british-spelling-table' = @(
         'LicenseRef-VarCon',
         'https://wordlist.aspell.net/varcon/')
+    'seam-casing-hunspell-dictionaries' = @(
+        'MULTI-PERMISSIVE-GPL3-COMPATIBLE-LGPL-2.1-DA-FLAGGED',
+        'https://github.com/wooorm/dictionaries')
+    'seam-casing-and-langid-models' = @(
+        'CC-BY-4.0 AND CC-BY-SA-4.0',
+        'https://universaldependencies.org/')
 }
 $artifacts = @($inventory.artifacts)
 $artifactIdDifference = @(Compare-Object `

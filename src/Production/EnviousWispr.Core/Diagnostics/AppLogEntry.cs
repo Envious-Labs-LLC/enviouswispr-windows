@@ -20,4 +20,5 @@ public sealed record AppLogEntry(
     DeliveryFaultKind? Fault = null,
     DiagnosticRecognitionLanguage? RecognitionLanguage = null,
     DiagnosticSnippetImport? SnippetImport = null,
-    DiagnosticWordImport? WordImport = null);
+    DiagnosticWordImport? WordImport = null,
+    CaseRepairDecision? CaseRepairDecision = null);

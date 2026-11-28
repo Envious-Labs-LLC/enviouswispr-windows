@@ -94,9 +94,17 @@ public sealed class JsonPortableProfileService : IPortableProfileService
             {
                 if (profile.Preferences is not null)
                 {
+                    var updatedPreferences = SettingsSchemaMigration.SeedEgOneModelIdIfMissing(profile.Preferences)!;
+                    if (!document.RootElement.TryGetProperty("preferences", out var preferencesElement) ||
+                        preferencesElement.ValueKind != JsonValueKind.Object ||
+                        !preferencesElement.TryGetProperty("smartInsertionEnabled", out _))
+                    {
+                        updatedPreferences = SettingsSchemaMigration.ApplySmartInsertionDefault(updatedPreferences);
+                    }
+
                     profile = profile with
                     {
-                        Preferences = SettingsSchemaMigration.SeedEgOneModelIdIfMissing(profile.Preferences)!,
+                        Preferences = updatedPreferences,
                     };
                 }
 
@@ -209,7 +217,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 SchemaVersion = PortableProfile.CurrentSchemaVersion,
                 Preferences = SettingsSchemaMigration.ApplyFixLearnedWordsDefault(legacy.Preferences),
             },
-            >= 2 and <= 22 => legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion },
+            >= 2 and < PortableProfile.CurrentSchemaVersion => legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion },
             _ => null,
         };
     }

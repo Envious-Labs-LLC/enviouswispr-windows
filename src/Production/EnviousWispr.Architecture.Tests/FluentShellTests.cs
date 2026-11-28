@@ -174,6 +174,8 @@ public sealed class FluentShellTests
             "StartAtLoginToggle",
             "LivePreviewToggle",
             "CopyInsteadOfPasteToggle",
+            "ReturnToStartWindowToggle",
+            "SmartInsertionToggle",
             "HistoryEnabledToggle",
             "LocalDiagnosticsToggle",
             "ShareUsageMetricsToggle",
@@ -423,5 +425,47 @@ public sealed class FluentShellTests
 
         Assert.NotNull(directory);
         return directory.FullName;
+    }
+
+    [Fact]
+    public void SmartInsertionRowHasExpectedCopyHelpButtonAndAppWiring()
+    {
+        var root = FindRepositoryRoot();
+        var document = LoadMainWindow();
+
+        var label = FindNamed(document, "SmartInsertionToggleLabel");
+        var toggle = FindNamed(document, "SmartInsertionToggle");
+        Assert.Equal("internal", (string?)label.Attribute(XName.Get("FieldModifier", XamlNamespace)));
+        Assert.Equal("internal", (string?)toggle.Attribute(XName.Get("FieldModifier", XamlNamespace)));
+        Assert.Equal("Smart insertion", (string?)label.Attribute("Text"));
+        Assert.Equal("{StaticResource BrandToggleSwitchStyle}", (string?)toggle.Attribute("Style"));
+
+        var headerGrid = label.Parent!;
+        var helpButton = headerGrid.Element(XName.Get("Button", PresentationNamespace));
+        Assert.NotNull(helpButton);
+        Assert.Equal("About Smart insertion", (string?)helpButton!.Attribute("AutomationProperties.Name"));
+
+        var row = toggle.Parent!;
+        var textStack = row.Elements(XName.Get("StackPanel", PresentationNamespace)).Single();
+        var helperText = textStack.Elements(XName.Get("TextBlock", PresentationNamespace)).Single();
+        Assert.Equal("Fits text to the spacing and capitals around your cursor.", (string?)helperText.Attribute("Text"));
+
+        var flyoutText = helpButton.Descendants(XName.Get("TextBlock", PresentationNamespace)).Single();
+        Assert.Equal(
+            "Matches spacing and capitalization to the text around your cursor when you dictate into the middle of a sentence.",
+            (string?)flyoutText.Attribute("Text"));
+
+        var pageControls = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.PageControls.cs"));
+        var settingsCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Settings.cs"));
+        var appCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var runtimeCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.DictationRuntime.cs"));
+
+        Assert.Contains("SmartInsertionToggle => _settingsPageView?.SmartInsertionToggle;", pageControls, StringComparison.Ordinal);
+        Assert.Contains("SmartInsertionToggle.Toggled", settingsCs, StringComparison.Ordinal);
+        Assert.Contains("SmartInsertionEnabled", settingsCs, StringComparison.Ordinal);
+        Assert.Contains("SeamCasingOracleRuntime.Shared.Prewarm();", appCs, StringComparison.Ordinal);
+        Assert.Contains("WindowsElsLanguageDetector", runtimeCs, StringComparison.Ordinal);
+        Assert.Contains("osLanguageDetector: _elsLanguageDetector", runtimeCs, StringComparison.Ordinal);
+        Assert.Contains("SmartInsertionEnabled = _settings.Preferences.SmartInsertionEnabled", runtimeCs, StringComparison.Ordinal);
     }
 }

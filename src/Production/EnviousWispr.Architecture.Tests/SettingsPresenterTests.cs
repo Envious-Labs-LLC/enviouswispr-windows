@@ -595,4 +595,26 @@ public sealed class SettingsPresenterTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
+
+    [Fact]
+    public async Task SaveGeneralRoundTripsSmartInsertionEnabledAndPortableProfile()
+    {
+        Assert.True(UserPreferences.Default.SmartInsertionEnabled);
+
+        var store = new BlockingStore();
+        store.LetSavesFinish();
+        using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+        var disabled = await presenter.SaveGeneralAsync(General() with { SmartInsertionEnabled = false });
+        Assert.Equal(GeneralSaveStatus.Saved, disabled.Status);
+        Assert.False(presenter.Current.Preferences.SmartInsertionEnabled);
+        Assert.False(store.LastSaved!.Preferences.SmartInsertionEnabled);
+        Assert.False(presenter.Current.ToPortableProfile().Preferences.SmartInsertionEnabled);
+
+        var reenabled = await presenter.SaveGeneralAsync(General() with { SmartInsertionEnabled = true });
+        Assert.Equal(GeneralSaveStatus.Saved, reenabled.Status);
+        Assert.True(presenter.Current.Preferences.SmartInsertionEnabled);
+        Assert.True(store.LastSaved!.Preferences.SmartInsertionEnabled);
+        Assert.True(presenter.Current.ToPortableProfile().Preferences.SmartInsertionEnabled);
+    }
 }
