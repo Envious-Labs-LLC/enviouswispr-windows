@@ -486,6 +486,14 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    public void SetRecordingSilentMicNotice(MicSilenceLevel level)
+    {
+        if (!_overlayWindow.IsPreviewVisible)
+        {
+            _overlayWindow.SetSilentMicNotice(level);
+        }
+    }
+
     public void SetAudioLevel(AudioLevel level) =>
         _overlayWindow.SetAudioLevel(level.RootMeanSquare);
 

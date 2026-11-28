@@ -53,6 +53,8 @@ public enum RecordingNoticeKind
     None,
     ApproachingCap,
     AutoStopUnavailable,
+    MicSilentCalm,
+    MicSilentStrong,
 }
 
 /// <summary>Visual variant for rich error capsules that offer a recovery action.</summary>

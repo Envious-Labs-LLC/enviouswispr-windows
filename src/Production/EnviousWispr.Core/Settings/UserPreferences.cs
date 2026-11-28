@@ -175,6 +175,16 @@ public enum PolishUnloadPolicy
     SixtyMinutes = 6,
 }
 
+/// <summary>How long the microphone capture engine stays warm after dictation ends (ref: macOS WarmEnginePolicy).</summary>
+public enum MicrophoneWarmPolicy
+{
+    Off = 0,
+    Seconds10 = 1,
+    Seconds30 = 2,
+    Seconds60 = 3,
+    Always = 4,
+}
+
 /// <summary>Which window receives dictated text when focus moves between pressing the hotkey and releasing it.</summary>
 public enum PasteTargetMode
 {
@@ -288,7 +298,9 @@ public sealed record DictationPreferences(
     string CopyLastGesture = "",
     bool CasualModeEnabled = false,
     bool LearnFromEditsEnabled = true,
-    bool FixLearnedWordsEnabled = true)
+    bool FixLearnedWordsEnabled = true,
+    MicrophoneWarmPolicy WarmMicrophonePolicy = MicrophoneWarmPolicy.Seconds30,
+    bool SilentMicWarningsEnabled = true)
 {
     /// <summary>Paste Last Dictation's default: Wispr Flow's Windows binding for the same action. Ref: #206.</summary>
     /// <remarks>

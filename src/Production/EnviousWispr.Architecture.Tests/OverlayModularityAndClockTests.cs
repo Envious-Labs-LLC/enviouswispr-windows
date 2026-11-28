@@ -179,6 +179,7 @@ public sealed class OverlayModularityAndClockTests
             .ToHashSet(StringComparer.Ordinal);
 
         Assert.Contains("DeferredSurfaceHost", declaredNames);
+        Assert.Contains("MutedIconProbe", declaredNames);
         Assert.Contains("LearnedCountdownScale", declaredNames);
         Assert.Contains("EscapeCountdownScale", declaredNames);
 
@@ -225,6 +226,21 @@ public sealed class OverlayModularityAndClockTests
         Assert.Contains("_learnedPillView.Detach()", windowSource, StringComparison.Ordinal);
         Assert.Contains("_bluetoothCardView.Detach()", windowSource, StringComparison.Ordinal);
         Assert.Contains("_polishSetupCardView.Detach()", windowSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SilentMicNoticeVisualsAndPrecedenceAreWiredAcrossOverlayAndTokens()
+    {
+        var root = FindRepositoryRoot();
+        var tokensText = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "Theme", "PillTokens.xaml"));
+        var windowSource = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"));
+        var surfaceSource = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "Overlay", "OverlayRecordingSurface.cs"));
+
+        Assert.Contains("x:Key=\"PillWarningGlyphIconStyle\"", tokensText, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"PillWarningTextStyle\"", tokensText, StringComparison.Ordinal);
+        Assert.Contains("SetSilentMicNotice", windowSource, StringComparison.Ordinal);
+        Assert.Contains("OverlayRoot.ActualTheme == ElementTheme.Light", windowSource, StringComparison.Ordinal);
+        Assert.Contains("FlattenMetersForSilence", surfaceSource, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

@@ -35,6 +35,7 @@ internal sealed class OverlayRecordingSurface
     private readonly TextBlock _previewText;
     private readonly Border _previewFade;
     private readonly Border _distressRedProbe;
+    private readonly Border _mutedIconProbe;
     private readonly StackPanel _lipsSpectrumPalette;
 
     private readonly Border?[] _lipsBars;
@@ -63,6 +64,7 @@ internal sealed class OverlayRecordingSurface
         TextBlock previewText,
         Border previewFade,
         Border distressRedProbe,
+        Border mutedIconProbe,
         StackPanel lipsSpectrumPalette)
     {
         _lipsMark = lipsMark;
@@ -73,6 +75,7 @@ internal sealed class OverlayRecordingSurface
         _previewText = previewText;
         _previewFade = previewFade;
         _distressRedProbe = distressRedProbe;
+        _mutedIconProbe = mutedIconProbe;
         _lipsSpectrumPalette = lipsSpectrumPalette;
 
         var lipsCount = Math.Min(_lipsMark.Children.Count, RecordingPillGeometry.LipsBarCount);
@@ -140,9 +143,10 @@ internal sealed class OverlayRecordingSurface
         }
     }
 
-    public void ApplyLipsColoring(bool distress)
+    public void ApplyLipsColoring(bool distress, bool silentMic = false)
     {
         var redBrush = _distressRedProbe.Background;
+        var mutedBrush = _mutedIconProbe.Background;
         for (var index = 0; index < _lipsBars.Length; index++)
         {
             if (_lipsBars[index] is not { } bar)
@@ -153,6 +157,10 @@ internal sealed class OverlayRecordingSurface
             if (distress && redBrush is not null)
             {
                 bar.Background = redBrush;
+            }
+            else if (silentMic && mutedBrush is not null)
+            {
+                bar.Background = mutedBrush;
             }
             else
             {
@@ -167,8 +175,17 @@ internal sealed class OverlayRecordingSurface
         }
     }
 
-    public void ApplySpectrumSweep()
+    public void ApplySpectrumSweep(bool silentMic = false)
     {
+        if (silentMic)
+        {
+            var mutedColor = (_mutedIconProbe.Background as SolidColorBrush)?.Color
+                ?? Windows.UI.Color.FromArgb(255, 158, 155, 168);
+            SetMeterMutedColors(_levelBarBrushes, mutedColor);
+            SetMeterMutedColors(_wellMeterBrushes, mutedColor);
+            return;
+        }
+
         for (var index = 0; index < _sweepStops.Length; index++)
         {
             if (index >= _lipsSpectrumPalette.Children.Count
@@ -182,6 +199,12 @@ internal sealed class OverlayRecordingSurface
 
         UpdateSweepColors(_levelBarBrushes, _sweepStops);
         UpdateSweepColors(_wellMeterBrushes, _sweepStops);
+    }
+
+    public void FlattenMetersForSilence()
+    {
+        DrawFlatMeter(_levelBarElements, _lastLevelBarHeights, _levelBars.Height);
+        DrawFlatMeter(_wellMeterElements, _lastWellMeterHeights, _wellMeter.Height);
     }
 
     public void DrawSampleLevelRailForPreview()
@@ -219,6 +242,8 @@ internal sealed class OverlayRecordingSurface
 
     public void ResetLevelVisuals(RecordingLevelHistory history)
     {
+        ApplyLipsColoring(distress: false, silentMic: false);
+        ApplySpectrumSweep(silentMic: false);
         DrawLips(0f, force: true);
         DrawMeter(_levelBarElements, _lastLevelBarHeights, _levelBars.Height, history.Levels);
         DrawMeter(_wellMeterElements, _lastWellMeterHeights, _wellMeter.Height, history.Levels);
@@ -301,6 +326,35 @@ internal sealed class OverlayRecordingSurface
 
             var (lower, upper, fraction) = RecordingPillGeometry.SpectrumPosition(index, count);
             brush.Color = Blend(stops[lower], stops[upper], fraction);
+        }
+    }
+
+    private static void SetMeterMutedColors(SolidColorBrush?[] brushes, Windows.UI.Color mutedColor)
+    {
+        for (var index = 0; index < brushes.Length; index++)
+        {
+            if (brushes[index] is { } brush && brush.Color != mutedColor)
+            {
+                brush.Color = mutedColor;
+            }
+        }
+    }
+
+    private static void DrawFlatMeter(Border?[] bars, double[] lastHeights, double stripHeight)
+    {
+        var flatHeight = RecordingPillGeometry.MeterBarHeight(0f, stripHeight);
+        for (var index = 0; index < bars.Length; index++)
+        {
+            if (bars[index] is not { } bar)
+            {
+                continue;
+            }
+
+            if (double.IsNaN(lastHeights[index]) || Math.Abs(flatHeight - lastHeights[index]) >= HeightDeltaEpsilon)
+            {
+                bar.Height = flatHeight;
+                lastHeights[index] = flatHeight;
+            }
         }
     }
 

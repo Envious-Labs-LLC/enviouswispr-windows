@@ -367,6 +367,10 @@ public partial class App
                 ? fixtureCapture
                 : new WasapiAudioCapture();
         var audioCapture = _audioCapture;
+        if (audioCapture is IWarmAudioCapture warmCapture)
+        {
+            _ = ApplyWarmMicrophonePolicyAsync(warmCapture, preferences.WarmMicrophonePolicy);
+        }
         audioCapture.LevelChanged += OnAudioLevelChanged;
         if (audioCapture is WasapiAudioCapture wasapiCapture)
         {
@@ -1164,6 +1168,39 @@ public partial class App
     /// Individual WAV recordings are saved under <c>recordings\dictations\&lt;entryId&gt;.wav</c> when
     /// History persists the entry.
     /// </summary>
+    private async Task ApplyWarmMicrophonePolicyAsync(MicrophoneWarmPolicy policy)
+    {
+        if (_audioCapture is IWarmAudioCapture warm)
+        {
+            await ApplyWarmMicrophonePolicyAsync(warm, policy).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task ApplyWarmMicrophonePolicyAsync(IWarmAudioCapture warm, MicrophoneWarmPolicy policy)
+    {
+        try
+        {
+            await warm.SetWarmPolicyAsync(policy).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+        }
+    }
+
+    private async Task TearDownWarmAudioCaptureAsync()
+    {
+        if (_audioCapture is IWarmAudioCapture warm)
+        {
+            try
+            {
+                await warm.TearDownWarmAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+            {
+            }
+        }
+    }
+
     private void ArchiveDictationAudio(CapturedAudio audio)
     {
         ArgumentNullException.ThrowIfNull(audio);

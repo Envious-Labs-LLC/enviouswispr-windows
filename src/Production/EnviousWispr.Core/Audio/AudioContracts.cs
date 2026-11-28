@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Core.Audio;
 
@@ -186,4 +187,29 @@ public interface IAudioDeviceCatalog : IDisposable
 
     Task<IReadOnlyList<AudioDeviceInfo>> GetCaptureDevicesAsync(
         CancellationToken cancellationToken = default);
+}
+
+public readonly record struct ExactZeroRun(int SampleCount, bool SinceTakeStart);
+
+public enum MicSilenceLevel
+{
+    None = 0,
+    Calm = 1,
+    Strong = 2,
+}
+
+public interface ISilentMicSampleSource
+{
+    ExactZeroRun? CurrentExactZeroRun { get; }
+
+    bool LastCaptureWasWholeZero { get; }
+}
+
+public interface IWarmAudioCapture
+{
+    MicrophoneWarmPolicy WarmPolicy { get; }
+
+    Task SetWarmPolicyAsync(MicrophoneWarmPolicy policy, CancellationToken cancellationToken = default);
+
+    Task TearDownWarmAsync(CancellationToken cancellationToken = default);
 }

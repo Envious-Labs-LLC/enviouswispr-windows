@@ -85,6 +85,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     private readonly LivePreviewController _preview;
     private readonly AutoStopMonitor _autoStop;
     private readonly StreamingTranscriptionController _streaming;
+    private readonly SilentMicMonitor? _silentMic;
     private readonly TimeProvider _clock;
     private readonly UatRuntimePhaseJournal? _phaseJournal;
 
@@ -95,7 +96,8 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         AutoStopMonitor autoStop,
         StreamingTranscriptionController streaming,
         TimeProvider clock,
-        UatRuntimePhaseJournal? phaseJournal = null)
+        UatRuntimePhaseJournal? phaseJournal = null,
+        SilentMicMonitor? silentMic = null)
     {
         ArgumentNullException.ThrowIfNull(watchdog);
         ArgumentNullException.ThrowIfNull(preview);
@@ -108,6 +110,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         _streaming = streaming;
         _clock = clock;
         _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
+        _silentMic = silentMic;
     }
 
     public void CloseStreamingAdmission() => _streaming.CloseAdmission();
@@ -118,7 +121,9 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         using var dictation = DictationScope.Begin(sessionId.Value);
         _watchdog.Start(sessionId, settings.WatchdogDuration, settings.WatchdogWarningLead);
         await _preview.StartAsync(sessionId).ConfigureAwait(false);
-        _autoStop.Start(sessionId, settings.Dictation(), settings.IsHandsFree);
+        var preferences = settings.Dictation();
+        _autoStop.Start(sessionId, preferences, settings.IsHandsFree);
+        _silentMic?.Start(sessionId, preferences.SilentMicWarningsEnabled);
         _streaming.Start(sessionId);
     }
 
@@ -136,8 +141,11 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupEntered, DictationScope.Current);
         var streaming = await _streaming.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
         var autoStop = await _autoStop.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
+        var silentMic = _silentMic is null
+            ? StopOutcome.Completed
+            : await _silentMic.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
         var preview = await _preview.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
-        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, Combine(autoStop, silentMic), preview);
         if (report.Completed)
         {
             _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
@@ -154,8 +162,11 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupEntered, DictationScope.Current);
         var streaming = await _streaming.CompleteOrdinaryAsync(cleanupRemaining, processingToken).ConfigureAwait(false);
         var autoStop = await _autoStop.StopAsync(cleanupRemaining(), CancellationToken.None).ConfigureAwait(false);
+        var silentMic = _silentMic is null
+            ? StopOutcome.Completed
+            : await _silentMic.StopAsync(cleanupRemaining(), CancellationToken.None).ConfigureAwait(false);
         var preview = await _preview.StopAsync(cleanupRemaining(), CancellationToken.None).ConfigureAwait(false);
-        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, Combine(autoStop, silentMic), preview);
         if (report.Completed)
         {
             _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
@@ -179,8 +190,11 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         }
 
         var autoStop = await _autoStop.StopAsync().ConfigureAwait(false);
+        var silentMic = _silentMic is null
+            ? StopOutcome.Completed
+            : await _silentMic.StopAsync().ConfigureAwait(false);
         var preview = await _preview.StopAsync().ConfigureAwait(false);
-        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, Combine(autoStop, silentMic), preview);
         if (report.Completed)
         {
             _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
@@ -209,8 +223,11 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         var budget = new StopBudget(deadline, _clock);
         var streaming = await _streaming.StopAsync(budget.Left).ConfigureAwait(false);
         var autoStop = await _autoStop.StopAsync(budget.Left).ConfigureAwait(false);
+        var silentMic = _silentMic is null
+            ? StopOutcome.Completed
+            : await _silentMic.StopAsync(budget.Left).ConfigureAwait(false);
         var preview = await _preview.StopAsync(budget.Left).ConfigureAwait(false);
-        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, Combine(autoStop, silentMic), preview);
         if (report.Completed)
         {
             _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
@@ -218,6 +235,11 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
 
         return report;
     }
+
+    private static StopOutcome Combine(StopOutcome first, StopOutcome second) =>
+        first == StopOutcome.Completed && second == StopOutcome.Completed
+            ? StopOutcome.Completed
+            : StopOutcome.StillRunning;
 
     public Task StopWatchdogAsync() => _watchdog.StopAsync();
 

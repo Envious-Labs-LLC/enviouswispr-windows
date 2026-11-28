@@ -108,6 +108,33 @@ public sealed class PillCatalogParityTests
             "Recording auto-stops in under a minute (60-minute cap)",
             OverlayPillCatalog.FormatRecordingNoticeText(RecordingNoticeKind.ApproachingCap));
         Assert.Equal(
+            "We\u2019re not hearing anything from your microphone.",
+            OverlayPillCatalog.FormatRecordingNoticeText(RecordingNoticeKind.MicSilentCalm));
+        Assert.Equal(
+            "Your microphone isn\u2019t sending sound. Stop and check it in Settings.",
+            OverlayPillCatalog.FormatRecordingNoticeText(RecordingNoticeKind.MicSilentStrong));
+        Assert.Equal(
+            PillActionKind.OpenMicrophoneSettings,
+            PillPreviewCatalog.Find(PillPreviewKind.AdvisoryZeroSignal).PreviewStatus().Action?.Kind);
+        Assert.Equal(
+            RecordingNoticeKind.MicSilentCalm,
+            PillPreviewCatalog.Find(PillPreviewKind.RecordingCapsuleSilentMicCalm).PreviewStatus().RecordingNotice);
+        Assert.Equal(
+            RecordingNoticeKind.MicSilentStrong,
+            PillPreviewCatalog.Find(PillPreviewKind.RecordingCapsuleSilentMicStrong).PreviewStatus().RecordingNotice);
+        Assert.Equal(
+            RecordingNoticeKind.MicSilentCalm,
+            PillPreviewCatalog.Find(PillPreviewKind.RecordingLevelRailSilentMicCalm).PreviewStatus().RecordingNotice);
+        Assert.Equal(
+            RecordingNoticeKind.MicSilentStrong,
+            PillPreviewCatalog.Find(PillPreviewKind.RecordingLevelRailSilentMicStrong).PreviewStatus().RecordingNotice);
+        Assert.Equal(
+            RecordingNoticeKind.MicSilentCalm,
+            PillPreviewCatalog.Find(PillPreviewKind.RecordingReadingWellSilentMicCalm).PreviewStatus().RecordingNotice);
+        Assert.Equal(
+            RecordingNoticeKind.MicSilentStrong,
+            PillPreviewCatalog.Find(PillPreviewKind.RecordingReadingWellSilentMicStrong).PreviewStatus().RecordingNotice);
+        Assert.Equal(
             "60-minute limit reached. Transcribing...",
             OverlayPillCatalog.MaxDurationTranscribingText);
         Assert.Equal(

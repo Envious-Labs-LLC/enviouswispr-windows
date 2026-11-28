@@ -40,6 +40,11 @@ public interface IRuntimeView
     void ShowApproachingCapNotice()
     {
     }
+
+    /// <summary>Updates or clears the silent-microphone notice on the active recording pill.</summary>
+    void SetRecordingSilentMicNotice(MicSilenceLevel level)
+    {
+    }
 }
 
 /// <summary>The shell's leaf reads the long-lived session owners need; nothing here sequences anything.</summary>
@@ -158,6 +163,7 @@ public sealed class SessionRuntime
         StreamingTranscriptionController streaming,
         RecordingWatchdog watchdog,
         AutoStopMonitor autoStop,
+        SilentMicMonitor silentMic,
         TimeProvider clock)
     {
         _queue = queue;
@@ -168,6 +174,7 @@ public sealed class SessionRuntime
         Streaming = streaming;
         Watchdog = watchdog;
         AutoStop = autoStop;
+        SilentMic = silentMic;
         _clock = clock;
     }
 
@@ -185,8 +192,10 @@ public sealed class SessionRuntime
 
     public AutoStopMonitor AutoStop { get; }
 
+    public SilentMicMonitor SilentMic { get; }
+
     /// <summary>The order around a recording, for the session the executor is about to own.</summary>
-    public SessionBackgroundWork Background() => new(Watchdog, Preview, AutoStop, Streaming, _clock);
+    public SessionBackgroundWork Background() => new(Watchdog, Preview, AutoStop, Streaming, _clock, silentMic: SilentMic);
 
     /// <summary>A key's signal, on the same queue the timers use.</summary>
     public Task SubmitAsync(PushToTalkSignal signal, bool isHandsFree = false) =>
@@ -239,6 +248,10 @@ public static class RuntimeComposition
         var streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(parts.Shell), parts.Logger, parts.Clock);
         var queue = new SessionQueue(parts.Shell, parts.Logger);
         var timers = new RecordingTimerEffects(parts.Shell, queue);
+        var silentMic = new SilentMicMonitor(
+            new SilentMicNoticeEffects(parts.Shell),
+            () => parts.Shell.Audio() as ISilentMicSampleSource,
+            parts.Clock);
         return new SessionRuntime(
             queue,
             persistence,
@@ -248,6 +261,16 @@ public static class RuntimeComposition
             streaming,
             new RecordingWatchdog(timers, parts.Clock),
             new AutoStopMonitor(timers, parts.Logger, parts.Clock),
+            silentMic,
             parts.Clock);
+    }
+
+    private sealed class SilentMicNoticeEffects(RuntimeShell shell) : ISilentMicNoticeEffects
+    {
+        public void ShowSilentMicNotice(MicSilenceLevel level) =>
+            shell.View.SetRecordingSilentMicNotice(level);
+
+        public void ClearSilentMicNotice() =>
+            shell.View.SetRecordingSilentMicNotice(MicSilenceLevel.None);
     }
 }

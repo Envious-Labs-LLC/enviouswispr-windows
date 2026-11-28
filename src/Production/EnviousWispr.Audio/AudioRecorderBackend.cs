@@ -41,7 +41,7 @@ internal sealed class WasapiRecorderFactory : IAudioRecorderFactory
         var builder = new WasapiRecorderBuilder()
             .WithSharedMode()
             .WithEventSync()
-            .WithBufferLength(50)
+            .WithBufferLength(20)
             .WithFormat(CaptureFormat)
             .WithMmcssThreadPriority("Audio");
 

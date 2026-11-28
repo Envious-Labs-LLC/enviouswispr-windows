@@ -139,6 +139,7 @@ public partial class App
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
+            _ = TearDownWarmAudioCaptureAsync();
             // THE INTERRUPTION OWNS ITS CANCEL. The coordinator cancels the finalisation in flight
             // for an interruption it admits, and for none it refuses; once leaving has begun the exit
             // has closed admission and cut the finalisation by its own policy (the lifetime's), and a
@@ -385,6 +386,7 @@ public partial class App
             return;
         }
 
+        var previousPreferred = _settings.PreferredMicrophoneId;
         var normalized = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
         SettingsSaveResult result;
         using (lease)
@@ -412,6 +414,11 @@ public partial class App
         }
 
         var updated = presentation.Settings.Current;
+        if (!string.Equals(previousPreferred, updated.PreferredMicrophoneId, StringComparison.Ordinal))
+        {
+            await TearDownWarmAudioCaptureAsync().ConfigureAwait(false);
+        }
+
         PostToLiveWindow(_ =>
         {
             _settings = updated;
@@ -748,6 +755,8 @@ public partial class App
             new LifetimeStep("live preview", () => _livePreview.DisposeAsync().AsTask()),
             new LifetimeStep("watchdog", () => _watchdog.DisposeAsync().AsTask()),
             new LifetimeStep("auto-stop", () => _autoStop.DisposeAsync().AsTask()),
+            new LifetimeStep("silent mic monitor", () => _silentMic.DisposeAsync().AsTask()),
+            new LifetimeStep("warm audio capture", TearDownWarmAudioCaptureAsync),
             LifetimeStep.Of("history store", _historyStore.Dispose),
             LifetimeStep.Of("recovery store", _recoveryTextStore.Dispose),
         ],

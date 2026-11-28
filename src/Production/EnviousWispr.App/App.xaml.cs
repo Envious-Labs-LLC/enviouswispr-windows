@@ -67,6 +67,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly SessionRuntime _runtime;
     private PushToTalkSessionController? _sessionController;
     private readonly AutoStopMonitor _autoStop;
+    private readonly SilentMicMonitor _silentMic;
     private readonly RecordingWatchdog _watchdog;
     private readonly StreamingTranscriptionController _streaming;
     private MainWindow? _window;
@@ -166,6 +167,7 @@ public partial class App : Application, IAsyncDisposable
         _streaming = _runtime.Streaming;
         _watchdog = _runtime.Watchdog;
         _autoStop = _runtime.AutoStop;
+        _silentMic = _runtime.SilentMic;
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         // THE WINDOW IS READ WHEN THE STORE IS FIRST ASKED, not now: it does not exist yet, and the
@@ -380,6 +382,7 @@ public partial class App : Application, IAsyncDisposable
             mishearingAdvisor);
         InitializeSelfLearning();
         _windowHostBinding = MainWindowHostBinder.Attach(_window, BuildMainWindowHostContracts());
+        _window.PrepareMicrophoneForTestAsync = TearDownWarmAudioCaptureAsync;
         _window.RefreshLearnMemoryUi();
         ReportDataDeletionLeftover(_window);
         _window.AppWindow.Closing += OnAppWindowClosing;
@@ -538,7 +541,14 @@ public partial class App : Application, IAsyncDisposable
             Dictation: new WindowDictationHost(
                 SessionStatusChanged: OnSessionStatusChanged,
                 RecordingSoundPlaybackFailed: OnRecordingSoundPlaybackFailed,
-                AudioDevicesChanged: OnAudioDevicesChanged,
+                AudioDevicesChanged: change =>
+                {
+                    OnAudioDevicesChanged(change);
+                    if (change.AffectsCapture)
+                    {
+                        _ = TearDownWarmAudioCaptureAsync();
+                    }
+                },
                 DictationEnded: OnDictationEnded,
                 TranscriptionRetryRequested: OnTranscriptionRetryRequested,
                 ManualDictationToggleRequested: OnManualDictationToggleRequested,
@@ -617,6 +627,8 @@ public partial class App : Application, IAsyncDisposable
     private void OnSettingsChanged(AppSettings settings)
     {
         var previousSharing = _settings.Observability?.ShareAnonymousTelemetry == true;
+        var previousPreferredMicrophoneId = _settings.PreferredMicrophoneId;
+        var previousWarmMicrophonePolicy = _settings.Preferences.Dictation.WarmMicrophonePolicy;
         var previousFinalEngine = _settings.Preferences.Dictation.FinalEngine;
         var previousPreviewEnabled = _settings.Preferences.LivePreviewEnabled;
         var previousPreviewEngine = _settings.Preferences.LivePreviewEngine;
@@ -673,6 +685,16 @@ public partial class App : Application, IAsyncDisposable
         if (previousLearnFromEdits != settings.Preferences.Dictation.LearnFromEditsEnabled)
         {
             OnSelfLearningSettingChanged(settings.Preferences.Dictation.LearnFromEditsEnabled);
+        }
+
+        if (!string.Equals(previousPreferredMicrophoneId, settings.PreferredMicrophoneId, StringComparison.Ordinal))
+        {
+            _ = TearDownWarmAudioCaptureAsync();
+        }
+
+        if (previousWarmMicrophonePolicy != settings.Preferences.Dictation.WarmMicrophonePolicy)
+        {
+            _ = ApplyWarmMicrophonePolicyAsync(settings.Preferences.Dictation.WarmMicrophonePolicy);
         }
     }
 
@@ -734,6 +756,9 @@ public partial class App : Application, IAsyncDisposable
 
         public void ShowApproachingCapNotice() =>
             app.PostToLiveWindow(window => window.ShowApproachingCapNotice());
+
+        public void SetRecordingSilentMicNotice(MicSilenceLevel level) =>
+            app.PostToLiveWindow(window => window.SetRecordingSilentMicNotice(level));
     }
 
     /// <summary>The window as the session sees it: each sink one dispatch to the window, and nothing decided here.</summary>

@@ -88,6 +88,7 @@ public static class AppSettingsValidator
         LanguageCatalog.IsCanonicalStoredCode(preferences.Dictation.WhisperLanguage) &&
         Enum.IsDefined(preferences.Dictation.EnglishSpelling) &&
         Enum.IsDefined(preferences.Dictation.RecordingMode) &&
+        Enum.IsDefined(preferences.Dictation.WarmMicrophonePolicy) &&
         HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
         HotkeyGestureParser.Parse(preferences.Dictation.CancelGesture).Succeeded &&
         HotkeyGestureParser.Parse(preferences.Dictation.QuickAddGesture).Succeeded &&

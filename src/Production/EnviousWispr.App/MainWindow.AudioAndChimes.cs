@@ -39,6 +39,8 @@ public sealed partial class MainWindow
 
     public event Action<AudioDeviceChange>? AudioDevicesChanged;
 
+    internal Func<Task>? PrepareMicrophoneForTestAsync { get; set; }
+
     public void CancelRecordingSoundCue()
     {
         Interlocked.Increment(ref _recordingSoundAttempt);
@@ -492,6 +494,11 @@ public sealed partial class MainWindow
         _session.MicrophoneTest.Frame += OnMicrophoneTestFrame;
         try
         {
+            if (!await PrepareForMicrophoneTestAsync().ConfigureAwait(true))
+            {
+                return;
+            }
+
             var result = await _session.MicrophoneTest.RunAsync(device, recording).ConfigureAwait(true);
             if (_session.Closing)
             {
@@ -532,6 +539,16 @@ public sealed partial class MainWindow
             MicrophoneTestButton.IsEnabled = true;
             DrawMicrophoneTestLevel(0f);
         }
+    }
+
+    private async Task<bool> PrepareForMicrophoneTestAsync()
+    {
+        if (PrepareMicrophoneForTestAsync is { } prepare)
+        {
+            await prepare().ConfigureAwait(true);
+        }
+
+        return !_session.Closing;
     }
 
     /// <summary>Stops a microphone test, because something with a better claim wants the device.</summary>

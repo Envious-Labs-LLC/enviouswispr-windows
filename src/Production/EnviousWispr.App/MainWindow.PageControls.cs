@@ -260,6 +260,14 @@ public sealed partial class MainWindow
     private global::Microsoft.UI.Xaml.Controls.Button AppTabUpdatesLicenses => _settingsPageView?.AppTabUpdatesLicenses;
     private global::Microsoft.UI.Xaml.Controls.Border MicrophoneSection => _settingsPageView?.MicrophoneSection;
     private global::Microsoft.UI.Xaml.Controls.ComboBox MicrophoneComboBox => _settingsPageView?.MicrophoneComboBox;
+    private global::Microsoft.UI.Xaml.Controls.Button MicReadinessOffSegmentButton => _settingsPageView?.MicReadinessOffSegmentButton;
+    private global::Microsoft.UI.Xaml.Controls.Button MicReadiness10sSegmentButton => _settingsPageView?.MicReadiness10sSegmentButton;
+    private global::Microsoft.UI.Xaml.Controls.Button MicReadiness30sSegmentButton => _settingsPageView?.MicReadiness30sSegmentButton;
+    private global::Microsoft.UI.Xaml.Controls.Button MicReadiness60sSegmentButton => _settingsPageView?.MicReadiness60sSegmentButton;
+    private global::Microsoft.UI.Xaml.Controls.Button MicReadinessAlwaysSegmentButton => _settingsPageView?.MicReadinessAlwaysSegmentButton;
+    private global::Microsoft.UI.Xaml.Controls.Border MicReadinessAlwaysNotice => _settingsPageView?.MicReadinessAlwaysNotice;
+    private global::Microsoft.UI.Xaml.Controls.TextBlock MicReadinessAlwaysNoticeText => _settingsPageView?.MicReadinessAlwaysNoticeText;
+    private global::Microsoft.UI.Xaml.Controls.ToggleSwitch SilentMicWarningsToggle => _settingsPageView?.SilentMicWarningsToggle;
     private global::Microsoft.UI.Xaml.Controls.StackPanel MicrophoneTestBars => _settingsPageView?.MicrophoneTestBars;
     private global::Microsoft.UI.Xaml.Controls.TextBlock MicrophoneTestResultText => _settingsPageView?.MicrophoneTestResultText;
     private global::Microsoft.UI.Xaml.Controls.Button MicrophoneTestButton => _settingsPageView?.MicrophoneTestButton;
