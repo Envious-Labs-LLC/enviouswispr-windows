@@ -75,6 +75,11 @@ public static class LeadingMarkerRepair
             return output;
         }
 
+        if (CountNormalizedToken(outputTokens, firstInputNormalized) >= CountNormalizedToken(inputTokens, firstInputNormalized))
+        {
+            return output;
+        }
+
         var secondInputNormalized = NormalizeToken(inputTokens[1]);
         if (CorrectionCues.Contains(secondInputNormalized) &&
             !string.Equals(firstOutputNormalized, secondInputNormalized, StringComparison.Ordinal))
@@ -97,6 +102,20 @@ public static class LeadingMarkerRepair
         }
 
         return string.Concat(capitalizedMarker, separator, body);
+    }
+
+    private static int CountNormalizedToken(string[] tokens, string targetNormalized)
+    {
+        var count = 0;
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (string.Equals(NormalizeToken(tokens[i]), targetNormalized, StringComparison.Ordinal))
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private static string? NormalizeBaseLanguage(string? language)

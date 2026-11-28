@@ -166,6 +166,8 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
             var maxUtf8Bytes = PolishChunker.MaximumBytesForWords(maxWords);
             var pieces = PolishChunker.SplitByBudget(request.Input.Text, maxWords, maxUtf8Bytes);
             var expectedLanguage = request.DetectedLanguage ?? request.RecognitionLanguage;
+            using var attemptTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            attemptTimeout.CancelAfter(_requestTimeout);
 
             if (pieces.Count <= 1)
             {
@@ -178,6 +180,7 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                     readiness.Model,
                     timer,
                     applyLeadingMarkerRepair: true,
+                    attemptTimeout.Token,
                     cancellationToken).ConfigureAwait(false);
                 timer.Stop();
                 return singleResult;
@@ -202,6 +205,7 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                     readiness.Model,
                     timer,
                     applyLeadingMarkerRepair: false,
+                    attemptTimeout.Token,
                     cancellationToken).ConfigureAwait(false);
                 if (pieceResult.UsedFallback)
                 {
@@ -253,10 +257,9 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
         OllamaModelInfo model,
         Stopwatch timer,
         bool applyLeadingMarkerRepair,
-        CancellationToken cancellationToken)
+        CancellationToken timeoutToken,
+        CancellationToken callerCancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_requestTimeout);
         try
         {
             for (var attempt = 0; ; attempt++)
@@ -269,7 +272,7 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                         recognitionLanguage,
                         targetAppName,
                         model,
-                        timeout.Token).ConfigureAwait(false);
+                        timeoutToken).ConfigureAwait(false);
                     if (LooksLikeCodeOutput(output))
                     {
                         return Fallback(
@@ -316,13 +319,13 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                 catch (OllamaPolishException exception) when (
                     exception.CanRetry && attempt < RetryDelays.Length)
                 {
-                    await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
+                    await _delay(RetryDelays[attempt], timeoutToken).ConfigureAwait(false);
                 }
                 catch (Exception exception) when (
                     exception is HttpRequestException or IOException &&
                     attempt < RetryDelays.Length)
                 {
-                    await _delay(RetryDelays[attempt], timeout.Token).ConfigureAwait(false);
+                    await _delay(RetryDelays[attempt], timeoutToken).ConfigureAwait(false);
                 }
                 catch (OllamaPolishException exception)
                 {
@@ -343,7 +346,7 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                 }
             }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (!callerCancellationToken.IsCancellationRequested)
         {
             return Fallback(
                 segmentInput,

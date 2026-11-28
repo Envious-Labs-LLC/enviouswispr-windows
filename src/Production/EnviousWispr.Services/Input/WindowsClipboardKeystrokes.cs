@@ -47,16 +47,17 @@ internal static partial class WindowsClipboardPaste
             return false;
         }
 
-        var attemptedRelease = false;
+        var released = false;
         try
         {
             wait(holdDuration);
-            attemptedRelease = true;
-            return send(up);
+            var ok = send(up);
+            released = ok;
+            return ok;
         }
         finally
         {
-            if (!attemptedRelease)
+            if (!released)
             {
                 _ = send(up);
             }

@@ -381,8 +381,44 @@ public sealed class Wave1BHeartHardeningTests
             "Actually, API requests succeed.",
             LeadingMarkerRepair.Repair("Actually API requests succeed.", "API requests succeed.", "en"));
         Assert.Equal(
+            "We should actually ship it.",
+            LeadingMarkerRepair.Repair("Actually we should ship it.", "We should actually ship it.", "en"));
+        Assert.Equal(
+            "Actually, I actually think so.",
+            LeadingMarkerRepair.Repair("Actually I actually think so.", "I actually think so.", "en"));
+        Assert.Equal(
             "On devrait partir.",
             LeadingMarkerRepair.Repair("Actually on devrait partir.", "On devrait partir.", "fr"));
+    }
+
+    [Fact]
+    public async Task B3OllamaPolishProviderEnforcesSingleSharedDeadlineAcrossAllChunks()
+    {
+        var input350 = string.Join(' ', Enumerable.Range(0, 350).Select(i => $"chunk{i}."));
+        var handler = new AsyncScriptedHttpHandler(async (req, ct) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return JsonReply("""{"models":[{"name":"llama3.2","capabilities":["completion"]}]}""");
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(90), ct);
+            using var doc = JsonDocument.Parse(req.Body);
+            var userText = doc.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+            const string marker = "Transcript to clean:\n\n";
+            var segment = userText.StartsWith(marker, StringComparison.OrdinalIgnoreCase)
+                ? userText[marker.Length..]
+                : userText;
+            return JsonReply(JsonSerializer.Serialize(new { message = new { content = segment }, done_reason = "stop" }));
+        });
+
+        // 2 chunks * 90 ms = 180 ms exceeds a single 130 ms shared timeout even though each chunk < 130 ms.
+        await using var provider = new OllamaPolishProvider(
+            new OllamaPolishOptions(null, "llama3.2", RequestTimeout: TimeSpan.FromMilliseconds(130)),
+            handler);
+        var result = await provider.TryPolishAsync(new PolishRequest(new ProcessedText(DictationSessionId.Create(), input350), "en"));
+        Assert.Equal(PolishAttemptStatus.TimedOut, result.Status);
+        Assert.Equal(input350, result.Output.Text);
     }
 
     [Fact]
@@ -420,6 +456,25 @@ public sealed class Wave1BHeartHardeningTests
                 _ => throw new InvalidOperationException("wait aborted")));
         Assert.Equal(["down", "up"], releaseEvents);
 
+        var retryUpCount = 0;
+        var failedUpResult = WindowsClipboardPaste.SendHoldAndReleaseChord(
+            chord,
+            TimeSpan.FromMilliseconds(20),
+            inputs =>
+            {
+                var isUp = (inputs[0].Union.Keyboard.Flags & 0x0002u) != 0;
+                if (!isUp)
+                {
+                    return true;
+                }
+
+                retryUpCount++;
+                return retryUpCount > 1;
+            },
+            _ => { });
+        Assert.False(failedUpResult);
+        Assert.Equal(2, retryUpCount);
+
         Assert.True(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(null, "Chrome_WidgetWin_1"));
         Assert.False(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(null, "Notepad"));
         Assert.True(WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(
@@ -454,6 +509,20 @@ public sealed class Wave1BHeartHardeningTests
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json"),
     };
+
+    private sealed class AsyncScriptedHttpHandler(
+        Func<ScriptedHttpRequest, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            return await respond(new ScriptedHttpRequest(request.Method, body), cancellationToken);
+        }
+    }
 
     private sealed class ScriptedHttpHandler(
         Func<ScriptedHttpRequest, HttpResponseMessage> respond) : HttpMessageHandler
