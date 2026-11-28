@@ -241,5 +241,26 @@ public sealed class BuiltinDictionaryCorrectionTests
             excludeLearnedAliases: false);
 
         Assert.Equal("a clod of earth and EnviousWispr", preview);
+
+        // Even after a user edits Claude to add a manual alias (promoting Origin to User),
+        // checker-only aliases ("clod", "clawed") must stay excluded in live preview while
+        // the newly added manual alias still applies.
+        var editedClaude = new CustomWordEntry(
+            aliases: ["clod", "clawed", "claud"],
+            replacement: "Claude",
+            strictness: MatchStrictness.Default,
+            category: WordCategory.Brand,
+            id: "builtin:claude",
+            learnedAliases: ["clod", "clawed"],
+            learnedAt: null,
+            origin: CustomWordOrigin.User);
+        var editedPreview = LivePreviewTextFormatter.Format(
+            "a clod of earth, claud, and clawed",
+            wordCorrectionEnabled: true,
+            [editedClaude],
+            EnglishSpelling.American,
+            excludeLearnedAliases: false);
+
+        Assert.Equal("a clod of earth, Claude, and clawed", editedPreview);
     }
 }

@@ -43,7 +43,7 @@ public static class LivePreviewTextFormatter
         }
 
         var activeCustomWords = wordCorrectionEnabled && customWords is { Count: > 0 }
-            ? (excludeLearnedAliases ? customWords : ExcludeBuiltinCheckerAliases(customWords))
+            ? (excludeLearnedAliases ? customWords : ExcludeUnlearnedCheckerAliases(customWords))
             : [];
         var activePackWords = wordCorrectionEnabled
             ? VocabularyPacks.ResolveEntries(enabledVocabularyPackIds, vocabularyPackOverrides)
@@ -80,19 +80,19 @@ public static class LivePreviewTextFormatter
         return bounded;
     }
 
-    private static IReadOnlyList<CustomWordEntry> ExcludeBuiltinCheckerAliases(IReadOnlyList<CustomWordEntry> entries)
+    private static IReadOnlyList<CustomWordEntry> ExcludeUnlearnedCheckerAliases(IReadOnlyList<CustomWordEntry> entries)
     {
-        var hasBuiltinChecker = false;
+        var hasUnlearnedChecker = false;
         for (var i = 0; i < entries.Count; i++)
         {
-            if (entries[i].Origin == CustomWordOrigin.Builtin && entries[i].HasCheckerAliases)
+            if (!entries[i].LearnedAt.HasValue && entries[i].HasCheckerAliases)
             {
-                hasBuiltinChecker = true;
+                hasUnlearnedChecker = true;
                 break;
             }
         }
 
-        if (!hasBuiltinChecker)
+        if (!hasUnlearnedChecker)
         {
             return entries;
         }
@@ -100,7 +100,7 @@ public static class LivePreviewTextFormatter
         var filtered = new List<CustomWordEntry>(entries.Count);
         foreach (var entry in entries)
         {
-            if (entry.Origin != CustomWordOrigin.Builtin || !entry.HasCheckerAliases)
+            if (entry.LearnedAt.HasValue || !entry.HasCheckerAliases)
             {
                 filtered.Add(entry);
                 continue;

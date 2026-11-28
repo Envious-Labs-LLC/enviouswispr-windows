@@ -382,6 +382,26 @@ public sealed class BuiltinWordsLifecycleTests
         Assert.Equal(AppSettingsValidator.MaximumCustomWords, settings.Current.UserData.CustomWords.Count);
     }
 
+    [Fact]
+    public async Task PartialConflictReplacementOverBuiltinClaudePreservesCheckerProvenanceOnRemainingAlias()
+    {
+        var (vocab, presenter, _) = Build();
+        var importer = new VocabularyImportController(vocab);
+
+        // Replace only "clod" -> "ClodCorp"; "clawed" remains for Claude and must retain its checker-only provenance.
+        var plan = await importer.ImportAsync("clod,ClodCorp").WaitAsync(Patience);
+        Assert.True(plan.Saved);
+        var conflict = Assert.Single(plan.Value!.Conflicts);
+
+        var replaced = await importer.ReplaceConflictsAsync([conflict]).WaitAsync(Patience);
+        Assert.True(replaced.Saved);
+
+        var claudeRemaining = Assert.Single(presenter.Current.UserData.EffectiveCustomWords(), e => e.Replacement == "Claude");
+        Assert.Equal(["clawed"], claudeRemaining.Aliases);
+        Assert.Equal(["clawed"], claudeRemaining.LearnedAliases);
+        Assert.True(claudeRemaining.HasCheckerAliases);
+    }
+
     private static (VocabularyPresenter Vocab, SettingsPresenter Settings, RecordingStore Store) Build()
     {
         var store = new RecordingStore();
