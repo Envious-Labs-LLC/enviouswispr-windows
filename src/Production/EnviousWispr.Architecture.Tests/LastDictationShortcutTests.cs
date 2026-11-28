@@ -111,7 +111,7 @@ public sealed class LastDictationShortcutTests
     }
 
     [Fact]
-    public void PasteLastSignalsOncePerPressAndMasksTheAlt()
+    public void PasteLastSignalsOnReleaseOncePerPressAndMasksTheAlt()
     {
         var tracker = Tracker();
 
@@ -119,13 +119,15 @@ public sealed class LastDictationShortcutTests
         var repeat = tracker.Process(LetterZ, isKeyDown: true, AltShift);
         var up = tracker.Process(LetterZ, isKeyDown: false, AltShift);
 
-        Assert.Equal(PushToTalkSignal.PasteLast, down.Signal);
+        Assert.Null(down.Signal);
         Assert.True(down.Consume);
         Assert.True(down.MaskMenuKey);
         Assert.Null(repeat.Signal);
         Assert.True(repeat.Consume);
         Assert.False(repeat.MaskMenuKey);
+        Assert.Equal(PushToTalkSignal.PasteLast, up.Signal);
         Assert.True(up.Consume);
+        Assert.True(up.MaskMenuKey);
     }
 
     [Fact]
@@ -214,11 +216,14 @@ public sealed class LastDictationShortcutTests
 
         var pasteDown = tracker.Process(LetterZ, isKeyDown: true, AltShift);
         tracker.Process(LetterZ, isKeyDown: true, HotkeyModifiers.None);
-        tracker.Process(LetterZ, isKeyDown: false, HotkeyModifiers.None);
-        var again = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        var pasteUp = tracker.Process(LetterZ, isKeyDown: false, HotkeyModifiers.None);
+        var againDown = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        var againUp = tracker.Process(LetterZ, isKeyDown: false, AltShift);
 
-        Assert.Equal(PushToTalkSignal.PasteLast, pasteDown.Signal);
-        Assert.Equal(PushToTalkSignal.PasteLast, again.Signal);
+        Assert.Null(pasteDown.Signal);
+        Assert.Equal(PushToTalkSignal.PasteLast, pasteUp.Signal);
+        Assert.Null(againDown.Signal);
+        Assert.Equal(PushToTalkSignal.PasteLast, againUp.Signal);
     }
 
     /// <summary>

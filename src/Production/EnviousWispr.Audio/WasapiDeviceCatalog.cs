@@ -83,12 +83,14 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
             using (device)
             {
                 var transport = ClassifyEndpoint(device);
+                var isMuted = TryReadEndpointMute(device);
                 result.Add(new AudioDeviceInfo(
                     new AudioDeviceId(device.ID),
                     device.FriendlyName,
                     string.Equals(device.ID, defaultDeviceId, StringComparison.Ordinal),
                     IsActive: true,
-                    Transport: transport));
+                    Transport: transport,
+                    IsMuted: isMuted));
             }
         }
 
@@ -209,6 +211,35 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
             deviceDescription,
             friendlyName,
             iconPath);
+    }
+
+    /// <summary>Returns true when the resolved active or default capture endpoint is classified as Bluetooth.</summary>
+    public static bool IsBluetoothDevice(AudioDeviceId? deviceId)
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var device = deviceId is { } id
+                ? enumerator.GetDevice(id.Value)
+                : enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            return ClassifyEndpoint(device) == AudioDeviceTransport.Bluetooth;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadEndpointMute(MMDevice device)
+    {
+        try
+        {
+            return device.AudioEndpointVolume?.Mute ?? false;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool ContainsVirtualAdapterMarker(string text)

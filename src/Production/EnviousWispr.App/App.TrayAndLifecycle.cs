@@ -139,6 +139,7 @@ public partial class App
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
+            _pushToTalkHook?.ResetHeldKeys();
             _ = TearDownWarmAudioCaptureAsync();
             // THE INTERRUPTION OWNS ITS CANCEL. The coordinator cancels the finalisation in flight
             // for an interruption it admits, and for none it refuses; once leaving has begun the exit
@@ -152,6 +153,12 @@ public partial class App
         }
         else
         {
+            if (transition is SystemLifecycleTransition.SessionUnlocked or
+                SystemLifecycleTransition.Resumed)
+            {
+                _pushToTalkHook?.ResetHeldKeys();
+            }
+
             PostToLiveWindow(window =>
                 window.SetSessionStatus(DictationStatus.Quiet("Windows resumed. EnviousWispr is ready")));
         }
@@ -769,6 +776,7 @@ public partial class App
             {
                 if (_presentation is { } presentation)
                 {
+                    presentation.DeviceCatalog().DevicesChanged -= OnCatalogAudioDevicesChanged;
                     await presentation.DisposeAsync().ConfigureAwait(true);
                 }
 

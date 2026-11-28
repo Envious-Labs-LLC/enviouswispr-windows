@@ -15,7 +15,12 @@ public sealed class WasapiAudioCapture :
     ISilentMicSampleSource
 {
     public static readonly TimeSpan DefaultHardCaptureBackstop = TimeSpan.FromMinutes(61);
+    public static readonly TimeSpan WiredFirstPacketTimeout = TimeSpan.FromMilliseconds(800);
+    public static readonly TimeSpan BluetoothFirstPacketTimeout = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan BluetoothSettlingProbeDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan BluetoothColdStartSettlingDelay = TimeSpan.FromMilliseconds(250);
     private const int PreRollCapacitySamples = 8_000;
+    private const int MuteProbeIntervalSamples = 8_000;
 
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
@@ -35,6 +40,7 @@ public sealed class WasapiAudioCapture :
     private readonly MemoryStream _capturedBytes = new();
     private readonly float[] _preRollRing = new float[PreRollCapacitySamples];
     private readonly IAudioRecorderFactory _recorderFactory;
+    private readonly Func<AudioDeviceId?, bool> _isBluetoothDevice;
     private readonly TimeSpan _stopTimeout;
     private readonly long _maxCapturedBytes;
     private readonly TimeProvider _timeProvider;
@@ -44,10 +50,13 @@ public sealed class WasapiAudioCapture :
     private AudioCaptureRequest? _request;
     private AudioDeviceId? _warmDeviceId;
     private ITimer? _warmTeardownTimer;
+    private ITimer? _firstPacketWatchdogTimer;
     private CaptureState _state = CaptureState.Cold;
     private int _warmPolicy = (int)MicrophoneWarmPolicy.Off;
     private long _warmIdleSinceTimestamp;
+    private long? _lastWarmPacketTimestamp;
     private long _warmGeneration;
+    private long _captureAttemptGeneration;
     private int _inFlightCaptureCallbacks;
     private int _preRollWriteIndex;
     private int _preRollCount;
@@ -56,10 +65,14 @@ public sealed class WasapiAudioCapture :
     private bool _exactZeroSinceTakeStart = true;
     private bool _sawNonZeroPostPreRoll;
     private bool _lastCaptureWasWholeZero;
+    private bool _isEndpointMuted;
+    private bool _lastCaptureWasEndpointMuted;
+    private AppErrorCode? _stallErrorCode;
     private volatile bool _isCapturing;
     private volatile bool _clientRequestedStop;
     private volatile bool _backendStopped;
     private volatile bool _unexpectedStop;
+    private bool _suppressUnexpectedStopEvent;
     private int _backstopTriggered;
     private int _backstopSignalled;
     private bool _disposed;
@@ -75,7 +88,8 @@ public sealed class WasapiAudioCapture :
             new WasapiRecorderFactory(),
             TimeSpan.FromSeconds(2),
             DefaultHardCaptureBackstop,
-            TimeProvider.System)
+            TimeProvider.System,
+            WasapiDeviceCatalog.IsBluetoothDevice)
     {
     }
 
@@ -83,7 +97,8 @@ public sealed class WasapiAudioCapture :
         IAudioRecorderFactory recorderFactory,
         TimeSpan stopTimeout,
         TimeSpan? hardCaptureBackstop = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Func<AudioDeviceId?, bool>? isBluetoothDevice = null)
     {
         ArgumentNullException.ThrowIfNull(recorderFactory);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(stopTimeout, TimeSpan.Zero);
@@ -91,6 +106,7 @@ public sealed class WasapiAudioCapture :
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(effectiveBackstop, TimeSpan.Zero);
 
         _recorderFactory = recorderFactory;
+        _isBluetoothDevice = isBluetoothDevice ?? (static _ => false);
         _stopTimeout = stopTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
         var requestedSamples = effectiveBackstop.TotalSeconds * AudioSampleConverter.TargetSampleRate;
@@ -101,6 +117,8 @@ public sealed class WasapiAudioCapture :
     }
 
     public event EventHandler<AudioLevel>? LevelChanged;
+
+    public event EventHandler<AudioCaptureStopped>? UnexpectedStop;
 
     public event EventHandler<DictationSessionId>? MaxDurationBackstopReached;
 
@@ -124,6 +142,10 @@ public sealed class WasapiAudioCapture :
 
     public float LastRootMeanSquare => _rms;
 
+    public bool IsEndpointMuted => Volatile.Read(ref _isEndpointMuted);
+
+    public bool LastCaptureWasEndpointMuted => Volatile.Read(ref _lastCaptureWasEndpointMuted);
+
     public ExactZeroRun? CurrentExactZeroRun
     {
         get
@@ -135,7 +157,7 @@ public sealed class WasapiAudioCapture :
                     return null;
                 }
 
-                return new ExactZeroRun(_exactZeroRunSamples, _exactZeroSinceTakeStart);
+                return new ExactZeroRun(_exactZeroRunSamples, _exactZeroSinceTakeStart, Volatile.Read(ref _isEndpointMuted));
             }
         }
     }
@@ -184,6 +206,87 @@ public sealed class WasapiAudioCapture :
                     }
 
                     break;
+            }
+        }
+        finally
+        {
+            _transitionGate.Release();
+        }
+    }
+
+    public async Task RefreshWarmAsync(
+        AudioDeviceId? deviceId,
+        bool isBluetooth = false,
+        CancellationToken cancellationToken = default)
+    {
+        await _transitionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_disposed || _state != CaptureState.WarmIdle)
+            {
+                return;
+            }
+
+            if (_warmDeviceId == deviceId && !_backendStopped && !_unexpectedStop)
+            {
+                return;
+            }
+
+            await TearDownWarmCoreLockedAsync().ConfigureAwait(false);
+            var warmPolicy = WarmPolicy;
+            if (_disposed || warmPolicy == MicrophoneWarmPolicy.Off)
+            {
+                return;
+            }
+
+            IAudioRecorderSession? recorder = null;
+            try
+            {
+                recorder = await _recorderFactory.CreateAsync(deviceId, cancellationToken).ConfigureAwait(false);
+                lock (_bufferGate)
+                {
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
+                    ClearPreRollRingLocked();
+                    _capturedBytes.SetLength(0);
+                    _capturedBytes.Capacity = 0;
+                    _recordingStopped = new TaskCompletionSource<Exception?>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    _recorder = recorder;
+                    _warmDeviceId = deviceId;
+                    _clientRequestedStop = false;
+                    _backendStopped = false;
+                    _unexpectedStop = false;
+                    _lastWarmPacketTimestamp = null;
+                    _state = CaptureState.WarmIdle;
+                    _warmGeneration++;
+                    _warmIdleSinceTimestamp = _timeProvider.GetTimestamp();
+                }
+
+                recorder.DataAvailable += OnDataAvailable;
+                recorder.Stopped += OnRecordingStopped;
+                recorder.Start();
+                Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(recorder));
+                ScheduleWarmTeardownForPolicyLocked(warmPolicy);
+                recorder = null;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or COMException or OperationCanceledException)
+            {
+                if (recorder is not null)
+                {
+                    try
+                    {
+                        await ReleaseRecorderAsync(recorder).ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+
+                ClearSession();
             }
         }
         finally
@@ -254,7 +357,7 @@ public sealed class WasapiAudioCapture :
                 byteCount).ToArray();
         }
 
-        var samples = AudioSampleConverter.ConvertToMono16Khz(bytes, CaptureFormat).Samples;
+        var samples = DecodeCapturedFloats(bytes, _recorder?.Format ?? CaptureFormat);
         return new AudioSnapshot(
             sessionId,
             samples,
@@ -290,7 +393,7 @@ public sealed class WasapiAudioCapture :
 
         var tailSamples = tailBytes is null
             ? ReadOnlyMemory<float>.Empty
-            : AudioSampleConverter.ConvertToMono16Khz(tailBytes, CaptureFormat).Samples;
+            : DecodeCapturedFloats(tailBytes, _recorder?.Format ?? CaptureFormat);
         return new IncrementalAudioSnapshot(
             sessionId,
             AudioSampleConverter.TargetSampleRate,
@@ -313,9 +416,13 @@ public sealed class WasapiAudioCapture :
             }
 
             CancelWarmTeardownTimer();
+            CancelFirstPacketWatchdogTimer();
+            var isBluetooth = request.IsBluetooth || _isBluetoothDevice(request.DeviceId);
             if (_state == CaptureState.WarmIdle)
             {
                 var reusedWarm = false;
+                IAudioRecorderSession? warmRecorder = null;
+                long attemptGeneration = 0;
                 lock (_bufferGate)
                 {
                     if (_state == CaptureState.WarmIdle &&
@@ -334,21 +441,36 @@ public sealed class WasapiAudioCapture :
                         _exactZeroRunSamples = 0;
                         _exactZeroSinceTakeStart = true;
                         _sawNonZeroPostPreRoll = false;
+                        _stallErrorCode = null;
                         Volatile.Write(ref _lastCaptureWasWholeZero, false);
+                        Volatile.Write(ref _lastCaptureWasEndpointMuted, false);
                         _request = request;
                         _clientRequestedStop = false;
                         _unexpectedStop = false;
+                        _suppressUnexpectedStopEvent = false;
                         Volatile.Write(ref _backstopTriggered, 0);
                         Volatile.Write(ref _backstopSignalled, 0);
                         _warmGeneration++;
+                        attemptGeneration = ++_captureAttemptGeneration;
                         _state = CaptureState.Capturing;
                         _isCapturing = true;
+                        warmRecorder = _recorder;
                         reusedWarm = true;
                     }
                 }
 
                 if (reusedWarm)
                 {
+                    Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(warmRecorder));
+                    // Always watch for a live packet on the new take even if warm idle recently saw audio,
+                    // because _packets was reset for this recording and a dead stream at handoff must fail fast.
+                    ArmFirstPacketWatchdog(
+                        attemptGeneration,
+                        isBluetooth ? BluetoothFirstPacketTimeout : WiredFirstPacketTimeout,
+                        request,
+                        isBluetooth,
+                        allowBluetoothRetry: false);
+
                     _lastDeviceOpenMilliseconds = 0;
                     _lastStreamStartMilliseconds = 0;
                     return new AudioOperationResult(Succeeded: true);
@@ -362,90 +484,159 @@ public sealed class WasapiAudioCapture :
             }
 
             Volatile.Write(ref _lastCaptureWasWholeZero, false);
+            Volatile.Write(ref _lastCaptureWasEndpointMuted, false);
 
-            // TIMED SEPARATELY BECAUSE THE TWO HALVES ANSWER DIFFERENT QUESTIONS. Opening is the
-            // half a warm device would remove; starting the stream is the half nothing can remove.
-            // The stopwatch starts before the try so a FAILED open is still timed - a device that
-            // takes two seconds to refuse is worth knowing about, and it is exactly the case a
-            // success-only measurement never sees.
-            var openTimer = System.Diagnostics.Stopwatch.StartNew();
-            IAudioRecorderSession recorder;
-            try
+            var maxAttempts = isBluetooth ? 2 : 1;
+            for (var attempt = 0; attempt < maxAttempts; attempt++)
             {
-                recorder = await _recorderFactory
-                    .CreateAsync(request.DeviceId, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (ArgumentException)
-            {
-                return Failure(AppErrorCode.AudioFormatUnsupported, canRetry: true);
-            }
-            catch (InvalidOperationException)
-            {
-                return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return Failure(AppErrorCode.AccessDenied, canRetry: true);
-            }
-            catch (COMException)
-            {
-                return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
-            }
-            finally
-            {
-                // ONE PLACE FOR ALL FIVE EXITS. Recording it inside each branch means the next
-                // branch someone adds is the one that quietly stops being measured, and a missing
-                // number here does not look like a defect - it looks like the case never happened.
-                openTimer.Stop();
-                _lastDeviceOpenMilliseconds = openTimer.ElapsedMilliseconds;
+                var openTimer = System.Diagnostics.Stopwatch.StartNew();
+                IAudioRecorderSession recorder;
+                try
+                {
+                    recorder = await _recorderFactory
+                        .CreateAsync(request.DeviceId, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (ArgumentException)
+                {
+                    return Failure(AppErrorCode.AudioFormatUnsupported, canRetry: true);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return Failure(AppErrorCode.AccessDenied, canRetry: true);
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or COMException)
+                {
+                    if (attempt + 1 < maxAttempts)
+                    {
+                        await Task.Delay(BluetoothColdStartSettlingDelay, _timeProvider, cancellationToken)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+
+                    return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
+                }
+                finally
+                {
+                    openTimer.Stop();
+                    _lastDeviceOpenMilliseconds = openTimer.ElapsedMilliseconds;
+                }
+
+                long attemptGeneration;
+                lock (_bufferGate)
+                {
+                    _capturedBytes.SetLength(0);
+                    _capturedBytes.Capacity = 0;
+                    ClearPreRollRingLocked();
+                    _drainedPreRollSampleCount = 0;
+                    _packets = 0;
+                    _silentPackets = 0;
+                    _peak = 0f;
+                    _rms = 0f;
+                    _exactZeroRunSamples = 0;
+                    _exactZeroSinceTakeStart = true;
+                    _sawNonZeroPostPreRoll = false;
+                    _stallErrorCode = null;
+                    _lastWarmPacketTimestamp = null;
+                    _request = request;
+                    _warmDeviceId = request.DeviceId;
+                    _recordingStopped = new TaskCompletionSource<Exception?>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    _recorder = recorder;
+                    _clientRequestedStop = false;
+                    _backendStopped = false;
+                    _unexpectedStop = false;
+                    _suppressUnexpectedStopEvent = isBluetooth && attempt + 1 < maxAttempts;
+                    Volatile.Write(ref _backstopTriggered, 0);
+                    Volatile.Write(ref _backstopSignalled, 0);
+                    attemptGeneration = ++_captureAttemptGeneration;
+                    _state = CaptureState.Capturing;
+                    _isCapturing = true;
+                }
+
+                recorder.DataAvailable += OnDataAvailable;
+                recorder.Stopped += OnRecordingStopped;
+
+                try
+                {
+                    var startTimer = System.Diagnostics.Stopwatch.StartNew();
+                    recorder.Start();
+                    startTimer.Stop();
+                    _lastStreamStartMilliseconds = startTimer.ElapsedMilliseconds;
+
+                    // If Bluetooth SCO initialization immediately stopped before delivering any packet,
+                    // allow one bounded teardown + reopen settling retry before failing.
+                    if (isBluetooth && attempt + 1 < maxAttempts && _backendStopped && Volatile.Read(ref _packets) == 0)
+                    {
+                        await ReleaseRecorderAsync(recorder).ConfigureAwait(false);
+                        ClearSession();
+                        await Task.Delay(BluetoothColdStartSettlingDelay, _timeProvider, cancellationToken)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+
+                    DictationSessionId? deferredStopSession = null;
+                    lock (_bufferGate)
+                    {
+                        if (_suppressUnexpectedStopEvent)
+                        {
+                            _suppressUnexpectedStopEvent = false;
+                            if (_unexpectedStop && _state == CaptureState.Capturing && _request is { } stoppedReq)
+                            {
+                                _isCapturing = false;
+                                deferredStopSession = stoppedReq.SessionId;
+                            }
+                        }
+                    }
+
+                    if (deferredStopSession is { } missedSession)
+                    {
+                        UnexpectedStop?.Invoke(
+                            this,
+                            new AudioCaptureStopped(
+                                missedSession,
+                                new AppError(
+                                    AppErrorCode.AudioDeviceLost,
+                                    AppErrorStage.AudioCapture,
+                                    CanRetry: true)));
+                    }
+
+                    Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(recorder));
+                    if (Volatile.Read(ref _packets) == 0 && !_backendStopped && !_unexpectedStop)
+                    {
+                        var canRetryInWatchdog = isBluetooth && attempt == 0;
+                        var initialTimeout = canRetryInWatchdog
+                            ? BluetoothSettlingProbeDelay
+                            : (isBluetooth
+                                ? BluetoothFirstPacketTimeout - BluetoothSettlingProbeDelay
+                                : WiredFirstPacketTimeout);
+                        ArmFirstPacketWatchdog(
+                            attemptGeneration,
+                            initialTimeout,
+                            request,
+                            isBluetooth,
+                            allowBluetoothRetry: canRetryInWatchdog);
+                    }
+
+                    return new AudioOperationResult(Succeeded: true);
+                }
+                catch (Exception exception) when (
+                    exception is InvalidOperationException or ArgumentException or COMException)
+                {
+                    await ReleaseRecorderAsync(recorder).ConfigureAwait(false);
+                    ClearSession();
+                    if (attempt + 1 < maxAttempts && exception is InvalidOperationException or COMException)
+                    {
+                        await Task.Delay(BluetoothColdStartSettlingDelay, _timeProvider, cancellationToken)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+
+                    return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
+                }
             }
 
-            lock (_bufferGate)
-            {
-                _capturedBytes.SetLength(0);
-                _capturedBytes.Capacity = 0;
-                ClearPreRollRingLocked();
-                _drainedPreRollSampleCount = 0;
-                _packets = 0;
-                _silentPackets = 0;
-                _peak = 0f;
-                _rms = 0f;
-                _exactZeroRunSamples = 0;
-                _exactZeroSinceTakeStart = true;
-                _sawNonZeroPostPreRoll = false;
-                _request = request;
-                _warmDeviceId = request.DeviceId;
-                _recordingStopped = new TaskCompletionSource<Exception?>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-                _recorder = recorder;
-                _clientRequestedStop = false;
-                _backendStopped = false;
-                _unexpectedStop = false;
-                Volatile.Write(ref _backstopTriggered, 0);
-                Volatile.Write(ref _backstopSignalled, 0);
-                _state = CaptureState.Capturing;
-                _isCapturing = true;
-            }
-
-            recorder.DataAvailable += OnDataAvailable;
-            recorder.Stopped += OnRecordingStopped;
-
-            try
-            {
-                var startTimer = System.Diagnostics.Stopwatch.StartNew();
-                recorder.Start();
-                startTimer.Stop();
-                _lastStreamStartMilliseconds = startTimer.ElapsedMilliseconds;
-                return new AudioOperationResult(Succeeded: true);
-            }
-            catch (Exception exception) when (
-                exception is InvalidOperationException or ArgumentException or COMException)
-            {
-                await ReleaseRecorderAsync(recorder).ConfigureAwait(false);
-                ClearSession();
-                return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
-            }
+            return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
         }
         finally
         {
@@ -459,11 +650,30 @@ public sealed class WasapiAudioCapture :
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_state != CaptureState.Capturing || _recorder is null || _request is null || _recordingStopped is null)
+            if (_state != CaptureState.Capturing || _request is null)
             {
                 return EmptyFailure(AppErrorCode.InvalidTransition);
             }
 
+            if (_recorder is null)
+            {
+                if (_unexpectedStop)
+                {
+                    var abortedRequest = _request;
+                    var abortedError = _stallErrorCode ?? AppErrorCode.AudioDeviceLost;
+                    ClearSession();
+                    return Interrupted(abortedRequest.SessionId, [], 0, abortedError);
+                }
+
+                return EmptyFailure(AppErrorCode.InvalidTransition);
+            }
+
+            if (_recordingStopped is null)
+            {
+                return EmptyFailure(AppErrorCode.InvalidTransition);
+            }
+
+            CancelFirstPacketWatchdogTimer();
             var recorder = _recorder;
             var request = _request;
             var stopped = _recordingStopped;
@@ -514,9 +724,11 @@ public sealed class WasapiAudioCapture :
                     {
                         warmSamples = SnapshotSamplesLocked();
                         warmDrainedPreRoll = _drainedPreRollSampleCount;
+                        var isWholeZero = !_sawNonZeroPostPreRoll && (_packets > 0 || warmSamples.Length > warmDrainedPreRoll);
+                        Volatile.Write(ref _lastCaptureWasWholeZero, isWholeZero);
                         Volatile.Write(
-                            ref _lastCaptureWasWholeZero,
-                            !_sawNonZeroPostPreRoll && (_packets > 0 || warmSamples.Length > warmDrainedPreRoll));
+                            ref _lastCaptureWasEndpointMuted,
+                            isWholeZero && Volatile.Read(ref _isEndpointMuted));
                         _drainedPreRollSampleCount = 0;
                         _exactZeroRunSamples = 0;
                         _exactZeroSinceTakeStart = true;
@@ -576,15 +788,18 @@ public sealed class WasapiAudioCapture :
             }
 
             var interrupted = _unexpectedStop || stopException is not null;
+            var errorCode = _stallErrorCode ?? AppErrorCode.AudioDeviceLost;
             float[] samples;
             int coldDrainedPreRoll;
             lock (_bufferGate)
             {
                 samples = SnapshotSamplesLocked();
                 coldDrainedPreRoll = _drainedPreRollSampleCount;
+                var isWholeZero = !_sawNonZeroPostPreRoll && (_packets > 0 || samples.Length > coldDrainedPreRoll);
+                Volatile.Write(ref _lastCaptureWasWholeZero, isWholeZero);
                 Volatile.Write(
-                    ref _lastCaptureWasWholeZero,
-                    !_sawNonZeroPostPreRoll && (_packets > 0 || samples.Length > coldDrainedPreRoll));
+                    ref _lastCaptureWasEndpointMuted,
+                    isWholeZero && Volatile.Read(ref _isEndpointMuted));
             }
 
             try
@@ -599,7 +814,7 @@ public sealed class WasapiAudioCapture :
 
             ClearSession();
             return interrupted
-                ? Interrupted(request.SessionId, samples, coldDrainedPreRoll)
+                ? Interrupted(request.SessionId, samples, coldDrainedPreRoll, errorCode)
                 : new CapturedAudio(
                     request.SessionId,
                     samples,
@@ -656,6 +871,7 @@ public sealed class WasapiAudioCapture :
     private async Task<AudioOperationResult> CancelCoreLockedAsync(bool emitSilentLevel)
     {
         CancelWarmTeardownTimer();
+        CancelFirstPacketWatchdogTimer();
         Exception? cleanupException = null;
         if (_recorder is not null)
         {
@@ -712,6 +928,7 @@ public sealed class WasapiAudioCapture :
     private async Task TearDownWarmCoreLockedAsync()
     {
         CancelWarmTeardownTimer();
+        CancelFirstPacketWatchdogTimer();
         var recorder = _recorder;
         var stopped = _recordingStopped;
         var alreadyStopped = _backendStopped;
@@ -888,107 +1105,309 @@ public sealed class WasapiAudioCapture :
                 BeforeDataConversionForTesting?.Invoke();
             }
 
-            var bytes = args.IsSilent ? new byte[args.Bytes.Length] : args.Bytes.ToArray();
-            var converted = AudioSampleConverter.ConvertToMono16Khz(bytes, CaptureFormat);
+            var format = _recorder?.Format ?? CaptureFormat;
             var hitBackstop = false;
             var wroteAudio = false;
+            var probeMute = false;
+            IAudioRecorderSession? activeRecorderForMute = null;
             DictationSessionId backstopSession = default;
-            lock (_bufferGate)
+            var levelPeak = 0f;
+            var levelRms = 0f;
+
+            if (IsNativeMono16KhzFloat(format))
             {
-                if (!enteredDuringCapture)
+                if (args.Bytes.Length % sizeof(float) != 0)
                 {
-                    if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm)
+                    throw new ArgumentException("Audio data must contain complete frames.", nameof(args));
+                }
+
+                var sampleCountTotal = args.Bytes.Length / sizeof(float);
+                if (args.IsSilent)
+                {
+                    lock (_bufferGate)
                     {
-                        if (!_backendStopped && !_unexpectedStop)
+                        if (!enteredDuringCapture)
                         {
-                            AppendPreRollLocked(converted.Samples);
+                            if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm)
+                            {
+                                if (!_backendStopped && !_unexpectedStop)
+                                {
+                                    _lastWarmPacketTimestamp = _timeProvider.GetTimestamp();
+                                    AppendSilentPreRollLocked(sampleCountTotal);
+                                }
+
+                                return;
+                            }
+
+                            if (_state != CaptureState.Capturing ||
+                                _request is null ||
+                                Volatile.Read(ref _backstopTriggered) != 0)
+                            {
+                                return;
+                            }
+                        }
+                        else if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
+                            _request is null ||
+                            Volatile.Read(ref _backstopTriggered) != 0)
+                        {
+                            return;
                         }
 
-                        return;
-                    }
+                        var firstLivePacket = Interlocked.Increment(ref _packets) == 1;
+                        if (firstLivePacket)
+                        {
+                            CancelFirstPacketWatchdogTimer();
+                        }
 
-                    if (_state != CaptureState.Capturing ||
+                        Interlocked.Increment(ref _silentPackets);
+                        var remaining = _maxCapturedBytes - _capturedBytes.Length;
+                        var writeCount = args.Bytes.Length;
+                        if (remaining <= 0)
+                        {
+                            writeCount = 0;
+                            hitBackstop = true;
+                        }
+                        else if (writeCount >= remaining)
+                        {
+                            writeCount = (int)(remaining - (remaining % sizeof(float)));
+                            hitBackstop = true;
+                        }
+
+                        if (writeCount > 0)
+                        {
+                            WriteSilentBytesLocked(writeCount);
+                            wroteAudio = true;
+                            var writtenSamples = writeCount / sizeof(float);
+                            var previousZero = _exactZeroRunSamples;
+                            _exactZeroRunSamples += writtenSamples;
+                            if (_exactZeroRunSamples / MuteProbeIntervalSamples != previousZero / MuteProbeIntervalSamples ||
+                                firstLivePacket)
+                            {
+                                probeMute = true;
+                                activeRecorderForMute = _recorder;
+                            }
+                        }
+
+                        if (hitBackstop)
+                        {
+                            backstopSession = _request.SessionId;
+                            Volatile.Write(ref _backstopTriggered, 1);
+                        }
+                    }
+                }
+                else
+                {
+                    var nativeFloats = MemoryMarshal.Cast<byte, float>(args.Bytes.Span);
+                    MeasureNativeMono16KhzFloat(nativeFloats, out levelPeak, out levelRms);
+
+                    lock (_bufferGate)
+                    {
+                        if (!enteredDuringCapture)
+                        {
+                            if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm)
+                            {
+                                if (!_backendStopped && !_unexpectedStop)
+                                {
+                                    _lastWarmPacketTimestamp = _timeProvider.GetTimestamp();
+                                    AppendClampedPreRollLocked(nativeFloats);
+                                }
+
+                                return;
+                            }
+
+                            if (_state != CaptureState.Capturing ||
+                                _request is null ||
+                                Volatile.Read(ref _backstopTriggered) != 0)
+                            {
+                                return;
+                            }
+                        }
+                        else if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
+                            _request is null ||
+                            Volatile.Read(ref _backstopTriggered) != 0)
+                        {
+                            return;
+                        }
+
+                        if (Interlocked.Increment(ref _packets) == 1)
+                        {
+                            CancelFirstPacketWatchdogTimer();
+                        }
+
+                        var remaining = _maxCapturedBytes - _capturedBytes.Length;
+                        var writeCount = args.Bytes.Length;
+                        if (remaining <= 0)
+                        {
+                            writeCount = 0;
+                            hitBackstop = true;
+                        }
+                        else if (writeCount >= remaining)
+                        {
+                            writeCount = (int)(remaining - (remaining % sizeof(float)));
+                            hitBackstop = true;
+                        }
+
+                        if (writeCount > 0)
+                        {
+                            WriteClampedNativeFloatsLocked(nativeFloats[..(writeCount / sizeof(float))]);
+                            wroteAudio = true;
+                            if (levelPeak > _peak)
+                            {
+                                _peak = levelPeak;
+                            }
+
+                            if (levelRms > _rms)
+                            {
+                                _rms = levelRms;
+                            }
+
+                            var previousZero = _exactZeroRunSamples;
+                            foreach (var rawSample in nativeFloats[..(writeCount / sizeof(float))])
+                            {
+                                var sample = Math.Clamp(rawSample, -1f, 1f);
+                                if (sample == 0f)
+                                {
+                                    _exactZeroRunSamples++;
+                                }
+                                else
+                                {
+                                    _exactZeroRunSamples = 0;
+                                    _exactZeroSinceTakeStart = false;
+                                    _sawNonZeroPostPreRoll = true;
+                                }
+                            }
+
+                            if (_exactZeroRunSamples > 0 &&
+                                _exactZeroRunSamples / MuteProbeIntervalSamples != previousZero / MuteProbeIntervalSamples)
+                            {
+                                probeMute = true;
+                                activeRecorderForMute = _recorder;
+                            }
+                        }
+
+                        if (hitBackstop)
+                        {
+                            backstopSession = _request.SessionId;
+                            Volatile.Write(ref _backstopTriggered, 1);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                var bytes = args.IsSilent ? new byte[args.Bytes.Length] : args.Bytes.ToArray();
+                var converted = AudioSampleConverter.ConvertToMono16Khz(bytes, format);
+                levelPeak = converted.Peak;
+                levelRms = converted.RootMeanSquare;
+                lock (_bufferGate)
+                {
+                    if (!enteredDuringCapture)
+                    {
+                        if (_state is CaptureState.WarmIdle or CaptureState.DrainingToWarm)
+                        {
+                            if (!_backendStopped && !_unexpectedStop)
+                            {
+                                _lastWarmPacketTimestamp = _timeProvider.GetTimestamp();
+                                AppendPreRollLocked(converted.Samples);
+                            }
+
+                            return;
+                        }
+
+                        if (_state != CaptureState.Capturing ||
+                            _request is null ||
+                            Volatile.Read(ref _backstopTriggered) != 0)
+                        {
+                            return;
+                        }
+                    }
+                    else if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
                         _request is null ||
                         Volatile.Read(ref _backstopTriggered) != 0)
                     {
                         return;
                     }
-                }
-                else if (_state is not (CaptureState.Capturing or CaptureState.DrainingToWarm) ||
-                    _request is null ||
-                    Volatile.Read(ref _backstopTriggered) != 0)
-                {
-                    return;
-                }
 
-                Interlocked.Increment(ref _packets);
-                if (args.IsSilent)
-                {
-                    Interlocked.Increment(ref _silentPackets);
-                }
-
-                var remaining = _maxCapturedBytes - _capturedBytes.Length;
-                var writeCount = bytes.Length;
-                if (remaining <= 0)
-                {
-                    writeCount = 0;
-                    hitBackstop = true;
-                }
-                else if (writeCount >= remaining)
-                {
-                    writeCount = (int)(remaining - (remaining % sizeof(float)));
-                    hitBackstop = true;
-                }
-
-                if (writeCount > 0)
-                {
-                    _capturedBytes.Write(bytes.AsSpan(0, writeCount));
-                    wroteAudio = true;
-
-                    if (converted.Peak > _peak)
+                    if (Interlocked.Increment(ref _packets) == 1)
                     {
-                        _peak = converted.Peak;
+                        CancelFirstPacketWatchdogTimer();
                     }
 
-                    if (converted.RootMeanSquare > _rms)
-                    {
-                        _rms = converted.RootMeanSquare;
-                    }
-
-                    var sampleCount = Math.Min(converted.Samples.Length, writeCount / sizeof(float));
                     if (args.IsSilent)
                     {
-                        _exactZeroRunSamples += sampleCount;
+                        Interlocked.Increment(ref _silentPackets);
                     }
-                    else
+
+                    var remaining = _maxCapturedBytes - _capturedBytes.Length;
+                    var writeCount = bytes.Length;
+                    if (remaining <= 0)
                     {
-                        var samplesSpan = converted.Samples.AsSpan(0, sampleCount);
-                        foreach (var sample in samplesSpan)
+                        writeCount = 0;
+                        hitBackstop = true;
+                    }
+                    else if (writeCount >= remaining)
+                    {
+                        writeCount = (int)(remaining - (remaining % sizeof(float)));
+                        hitBackstop = true;
+                    }
+
+                    if (writeCount > 0)
+                    {
+                        _capturedBytes.Write(bytes.AsSpan(0, writeCount));
+                        wroteAudio = true;
+
+                        if (converted.Peak > _peak)
                         {
-                            if (sample == 0f)
+                            _peak = converted.Peak;
+                        }
+
+                        if (converted.RootMeanSquare > _rms)
+                        {
+                            _rms = converted.RootMeanSquare;
+                        }
+
+                        var sampleCount = Math.Min(converted.Samples.Length, writeCount / sizeof(float));
+                        if (args.IsSilent)
+                        {
+                            _exactZeroRunSamples += sampleCount;
+                            probeMute = true;
+                            activeRecorderForMute = _recorder;
+                        }
+                        else
+                        {
+                            var samplesSpan = converted.Samples.AsSpan(0, sampleCount);
+                            foreach (var sample in samplesSpan)
                             {
-                                _exactZeroRunSamples++;
-                            }
-                            else
-                            {
-                                _exactZeroRunSamples = 0;
-                                _exactZeroSinceTakeStart = false;
-                                _sawNonZeroPostPreRoll = true;
+                                if (sample == 0f)
+                                {
+                                    _exactZeroRunSamples++;
+                                }
+                                else
+                                {
+                                    _exactZeroRunSamples = 0;
+                                    _exactZeroSinceTakeStart = false;
+                                    _sawNonZeroPostPreRoll = true;
+                                }
                             }
                         }
                     }
-                }
 
-                if (hitBackstop)
-                {
-                    backstopSession = _request.SessionId;
-                    Volatile.Write(ref _backstopTriggered, 1);
+                    if (hitBackstop)
+                    {
+                        backstopSession = _request.SessionId;
+                        Volatile.Write(ref _backstopTriggered, 1);
+                    }
                 }
+            }
+
+            if (probeMute && activeRecorderForMute is not null)
+            {
+                Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(activeRecorderForMute));
             }
 
             if (wroteAudio && _state == CaptureState.Capturing)
             {
-                LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
+                LevelChanged?.Invoke(this, new AudioLevel(levelPeak, levelRms));
             }
 
             if (hitBackstop && Interlocked.CompareExchange(ref _backstopSignalled, 1, 0) == 0)
@@ -1039,8 +1458,10 @@ public sealed class WasapiAudioCapture :
 
     private void OnRecordingStopped(object? sender, AudioRecorderStopped args)
     {
+        CancelFirstPacketWatchdogTimer();
         var scheduleWarmCleanup = false;
         long warmGeneration = 0;
+        DictationSessionId? unexpectedSessionId = null;
         TaskCompletionSource<Exception?>? stoppedTcs;
         TaskCompletionSource? drainToSignal = null;
         lock (_bufferGate)
@@ -1052,6 +1473,12 @@ public sealed class WasapiAudioCapture :
                 _unexpectedStop = true;
                 _isCapturing = false;
                 drainToSignal = _warmDrainTcs;
+                if (!_suppressUnexpectedStopEvent &&
+                    _state == CaptureState.Capturing &&
+                    _request is { } activeRequest)
+                {
+                    unexpectedSessionId = activeRequest.SessionId;
+                }
             }
             else if (_state == CaptureState.WarmIdle && !_clientRequestedStop)
             {
@@ -1062,6 +1489,18 @@ public sealed class WasapiAudioCapture :
 
         drainToSignal?.TrySetResult();
         stoppedTcs?.TrySetResult(args.Exception);
+        if (unexpectedSessionId is { } faultedSession)
+        {
+            UnexpectedStop?.Invoke(
+                this,
+                new AudioCaptureStopped(
+                    faultedSession,
+                    new AppError(
+                        AppErrorCode.AudioDeviceLost,
+                        AppErrorStage.AudioCapture,
+                        CanRetry: true)));
+        }
+
         if (scheduleWarmCleanup)
         {
             _ = Task.Run(() => TearDownWarmIfGenerationMatchesAsync(warmGeneration));
@@ -1164,14 +1603,398 @@ public sealed class WasapiAudioCapture :
 
         try
         {
-            return AudioSampleConverter.ConvertToMono16Khz(
+            return DecodeCapturedFloats(
                 buffer.Array.AsSpan(buffer.Offset, byteCount),
-                CaptureFormat).Samples;
+                _recorder?.Format ?? CaptureFormat);
         }
         finally
         {
             _capturedBytes.SetLength(0);
             _capturedBytes.Capacity = 0;
+        }
+    }
+
+    private static bool IsNativeMono16KhzFloat(AudioBufferFormat format) =>
+        BitConverter.IsLittleEndian &&
+        format.SampleRate == AudioSampleConverter.TargetSampleRate &&
+        format.Channels == 1 &&
+        format.Encoding == AudioSampleEncoding.Ieee754Single;
+
+    private static float[] DecodeCapturedFloats(ReadOnlySpan<byte> bytes, AudioBufferFormat format)
+    {
+        if (bytes.IsEmpty)
+        {
+            return [];
+        }
+
+        if (IsNativeMono16KhzFloat(format))
+        {
+            var samples = new float[bytes.Length / sizeof(float)];
+            bytes.CopyTo(MemoryMarshal.AsBytes(samples.AsSpan()));
+            return samples;
+        }
+
+        return AudioSampleConverter.ConvertToMono16Khz(bytes, format).Samples;
+    }
+
+    private static void MeasureNativeMono16KhzFloat(
+        ReadOnlySpan<float> samples,
+        out float peak,
+        out float rootMeanSquare)
+    {
+        if (samples.IsEmpty)
+        {
+            peak = 0f;
+            rootMeanSquare = 0f;
+            return;
+        }
+
+        double sumSquares = 0;
+        peak = 0f;
+        foreach (var raw in samples)
+        {
+            var clamped = Math.Clamp(raw, -1f, 1f);
+            peak = Math.Max(peak, Math.Abs(clamped));
+            sumSquares += clamped * clamped;
+        }
+
+        rootMeanSquare = (float)Math.Sqrt(sumSquares / samples.Length);
+    }
+
+    private void AppendSilentPreRollLocked(int sampleCount)
+    {
+        if (sampleCount <= 0)
+        {
+            return;
+        }
+
+        if (sampleCount >= PreRollCapacitySamples)
+        {
+            Array.Clear(_preRollRing);
+            _preRollWriteIndex = 0;
+            _preRollCount = PreRollCapacitySamples;
+            return;
+        }
+
+        var firstPart = Math.Min(sampleCount, PreRollCapacitySamples - _preRollWriteIndex);
+        Array.Clear(_preRollRing, _preRollWriteIndex, firstPart);
+        var remaining = sampleCount - firstPart;
+        if (remaining > 0)
+        {
+            Array.Clear(_preRollRing, 0, remaining);
+        }
+
+        _preRollWriteIndex = (_preRollWriteIndex + sampleCount) % PreRollCapacitySamples;
+        _preRollCount = Math.Min(PreRollCapacitySamples, _preRollCount + sampleCount);
+    }
+
+    private void AppendClampedPreRollLocked(ReadOnlySpan<float> rawSamples)
+    {
+        if (rawSamples.IsEmpty)
+        {
+            return;
+        }
+
+        var tail = rawSamples.Length >= PreRollCapacitySamples
+            ? rawSamples[^PreRollCapacitySamples..]
+            : rawSamples;
+        foreach (var sample in tail)
+        {
+            _preRollRing[_preRollWriteIndex] = Math.Clamp(sample, -1f, 1f);
+            _preRollWriteIndex = (_preRollWriteIndex + 1) % PreRollCapacitySamples;
+            _preRollCount = Math.Min(PreRollCapacitySamples, _preRollCount + 1);
+        }
+    }
+
+    private void WriteClampedNativeFloatsLocked(ReadOnlySpan<float> rawSamples)
+    {
+        if (rawSamples.IsEmpty)
+        {
+            return;
+        }
+
+        if (BitConverter.IsLittleEndian)
+        {
+            var needsClamping = false;
+            foreach (var sample in rawSamples)
+            {
+                if (!(sample is >= -1f and <= 1f))
+                {
+                    needsClamping = true;
+                    break;
+                }
+            }
+
+            if (!needsClamping)
+            {
+                _capturedBytes.Write(MemoryMarshal.AsBytes(rawSamples));
+                return;
+            }
+        }
+
+        Span<byte> scratch = stackalloc byte[sizeof(float)];
+        foreach (var sample in rawSamples)
+        {
+            var clamped = Math.Clamp(sample, -1f, 1f);
+            BinaryPrimitives.WriteInt32LittleEndian(scratch, BitConverter.SingleToInt32Bits(clamped));
+            _capturedBytes.Write(scratch);
+        }
+    }
+
+    private void WriteSilentBytesLocked(int byteCount)
+    {
+        Span<byte> zeros = stackalloc byte[1024];
+        zeros.Clear();
+        var remaining = byteCount;
+        while (remaining > 0)
+        {
+            var chunk = Math.Min(remaining, zeros.Length);
+            _capturedBytes.Write(zeros[..chunk]);
+            remaining -= chunk;
+        }
+    }
+
+    private static bool SafeIsEndpointMuted(IAudioRecorderSession? recorder)
+    {
+        if (recorder is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return recorder.IsEndpointMuted();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void ArmFirstPacketWatchdog(
+        long attemptGeneration,
+        TimeSpan timeout,
+        AudioCaptureRequest request,
+        bool isBluetooth,
+        bool allowBluetoothRetry)
+    {
+        CancelFirstPacketWatchdogTimer();
+        _firstPacketWatchdogTimer = _timeProvider.CreateTimer(
+            static state =>
+            {
+                var (self, gen, req, bt, allowRetry) =
+                    ((WasapiAudioCapture, long, AudioCaptureRequest, bool, bool))state!;
+                _ = self.OnFirstPacketWatchdogDueAsync(gen, req, bt, allowRetry);
+            },
+            (this, attemptGeneration, request, isBluetooth, allowBluetoothRetry),
+            timeout,
+            Timeout.InfiniteTimeSpan);
+    }
+
+    private void CancelFirstPacketWatchdogTimer()
+    {
+        var timer = Interlocked.Exchange(ref _firstPacketWatchdogTimer, null);
+        timer?.Dispose();
+    }
+
+    internal async Task OnFirstPacketWatchdogDueAsync(
+        long attemptGeneration,
+        AudioCaptureRequest request,
+        bool isBluetooth,
+        bool allowBluetoothRetry)
+    {
+        try
+        {
+            await _transitionGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        var stalledSession = false;
+        var stallErrorCode = AppErrorCode.AudioDeviceUnavailable;
+        IAudioRecorderSession? stalledRecorder = null;
+        TaskCompletionSource<Exception?>? stoppedTcs = null;
+        try
+        {
+            if (_disposed ||
+                _state != CaptureState.Capturing ||
+                _captureAttemptGeneration != attemptGeneration ||
+                Volatile.Read(ref _packets) > 0 ||
+                _unexpectedStop ||
+                _clientRequestedStop)
+            {
+                return;
+            }
+
+            CancelFirstPacketWatchdogTimer();
+
+            if (allowBluetoothRetry && isBluetooth)
+            {
+                var priorRecorder = _recorder;
+                var priorStopped = _recordingStopped;
+                var priorAlreadyStopped = _backendStopped;
+                if (priorRecorder is not null)
+                {
+                    if (priorStopped is not null && !priorAlreadyStopped)
+                    {
+                        _clientRequestedStop = true;
+                        try
+                        {
+                            priorRecorder.Stop();
+                            await priorStopped.Task.WaitAsync(_stopTimeout, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (Exception exception) when (
+                            exception is InvalidOperationException or COMException or TimeoutException)
+                        {
+                        }
+                    }
+
+                    try
+                    {
+                        await ReleaseRecorderAsync(priorRecorder).ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (exception is InvalidOperationException or COMException)
+                    {
+                    }
+
+                    lock (_bufferGate)
+                    {
+                        if (ReferenceEquals(_recorder, priorRecorder))
+                        {
+                            _recorder = null;
+                            _recordingStopped = null;
+                        }
+                    }
+                }
+
+                await Task.Delay(BluetoothColdStartSettlingDelay, _timeProvider, CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (_disposed || _captureAttemptGeneration != attemptGeneration)
+                {
+                    return;
+                }
+
+                try
+                {
+                    var retryRecorder = await _recorderFactory
+                        .CreateAsync(request.DeviceId, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    var abandoned = false;
+                    lock (_bufferGate)
+                    {
+                        if (_disposed || _captureAttemptGeneration != attemptGeneration)
+                        {
+                            abandoned = true;
+                        }
+                        else
+                        {
+                            _recordingStopped = new TaskCompletionSource<Exception?>(
+                                TaskCreationOptions.RunContinuationsAsynchronously);
+                            _recorder = retryRecorder;
+                            _clientRequestedStop = false;
+                            _backendStopped = false;
+                            _unexpectedStop = false;
+                        }
+                    }
+
+                    if (abandoned)
+                    {
+                        await ReleaseRecorderAsync(retryRecorder).ConfigureAwait(false);
+                        return;
+                    }
+
+                    retryRecorder.DataAvailable += OnDataAvailable;
+                    retryRecorder.Stopped += OnRecordingStopped;
+                    retryRecorder.Start();
+                    Volatile.Write(ref _isEndpointMuted, SafeIsEndpointMuted(retryRecorder));
+
+                    if (Volatile.Read(ref _packets) == 0 && !_backendStopped && !_unexpectedStop)
+                    {
+                        var remainingBudget = BluetoothFirstPacketTimeout - BluetoothSettlingProbeDelay;
+                        if (remainingBudget > TimeSpan.Zero)
+                        {
+                            ArmFirstPacketWatchdog(
+                                attemptGeneration,
+                                remainingBudget,
+                                request,
+                                isBluetooth,
+                                allowBluetoothRetry: false);
+                        }
+                    }
+
+                    return;
+                }
+                catch (Exception exception) when (
+                    exception is InvalidOperationException or ArgumentException or COMException or UnauthorizedAccessException)
+                {
+                    stallErrorCode = exception switch
+                    {
+                        UnauthorizedAccessException => AppErrorCode.AccessDenied,
+                        ArgumentException => AppErrorCode.AudioFormatUnsupported,
+                        _ => AppErrorCode.AudioDeviceUnavailable,
+                    };
+                }
+            }
+
+            lock (_bufferGate)
+            {
+                if (_disposed ||
+                    _state != CaptureState.Capturing ||
+                    _captureAttemptGeneration != attemptGeneration ||
+                    Volatile.Read(ref _packets) > 0)
+                {
+                    return;
+                }
+
+                stalledSession = true;
+                stalledRecorder = _recorder;
+                stoppedTcs = _recordingStopped;
+                _clientRequestedStop = true;
+                _unexpectedStop = true;
+                _backendStopped = true;
+                _isCapturing = false;
+                _stallErrorCode = stallErrorCode;
+                _capturedBytes.SetLength(0);
+                _capturedBytes.Capacity = 0;
+                _drainedPreRollSampleCount = 0;
+            }
+
+            if (stalledRecorder is not null)
+            {
+                try
+                {
+                    stalledRecorder.Stop();
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or COMException)
+                {
+                }
+            }
+
+            stoppedTcs?.TrySetResult(null);
+        }
+        finally
+        {
+            try
+            {
+                _transitionGate.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        if (stalledSession)
+        {
+            UnexpectedStop?.Invoke(
+                this,
+                new AudioCaptureStopped(
+                    request.SessionId,
+                    new AppError(
+                        stallErrorCode,
+                        AppErrorStage.AudioCapture,
+                        CanRetry: true)));
         }
     }
 
@@ -1204,7 +2027,11 @@ public sealed class WasapiAudioCapture :
             _clientRequestedStop = false;
             _backendStopped = false;
             _unexpectedStop = false;
+            _suppressUnexpectedStopEvent = false;
+            _stallErrorCode = null;
+            _isEndpointMuted = false;
             _warmGeneration++;
+            _captureAttemptGeneration++;
             Volatile.Write(ref _backstopTriggered, 0);
             Volatile.Write(ref _backstopSignalled, 0);
         }
@@ -1227,15 +2054,16 @@ public sealed class WasapiAudioCapture :
     private static CapturedAudio Interrupted(
         DictationSessionId sessionId,
         float[] samples,
-        int drainedPreRollSampleCount = 0) => new(
+        int drainedPreRollSampleCount = 0,
+        AppErrorCode errorCode = AppErrorCode.AudioDeviceLost) => new(
         sessionId,
         samples,
         AudioSampleConverter.TargetSampleRate,
         Channels: 1,
         AudioCaptureOutcome.Interrupted,
         new AppError(
-            AppErrorCode.AudioDeviceLost,
+            errorCode,
             AppErrorStage.AudioCapture,
-            CanRetry: samples.Length > 0),
+            CanRetry: samples.Length > 0 || errorCode == AppErrorCode.AudioDeviceUnavailable),
         DrainedPreRollSampleCount: drainedPreRollSampleCount);
 }

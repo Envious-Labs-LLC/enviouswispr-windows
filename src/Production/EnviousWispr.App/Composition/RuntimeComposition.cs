@@ -45,6 +45,10 @@ public interface IRuntimeView
     void SetRecordingSilentMicNotice(MicSilenceLevel level)
     {
     }
+
+    /// <summary>Updates or clears the silent-microphone notice on the active recording pill, including endpoint mute state.</summary>
+    void SetRecordingSilentMicNotice(MicSilenceLevel level, bool isEndpointMuted) =>
+        SetRecordingSilentMicNotice(level);
 }
 
 /// <summary>The shell's leaf reads the long-lived session owners need; nothing here sequences anything.</summary>
@@ -269,6 +273,9 @@ public static class RuntimeComposition
     {
         public void ShowSilentMicNotice(MicSilenceLevel level) =>
             shell.View.SetRecordingSilentMicNotice(level);
+
+        public void ShowSilentMicNotice(MicSilenceLevel level, bool isEndpointMuted) =>
+            shell.View.SetRecordingSilentMicNotice(level, isEndpointMuted);
 
         public void ClearSilentMicNotice() =>
             shell.View.SetRecordingSilentMicNotice(MicSilenceLevel.None);

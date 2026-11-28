@@ -222,6 +222,7 @@ public static class OverlayPillCatalog
         RecordingNoticeKind.AutoStopUnavailable => "Auto-stop unavailable right now",
         RecordingNoticeKind.MicSilentCalm => "We\u2019re not hearing anything from your microphone.",
         RecordingNoticeKind.MicSilentStrong => "Your microphone isn\u2019t sending sound. Stop and check it in Settings.",
+        RecordingNoticeKind.MicMuted => "Your microphone is muted in Windows. Unmute it to dictate.",
         _ => string.Empty,
     };
 }

@@ -155,9 +155,27 @@ public static class HotkeyGestureParser
         // Alt is excluded from a pair as well as alone: a lone Alt tap opens a window's menu bar,
         // and Alt+Shift cycles the keyboard layout. Both are shell gestures this app would lose.
         var modifierCount = System.Numerics.BitOperations.PopCount((uint)modifiers);
-        return modifierCount >= 2 && !modifiers.HasFlag(HotkeyModifiers.Alt)
+        return IsSupportedModifierSet(modifiers)
             ? new HotkeyGestureParseResult(true, new HotkeyGesture(modifiers, string.Empty))
             : Failure();
+    }
+
+    /// <summary>
+    /// True when a modifier-only combination has at least two distinct modifiers and avoids
+    /// AltGr (`Ctrl+Alt`) and input-language switching (`Alt+Shift`) shell collisions.
+    /// Non-AltGr sets such as `Alt+Win` are allowed.
+    /// </summary>
+    public static bool IsSupportedModifierSet(HotkeyModifiers modifiers)
+    {
+        var modifierCount = System.Numerics.BitOperations.PopCount((uint)modifiers);
+        if (modifierCount < 2)
+        {
+            return false;
+        }
+
+        // Ctrl+Alt is Windows AltGr typing; Alt+Shift switches Windows keyboard layouts.
+        // Permit Alt only when combined with Windows (e.g., Alt+Win, Ctrl+Alt+Win).
+        return !modifiers.HasFlag(HotkeyModifiers.Alt) || modifiers.HasFlag(HotkeyModifiers.Windows);
     }
 
     private static bool TryParseModifier(string token, out HotkeyModifiers modifier)
@@ -284,7 +302,10 @@ public enum LastDictationShortcutState
     Unavailable,
 }
 
-public sealed record PushToTalkSignalEvent(PushToTalkSignal Signal, bool IsHandsFree = false);
+public sealed record PushToTalkSignalEvent(
+    PushToTalkSignal Signal,
+    bool IsHandsFree = false,
+    TargetWindowId? TargetWindow = null);
 
 public interface IGlobalPushToTalk : IAsyncDisposable
 {

@@ -13,7 +13,8 @@ internal readonly record struct HotkeyEdgeDecision(
     bool Consume,
     PushToTalkSignal? Signal = null,
     bool MaskMenuKey = false,
-    bool IsHandsFree = false);
+    bool IsHandsFree = false,
+    bool ArmPasteLastTarget = false);
 
 internal readonly record struct HotkeyBinding(uint VirtualKey, HotkeyModifiers Modifiers);
 
@@ -113,7 +114,8 @@ internal sealed class HotkeyEdgeTracker
         _recordGesture = isModifierSet || isSingleModifier
             ? new HotkeyGesturePolicy(
                 isModifierSet ? ModifierSetSentinel : record.VirtualKey,
-                needsHoldThreshold: true)
+                needsHoldThreshold: true,
+                toggleMode: recordingMode == DictationRecordingMode.Toggle)
             : null;
     }
 
@@ -357,7 +359,12 @@ internal sealed class HotkeyEdgeTracker
                     if (oneShot.Held && virtualKey == oneShot.Binding.VirtualKey)
                     {
                         oneShot.Held = false;
-                        return new HotkeyEdgeDecision(Consume: true);
+                        return oneShot.Signal == PushToTalkSignal.PasteLast
+                            ? new HotkeyEdgeDecision(
+                                Consume: true,
+                                PushToTalkSignal.PasteLast,
+                                MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0)
+                            : new HotkeyEdgeDecision(Consume: true);
                     }
                 }
 
@@ -473,7 +480,7 @@ internal sealed class HotkeyEdgeTracker
 
     private void UpdateHeldOrdinaryKeys(uint virtualKey, bool isKeyDown)
     {
-        if (IsModifierKey(virtualKey))
+        if (virtualKey == MenuKeyMask.VirtualKeyUnassigned || IsModifierKey(virtualKey))
         {
             return;
         }
@@ -625,9 +632,14 @@ internal sealed class HotkeyEdgeTracker
                     Consume: false,
                     PushToTalkSignal.Pressed,
                     MaskMenuKey: RequiresAltMenuMask && !_altMaskSentForPress,
-                    IsHandsFree: false);
+                    IsHandsFree: _recordingMode == DictationRecordingMode.Toggle);
 
             case HotkeyGestureOutcome.ToggleStarted:
+                if (_recordingMode == DictationRecordingMode.Toggle && _ownsActiveRecording)
+                {
+                    return null;
+                }
+
                 _cancelledUntilRecordRelease = false;
                 _ownsActiveRecording = true;
                 return new HotkeyEdgeDecision(
@@ -668,16 +680,82 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
-    /// <summary>Forgets a modifier press in progress.</summary>
-    public void ResetHeldKeys()
+    /// <summary>True when any unconsumed key, modifier, or pending gesture is currently marked held.</summary>
+    public bool HasHeldState
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _heldOrdinaryKeys.Count > 0 ||
+                    _typingKey != NoKey ||
+                    _modifierSetEngaged ||
+                    (_recordGesture?.IsHolding ?? false) ||
+                    (_recordGesture?.HasTentativeRecording ?? false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reconciles unconsumed ordinary keys against <paramref name="isKeyDown"/> so keys whose release
+    /// was swallowed (e.g. UAC, UIPI, Win+L) cannot poison future modifier gestures.
+    /// </summary>
+    /// <remarks>
+    /// Consumed keys (ordinary-key PTT, Cancel, QuickAdd, PasteLast/CopyLast, one-shots) are swallowed by
+    /// <c>WH_KEYBOARD_LL</c> before Windows updates <c>GetAsyncKeyState</c>, so polling
+    /// <c>GetAsyncKeyState</c> for them would always read up and drop active holds at 40 ms.
+    /// Consumed holds are cleared via <see cref="ResetHeldKeys"/> on suspend/lock/unlock/capture.
+    /// </remarks>
+    internal void ReconcileHeldKeys(Func<uint, bool> isKeyDown)
+    {
+        ArgumentNullException.ThrowIfNull(isKeyDown);
+
+        lock (_sync)
+        {
+            if (_typingKey != NoKey && _typingKey != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(_typingKey))
+            {
+                _typingKey = NoKey;
+            }
+
+            if (_heldOrdinaryKeys.Count > 0)
+            {
+                _heldOrdinaryKeys.RemoveWhere(vk => vk != MenuKeyMask.VirtualKeyUnassigned && !isKeyDown(vk));
+            }
+        }
+    }
+
+    /// <summary>Forgets held key, modifier, and gesture presses in progress.</summary>
+    public void ResetHeldKeys(bool preserveActiveRecording = false)
     {
         lock (_sync)
         {
-            _altMaskSentForPress = false;
-            _modifierSetEngaged = false;
-            _ownsActiveRecording = false;
+            var keepRecording = preserveActiveRecording &&
+                (_recordHeld || _ownsActiveRecording || (_recordGesture?.IsRecordingHandsFree ?? false));
+            if (!keepRecording)
+            {
+                _recordHeld = false;
+                _cancelledUntilRecordRelease = false;
+                _altMaskSentForPress = false;
+                _modifierSetEngaged = false;
+                _ownsActiveRecording = false;
+                _recordGesture?.Reset();
+            }
+
+            _cancelHeld = false;
+            _quickAddHeld = false;
+            _typingKey = NoKey;
+            _oneShotKeyPresses.Clear();
+            if (_pasteLast is not null)
+            {
+                _pasteLast.Held = false;
+            }
+
+            if (_copyLast is not null)
+            {
+                _copyLast.Held = false;
+            }
+
             _heldOrdinaryKeys.Clear();
-            _recordGesture?.Reset();
         }
     }
 
@@ -825,8 +903,9 @@ internal sealed class HotkeyEdgeTracker
         oneShot.Held = true;
         return new HotkeyEdgeDecision(
             Consume: true,
-            oneShot.Signal,
-            MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
+            oneShot.Signal == PushToTalkSignal.PasteLast ? null : oneShot.Signal,
+            MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0,
+            ArmPasteLastTarget: oneShot.Signal == PushToTalkSignal.PasteLast);
     }
 
     private sealed class OneShotBinding(HotkeyBinding binding, PushToTalkSignal signal)

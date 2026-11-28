@@ -452,9 +452,14 @@ public sealed partial class MainWindow
         // load fills the three fields one at a time, which is harmless - a field still holding
         // its empty starting value does not collide with anything.
         var fields = KeybindFields();
-        var clashes = HotkeyConflictDetector.Find(fields.Select(field => (field.Role, field.Box.Text)).ToArray());
+        var roleBindings = fields.Select(field => (field.Role, field.Box.Text)).ToArray();
+        var clashes = HotkeyConflictDetector.Find(roleBindings);
+        var systemConflicts = HotkeyConflictDetector.FindSystemConflicts(roleBindings);
         var guilty = clashes
             .SelectMany(clash => new[] { clash.FirstRole, clash.SecondRole })
+            .Concat(systemConflicts
+                .Where(conflict => conflict.Severity == SystemShortcutConflictSeverity.Blocked)
+                .Select(conflict => conflict.Role))
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var field in fields)
@@ -479,10 +484,13 @@ public sealed partial class MainWindow
             }
         }
 
+        var clashMessage = HotkeyConflictDetector.Describe(clashes);
+        var systemMessage = HotkeyConflictDetector.DescribeSystemConflicts(systemConflicts);
+        var combinedMessage = string.Join(" ", new[] { clashMessage, systemMessage }.Where(s => !string.IsNullOrEmpty(s)));
         SetLiveRegion(
             KeybindConflictText,
-            HotkeyConflictDetector.Describe(clashes),
-            clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible);
+            combinedMessage,
+            string.IsNullOrEmpty(combinedMessage) ? Visibility.Collapsed : Visibility.Visible);
         HandsFreeGestureButton.Visibility = string.Equals(
             HotkeyTextBox.Text.Trim(),
             HandsFreeRecordBinding.Suggested,
@@ -614,7 +622,7 @@ public sealed partial class MainWindow
         // run the set and nobody could choose it. Offered on the first release, while the set is still whole. Alt is
         // refused in a set as it is alone, matching the parser. Ref: #66.
         var isSet = System.Numerics.BitOperations.PopCount((uint)set) >= 2;
-        if (isSet && set.HasFlag(HotkeyModifiers.Alt))
+        if (isSet && !HotkeyGestureParser.IsSupportedModifierSet(set))
         {
             e.Handled = true;
             return;

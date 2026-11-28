@@ -14,6 +14,13 @@ internal interface IAudioRecorderSession : IAsyncDisposable
 
     event EventHandler<AudioRecorderStopped>? Stopped;
 
+    AudioBufferFormat Format => new(
+        AudioSampleConverter.TargetSampleRate,
+        Channels: 1,
+        AudioSampleEncoding.Ieee754Single);
+
+    bool IsEndpointMuted() => false;
+
     void Start();
 
     void Stop();
@@ -67,17 +74,19 @@ internal sealed class WasapiRecorderFactory : IAudioRecorderFactory
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        return new NAudioRecorderSession(recorder);
+        return new NAudioRecorderSession(recorder, deviceId);
     }
 }
 
 internal sealed class NAudioRecorderSession : IAudioRecorderSession
 {
     private readonly WasapiRecorder _recorder;
+    private readonly AudioDeviceId? _deviceId;
 
-    public NAudioRecorderSession(WasapiRecorder recorder)
+    public NAudioRecorderSession(WasapiRecorder recorder, AudioDeviceId? deviceId = null)
     {
         _recorder = recorder;
+        _deviceId = deviceId;
         _recorder.DataAvailable += OnDataAvailable;
         _recorder.RecordingStopped += OnRecordingStopped;
     }
@@ -85,6 +94,22 @@ internal sealed class NAudioRecorderSession : IAudioRecorderSession
     public event EventHandler<AudioRecorderData>? DataAvailable;
 
     public event EventHandler<AudioRecorderStopped>? Stopped;
+
+    public bool IsEndpointMuted()
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var device = _deviceId is { } id
+                ? enumerator.GetDevice(id.Value)
+                : enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            return device.AudioEndpointVolume?.Mute ?? false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public void Start() => _recorder.StartRecording();
 

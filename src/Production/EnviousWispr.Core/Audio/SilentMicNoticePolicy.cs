@@ -1,31 +1,40 @@
 namespace EnviousWispr.Core.Audio;
 
+public readonly record struct MicSilenceNotice(MicSilenceLevel Level, bool IsEndpointMuted = false);
+
 /// <summary>Evaluates live exact-zero runs for silent-microphone notices and trims trailing exact-zero audio (#4841).</summary>
 public static class SilentMicNoticePolicy
 {
     public const int CalmMidTakeSamples = 80_000;
     public const int CalmSinceStartSamples = 96_000;
     public const int StrongSamples = 240_000;
+    public const int MutedCalmSamples = 16_000;
     public const int TrailingZeroTrimMinimumSamples = 16_000;
 
-    public static MicSilenceLevel Evaluate(ExactZeroRun? run, bool warningsEnabled)
+    public static MicSilenceLevel Evaluate(ExactZeroRun? run, bool warningsEnabled) =>
+        EvaluateNotice(run, warningsEnabled).Level;
+
+    public static MicSilenceNotice EvaluateNotice(ExactZeroRun? run, bool warningsEnabled)
     {
         if (!warningsEnabled || run is not { SampleCount: > 0 } current)
         {
-            return MicSilenceLevel.None;
+            return new MicSilenceNotice(MicSilenceLevel.None);
         }
 
         if (current.SampleCount >= StrongSamples)
         {
-            return MicSilenceLevel.Strong;
+            return new MicSilenceNotice(MicSilenceLevel.Strong, current.IsEndpointMuted);
         }
 
-        var calmThreshold = current.SinceTakeStart
-            ? CalmSinceStartSamples
-            : CalmMidTakeSamples;
-        return current.SampleCount >= calmThreshold
+        var calmThreshold = current.IsEndpointMuted
+            ? MutedCalmSamples
+            : current.SinceTakeStart
+                ? CalmSinceStartSamples
+                : CalmMidTakeSamples;
+        var level = current.SampleCount >= calmThreshold
             ? MicSilenceLevel.Calm
             : MicSilenceLevel.None;
+        return new MicSilenceNotice(level, current.IsEndpointMuted && level != MicSilenceLevel.None);
     }
 
     public static ReadOnlyMemory<float> TrimTrailingExactZeros(

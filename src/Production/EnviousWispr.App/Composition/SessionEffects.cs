@@ -273,6 +273,7 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
         SessionTransitionKind.FinalizeReady =>
             DictationStatus.Quiet("Capture complete. Transcribing locally"),
         SessionTransitionKind.Cancelled => DictationStatus.Quiet("Cancelled. Nothing will be delivered"),
+        SessionTransitionKind.Discarded => DictationStatus.Quiet("Idle"),
         SessionTransitionKind.Failed when result.Error?.Code == AppErrorCode.AccessDenied =>
             DictationStatus.RichError(
                 "Microphone access is blocked",

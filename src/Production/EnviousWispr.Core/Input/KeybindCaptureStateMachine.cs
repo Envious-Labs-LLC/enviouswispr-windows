@@ -181,7 +181,7 @@ public sealed class KeybindCaptureStateMachine
 
         return new KeybindCaptureStepResult(
             KeybindCaptureStatus.InvalidAttempt,
-            HintMessage: "Alt cannot be used in a modifier-only pair. Try LeftAlt or RightAlt alone, Ctrl+Win, or add a key such as Ctrl+Alt+W.");
+            HintMessage: "Ctrl+Alt and Alt+Shift conflict with Windows typing or layout shortcuts. Try Alt+Win, Ctrl+Win, LeftAlt or RightAlt alone, or add a key such as Ctrl+Alt+W.");
     }
 
     private HotkeyModifiers CurrentModifiers() => CombineModifiers(_heldModifiers);

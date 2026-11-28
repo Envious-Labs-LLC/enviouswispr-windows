@@ -316,16 +316,30 @@ public sealed class HotkeyGestureParserTests
     }
 
     /// <summary>
-    /// Alt is excluded from a pair as well as on its own. A lone Alt tap opens a window's menu bar
-    /// and Alt+Shift cycles the keyboard layout; both are shell gestures the user would lose.
+    /// Ctrl+Alt collides with Windows AltGr typing and Alt+Shift cycles the keyboard layout; both remain refused,
+    /// while non-AltGr Windows combinations such as Alt+Win are permitted.
     /// </summary>
     [Theory]
     [InlineData("Ctrl+Alt")]
     [InlineData("Alt+Shift")]
-    [InlineData("Alt+Win")]
-    public void AnyPairContainingAltIsRefused(string typed)
+    public void AltGrAndLayoutSwitchModifierPairsAreRefused(string typed)
     {
         Assert.False(HotkeyGestureParser.Parse(typed).Succeeded);
+    }
+
+    [Theory]
+    [InlineData("Alt+Win")]
+    [InlineData("Win+Alt")]
+    [InlineData("Alt+Shift+Win")]
+    [InlineData("Ctrl+Alt+Win")]
+    public void NonAltGrAltModifierSetsWithWindowsAreAllowed(string typed)
+    {
+        var result = HotkeyGestureParser.Parse(typed);
+
+        Assert.True(result.Succeeded, $"{typed} was refused.");
+        Assert.Equal(string.Empty, result.Gesture!.Value.Key);
+        Assert.True(result.Gesture.Value.Modifiers.HasFlag(HotkeyModifiers.Alt));
+        Assert.True(result.Gesture.Value.Modifiers.HasFlag(HotkeyModifiers.Windows));
     }
 
     /// <summary>

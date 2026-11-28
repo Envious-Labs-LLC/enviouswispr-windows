@@ -323,6 +323,17 @@ public sealed class SettingsPresenter : IDisposable
             return new GeneralSaveOutcome(GeneralSaveStatus.OverlappingShortcuts, Overlap: HotkeyConflictDetector.Describe(clashes));
         }
 
+        var blockedSystem = HotkeyConflictDetector
+            .FindSystemConflicts(ShortcutRoles(input))
+            .Where(conflict => conflict.Severity == SystemShortcutConflictSeverity.Blocked)
+            .ToArray();
+        if (blockedSystem.Length > 0)
+        {
+            return new GeneralSaveOutcome(
+                GeneralSaveStatus.OverlappingShortcuts,
+                Overlap: HotkeyConflictDetector.DescribeSystemConflicts(blockedSystem));
+        }
+
         var dictation = new DictationPreferences(
             (FinalAsrEngine)Math.Clamp(Chosen(input.FinalEngineIndex), 0, 1),
             recording.Gesture!.Value.ToString(),

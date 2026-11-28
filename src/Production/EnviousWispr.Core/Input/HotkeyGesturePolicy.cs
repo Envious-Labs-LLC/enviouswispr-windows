@@ -105,6 +105,7 @@ public sealed class HotkeyGesturePolicy
 
     private readonly uint _boundKey;
     private readonly TimeSpan _holdThreshold;
+    private readonly bool _toggleMode;
 
     private TimeSpan? _pressedAt;
     private bool _pressDisqualified;
@@ -114,16 +115,22 @@ public sealed class HotkeyGesturePolicy
     private int _tapCount;
     private TimeSpan? _lastTapAt;
     private bool _toggleRecording;
+    private bool _startedToggleOnPress;
 
     /// <param name="boundKey">The virtual key the user bound.</param>
     /// <param name="needsHoldThreshold">
     /// True when the bound key could begin a shortcut - a bare modifier or a modifier set. False for
     /// an ordinary key, which then starts on key-down with no delay at all.
     /// </param>
-    public HotkeyGesturePolicy(uint boundKey, bool needsHoldThreshold)
+    /// <param name="toggleMode">
+    /// True when recording mode is Toggle so holding a modifier binding past the threshold toggles
+    /// hands-free recording on instead of ending the take on release.
+    /// </param>
+    public HotkeyGesturePolicy(uint boundKey, bool needsHoldThreshold, bool toggleMode = false)
     {
         _boundKey = boundKey;
         _holdThreshold = needsHoldThreshold ? ModifierHoldThreshold : TimeSpan.Zero;
+        _toggleMode = toggleMode;
     }
 
     /// <summary>True while hands-free recording is running.</summary>
@@ -162,7 +169,7 @@ public sealed class HotkeyGesturePolicy
         get
         {
             if (_pressedAt is { } pressed && !_holdConfirmed && !_pressDisqualified &&
-                (_tapCount > 0 || _toggleRecording || !_holding))
+                (_tapCount > 0 || _toggleRecording || _toggleMode || !_holding))
             {
                 return pressed + _holdThreshold;
             }
@@ -187,6 +194,19 @@ public sealed class HotkeyGesturePolicy
             {
                 var holdConfirmed = _holdConfirmed ||
                     (_pressedAt is { } heldSince && now - heldSince >= _holdThreshold);
+                if (_toggleMode && _pressedAt is null && _tentativeRecording)
+                {
+                    // The user already released the toggle key after a brief tap and immediately resumed
+                    // typing inside MultiTapWindow: promote the completed tap instead of discarding it.
+                    _holding = false;
+                    _holdConfirmed = false;
+                    _tentativeRecording = false;
+                    _tapCount = 0;
+                    _lastTapAt = null;
+                    _toggleRecording = true;
+                    return HotkeyGestureOutcome.ToggleStarted;
+                }
+
                 if (_holdThreshold > TimeSpan.Zero && !_toggleRecording && !holdConfirmed &&
                     (_holding || _tentativeRecording))
                 {
@@ -233,6 +253,14 @@ public sealed class HotkeyGesturePolicy
 
                 var wasTentative = _tentativeRecording;
                 _tentativeRecording = false;
+                if (_toggleMode)
+                {
+                    _holding = false;
+                    _toggleRecording = true;
+                    _startedToggleOnPress = true;
+                    return HotkeyGestureOutcome.ToggleStarted;
+                }
+
                 _holding = true;
                 return wasTentative ? HotkeyGestureOutcome.Nothing : HotkeyGestureOutcome.HoldStarted;
             }
@@ -268,6 +296,7 @@ public sealed class HotkeyGesturePolicy
         _holding = false;
         _holdConfirmed = false;
         _tentativeRecording = false;
+        _startedToggleOnPress = false;
         _tapCount = 0;
         _lastTapAt = null;
     }
@@ -327,10 +356,12 @@ public sealed class HotkeyGesturePolicy
         var wasHolding = _holding;
         var disqualified = _pressDisqualified;
         var wasHoldConfirmed = _holdConfirmed || now - pressed >= _holdThreshold;
+        var startedToggleOnPress = _startedToggleOnPress;
         _pressedAt = null;
         _pressDisqualified = false;
         _holding = false;
         _holdConfirmed = false;
+        _startedToggleOnPress = false;
 
         if (disqualified)
         {
@@ -343,10 +374,21 @@ public sealed class HotkeyGesturePolicy
             _tentativeRecording = false;
             _tapCount = 0;
             _lastTapAt = null;
+            if (startedToggleOnPress)
+            {
+                return HotkeyGestureOutcome.Nothing;
+            }
+
             if (_toggleRecording)
             {
                 _toggleRecording = false;
                 return HotkeyGestureOutcome.ToggleStopped;
+            }
+
+            if (_toggleMode)
+            {
+                _toggleRecording = true;
+                return HotkeyGestureOutcome.ToggleStarted;
             }
 
             return wasHolding ? HotkeyGestureOutcome.HoldEnded : HotkeyGestureOutcome.Nothing;
@@ -395,6 +437,13 @@ public sealed class HotkeyGesturePolicy
         {
             _toggleRecording = false;
             return HotkeyGestureOutcome.ToggleStopped;
+        }
+
+        if (taps == 1 && _toggleMode && _tentativeRecording)
+        {
+            _toggleRecording = true;
+            _tentativeRecording = false;
+            return HotkeyGestureOutcome.ToggleStarted;
         }
 
         if (taps == 1 && _tentativeRecording)

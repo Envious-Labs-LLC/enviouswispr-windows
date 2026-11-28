@@ -764,6 +764,12 @@ public sealed class WasapiAudioCaptureTests
 
         public bool InterruptWhenStarted { get; init; }
 
+        public bool ThrowInvalidOpOnStart { get; init; }
+
+        public bool IsMuted { get; set; }
+
+        public bool IsEndpointMuted() => IsMuted;
+
         public int StartCount { get; private set; }
 
         public bool Disposed { get; private set; }
@@ -771,6 +777,11 @@ public sealed class WasapiAudioCaptureTests
         public void Start()
         {
             StartCount++;
+            if (ThrowInvalidOpOnStart)
+            {
+                throw new InvalidOperationException("cold bluetooth start transient");
+            }
+
             if (InterruptWhenStarted)
             {
                 Interrupt();
@@ -812,5 +823,369 @@ public sealed class WasapiAudioCaptureTests
             Disposed = true;
             return ValueTask.CompletedTask;
         }
+    }
+
+    [Fact]
+    public async Task WiredFirstPacketStallWatchdogFiresUnexpectedStopAfter800Ms()
+    {
+        var clock = new Deterministic.ManualClock();
+        var recorder = new FakeRecorderSession();
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(recorder),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => false);
+
+        var unexpected = new TaskCompletionSource<AudioCaptureStopped>(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.UnexpectedStop += (_, args) => unexpected.TrySetResult(args);
+
+        var sessionId = DictationSessionId.Create();
+        var started = await capture.StartAsync(new AudioCaptureRequest(sessionId));
+        Assert.True(started.Succeeded);
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(WasapiAudioCapture.WiredFirstPacketTimeout, clock.NextDue);
+
+        clock.Advance(TimeSpan.FromMilliseconds(799));
+        Assert.False(unexpected.Task.IsCompleted);
+        Assert.True(capture.IsCapturing);
+
+        clock.Advance(TimeSpan.FromMilliseconds(2));
+        var fault = await unexpected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(sessionId, fault.SessionId);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, fault.Error.Code);
+        Assert.False(capture.IsCapturing);
+
+        var stopped = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Interrupted, stopped.Outcome);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, stopped.Error?.Code);
+    }
+
+    [Fact]
+    public async Task WiredCaptureWithFirstPacketAfterWarmReuseDoesNotStallWatchdogWhileSilentWarmReuseStalls()
+    {
+        var clock = new Deterministic.ManualClock();
+        var recorder = new FakeRecorderSession();
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(recorder),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => false);
+
+        var unexpectedCalls = 0;
+        capture.UnexpectedStop += (_, _) => Interlocked.Increment(ref unexpectedCalls);
+
+        await capture.SetWarmPolicyAsync(MicrophoneWarmPolicy.Seconds30);
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        recorder.Emit(0.05f);
+        await capture.StopAsync();
+
+        // Warm callback seeds pre-roll; new take still arms watchdog until a live packet arrives for THIS take.
+        recorder.Emit(0.15f);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+
+        var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        Assert.True(started.Succeeded);
+        recorder.Emit(0.25f);
+
+        clock.Advance(TimeSpan.FromMilliseconds(2000));
+        Assert.Equal(0, Volatile.Read(ref unexpectedCalls));
+
+        var result = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Completed, result.Outcome);
+        Assert.Equal([0.15f, 0.25f], result.Samples.ToArray());
+
+        // Now verify warm reuse that delivers zero live packets for the new take still triggers stall watchdog.
+        recorder.Emit(0.35f);
+        var stalledStart = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        Assert.True(stalledStart.Succeeded);
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(WasapiAudioCapture.WiredFirstPacketTimeout + TimeSpan.FromMilliseconds(5));
+        Assert.Equal(1, Volatile.Read(ref unexpectedCalls));
+    }
+
+    [Fact]
+    public async Task BluetoothFirstAttemptImmediateStopSuppressesUnexpectedStopAndRetriesCleanly()
+    {
+        var clock = new Deterministic.ManualClock();
+        var count = 0;
+        var factory = new FakeRecorderFactory(_ =>
+        {
+            count++;
+            return new FakeRecorderSession { InterruptWhenStarted = count == 1 };
+        });
+        await using var capture = new WasapiAudioCapture(
+            factory,
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => true);
+
+        var unexpectedCalls = 0;
+        capture.UnexpectedStop += (_, _) => Interlocked.Increment(ref unexpectedCalls);
+
+        var startTask = capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create(), IsBluetooth: true));
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        var started = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(started.Succeeded);
+        Assert.Equal(2, factory.CreateCount);
+        Assert.Equal(0, Volatile.Read(ref unexpectedCalls));
+        await capture.CancelAsync();
+    }
+
+    [Fact]
+    public async Task BluetoothColdStartRetriesOnceOnStartFailureAndSettlingDelayWhileWiredFailsOnce()
+    {
+        var clock = new Deterministic.ManualClock();
+        var btCount = 0;
+        var sessions = new List<FakeRecorderSession>();
+        var btFactory = new FakeRecorderFactory(_ =>
+        {
+            btCount++;
+            var session = new FakeRecorderSession { ThrowInvalidOpOnStart = btCount == 1 };
+            sessions.Add(session);
+            return session;
+        });
+
+        await using var btCapture = new WasapiAudioCapture(
+            btFactory,
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => true);
+
+        var startTask = btCapture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create(), IsBluetooth: true));
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        var btStarted = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(btStarted.Succeeded);
+        Assert.Equal(2, btFactory.CreateCount);
+        Assert.True(sessions[0].Disposed);
+        await btCapture.CancelAsync();
+
+        var wiredFactory = new FakeRecorderFactory(_ => new FakeRecorderSession { ThrowInvalidOpOnStart = true });
+        await using var wiredCapture = new WasapiAudioCapture(
+            wiredFactory,
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => false);
+        var wiredStarted = await wiredCapture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        Assert.False(wiredStarted.Succeeded);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, wiredStarted.Error?.Code);
+        Assert.Equal(1, wiredFactory.CreateCount);
+    }
+
+    [Fact]
+    public async Task BluetoothZeroPacketProbeRetriesOnceAndFailsAtTotal1500MsWhenStillSilent()
+    {
+        var clock = new Deterministic.ManualClock();
+        var createCount = 0;
+        var sessions = new List<FakeRecorderSession>();
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(_ =>
+            {
+                createCount++;
+                var session = new FakeRecorderSession();
+                sessions.Add(session);
+                return session;
+            }),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => true);
+
+        var faultTcs = new TaskCompletionSource<AudioCaptureStopped>(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.UnexpectedStop += (_, args) => faultTcs.TrySetResult(args);
+
+        var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create(), IsBluetooth: true));
+        Assert.True(started.Succeeded);
+
+        // Initial Bluetooth probe at 500ms -> schedules 250ms settling delay -> opens retry session -> 1000ms remaining budget.
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        await clock.WhenRegistered(3).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, createCount);
+        Assert.True(sessions[0].Disposed);
+        Assert.False(faultTcs.Task.IsCompleted);
+
+        clock.Advance(TimeSpan.FromMilliseconds(1000));
+        var fault = await faultTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, fault.Error.Code);
+
+        var stopped = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Interrupted, stopped.Outcome);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, stopped.Error?.Code);
+    }
+
+    [Fact]
+    public async Task EndpointMuteTelemetryDistinguishesMutedZeroCaptureFromNonZeroOrUnmuted()
+    {
+        var recorder = new FakeRecorderSession { IsMuted = true };
+        await using var capture = CreateCapture(recorder);
+
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        recorder.EmitSilentFloats(16_000);
+
+        Assert.True(capture.IsEndpointMuted);
+        Assert.True(capture.CurrentExactZeroRun?.IsEndpointMuted);
+        var stopped = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Completed, stopped.Outcome);
+        Assert.True(capture.LastCaptureWasWholeZero);
+        Assert.True(capture.LastCaptureWasEndpointMuted);
+
+        recorder = new FakeRecorderSession { IsMuted = false };
+        await using var unmuted = CreateCapture(recorder);
+        await unmuted.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        recorder.EmitSilentFloats(16_000);
+        await unmuted.StopAsync();
+        Assert.False(unmuted.IsEndpointMuted);
+        Assert.True(unmuted.LastCaptureWasWholeZero);
+        Assert.False(unmuted.LastCaptureWasEndpointMuted);
+    }
+
+    [Fact]
+    public async Task RefreshWarmAsyncReplacesIdleWarmSessionAndDoesNotInterruptActiveRecording()
+    {
+        var sessions = new List<FakeRecorderSession>();
+        var requestedIds = new List<AudioDeviceId?>();
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(deviceId =>
+            {
+                requestedIds.Add(deviceId);
+                var session = new FakeRecorderSession();
+                sessions.Add(session);
+                return session;
+            }),
+            TestTimeout);
+
+        var firstDevice = new AudioDeviceId("mic-1");
+        var secondDevice = new AudioDeviceId("mic-2");
+        await capture.SetWarmPolicyAsync(MicrophoneWarmPolicy.Seconds30);
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create(), firstDevice));
+        sessions[0].Emit(0.1f);
+        await capture.StopAsync();
+        Assert.Single(sessions);
+
+        await capture.RefreshWarmAsync(secondDevice);
+        Assert.Equal(2, sessions.Count);
+        Assert.True(sessions[0].Disposed);
+        Assert.Equal([firstDevice, secondDevice], requestedIds);
+
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create(), secondDevice));
+        Assert.True(capture.IsCapturing);
+
+        // Must ignore topology refresh while actively capturing.
+        await capture.RefreshWarmAsync(firstDevice);
+        Assert.Equal(2, sessions.Count);
+        Assert.True(capture.IsCapturing);
+        await capture.CancelAsync();
+    }
+
+    [Fact]
+    public async Task Native16KhzMonoFloatFastPathClampsAndPreservesIncrementalSnapshots()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = CreateCapture(recorder);
+        var sessionId = DictationSessionId.Create();
+
+        await capture.StartAsync(new AudioCaptureRequest(sessionId));
+        recorder.Emit(0.25f, -0.5f, 1.5f);
+
+        var incremental = capture.GetSnapshotFrom(1);
+        Assert.NotNull(incremental);
+        Assert.Equal(3, incremental.TotalCapturedSamples);
+        Assert.Equal([-0.5f, 1f], incremental.Samples.ToArray());
+
+        var snapshot = capture.GetSnapshot(TimeSpan.FromSeconds(1));
+        Assert.NotNull(snapshot);
+        Assert.Equal([0.25f, -0.5f, 1f], snapshot.Samples.ToArray());
+
+        var stopped = await capture.StopAsync();
+        Assert.Equal([0.25f, -0.5f, 1f], stopped.Samples.ToArray());
+    }
+
+    [Fact]
+    public async Task StaleFirstPacketWatchdogCallbackDoesNotCancelActiveAttemptWatchdog()
+    {
+        var clock = new Deterministic.ManualClock();
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(_ => new FakeRecorderSession()),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => false);
+
+        var firstRequest = new AudioCaptureRequest(DictationSessionId.Create());
+        await capture.StartAsync(firstRequest);
+        await capture.CancelAsync();
+
+        var faults = new List<AudioCaptureStopped>();
+        var secondFault = new TaskCompletionSource<AudioCaptureStopped>(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.UnexpectedStop += (_, args) =>
+        {
+            faults.Add(args);
+            secondFault.TrySetResult(args);
+        };
+
+        var secondSession = DictationSessionId.Create();
+        await capture.StartAsync(new AudioCaptureRequest(secondSession));
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Simulate stale timer callback from attempt 1 firing late after attempt 2 armed its own timer.
+        await capture.OnFirstPacketWatchdogDueAsync(
+            attemptGeneration: 1,
+            firstRequest,
+            isBluetooth: false,
+            allowBluetoothRetry: false);
+
+        // Attempt 2's watchdog must remain armed and fire cleanly at 800ms.
+        Assert.False(secondFault.Task.IsCompleted);
+        clock.Advance(WasapiAudioCapture.WiredFirstPacketTimeout);
+        var fault = await secondFault.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(secondSession, fault.SessionId);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, fault.Error.Code);
+        Assert.Single(faults);
+
+        await capture.CancelAsync();
+    }
+
+    [Fact]
+    public async Task BluetoothWatchdogRetryAccessDeniedFailsCleanlyViaUnexpectedStop()
+    {
+        var clock = new Deterministic.ManualClock();
+        var createCount = 0;
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(_ =>
+            {
+                createCount++;
+                if (createCount == 2)
+                {
+                    throw new UnauthorizedAccessException("mic privacy revoked");
+                }
+
+                return new FakeRecorderSession();
+            }),
+            TestTimeout,
+            timeProvider: clock,
+            isBluetoothDevice: _ => true);
+
+        var faultTcs = new TaskCompletionSource<AudioCaptureStopped>(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.UnexpectedStop += (_, args) => faultTcs.TrySetResult(args);
+
+        var sessionId = DictationSessionId.Create();
+        var started = await capture.StartAsync(new AudioCaptureRequest(sessionId, IsBluetooth: true));
+        Assert.True(started.Succeeded);
+
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+
+        var fault = await faultTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(sessionId, fault.SessionId);
+        Assert.Equal(AppErrorCode.AccessDenied, fault.Error.Code);
+
+        var stopped = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Interrupted, stopped.Outcome);
+        Assert.Equal(AppErrorCode.AccessDenied, stopped.Error?.Code);
     }
 }

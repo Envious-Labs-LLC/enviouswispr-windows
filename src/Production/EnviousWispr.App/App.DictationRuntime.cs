@@ -123,6 +123,11 @@ public partial class App
     private void OnKeybindCaptureActiveChanged(bool active)
     {
         _keybindCaptureActive = active;
+        var preserveActiveRecording = _sessionController?.CurrentSession is
+        {
+            State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
+        };
+        _pushToTalkHook?.ResetHeldKeys(preserveActiveRecording);
         _pushToTalkHook?.SetCapturingKeybind(active);
     }
 
@@ -141,18 +146,27 @@ public partial class App
 
         var canonicalGesture = parsedGesture.ToString();
         var current = _presentation?.Settings.Current ?? _settings;
-        var conflicts = HotkeyConflictDetector.Find(
-            new (string Role, string Text)[]
-            {
-                ("Recording", canonicalGesture),
-                ("Cancel", current.Preferences.Dictation.CancelGesture),
-                ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
-                ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
-                ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
-            });
+        var roleBindings = new (string Role, string Text)[]
+        {
+            ("Recording", canonicalGesture),
+            ("Cancel", current.Preferences.Dictation.CancelGesture),
+            ("Add-a-word", current.Preferences.Dictation.QuickAddGesture),
+            ("Paste last", current.Preferences.Dictation.PasteLastGesture ?? string.Empty),
+            ("Copy last", current.Preferences.Dictation.CopyLastGesture ?? string.Empty),
+        };
+        var conflicts = HotkeyConflictDetector.Find(roleBindings);
         if (conflicts.Count > 0)
         {
             return (false, HotkeyConflictDetector.Describe(conflicts));
+        }
+
+        var blockedSystem = HotkeyConflictDetector
+            .FindSystemConflicts(roleBindings)
+            .Where(conflict => conflict.Severity == SystemShortcutConflictSeverity.Blocked)
+            .ToArray();
+        if (blockedSystem.Length > 0)
+        {
+            return (false, HotkeyConflictDetector.DescribeSystemConflicts(blockedSystem));
         }
 
         var disableGlobalHotkey = string.Equals(
@@ -438,6 +452,7 @@ public partial class App
         _sessionController = new PushToTalkSessionController(
             audioCapture,
             new WindowsForegroundTargetProvider(),
+            minimumHoldDuration: audioCapture is PublicFixtureAudioCapture ? TimeSpan.Zero : null,
             deliveryOptions: () => TextDeliveryOptions.Default with
             {
                 CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
@@ -604,7 +619,7 @@ public partial class App
             // The window only, here - microseconds. Naming its focused field takes UI Automation, which must not
             // hold up the signal loop a recording key is waiting in, so it runs off it and is accepted only if the
             // same window is still the one in front.
-            var pressedWindow = WindowsForegroundTargetProvider.ForegroundWindow();
+            var pressedWindow = args.TargetWindow ?? WindowsForegroundTargetProvider.ForegroundWindow();
             _ = ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressedWindow);
             return;
         }
@@ -930,7 +945,15 @@ public partial class App
     {
         if (source == LastDictationSource.Shortcut)
         {
-            await ModifierKeys.WaitForReleaseAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            // PasteLast fires on chord key-up, returning immediately once modifiers are already up, while
+            // still giving slowly lifted modifiers up to 1 second before falling back to clipboard-only copy.
+            var released = await ModifierKeys
+                .WaitForReleaseAsync(TimeSpan.FromSeconds(1), cancellationToken)
+                .ConfigureAwait(false);
+            if (!released)
+            {
+                return await reuse.CopyAsync(source, shownEntry, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return await reuse.PasteAsync(target, source, shownEntry, cancellationToken).ConfigureAwait(false);

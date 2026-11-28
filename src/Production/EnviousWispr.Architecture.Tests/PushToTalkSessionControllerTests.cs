@@ -16,7 +16,10 @@ public sealed class PushToTalkSessionControllerTests
     {
         var audio = new FakeAudioCapture();
         var targets = new FakeTargetProvider(101);
-        await using var controller = new PushToTalkSessionController(audio, targets);
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            targets,
+            minimumHoldDuration: TimeSpan.Zero);
 
         var started = await controller.PressAsync();
         targets.Window = new TargetWindowId(202);
@@ -129,7 +132,8 @@ public sealed class PushToTalkSessionControllerTests
         };
         await using var controller = new PushToTalkSessionController(
             audio,
-            new FakeTargetProvider(303));
+            new FakeTargetProvider(303),
+            minimumHoldDuration: TimeSpan.Zero);
 
         var started = await controller.PressAsync();
         var released = await controller.ReleaseAsync();
@@ -162,7 +166,8 @@ public sealed class PushToTalkSessionControllerTests
         };
         await using var controller = new PushToTalkSessionController(
             audio,
-            new FakeTargetProvider(404));
+            new FakeTargetProvider(404),
+            minimumHoldDuration: TimeSpan.Zero);
 
         await controller.PressAsync();
         var released = await controller.ReleaseAsync();
@@ -216,7 +221,8 @@ public sealed class PushToTalkSessionControllerTests
         var audio = new FakeAudioCapture();
         await using var controller = new PushToTalkSessionController(
             audio,
-            new FakeTargetProvider(707));
+            new FakeTargetProvider(707),
+            minimumHoldDuration: TimeSpan.Zero);
         await controller.PressAsync();
         await controller.ReleaseAsync();
 
@@ -255,7 +261,10 @@ public sealed class PushToTalkSessionControllerTests
     {
         var audio = new FakeAudioCapture();
         var targets = new FakeTargetProvider(101);
-        await using var controller = new PushToTalkSessionController(audio, targets);
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            targets,
+            minimumHoldDuration: TimeSpan.Zero);
 
         var started = await controller.PressAsync();
         targets.ThrowIfAsked = true;

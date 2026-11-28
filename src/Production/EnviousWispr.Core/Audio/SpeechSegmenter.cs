@@ -73,13 +73,18 @@ public sealed class SpeechSegmenter
 
     private readonly int _sampleRate;
     private readonly int _hangoverFrames;
+    private readonly bool _applyHighPassFilter;
 
     /// <param name="sampleRate">Samples per second of the audio being segmented.</param>
     /// <param name="trailingSilence">
     /// How long a pause must last before it ends a stretch of speech. Shorter than the gap between
     /// sentences and longer than the gap between words, or the segmenter cuts people off mid-thought.
     /// </param>
-    public SpeechSegmenter(int sampleRate, TimeSpan trailingSilence)
+    /// <param name="applyHighPassFilter">
+    /// True to apply the 250 Hz cascaded IIR high-pass filter ahead of frame RMS measurement (used by live
+    /// auto-stop monitoring to reject low-frequency rumble without altering ASR input audio).
+    /// </param>
+    public SpeechSegmenter(int sampleRate, TimeSpan trailingSilence, bool applyHighPassFilter = false)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(trailingSilence, TimeSpan.Zero);
@@ -88,37 +93,32 @@ public sealed class SpeechSegmenter
         _hangoverFrames = Math.Max(
             1,
             (int)(trailingSilence.TotalMilliseconds / FrameMilliseconds));
+        _applyHighPassFilter = applyHighPassFilter;
     }
 
-    /// <summary>
-    /// Splits the audio into consecutive speech and silence stretches, covering every sample.
-    /// </summary>
-    /// <remarks>
-    /// The returned segments are contiguous and exhaustive: the first starts at sample 0, each
-    /// begins where the previous ended, and the last ends at the final sample. A caller that
-    /// concatenates the speech stretches must not silently lose audio between them, and a gap
-    /// would be invisible in the output - it would read as the speaker having paused.
-    /// </remarks>
-    public IReadOnlyList<SpeechSegment> Segment(ReadOnlySpan<float> samples)
+    public IReadOnlyList<SpeechSegment> Segment(ReadOnlySpan<float> samples) =>
+        Segment(samples, baselineFloor: null, out _);
+
+    public IReadOnlyList<SpeechSegment> Segment(
+        ReadOnlySpan<float> samples,
+        double? baselineFloor,
+        out double observedNonZeroFloor)
     {
         var frameLength = _sampleRate * FrameMilliseconds / 1000;
         if (frameLength <= 0 || samples.Length < frameLength)
         {
+            observedNonZeroFloor = 0;
             return samples.Length == 0
                 ? []
                 : [new SpeechSegment(0, samples.Length, IsSpeech: false)];
         }
 
-        var frameCount = samples.Length / frameLength;
-        var loudness = new double[frameCount];
-        var floor = double.MaxValue;
-        for (var frame = 0; frame < frameCount; frame++)
-        {
-            loudness[frame] = RootMeanSquare(samples.Slice(frame * frameLength, frameLength));
-            floor = Math.Min(floor, loudness[frame]);
-        }
-
-        floor = Math.Clamp(floor, MinimumNoiseFloor, MaximumNoiseFloor);
+        var loudness = ComputeFilteredLoudness(samples, frameLength, out var windowFloor, out observedNonZeroFloor);
+        var frameCount = loudness.Length;
+        var effectiveFloor = baselineFloor is { } baseline
+            ? Math.Min(baseline, windowFloor)
+            : windowFloor;
+        var floor = Math.Clamp(effectiveFloor, MinimumNoiseFloor, MaximumNoiseFloor);
         var entry = floor * SpeechEntryFactor;
         var exit = floor * SpeechExitFactor;
 
@@ -186,9 +186,9 @@ public sealed class SpeechSegmenter
     /// silence" - a caller reading that would stop the moment anyone drew breath. It reports a
     /// duration so the decision to stop lives with the caller and its own threshold.
     /// </remarks>
-    public TimeSpan TrailingSilence(ReadOnlySpan<float> samples)
+    public TimeSpan TrailingSilence(ReadOnlySpan<float> samples, double? baselineFloor = null)
     {
-        var segments = Segment(samples);
+        var segments = Segment(samples, baselineFloor, out _);
         if (segments.Count == 0 || segments[^1].IsSpeech)
         {
             return TimeSpan.Zero;
@@ -232,6 +232,47 @@ public sealed class SpeechSegmenter
         }
 
         return new AudioSpeechCoverage(speech, silence);
+    }
+
+    private double[] ComputeFilteredLoudness(
+        ReadOnlySpan<float> samples,
+        int frameLength,
+        out double windowFloor,
+        out double observedNonZeroFloor)
+    {
+        var frameCount = samples.Length / frameLength;
+        var loudness = new double[frameCount];
+        var filter = _applyHighPassFilter ? new VadInputHighPassFilter(_sampleRate) : null;
+        Span<float> scratch = _applyHighPassFilter
+            ? (frameLength <= 1024 ? stackalloc float[frameLength] : new float[frameLength])
+            : Span<float>.Empty;
+
+        windowFloor = double.MaxValue;
+        var nonZeroFloor = double.MaxValue;
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            var slice = samples.Slice(frame * frameLength, frameLength);
+            double rms;
+            if (filter is not null)
+            {
+                filter.Process(slice, scratch);
+                rms = RootMeanSquare(scratch);
+            }
+            else
+            {
+                rms = RootMeanSquare(slice);
+            }
+
+            loudness[frame] = rms;
+            windowFloor = Math.Min(windowFloor, rms);
+            if (rms >= MinimumNoiseFloor)
+            {
+                nonZeroFloor = Math.Min(nonZeroFloor, rms);
+            }
+        }
+
+        observedNonZeroFloor = nonZeroFloor == double.MaxValue ? 0 : nonZeroFloor;
+        return loudness;
     }
 
     private static SpeechSegment Frames(int startFrame, int endFrame, int frameLength, bool isSpeech) =>

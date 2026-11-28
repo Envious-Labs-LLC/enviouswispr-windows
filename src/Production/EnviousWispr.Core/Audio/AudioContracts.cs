@@ -21,7 +21,8 @@ public sealed record AudioDeviceInfo(
     string DisplayName,
     bool IsDefault,
     bool IsActive,
-    AudioDeviceTransport Transport = AudioDeviceTransport.Unknown)
+    AudioDeviceTransport Transport = AudioDeviceTransport.Unknown,
+    bool IsMuted = false)
 {
     public bool IsVirtualOrLoopback => Transport == AudioDeviceTransport.Virtual;
 }
@@ -41,7 +42,12 @@ public sealed record AudioDeviceChange(
 
 public sealed record AudioCaptureRequest(
     DictationSessionId SessionId,
-    AudioDeviceId? DeviceId = null);
+    AudioDeviceId? DeviceId = null,
+    bool IsBluetooth = false);
+
+public sealed record AudioCaptureStopped(
+    DictationSessionId SessionId,
+    AppError Error);
 
 public readonly record struct AudioLevel(float Peak, float RootMeanSquare)
 {
@@ -170,6 +176,12 @@ public interface IAudioCapture : IAsyncDisposable
 {
     event EventHandler<AudioLevel>? LevelChanged;
 
+    event EventHandler<AudioCaptureStopped>? UnexpectedStop
+    {
+        add { }
+        remove { }
+    }
+
     bool IsCapturing { get; }
 
     Task<AudioOperationResult> StartAsync(
@@ -189,7 +201,10 @@ public interface IAudioDeviceCatalog : IDisposable
         CancellationToken cancellationToken = default);
 }
 
-public readonly record struct ExactZeroRun(int SampleCount, bool SinceTakeStart);
+public readonly record struct ExactZeroRun(
+    int SampleCount,
+    bool SinceTakeStart,
+    bool IsEndpointMuted = false);
 
 public enum MicSilenceLevel
 {
@@ -203,6 +218,10 @@ public interface ISilentMicSampleSource
     ExactZeroRun? CurrentExactZeroRun { get; }
 
     bool LastCaptureWasWholeZero { get; }
+
+    bool IsEndpointMuted => false;
+
+    bool LastCaptureWasEndpointMuted => false;
 }
 
 public interface IWarmAudioCapture
@@ -212,4 +231,7 @@ public interface IWarmAudioCapture
     Task SetWarmPolicyAsync(MicrophoneWarmPolicy policy, CancellationToken cancellationToken = default);
 
     Task TearDownWarmAsync(CancellationToken cancellationToken = default);
+
+    Task RefreshWarmAsync(AudioDeviceId? deviceId, bool isBluetooth = false, CancellationToken cancellationToken = default) =>
+        TearDownWarmAsync(cancellationToken);
 }
