@@ -119,6 +119,15 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
             // exception's kind, both fixed enums; never its type name or message.
             DeliveryStage: delivery.Fault?.Stage,
             Fault: delivery.Fault?.Kind));
+        if (delivery.CaseDecision != CaseRepairDecision.None)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.TextDeliveryCaseEvaluated,
+                AppFailureCategory.None,
+                Changed: delivery.LowercasedFirst,
+                CaseRepairDecision: delivery.CaseDecision));
+        }
         if (DeliveryClipboardDiagnostics.EntryFor(delivery, DateTimeOffset.UtcNow) is { } clipboard)
         {
             _logger.Write(clipboard);

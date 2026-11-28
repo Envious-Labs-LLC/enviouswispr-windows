@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
 
@@ -88,8 +90,40 @@ internal static class WindowsTextDeliveryPolicy
         return count;
     }
 
-    private static string NormalizeArrivalText(string value) =>
-        value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+    internal static string NormalizeArrivalText(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        var hasFormatChars = false;
+        foreach (var rune in normalized.EnumerateRunes())
+        {
+            if (Rune.GetUnicodeCategory(rune) == UnicodeCategory.Format)
+            {
+                hasFormatChars = true;
+                break;
+            }
+        }
+
+        if (!hasFormatChars)
+        {
+            return normalized;
+        }
+
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var rune in normalized.EnumerateRunes())
+        {
+            if (Rune.GetUnicodeCategory(rune) != UnicodeCategory.Format)
+            {
+                builder.Append(rune.ToString());
+            }
+        }
+
+        return builder.ToString();
+    }
 
     internal static PasteKeystrokeKind ResolveCommitKeystroke(
         CaretContext context,
@@ -129,18 +163,37 @@ internal static class WindowsTextDeliveryPolicy
         }
     }
 
-    internal static bool CaretUnchanged(CaretContext expected, CaretContext actual) =>
+    internal static bool ShouldCheckCaretTextUnchanged(
+        CaretContext expected,
+        bool candidateDeletesDictatedText)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        // Honest editable targets always revalidate caret text so mid-commit cursor moves fail closed;
+        // screen-derived terminals allow non-deleting insertions to tolerate UIA cell-grid redraws.
+        return !expected.IsScreenDerived || candidateDeletesDictatedText;
+    }
+
+    internal static bool CaretUnchanged(
+        CaretContext expected,
+        CaretContext actual,
+        bool checkCaretTextUnchanged = true) =>
         expected.Target == actual.Target &&
         string.Equals(expected.FocusedElementId, actual.FocusedElementId, StringComparison.Ordinal) &&
         expected.TargetKind == actual.TargetKind &&
-        expected.LeftReachedDocumentStart == actual.LeftReachedDocumentStart &&
-        expected.RightReachedDocumentEnd == actual.RightReachedDocumentEnd &&
         expected.HasTextContext == actual.HasTextContext &&
         expected.IsScreenDerived == actual.IsScreenDerived &&
         expected.IsUrlBarField == actual.IsUrlBarField &&
         string.Equals(expected.Left, actual.Left, StringComparison.Ordinal) &&
         string.Equals(expected.Selection, actual.Selection, StringComparison.Ordinal) &&
-        string.Equals(expected.Right, actual.Right, StringComparison.Ordinal);
+        (!checkCaretTextUnchanged || (
+            expected.LeftReachedDocumentStart == actual.LeftReachedDocumentStart &&
+            expected.RightReachedDocumentEnd == actual.RightReachedDocumentEnd &&
+            string.Equals(expected.Right, actual.Right, StringComparison.Ordinal)));
+
+    internal static bool ShouldRetryColdChromiumFocus(WindowsTextTargetAdapter.FocusedElementFacts? focus) =>
+        focus is not null &&
+        !focus.HasKeyboardFocus &&
+        focus.ClassName.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal);
 
     internal static TextDeliveryRefusalReason CompatibilityRefusal(
         TextTargetKind targetKind,
@@ -411,7 +464,10 @@ internal static class WindowsTextDeliveryPolicy
             fullscreen);
     }
 
-    internal static TextDeliveryRefusalReason PreflightRefusal(TargetContextResult current, CaretContext expected)
+    internal static TextDeliveryRefusalReason PreflightRefusal(
+        TargetContextResult current,
+        CaretContext expected,
+        bool checkCaretTextUnchanged = true)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(expected);
@@ -422,7 +478,7 @@ internal static class WindowsTextDeliveryPolicy
                 : RefusalFor(current.Status);
         }
 
-        return CaretUnchanged(expected, current.Context)
+        return CaretUnchanged(expected, current.Context, checkCaretTextUnchanged)
             ? TextDeliveryRefusalReason.None
             : TextDeliveryRefusalReason.TargetChanged;
     }

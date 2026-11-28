@@ -174,8 +174,18 @@ public sealed class CursorInsertionRepairTests
             Context(left: "We are ", right: ". Next"),
             "en");
 
-        Assert.Equal("Done", result.Insertion.Text);
+        Assert.Equal("done", result.Insertion.Text);
         Assert.True(result.DroppedDuplicatePeriod);
+        Assert.True(result.LowercasedFirst);
+
+        var afterTerminator = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "Done."),
+            Context(left: "Finished. ", right: ". Next"),
+            "en");
+
+        Assert.Equal("Done", afterTerminator.Insertion.Text);
+        Assert.True(afterTerminator.DroppedDuplicatePeriod);
+        Assert.False(afterTerminator.LowercasedFirst);
     }
 
     [Fact]
@@ -208,6 +218,153 @@ public sealed class CursorInsertionRepairTests
         Assert.Equal(CursorRepairDisposition.FallbackPayload, result.Disposition);
         Assert.Equal(said, result.Fallback.Text);
         Assert.Equal(said, result.Insertion.Text);
+    }
+
+    [Fact]
+    public void SkipsFormatCharactersAndTreatsObjectReplacementAsNonWordBoundary()
+    {
+        // G0-1: zero-width format characters around the caret are transparent while raw CaretContext stays intact,
+        // and U+FFFC never causes word-glue or inside-word refusal.
+        var zwspResult = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "Ask them."),
+            Context(left: "Can you \u200B", right: "\u200B"),
+            "en");
+        Assert.Equal(CursorRepairDisposition.ContextApplied, zwspResult.Disposition);
+        Assert.Equal("ask them.", zwspResult.Insertion.Text.TrimEnd());
+        Assert.True(zwspResult.LowercasedFirst);
+        Assert.False(zwspResult.AddedLeadingSpace);
+
+        var zwspTightLeft = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "Ask"),
+            Context(left: "Can you\u200B", right: "\u200B."),
+            "en");
+        Assert.Equal(CursorRepairDisposition.ContextApplied, zwspTightLeft.Disposition);
+        Assert.Equal(" ask", zwspTightLeft.Insertion.Text);
+        Assert.True(zwspTightLeft.LowercasedFirst);
+
+        var zwspInsideWord = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "mid"),
+            Context(left: "hel\u200B", right: "\u200Blo"),
+            "en");
+        Assert.True(zwspInsideWord.RefusedInsideWord);
+
+        var fffcLeft = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "World"),
+            Context(left: "See\uFFFC", right: "\uFFFC"),
+            "en");
+        Assert.Equal(CursorRepairDisposition.ContextApplied, fffcLeft.Disposition);
+        Assert.False(fffcLeft.RefusedInsideWord);
+        Assert.True(fffcLeft.AddedLeadingSpace);
+        Assert.True(fffcLeft.AddedTrailingSpace);
+        Assert.Equal(" World ", fffcLeft.Insertion.Text);
+    }
+
+    [Fact]
+    public void NeedsTrailingSpaceSuppressesHorizontalSpaceOnlyNeverNewlines()
+    {
+        // G0-3: \r and \n are line breaks, not horizontal separators, so trailing space is preserved before them.
+        var beforeNewline = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "hello"),
+            Context(left: "Say ", right: "\nnext line"),
+            "en");
+        Assert.True(beforeNewline.AddedTrailingSpace);
+        Assert.Equal("hello ", beforeNewline.Insertion.Text);
+
+        var beforeCrLf = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "hello"),
+            Context(left: "Say ", right: "\r\nnext line"),
+            "en");
+        Assert.True(beforeCrLf.AddedTrailingSpace);
+        Assert.Equal("hello ", beforeCrLf.Insertion.Text);
+
+        var beforeTab = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "hello"),
+            Context(left: "Say ", right: "\tnext column"),
+            "en");
+        Assert.False(beforeTab.AddedTrailingSpace);
+        Assert.Equal("hello", beforeTab.Insertion.Text);
+    }
+
+    [Fact]
+    public void KoreanIsTreatedAsSpaceSeparated()
+    {
+        // G0-5: Hangul and ko are word-spaced rather than unsegmented.
+        var koResult = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "세계"),
+            Context(left: "안녕", right: " 오늘"),
+            "ko");
+        Assert.Equal(CursorRepairDisposition.ContextApplied, koResult.Disposition);
+        Assert.True(koResult.AddedLeadingSpace);
+        Assert.False(koResult.AddedTrailingSpace);
+        Assert.Equal(" 세계", koResult.Insertion.Text);
+
+        var koFallback = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "안녕하세요"),
+            context: null,
+            "ko");
+        Assert.Equal("안녕하세요 ", koFallback.Fallback.Text);
+    }
+
+    [Fact]
+    public void StraightQuotesHonorOpeningAndClosingDirectionality()
+    {
+        // G0-6: straight opening quote gets no leading space and keeps capitalization; closing quote adds space.
+        var afterOpening = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "Hello"),
+            Context(left: "He said \"", right: "\""),
+            "en");
+        Assert.False(afterOpening.AddedLeadingSpace);
+        Assert.False(afterOpening.AddedTrailingSpace);
+        Assert.False(afterOpening.LowercasedFirst);
+        Assert.Equal(CaseRepairDecision.KeptAfterOpener, afterOpening.CaseDecision);
+        Assert.Equal("Hello", afterOpening.Insertion.Text);
+
+        var afterClosing = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "And then"),
+            Context(left: "\"Hello\"", right: string.Empty),
+            "en");
+        Assert.True(afterClosing.AddedLeadingSpace);
+        Assert.Equal(" And then ", afterClosing.Insertion.Text);
+
+        var beforeOpening = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "to"),
+            Context(left: "spoken ", right: "\"hello\""),
+            "en");
+        Assert.True(beforeOpening.AddedTrailingSpace);
+        Assert.Equal("to ", beforeOpening.Insertion.Text);
+    }
+
+    [Fact]
+    public void LeadingCaseRepairRunsBeforeSeamDeduplication()
+    {
+        // G0-8: "The" lowers to "the" and drops duplicate "the ", preserving "Review" capitalized cleanly.
+        var result = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "The Review is ready."),
+            Context(left: "Go to the ", right: string.Empty),
+            "en");
+
+        Assert.Equal("Review is ready. ", result.Insertion.Text);
+        Assert.True(result.LowercasedFirst);
+        Assert.Equal(CaseRepairDecision.LowercasedFirst, result.CaseDecision);
+        Assert.True(result.RemovedDuplicateWord);
+        Assert.True(result.CandidateDeletesDictatedText);
+    }
+
+    [Fact]
+    public void SmartInsertionDisabledReturnsFallbackPayloadWithoutModifyingText()
+    {
+        var result = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "Ask them."),
+            Context(left: "Can you ", right: "please"),
+            "en",
+            protectedWords: null,
+            smartInsertionEnabled: false);
+
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, result.Disposition);
+        Assert.Equal(CaseRepairDecision.SkippedSmartInsertionDisabled, result.CaseDecision);
+        Assert.False(result.LowercasedFirst);
+        Assert.False(result.AddedLeadingSpace);
+        Assert.Equal("Ask them. ", result.Insertion.Text);
     }
 
     private static CaretContext Context(

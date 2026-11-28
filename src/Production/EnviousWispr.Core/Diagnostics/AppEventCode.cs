@@ -426,4 +426,7 @@ public enum AppEventCode
 
     /// <summary>Runtime contextual checker evaluated flagged learned-word aliases before delivery (counts/timing only, never user text).</summary>
     LearnedWordChecked,
+
+    /// <summary>Smart insertion and continuation casing evaluated a seam (closed enum disposition only, never user words or surrounding context).</summary>
+    TextDeliveryCaseEvaluated,
 }

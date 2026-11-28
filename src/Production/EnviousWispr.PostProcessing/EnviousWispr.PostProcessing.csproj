@@ -4,6 +4,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The snippet expander's ending and collision decisions are tested directly, as macOS tests them. -->
     <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
   </ItemGroup>
@@ -11,6 +15,11 @@
   <ItemGroup>
     <EmbeddedResource Include="Resources\emoji-dictionary.json" />
     <EmbeddedResource Include="Resources\british-spelling.json" />
+    <EmbeddedResource Include="Resources\Casing\*.br">
+      <WithCulture>false</WithCulture>
+      <LogicalName>EnviousWispr.PostProcessing.Resources.Casing.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <None Include="Resources\varcon-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Link="licenses\varcon-LICENSE.txt" />
+    <None Include="Resources\Casing\Licenses\*.license" CopyToOutputDirectory="PreserveNewest" Link="licenses\casing\%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

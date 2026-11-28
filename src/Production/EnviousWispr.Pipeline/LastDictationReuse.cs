@@ -75,7 +75,8 @@ public sealed record LastDictationEnvironment(
     Func<TargetWindowId, bool> IsOwnWindow,
     ITextDelivery Delivery,
     Func<TextDeliveryOptions> DeliveryOptions,
-    Func<TargetWindowId, CancellationToken, Task<TargetWindowId?>> Reacquire);
+    Func<TargetWindowId, CancellationToken, Task<TargetWindowId?>> Reacquire,
+    Func<IReadOnlyList<string>?>? ProtectedWords = null);
 
 /// <summary>Paste or copy the last dictation again: the one owner behind the tray items and, later, two shortcuts.</summary>
 /// <remarks>
@@ -210,11 +211,13 @@ public sealed class LastDictationReuse
                 new TextDeliveryRequest(
                     new ProcessedText(DictationSessionId.Create(), entry.Text),
                     aimed ?? default,
-                    LanguageCode: null,
+                    LanguageCode: entry.LanguageCode,
                     options,
                     // A history entry does not record whether its words came from a snippet, so a
                     // re-paste takes the ordinary route, the one this action has always taken.
-                    SnippetExpanded: false),
+                    SnippetExpanded: false,
+                    ProtectedWords: _environment.ProtectedWords?.Invoke(),
+                    EngineDetectsLanguage: !string.IsNullOrWhiteSpace(entry.LanguageCode) ? true : null),
                 cancellationToken).ConfigureAwait(false);
             return Ended(Classify(action, result), result);
         }

@@ -1910,4 +1910,49 @@ public sealed class WindowsTextDeliverySafetyTests
         HasTextContext: true,
         SupportsDirectValueWrite: true,
         DirectValueWriteAtEnd: true);
+
+    [Fact]
+    public void PreflightRefusalHonorsCheckCaretTextUnchangedFlag()
+    {
+        var target = new TargetWindowId(0x555, 77, "WindowsTerminal", "term-focus");
+        var expected = Context(target, "hello ", string.Empty, string.Empty);
+        var leftDrifted = new TargetContextResult(TargetContextStatus.Available, expected with { Left = "hello world " });
+        var selectionDrifted = new TargetContextResult(TargetContextStatus.Available, expected with { Selection = "hello" });
+        var rightRedrew = new TargetContextResult(TargetContextStatus.Available, expected with { Right = "status redraw " });
+
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(leftDrifted, expected, checkCaretTextUnchanged: false));
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(selectionDrifted, expected, checkCaretTextUnchanged: false));
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(rightRedrew, expected, checkCaretTextUnchanged: true));
+        Assert.Equal(
+            TextDeliveryRefusalReason.None,
+            WindowsTextTargetAdapter.PreflightRefusal(rightRedrew, expected, checkCaretTextUnchanged: false));
+    }
+
+    [Fact]
+    public void EmptyOrMissingSelectionProducesAvailableEmptyContextWithoutUnsupportedTargetRefusal()
+    {
+        var target = new TargetWindowId(0x777, 88, "EXCEL", "excel-cell");
+        var empty = WindowsTextDeliveryPolicy.EmptyContext(target, "excel-cell", TextTargetKind.Office);
+        Assert.False(empty.HasTextContext);
+        Assert.Equal(string.Empty, empty.Left);
+        Assert.Equal(string.Empty, empty.Right);
+        Assert.False(empty.SupportsDirectValueWrite);
+
+        var adapterPath = Path.Combine(
+            RepositoryRoot(),
+            "src",
+            "Production",
+            "EnviousWispr.Services",
+            "Input",
+            "WindowsTextTargetAdapter.cs");
+        var adapterSource = File.ReadAllText(adapterPath);
+        Assert.Contains("if (caret is null || caret.NoSelection)", adapterSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("caret.NoSelection && targetKind != TextTargetKind.Terminal", adapterSource, StringComparison.Ordinal);
+    }
 }

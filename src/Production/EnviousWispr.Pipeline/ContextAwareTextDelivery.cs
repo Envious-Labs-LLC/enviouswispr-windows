@@ -20,12 +20,32 @@ namespace EnviousWispr.Pipeline;
 /// </remarks>
 public sealed class ContextAwareTextDelivery : ITextDelivery
 {
+    private static readonly TimeSpan DefaultOracleColdLoadBudget = TimeSpan.FromMilliseconds(250);
+
     private readonly ITextTargetAdapter _targetAdapter;
+    private readonly ISeamCasingOracle _seamCasingOracle;
+    private readonly IOsLanguageDetector? _osLanguageDetector;
+    private readonly LanguageIdentifier? _languageIdentifier;
+    private readonly TimeSpan _oracleColdLoadBudget;
 
     public ContextAwareTextDelivery(ITextTargetAdapter targetAdapter)
+        : this(targetAdapter, seamCasingOracle: null, osLanguageDetector: null, languageIdentifier: null, oracleColdLoadBudget: null)
+    {
+    }
+
+    public ContextAwareTextDelivery(
+        ITextTargetAdapter targetAdapter,
+        ISeamCasingOracle? seamCasingOracle = null,
+        IOsLanguageDetector? osLanguageDetector = null,
+        LanguageIdentifier? languageIdentifier = null,
+        TimeSpan? oracleColdLoadBudget = null)
     {
         ArgumentNullException.ThrowIfNull(targetAdapter);
         _targetAdapter = targetAdapter;
+        _seamCasingOracle = seamCasingOracle ?? SeamCasingOracleRuntime.Shared;
+        _osLanguageDetector = osLanguageDetector;
+        _languageIdentifier = languageIdentifier;
+        _oracleColdLoadBudget = oracleColdLoadBudget ?? DefaultOracleColdLoadBudget;
     }
 
     public ProcessedText? RecoveryText { get; private set; }
@@ -106,14 +126,72 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         // alone and puts the text on the clipboard - the same road every refused paste takes. (Copy-
         // only, the person's own choice, took its own early branch above; it does not come through here.)
         var forcedRefusal = RefusalFor(capture);
+        var repairContext = capture.Status == TargetContextStatus.Available && !request.SnippetExpanded
+            ? capture.Context
+            : null;
+        var surroundingText = repairContext is { HasTextContext: true }
+            ? string.Concat(repairContext.Left, " ", repairContext.Right).Trim()
+            : string.Empty;
+        var engineDetectsLanguage = request.EngineDetectsLanguage ?? !string.IsNullOrWhiteSpace(request.LanguageCode);
+        var resolution = DictationLanguageResolver.Resolve(
+            new LanguageEvidence(
+                request.LockedLanguageCode,
+                engineDetectsLanguage,
+                request.LanguageCode),
+            request.Text.Text,
+            surroundingText,
+            identifyTextOnAllPaths: false,
+            osDetector: _osLanguageDetector,
+            identifier: _languageIdentifier);
+
+        var effectiveOracle = _seamCasingOracle;
+        if (_seamCasingOracle is SeamCasingOracleRuntime runtime)
+        {
+            if (request.Options.SmartInsertionEnabled &&
+                repairContext is { HasTextContext: true } &&
+                SeamCasingPolicies.NormalizeBaseCode(resolution.Language) is { } baseLanguage &&
+                SeamCasingPolicies.PolicyFor(baseLanguage) is not null &&
+                !runtime.IsLanguageReady(baseLanguage))
+            {
+                try
+                {
+                    await runtime
+                        .WaitForLanguageReadyAsync(baseLanguage, _oracleColdLoadBudget, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (IsNamed(exception))
+                {
+                    return Stopped(request, DeliveryStage.ContextCapture, exception, cancellationToken);
+                }
+            }
+
+            effectiveOracle = runtime.NonBlockingOracle;
+        }
+
         // A TAKE THAT EXPANDED A SNIPPET IS NOT REPAIRED. Handing the repair no context is its whole
         // bypass - with none it returns the fallback payload - so it needs no branch of its own. The
         // capture still runs: its refusals (a protected field, an elevated or changed window) and the
         // target facts the commit routes on are about WHERE the words go, not what they say.
         var repair = CursorInsertionRepair.Apply(
             request.Text,
-            capture.Status == TargetContextStatus.Available && !request.SnippetExpanded ? capture.Context : null,
-            request.LanguageCode);
+            repairContext,
+            resolution.Language,
+            request.ProtectedWords,
+            request.Options.SmartInsertionEnabled,
+            effectiveOracle);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Stopped(
+                request,
+                DeliveryStage.Commit,
+                new OperationCanceledException(cancellationToken),
+                cancellationToken,
+                repair.Disposition,
+                repair.LowercasedFirst,
+                repair.CaseDecision,
+                repair.CandidateDeletesDictatedText);
+        }
+
         var targetKind = capture.Context?.TargetKind ?? TextTargetKind.Unknown;
         TextCommitResult commit;
         try
@@ -126,12 +204,21 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                     capture.Status == TargetContextStatus.Available ? capture.Context : null,
                     targetKind,
                     request.Options,
-                    forcedRefusal),
+                    forcedRefusal,
+                    repair.CandidateDeletesDictatedText),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (IsNamed(exception))
         {
-            return Stopped(request, DeliveryStage.Commit, exception, cancellationToken, repair.Disposition);
+            return Stopped(
+                request,
+                DeliveryStage.Commit,
+                exception,
+                cancellationToken,
+                repair.Disposition,
+                repair.LowercasedFirst,
+                repair.CaseDecision,
+                repair.CandidateDeletesDictatedText);
         }
 
         if (commit.Delivered || commit.ClipboardFallback)
@@ -150,7 +237,10 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             ClipboardUncertain: commit.ClipboardUncertain,
             ArrivalStatus: commit.ArrivalStatus,
             ArrivalElapsedMilliseconds: commit.ArrivalElapsedMilliseconds,
-            DeliveredText: commit.Delivered ? repair.Insertion.Text : null);
+            DeliveredText: commit.Delivered ? repair.Insertion.Text : null,
+            LowercasedFirst: repair.LowercasedFirst,
+            CaseDecision: repair.CaseDecision,
+            CandidateDeletesDictatedText: repair.CandidateDeletesDictatedText);
     }
 
     private static TextDeliveryRefusalReason RefusalFor(TargetContextResult capture) =>
@@ -176,7 +266,10 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         DeliveryStage stage,
         Exception exception,
         CancellationToken cancellationToken,
-        CursorRepairDisposition disposition = CursorRepairDisposition.FallbackPayload)
+        CursorRepairDisposition disposition = CursorRepairDisposition.FallbackPayload,
+        bool lowercasedFirst = false,
+        CaseRepairDecision caseDecision = CaseRepairDecision.None,
+        bool candidateDeletesDictatedText = false)
     {
         // THE CALLER'S CANCELLATION IS CANCELLATION; ANY OTHER OperationCanceledException IS A DEFECT,
         // because nothing else was asked to stop. A disposal is the app leaving. Everything else is a
@@ -194,6 +287,9 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             ClipboardFallback: false,
             RefusalReason: reason,
             RepairDisposition: disposition,
-            Fault: fault);
+            Fault: fault,
+            LowercasedFirst: lowercasedFirst,
+            CaseDecision: caseDecision,
+            CandidateDeletesDictatedText: candidateDeletesDictatedText);
     }
 }

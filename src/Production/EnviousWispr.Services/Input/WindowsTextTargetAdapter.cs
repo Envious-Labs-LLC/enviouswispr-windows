@@ -32,6 +32,18 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         TextDeliveryOptions options,
         CancellationToken cancellationToken = default)
     {
+        var (result, _) = await CaptureContextWithFocusAsync(
+            target,
+            options,
+            cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task<(TargetContextResult Result, FocusedElementFacts? Focus)> CaptureContextWithFocusAsync(
+        TargetWindowId target,
+        TextDeliveryOptions options,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(options);
         ValidateOptions(options);
         try
@@ -40,7 +52,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             try
             {
                 return await Task.Run(
-                    () => CaptureContext(target, options),
+                    () => CaptureContextWithFocus(target, options),
                     cancellationToken).ConfigureAwait(false);
             }
             finally
@@ -54,9 +66,11 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
         catch (Exception exception) when (IsExpectedAutomationFailure(exception))
         {
-            return new TargetContextResult(
-                TargetContextStatus.AccessibilityUnavailable,
-                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.AccessibilityUnavailable,
+                    RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
+                null);
         }
     }
 
@@ -96,13 +110,19 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
-        var current = await CaptureContextAsync(
+        var verifyCaretText = WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(
+            request.ExpectedContext,
+            request.CandidateDeletesDictatedText);
+        var (current, focus) = await CaptureContextWithFocusAsync(
             request.Target,
             request.Options,
             cancellationToken).ConfigureAwait(false);
         if (current.Status != TargetContextStatus.Available ||
             current.Context is null ||
-            !CaretUnchanged(request.ExpectedContext, current.Context))
+            !CaretUnchanged(
+                request.ExpectedContext,
+                current.Context,
+                checkCaretTextUnchanged: verifyCaretText))
         {
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.FallbackText.Text,
@@ -112,8 +132,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
         var commitRule = ResolveTargetPolicy(
             request.Target,
-            elementClassName: null,
-            isControlEdit: current.Context.TargetKind == TextTargetKind.StandardEdit);
+            elementClassName: focus?.ClassName,
+            isControlEdit: focus?.IsControlEdit ?? (current.Context.TargetKind == TextTargetKind.StandardEdit));
 
         if (CanUseDirectValueWrite(current.Context, request, commitRule))
         {
@@ -158,7 +178,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             () => GuardedPreflight(() => PreflightInput(
                 request.Target,
                 request.ExpectedContext,
-                request.Options)),
+                request.Options,
+                verifyCaretText)),
             cancellationToken,
             settleDelay,
             onPasteDispatched: () => dispatchedWatch = Stopwatch.StartNew()).ConfigureAwait(false);
@@ -421,8 +442,11 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     internal static TextDeliveryRefusalReason GuardedPreflight(Func<TextDeliveryRefusalReason> preflight) =>
         WindowsTextDeliveryPolicy.GuardedPreflight(preflight);
 
-    internal static bool CaretUnchanged(CaretContext expected, CaretContext actual) =>
-        WindowsTextDeliveryPolicy.CaretUnchanged(expected, actual);
+    internal static bool CaretUnchanged(
+        CaretContext expected,
+        CaretContext actual,
+        bool checkCaretTextUnchanged = true) =>
+        WindowsTextDeliveryPolicy.CaretUnchanged(expected, actual, checkCaretTextUnchanged);
 
     internal static TextDeliveryRefusalReason CompatibilityRefusal(
         TextTargetKind targetKind,
@@ -536,15 +560,22 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     private static TargetContextResult CaptureContext(
         TargetWindowId target,
+        TextDeliveryOptions options) =>
+        CaptureContextWithFocus(target, options).Result;
+
+    private static (TargetContextResult Result, FocusedElementFacts? Focus) CaptureContextWithFocus(
+        TargetWindowId target,
         TextDeliveryOptions options)
     {
         var budget = new UiaPreparationBudget(TargetActivationTimeout);
         var windowStatus = ActivateAndValidateWindow(target, budget, out var wasReactivated);
         if (windowStatus != TargetContextStatus.Available)
         {
-            return new TargetContextResult(
-                windowStatus,
-                RefusalReason: RefusalFor(windowStatus));
+            return (
+                new TargetContextResult(
+                    windowStatus,
+                    RefusalReason: RefusalFor(windowStatus)),
+                null);
         }
 
         if (wasReactivated)
@@ -559,9 +590,11 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 Thread.Sleep(25);
                 if (WindowsTargetWindowNative.CurrentForegroundWindow() != target.Value)
                 {
-                    return new TargetContextResult(
-                        TargetContextStatus.TargetChanged,
-                        RefusalReason: TextDeliveryRefusalReason.TargetChanged);
+                    return (
+                        new TargetContextResult(
+                            TargetContextStatus.TargetChanged,
+                            RefusalReason: TextDeliveryRefusalReason.TargetChanged),
+                        null);
                 }
             }
         }
@@ -569,18 +602,53 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         var win32ChildFocusId = WindowsWindowIdentity.TryCaptureDistinctWin32ChildFocusId(target.Value, target.ProcessId);
         if (!budget.TryAdmit())
         {
-            return new TargetContextResult(
-                TargetContextStatus.AccessibilityUnavailable,
-                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.AccessibilityUnavailable,
+                    RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
+                null);
         }
 
         var element = Automation(static () => AutomationElement.FocusedElement);
         var focus = ReadFocusedElementFacts(element);
+        if (WindowsTextDeliveryPolicy.ShouldRetryColdChromiumFocus(focus) && budget.TryAdmit())
+        {
+            Thread.Sleep(15);
+            var retriedElement = Automation(static () => AutomationElement.FocusedElement);
+            var retriedFocus = ReadFocusedElementFacts(retriedElement);
+            return CaptureFromFocusedElement(
+                target,
+                options,
+                budget,
+                win32ChildFocusId,
+                retriedElement,
+                retriedFocus);
+        }
+
+        return CaptureFromFocusedElement(
+            target,
+            options,
+            budget,
+            win32ChildFocusId,
+            element,
+            focus);
+    }
+
+    private static (TargetContextResult Result, FocusedElementFacts? Focus) CaptureFromFocusedElement(
+        TargetWindowId target,
+        TextDeliveryOptions options,
+        UiaPreparationBudget budget,
+        string? win32ChildFocusId,
+        AutomationElement? element,
+        FocusedElementFacts? focus)
+    {
         if (element is null || focus is null)
         {
-            return new TargetContextResult(
-                TargetContextStatus.AccessibilityUnavailable,
-                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.AccessibilityUnavailable,
+                    RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable),
+                focus);
         }
 
         var focusMatchesProcess = WindowsWindowIdentity.IsMatchingFocusProcess(target.Value, target.ProcessId, focus.ProcessId);
@@ -594,7 +662,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             focusProcessMatchesTarget: focusMatchesProcess);
         if (evaluation.Failure is not null)
         {
-            return evaluation.Failure;
+            return (evaluation.Failure, focus);
         }
 
         var focusedId = evaluation.EffectiveFocusId;
@@ -602,9 +670,11 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         var targetKind = rule.TargetKind;
         if (evaluation.WindowFallbackOnly || !focus.IsEnabled || !focus.IsKeyboardFocusable || !budget.TryAdmit())
         {
-            return new TargetContextResult(
-                TargetContextStatus.Available,
-                EmptyContext(target, focusedId, targetKind));
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.Available,
+                    EmptyContext(target, focusedId, targetKind)),
+                focus);
         }
 
         var textPattern = Automation(() =>
@@ -626,25 +696,96 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                         : null);
             }
 
-            return new TargetContextResult(
-                TargetContextStatus.Available,
-                EmptyContext(target, focusedId, targetKind, baselineValue));
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.Available,
+                    EmptyContext(target, focusedId, targetKind, baselineValue)),
+                focus);
         }
 
-        var caret = Automation(() => ReadCaret(textPattern, options));
-        if (caret is null || (caret.NoSelection && targetKind != TextTargetKind.Terminal))
+        var (caret, terminalScreenTail) = Automation(() =>
         {
-            return new TargetContextResult(
-                TargetContextStatus.AccessibilityUnavailable,
-                EmptyContext(target, focusedId, targetKind),
-                TextDeliveryRefusalReason.UnsupportedTarget);
+            var caretResult = ReadCaret(textPattern, options);
+            if (targetKind != TextTargetKind.Terminal || caretResult is null || caretResult.NoSelection)
+            {
+                return (caretResult, (string?)null);
+            }
+
+            string? screenTail = null;
+            var selections = textPattern.GetSelection();
+            if (selections.Length == 1)
+            {
+                var document = textPattern.DocumentRange;
+                var tailRange = selections[0].Clone();
+                tailRange.MoveEndpointByUnit(
+                    TextPatternRangeEndpoint.Start,
+                    TextUnit.Character,
+                    -2048);
+                if (tailRange.CompareEndpoints(
+                    TextPatternRangeEndpoint.Start,
+                    document,
+                    TextPatternRangeEndpoint.Start) < 0)
+                {
+                    tailRange.MoveEndpointByRange(
+                        TextPatternRangeEndpoint.Start,
+                        document,
+                        TextPatternRangeEndpoint.Start);
+                }
+
+                tailRange.MoveEndpointByUnit(
+                    TextPatternRangeEndpoint.End,
+                    TextUnit.Character,
+                    1024);
+                if (tailRange.CompareEndpoints(
+                    TextPatternRangeEndpoint.End,
+                    document,
+                    TextPatternRangeEndpoint.End) > 0)
+                {
+                    tailRange.MoveEndpointByRange(
+                        TextPatternRangeEndpoint.End,
+                        document,
+                        TextPatternRangeEndpoint.End);
+                }
+
+                if (tailRange.CompareEndpoints(
+                    TextPatternRangeEndpoint.Start,
+                    tailRange,
+                    TextPatternRangeEndpoint.End) <= 0)
+                {
+                    screenTail = tailRange.GetText(4096);
+                }
+            }
+
+            return (caretResult, screenTail);
+        });
+
+        if (targetKind == TextTargetKind.Terminal)
+        {
+            var terminalUi = new WindowsTerminalContextResolver.TerminalUiSnapshot(
+                caret?.Left,
+                caret?.Selected,
+                caret?.Right,
+                caret is null || caret.NoSelection,
+                terminalScreenTail);
+            var terminalContext = WindowsTerminalContextResolver.Resolve(
+                target,
+                focusedId,
+                focus.ProcessId,
+                terminalUi);
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.Available,
+                    terminalContext),
+                focus);
         }
 
-        if (caret.NoSelection)
+        if (caret is null || caret.NoSelection)
         {
-            return new TargetContextResult(
-                TargetContextStatus.Available,
-                EmptyContext(target, focusedId, targetKind));
+            return (
+                new TargetContextResult(
+                    TargetContextStatus.Available,
+                    EmptyContext(target, focusedId, targetKind)),
+                focus);
         }
 
         var supportsValue = !rule.SkipDirectValueWrite &&
@@ -653,23 +794,28 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObject) &&
                 valuePatternObject is ValuePattern valuePattern &&
                 !valuePattern.Current.IsReadOnly);
-        var urlBar = IsUrlBarField(element, targetKind);
-        return new TargetContextResult(
-            TargetContextStatus.Available,
-            new CaretContext(
-                target,
-                focusedId,
-                targetKind,
-                caret.Left,
-                caret.Selected,
-                caret.Right,
-                caret.LeftAtStart,
-                caret.RightAtEnd,
-                HasTextContext: true,
-                SupportsDirectValueWrite: supportsValue,
-                DirectValueWriteAtEnd: caret.RightAtEnd && caret.Right.Length == 0,
-                IsScreenDerived: targetKind == TextTargetKind.Terminal,
-                IsUrlBarField: urlBar));
+        var focusProcessName = targetKind == TextTargetKind.Browser
+            ? ResolveFocusProcessName(target, focus.ProcessId)
+            : null;
+        var urlBar = IsUrlBarField(element, targetKind, focusProcessName);
+        return (
+            new TargetContextResult(
+                TargetContextStatus.Available,
+                new CaretContext(
+                    target,
+                    focusedId,
+                    targetKind,
+                    caret.Left,
+                    caret.Selected,
+                    caret.Right,
+                    caret.LeftAtStart,
+                    caret.RightAtEnd,
+                    HasTextContext: true,
+                    SupportsDirectValueWrite: supportsValue,
+                    DirectValueWriteAtEnd: caret.RightAtEnd && caret.Right.Length == 0,
+                    IsScreenDerived: false,
+                    IsUrlBarField: urlBar)),
+            focus);
     }
 
     private static bool IsFocusSettledForProcess(nint windowHandle, uint targetProcessId)
@@ -857,23 +1003,29 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         bool isControlEdit) =>
         WindowsTextDeliveryPolicy.ResolveTargetPolicy(target, elementClassName, isControlEdit);
 
+    private static string? ResolveFocusProcessName(TargetWindowId target, uint focusProcessId)
+    {
+        if (focusProcessId == target.ProcessId && !string.IsNullOrWhiteSpace(target.ProcessName))
+        {
+            return target.ProcessName;
+        }
+
+        var focusName = WindowsWindowIdentity.TryGetProcessName(focusProcessId);
+        return !string.IsNullOrWhiteSpace(focusName) ? focusName : target.ProcessName;
+    }
+
     private static bool IsUrlBarField(
         AutomationElement element,
-        TextTargetKind targetKind)
+        TextTargetKind targetKind,
+        string? processName)
     {
-        if (targetKind != TextTargetKind.Browser)
+        if (targetKind != TextTargetKind.Browser ||
+            !WindowsBrowserAddressBarDetector.IsRecognizedChromiumBrowserProcess(processName))
         {
             return false;
         }
 
-        var (automationId, className) = Automation(() => (
-            element.Current.AutomationId ?? string.Empty,
-            element.Current.ClassName ?? string.Empty));
-        return automationId.Contains("address", StringComparison.OrdinalIgnoreCase) ||
-            automationId.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
-            automationId.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
-            className.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
-            className.Contains("urlbar", StringComparison.OrdinalIgnoreCase);
+        return Automation(() => WindowsBrowserAddressBarDetector.IsChromiumAddressBar(element, processName));
     }
 
     private static TargetContextStatus ActivateAndValidateWindow(
@@ -885,7 +1037,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private static TextDeliveryRefusalReason PreflightInput(
         TargetWindowId target,
         CaretContext expected,
-        TextDeliveryOptions options)
+        TextDeliveryOptions options,
+        bool checkCaretTextUnchanged = true)
     {
         if (!WindowsTargetWindowNative.IsSameForegroundWindowAndProcess(target))
         {
@@ -897,7 +1050,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return TextDeliveryRefusalReason.InputStateUnsafe;
         }
 
-        return PreflightRefusal(CaptureContext(target, options), expected);
+        return PreflightRefusal(CaptureContext(target, options), expected, checkCaretTextUnchanged);
     }
 
     /// <summary>What the paste's last look at the target, a moment before the keystroke, refuses with.</summary>
@@ -907,8 +1060,11 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     /// says; mapping its status alone read it as "accessibility unavailable". The status is the
     /// answer only when the capture gave no reason of its own.
     /// </remarks>
-    internal static TextDeliveryRefusalReason PreflightRefusal(TargetContextResult current, CaretContext expected) =>
-        WindowsTextDeliveryPolicy.PreflightRefusal(current, expected);
+    internal static TextDeliveryRefusalReason PreflightRefusal(
+        TargetContextResult current,
+        CaretContext expected,
+        bool checkCaretTextUnchanged = true) =>
+        WindowsTextDeliveryPolicy.PreflightRefusal(current, expected, checkCaretTextUnchanged);
 
     private static void ValidateOptions(TextDeliveryOptions options) =>
         WindowsTextDeliveryPolicy.ValidateOptions(options);
