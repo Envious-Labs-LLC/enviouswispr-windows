@@ -367,7 +367,9 @@ public sealed partial class MainWindow
     private global::Microsoft.UI.Xaml.Controls.ToggleSwitch EnableAiPolishToggle => _settingsPageView?.EnableAiPolishToggle;
     private global::Microsoft.UI.Xaml.Controls.StackPanel AiPolishEnabledContent => _settingsPageView?.AiPolishEnabledContent;
     private global::Microsoft.UI.Xaml.Controls.FontIcon ActivePolishProviderIcon => _settingsPageView?.ActivePolishProviderIcon;
+    private global::Microsoft.UI.Xaml.Controls.Grid ActivePolishProviderHeaderGrid => _settingsPageView?.ActivePolishProviderHeaderGrid;
     private global::Microsoft.UI.Xaml.Controls.TextBlock ActivePolishProviderNameText => _settingsPageView?.ActivePolishProviderNameText;
+    private global::Microsoft.UI.Xaml.Controls.StackPanel ActivePolishProviderBadgesPanel => _settingsPageView?.ActivePolishProviderBadgesPanel;
     private global::Microsoft.UI.Xaml.Controls.Border ActivePolishProviderRecommendedBadge => _settingsPageView?.ActivePolishProviderRecommendedBadge;
     private global::Microsoft.UI.Xaml.Controls.Border ActivePolishProviderBadge => _settingsPageView?.ActivePolishProviderBadge;
     private global::Microsoft.UI.Xaml.Controls.TextBlock ActivePolishProviderBadgeText => _settingsPageView?.ActivePolishProviderBadgeText;
@@ -375,6 +377,8 @@ public sealed partial class MainWindow
     private global::Microsoft.UI.Xaml.Controls.StackPanel PolishProviderChooserPanel => _settingsPageView?.PolishProviderChooserPanel;
     private global::Microsoft.UI.Xaml.Controls.ItemsControl PolishProviderComboBox => _settingsPageView?.PolishProviderComboBox;
     private global::Microsoft.UI.Xaml.Controls.StackPanel EgOneSettingsPanel => _settingsPageView?.EgOneSettingsPanel;
+    private global::Microsoft.UI.Xaml.Controls.Grid EgOneSectionHeaderGrid => _settingsPageView?.EgOneSectionHeaderGrid;
+    private global::Microsoft.UI.Xaml.Controls.TextBlock EgOneSectionTitleText => _settingsPageView?.EgOneSectionTitleText;
     private global::Microsoft.UI.Xaml.Controls.TextBlock EgOneMemoryText => _settingsPageView?.EgOneMemoryText;
     private global::Microsoft.UI.Xaml.Controls.Grid EgOneCardsGrid => _settingsPageView?.EgOneCardsGrid;
     private global::Microsoft.UI.Xaml.Controls.Grid EgOneFullCardContainer => _settingsPageView?.EgOneFullCardContainer;

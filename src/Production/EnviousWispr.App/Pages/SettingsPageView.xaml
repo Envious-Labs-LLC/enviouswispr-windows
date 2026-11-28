@@ -763,15 +763,25 @@
                                     <FontIcon x:Name="ActivePolishProviderIcon" x:FieldModifier="internal" Glyph="&#xE70F;" FontSize="20" Foreground="{ThemeResource BrandAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                        <TextBlock x:Name="ActivePolishProviderNameText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" />
-                                        <Border x:Name="ActivePolishProviderRecommendedBadge" x:FieldModifier="internal" Style="{StaticResource BrandSolidAccentChipStyle}" Padding="8,2">
-                                            <TextBlock Style="{StaticResource BrandSolidAccentChipTextStyle}" Text="Recommended" />
-                                        </Border>
-                                        <Border x:Name="ActivePolishProviderBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
-                                            <TextBlock x:Name="ActivePolishProviderBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="On this PC" />
-                                        </Border>
-                                    </StackPanel>
+                                    <Grid x:Name="ActivePolishProviderHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingS}" RowSpacing="{StaticResource BrandSpacingXs}" SizeChanged="ActivePolishProviderHeaderGrid_SizeChanged">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock x:Name="ActivePolishProviderNameText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" TextWrapping="NoWrap" VerticalAlignment="Center" />
+                                        <StackPanel x:Name="ActivePolishProviderBadgesPanel" x:FieldModifier="internal" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <Border x:Name="ActivePolishProviderRecommendedBadge" x:FieldModifier="internal" Style="{StaticResource BrandSolidAccentChipStyle}" Padding="8,2">
+                                                <TextBlock Style="{StaticResource BrandSolidAccentChipTextStyle}" Text="Recommended" />
+                                            </Border>
+                                            <Border x:Name="ActivePolishProviderBadge" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipStyle}" Padding="8,2">
+                                                <TextBlock x:Name="ActivePolishProviderBadgeText" x:FieldModifier="internal" Style="{StaticResource BrandAccentChipTextStyle}" Text="On this PC" />
+                                            </Border>
+                                        </StackPanel>
+                                    </Grid>
                                     <TextBlock x:Name="ActivePolishProviderStatusText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="Our model for cleaning up dictation on this PC." TextWrapping="Wrap" />
                                 </StackPanel>
                                 <Button Grid.Column="2" x:Name="ChangePolishProviderButton" x:FieldModifier="internal" Click="ChangePolishProviderButton_Click" Content="Change ⇅" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
@@ -787,10 +797,17 @@
                         </StackPanel>
                         <!-- EG-1 Configuration Panel -->
                         <StackPanel x:Name="EgOneSettingsPanel" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingM}">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="EG-1 · CHOOSE A SIZE" />
-                                <TextBlock Grid.Column="1" x:Name="EgOneMemoryText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="This PC: Local Memory" />
+                            <Grid x:Name="EgOneSectionHeaderGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingXs}" SizeChanged="EgOneSectionHeaderGrid_SizeChanged">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="EgOneSectionTitleText" x:FieldModifier="internal" Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="EG-1 · CHOOSE A SIZE" TextWrapping="NoWrap" />
+                                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="EgOneMemoryText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="This PC: Local Memory" TextWrapping="Wrap" HorizontalAlignment="Right" />
                             </Grid>
                             <Grid x:Name="EgOneCardsGrid" x:FieldModifier="internal" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="EgOneCardsGrid_SizeChanged">
                                 <Grid.ColumnDefinitions>

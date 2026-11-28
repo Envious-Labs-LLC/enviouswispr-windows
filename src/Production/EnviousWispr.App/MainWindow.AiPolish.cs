@@ -293,6 +293,10 @@ public sealed partial class MainWindow
             isOllamaHosted,
             _cloudPolishNotice);
         ApplyActivePolishProviderBadge(summaryBadge);
+        if (ActivePolishProviderHeaderGrid is { ActualWidth: > 0 } headerGrid)
+        {
+            UpdateActivePolishProviderHeaderLayout(headerGrid.ActualWidth);
+        }
 
         if (ActivePolishProviderIcon is not null)
         {
@@ -413,6 +417,10 @@ public sealed partial class MainWindow
             _egOneServerExecutableExists,
             isOllamaHosted: false);
         ApplyActivePolishProviderBadge(summaryBadge);
+        if (ActivePolishProviderHeaderGrid is { ActualWidth: > 0 } headerGrid)
+        {
+            UpdateActivePolishProviderHeaderLayout(headerGrid.ActualWidth);
+        }
         UpdateHistoryPolishState();
     }
 
@@ -627,6 +635,10 @@ public sealed partial class MainWindow
                 profile.DedicatedVramGb,
                 profile.PhysicalCoreCount,
                 liveReading);
+            if (EgOneSectionHeaderGrid is { ActualWidth: > 0 } sectionHeaderGrid)
+            {
+                UpdateEgOneSectionHeaderLayout(sectionHeaderGrid.ActualWidth);
+            }
         }
 
         var totalPhysicalBytes = liveReading?.TotalPhysicalBytes ??
@@ -759,6 +771,45 @@ public sealed partial class MainWindow
                 _egOneServerExecutableExists,
                 selectedState.IsInstalled);
         }
+    }
+
+    internal void ActivePolishProviderHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateActivePolishProviderHeaderLayout(e.NewSize.Width);
+
+    private void UpdateActivePolishProviderHeaderLayout(double available)
+    {
+        if (ActivePolishProviderNameText is null || ActivePolishProviderBadgesPanel is null || available <= 0)
+        {
+            return;
+        }
+
+        var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
+        ActivePolishProviderNameText.Measure(infinite);
+        ActivePolishProviderBadgesPanel.Measure(infinite);
+        var stack = ActivePolishProviderNameText.DesiredSize.Width + ActivePolishProviderBadgesPanel.DesiredSize.Width + 12d > available;
+        Grid.SetRow(ActivePolishProviderBadgesPanel, stack ? 1 : 0);
+        Grid.SetColumn(ActivePolishProviderBadgesPanel, stack ? 0 : 1);
+        Grid.SetColumnSpan(ActivePolishProviderBadgesPanel, stack ? 2 : 1);
+    }
+
+    internal void EgOneSectionHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateEgOneSectionHeaderLayout(e.NewSize.Width);
+
+    private void UpdateEgOneSectionHeaderLayout(double available)
+    {
+        if (EgOneSectionTitleText is null || EgOneMemoryText is null || available <= 0)
+        {
+            return;
+        }
+
+        var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
+        EgOneSectionTitleText.Measure(infinite);
+        EgOneMemoryText.Measure(infinite);
+        var stack = EgOneSectionTitleText.DesiredSize.Width + EgOneMemoryText.DesiredSize.Width + 16d > available;
+        Grid.SetRow(EgOneMemoryText, stack ? 1 : 0);
+        Grid.SetColumn(EgOneMemoryText, stack ? 0 : 1);
+        Grid.SetColumnSpan(EgOneMemoryText, stack ? 2 : 1);
+        EgOneMemoryText.HorizontalAlignment = stack ? HorizontalAlignment.Left : HorizontalAlignment.Right;
     }
 
     internal void EgOneCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
