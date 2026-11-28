@@ -509,7 +509,8 @@ public partial class App
                                     transcript,
                                     customWords,
                                     fileTextOptions,
-                                    EnabledVocabularyPackIds: _settings.UserData.EnabledVocabularyPackIds),
+                                    EnabledVocabularyPackIds: _settings.UserData.EnabledVocabularyPackIds,
+                                    VocabularyPackOverrides: _settings.UserData.VocabularyPackOverrides),
                                 token).ConfigureAwait(false);
                             var text = processed.Output.Text;
                             if (fileTextOptions.WordCorrectionEnabled &&

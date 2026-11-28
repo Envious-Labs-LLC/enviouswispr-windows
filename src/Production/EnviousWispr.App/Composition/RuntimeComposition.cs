@@ -61,7 +61,8 @@ public sealed record RuntimeShell(
     Func<bool> Leaving,
     Func<CancellationToken, Task<string?>> ClipboardText,
     Func<DictationPreferences>? Dictation = null,
-    Func<IReadOnlyList<string>>? EnabledVocabularyPackIds = null);
+    Func<IReadOnlyList<string>>? EnabledVocabularyPackIds = null,
+    Func<IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>>? VocabularyPackOverrides = null);
 
 /// <summary>Everything the long-lived session owners are built from.</summary>
 public sealed record RuntimeCompositionParts(

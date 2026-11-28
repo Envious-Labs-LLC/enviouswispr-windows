@@ -90,7 +90,8 @@ public partial class App
             new Transcript(DictationSessionId.Create(), spoken, "speed-check", []),
             _customWords,
             _deterministicTextOptions,
-            EnabledVocabularyPackIds: _enabledVocabularyPackIds);
+            EnabledVocabularyPackIds: _enabledVocabularyPackIds,
+            VocabularyPackOverrides: _vocabularyPackOverrides);
 
         var timings = new List<double>(SpeedCheckRuns);
         for (var run = 0; run <= SpeedCheckRuns; run++)
@@ -435,7 +436,13 @@ public partial class App
                 Dictation: () => _settings.Preferences.Dictation,
                 Engine: () => _transcriptionEngine,
                 Delivery: () => _textDelivery,
-                Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, _snippetVocabulary, CurrentPolishSetup(), _enabledVocabularyPackIds),
+                Options: () => new FinalizationOptions(
+                    _customWords,
+                    _deterministicTextOptions,
+                    _snippetVocabulary,
+                    CurrentPolishSetup(),
+                    _enabledVocabularyPackIds,
+                    _vocabularyPackOverrides),
                 CloudPolishProviderName: () => _cloudPolishConsent?.ProviderName,
                 RunId: () => _runId,
                 RecordingActive: active =>

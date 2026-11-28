@@ -38,6 +38,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
     private readonly Func<DeterministicTextOptions> _textOptions;
     private readonly Func<IReadOnlyList<CustomWordEntry>> _customWords;
     private readonly Func<IReadOnlyList<string>> _enabledVocabularyPackIds;
+    private readonly Func<IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>> _vocabularyPackOverrides;
     private readonly ITextTargetAdapter? _targetAdapter;
     private readonly Func<ITextTargetAdapter?>? _targetAdapterProvider;
     private readonly Func<CancellationToken, RepolishExecutionLease?>? _beginExecution;
@@ -56,7 +57,8 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         TimeProvider? clock = null,
         Func<IReadOnlyList<string>>? enabledVocabularyPackIds = null,
         Func<ITextTargetAdapter?>? targetAdapterProvider = null,
-        Func<CancellationToken, RepolishExecutionLease?>? beginExecution = null)
+        Func<CancellationToken, RepolishExecutionLease?>? beginExecution = null,
+        Func<IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>>? vocabularyPackOverrides = null)
     {
         ArgumentNullException.ThrowIfNull(historyStore);
         ArgumentNullException.ThrowIfNull(polishExecutor);
@@ -69,6 +71,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         _textOptions = textOptions ?? (() => new DeterministicTextOptions(true, true, true, true));
         _customWords = customWords ?? (() => Array.Empty<CustomWordEntry>());
         _enabledVocabularyPackIds = enabledVocabularyPackIds ?? (() => Array.Empty<string>());
+        _vocabularyPackOverrides = vocabularyPackOverrides ?? (() => VocabularyPacks.EmptyOverrides);
         _targetAdapter = targetAdapter;
         _targetAdapterProvider = targetAdapterProvider;
         _beginExecution = beginExecution;
@@ -200,11 +203,13 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         var deterministicOptions = _textOptions() with { CasualModeEnabled = false };
         var customWords = _customWords();
         var enabledPackIds = _enabledVocabularyPackIds();
+        var packOverrides = _vocabularyPackOverrides();
         var request = new DeterministicTextRequest(
             transcript,
             customWords,
             deterministicOptions,
-            EnabledVocabularyPackIds: enabledPackIds);
+            EnabledVocabularyPackIds: enabledPackIds,
+            VocabularyPackOverrides: packOverrides);
         var deterministicResult = new DeterministicTextResult(
             input,
             [],
