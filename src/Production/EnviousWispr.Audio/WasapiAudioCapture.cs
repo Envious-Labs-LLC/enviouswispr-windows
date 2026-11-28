@@ -77,6 +77,8 @@ public sealed class WasapiAudioCapture :
     private int _backstopSignalled;
     private bool _disposed;
     private Action<ReadOnlyMemory<float>>? _recoverySpoolSink;
+    private readonly object _spoolDispatchGate = new();
+    private float[]? _pendingWarmPreRollSpoolPacket;
     private long? _lastDeviceOpenMilliseconds;
     private long? _lastStreamStartMilliseconds;
     private int _packets;
@@ -100,6 +102,35 @@ public sealed class WasapiAudioCapture :
     /// </summary>
     public void AttachRecoverySpoolSink(Action<ReadOnlyMemory<float>>? sink) =>
         Volatile.Write(ref _recoverySpoolSink, sink);
+
+    private void PublishSpoolPacket(float[]? livePacket)
+    {
+        lock (_spoolDispatchGate)
+        {
+            float[]? preRoll;
+            lock (_bufferGate)
+            {
+                preRoll = _pendingWarmPreRollSpoolPacket;
+                _pendingWarmPreRollSpoolPacket = null;
+            }
+
+            var sink = Volatile.Read(ref _recoverySpoolSink);
+            if (sink is null)
+            {
+                return;
+            }
+
+            if (preRoll is { Length: > 0 })
+            {
+                sink(preRoll);
+            }
+
+            if (livePacket is { Length: > 0 })
+            {
+                sink(livePacket);
+            }
+        }
+    }
 
     internal WasapiAudioCapture(
         IAudioRecorderFactory recorderFactory,
@@ -429,7 +460,6 @@ public sealed class WasapiAudioCapture :
             if (_state == CaptureState.WarmIdle)
             {
                 var reusedWarm = false;
-                float[]? warmPreRollSpoolPacket = null;
                 IAudioRecorderSession? warmRecorder = null;
                 long attemptGeneration = 0;
                 lock (_bufferGate)
@@ -442,7 +472,7 @@ public sealed class WasapiAudioCapture :
                     {
                         _capturedBytes.SetLength(0);
                         _capturedBytes.Capacity = 0;
-                        warmPreRollSpoolPacket = DrainPreRollToCapturedBytesLocked(
+                        _pendingWarmPreRollSpoolPacket = DrainPreRollToCapturedBytesLocked(
                             captureSpoolCopy: Volatile.Read(ref _recoverySpoolSink) is not null);
                         _packets = 0;
                         _silentPackets = 0;
@@ -483,10 +513,7 @@ public sealed class WasapiAudioCapture :
 
                     _lastDeviceOpenMilliseconds = 0;
                     _lastStreamStartMilliseconds = 0;
-                    if (warmPreRollSpoolPacket is { Length: > 0 })
-                    {
-                        Volatile.Read(ref _recoverySpoolSink)?.Invoke(warmPreRollSpoolPacket);
-                    }
+                    PublishSpoolPacket(null);
 
                     return new AudioOperationResult(Succeeded: true);
                 }
@@ -745,6 +772,7 @@ public sealed class WasapiAudioCapture :
                             ref _lastCaptureWasEndpointMuted,
                             isWholeZero && Volatile.Read(ref _isEndpointMuted));
                         _drainedPreRollSampleCount = 0;
+                        _pendingWarmPreRollSpoolPacket = null;
                         _exactZeroRunSamples = 0;
                         _exactZeroSinceTakeStart = true;
                         _sawNonZeroPostPreRoll = false;
@@ -954,6 +982,7 @@ public sealed class WasapiAudioCapture :
             _isCapturing = false;
             _warmDeviceId = null;
             _drainedPreRollSampleCount = 0;
+            _pendingWarmPreRollSpoolPacket = null;
             ClearPreRollRingLocked();
             _capturedBytes.SetLength(0);
             _capturedBytes.Capacity = 0;
@@ -1447,7 +1476,7 @@ public sealed class WasapiAudioCapture :
 
             if (spoolPacket is { Length: > 0 })
             {
-                Volatile.Read(ref _recoverySpoolSink)?.Invoke(spoolPacket);
+                PublishSpoolPacket(spoolPacket);
             }
 
             if (hitBackstop && Interlocked.CompareExchange(ref _backstopSignalled, 1, 0) == 0)
@@ -2085,6 +2114,7 @@ public sealed class WasapiAudioCapture :
             _request = null;
             _warmDeviceId = null;
             _drainedPreRollSampleCount = 0;
+            _pendingWarmPreRollSpoolPacket = null;
             ClearPreRollRingLocked();
             _exactZeroRunSamples = 0;
             _exactZeroSinceTakeStart = true;

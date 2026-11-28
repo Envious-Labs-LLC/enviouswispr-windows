@@ -145,7 +145,6 @@ public static class OverlayPillCatalog
         or DictationOverlayState.Suggestion
         or DictationOverlayState.Warning
         or DictationOverlayState.RetainedPaste
-        or DictationOverlayState.Recovering
         or DictationOverlayState.Distress
         or DictationOverlayState.Error
         or DictationOverlayState.Busy;
@@ -163,7 +162,7 @@ public static class OverlayPillCatalog
             RichErrorVariant.PermissionDenied => 6.0d,
             _ => 3.0d,
         },
-        DictationOverlayState.Suggestion or DictationOverlayState.Busy or DictationOverlayState.Recovering => 6.0d,
+        DictationOverlayState.Suggestion or DictationOverlayState.Busy => 6.0d,
         DictationOverlayState.Advisory => 8.0d,
         DictationOverlayState.EscapeRecovery => EscapeRecoveryDwellSeconds,
         _ => 3.0d,

@@ -47,7 +47,7 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
     private readonly RecoveryReplayStatusCallbacks _statusCallbacks;
     private readonly Func<bool> _isLeaving;
     private readonly int _minimumSpokenSamples;
-    private readonly Action<DictationPreferences>? _applyLanguageSnapshot;
+    private readonly Action<DictationPreferences?>? _applyLanguageSnapshot;
     private readonly SemaphoreSlim _runGate = new(1, 1);
 
     private string? _activeSpoolPath;
@@ -70,7 +70,7 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
         RecoveryReplayStatusCallbacks statusCallbacks,
         Func<bool> isLeaving,
         int minimumSpokenSamples = RecoverySpoolConstants.MinimumSpokenSamples,
-        Action<DictationPreferences>? applyLanguageSnapshot = null)
+        Action<DictationPreferences?>? applyLanguageSnapshot = null)
     {
         ArgumentNullException.ThrowIfNull(spoolStore);
         ArgumentNullException.ThrowIfNull(engineAccessor);
@@ -279,8 +279,6 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
                             ? LanguageCatalog.AutomaticCode
                             : read.Header.LanguageCode,
                     };
-                    _applyLanguageSnapshot?.Invoke(languagePrefs);
-
                     var audio = new CapturedAudio(
                         read.Header.SessionId,
                         read.Samples,
@@ -288,7 +286,16 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
                         read.Header.Channels);
 
                     using var scope = DictationScope.Begin(read.Header.SessionId.Value);
-                    var transcript = await engine.TranscribeAsync(audio, itemCts.Token).ConfigureAwait(false);
+                    Transcript transcript;
+                    _applyLanguageSnapshot?.Invoke(languagePrefs);
+                    try
+                    {
+                        transcript = await engine.TranscribeAsync(audio, itemCts.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _applyLanguageSnapshot?.Invoke(null);
+                    }
                     if (WasDiscarded(orphan.FilePath))
                     {
                         await _spoolStore.DeleteFileAsync(orphan.FilePath).ConfigureAwait(false);
@@ -306,6 +313,7 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
                         targetAppName: null,
                         opts.EnabledVocabularyPackIds,
                         opts.VocabularyPackOverrides,
+                        persistRecoveryText: false,
                         itemCts.Token).ConfigureAwait(false);
                     if (WasDiscarded(orphan.FilePath))
                     {
@@ -336,9 +344,11 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
                     var persisted = savedEntryId is not null;
                     if (!persisted && !_historyPreferencesAccessor().IsEnabled)
                     {
-                        await _persistence.SaveRecoveryTextAsync(finalized.Processed.Output, CancellationToken.None).ConfigureAwait(false);
-                        _persistence.ShowPendingRecovery();
-                        persisted = true;
+                        if (await _persistence.TrySaveRecoveryTextAsync(finalized.Processed.Output, CancellationToken.None).ConfigureAwait(false))
+                        {
+                            _persistence.ShowPendingRecovery();
+                            persisted = true;
+                        }
                     }
 
                     if (persisted)
@@ -386,6 +396,7 @@ public sealed class StartupRecoveryReplayCoordinator : IDisposable
         }
         finally
         {
+            _applyLanguageSnapshot?.Invoke(null);
             _isRunning = false;
             Volatile.Write(ref _activeItemCts, null);
             Volatile.Write(ref _activeSpoolPath, null);

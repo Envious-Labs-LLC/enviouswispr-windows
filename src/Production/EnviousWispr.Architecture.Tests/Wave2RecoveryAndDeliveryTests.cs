@@ -595,6 +595,106 @@ public sealed class Wave2RecoveryAndDeliveryTests
         Assert.Equal(AppEventCode.TextDeliveryClipboardRestoreDeclined, entry!.Event);
     }
 
+    [Fact]
+    public async Task StartupReplayPreservesExistingRecoveryTextAppliesLanguageAndPersistsSafely()
+    {
+        // 1. Recovering pill stays open (no fixed auto-dwell) while replay is active so Discard stays reachable.
+        var recoveringDef = OverlayPillCatalog.Resolve(DictationStatus.Recovering());
+        Assert.False(recoveringDef.AutoDwells);
+
+        using var temp = new TempFolder();
+        var spoolStore = new RecoverySpoolStore(temp.Path);
+        Assert.False(spoolStore.HasCandidateFiles());
+
+        var orphanId = await WriteOrphanSpoolAsync(spoolStore, sampleCount: 16_000, "fr");
+        Assert.True(new RecoverySpoolStore(temp.Path).HasCandidateFiles());
+
+        // 2. Successful History replay does NOT overwrite an unrelated pending Home recovery copy.
+        var logger = new TestLogger();
+        var existingRecord = new RecoveryTextRecord(DictationSessionId.Create(), DateTimeOffset.UtcNow, "existing home copy");
+        var recoveryStore = new InMemoryRecoveryTextStore();
+        await recoveryStore.SaveAsync(existingRecord);
+        var history = new GatedFakeHistoryStore();
+        var persistence = new SessionPersistence(
+            recoveryStore,
+            history,
+            logger,
+            TimeProvider.System,
+            () => HistoryPreferences.Default,
+            new NullPersistenceEffects(),
+            audioArchive: null,
+            recoverySpoolStore: spoolStore);
+        persistence.AdoptStartupRecovery(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, existingRecord));
+
+        var seenLanguages = new List<string?>();
+        string? activeOverride = null;
+        var engine = new CallbackEngine((_, _) =>
+        {
+            seenLanguages.Add(activeOverride);
+            return Task.FromResult("replayed french");
+        });
+        var finalizer = new TranscriptFinalizer(
+            new DeterministicTextPipeline(),
+            new PolishExecutor(new NullAdmission(), new NullFinalizationEffects(), () => []),
+            new NullFinalizationEffects(),
+            new SnippetExpansionStage(new SnippetExpander(), TimeProvider.System, () => System.Globalization.CultureInfo.InvariantCulture, _ => Task.FromResult<string?>(null), TimeSpan.FromSeconds(1)));
+        var coordinator = new StartupRecoveryReplayCoordinator(
+            new CrossProcessSimSpoolStore(spoolStore.DirectoryPath),
+            () => engine,
+            finalizer,
+            persistence,
+            () => new FinalizationOptions([], DeterministicTextOptions.From(DictationPreferences.Default), SnippetVocabulary.Empty, null),
+            () => HistoryPreferences.Default,
+            () => DictationPreferences.Default with { WhisperLanguage = "es" },
+            logger,
+            TimeProvider.System,
+            RecoveryReplayStatusCallbacks.FromStatusSink(_ => { }),
+            () => false,
+            RecoverySpoolConstants.MinimumSpokenSamples,
+            applyLanguageSnapshot: prefs => activeOverride = prefs?.WhisperLanguage);
+
+        var summary = await coordinator.ReplayPendingSpoolsAsync().WaitAsync(TestTimeout);
+        Assert.Equal(1, summary.SavedCount);
+        Assert.Equal(["fr"], seenLanguages);
+        Assert.Null(activeOverride);
+        Assert.Equal("existing home copy", persistence.PendingRecord?.Text);
+        Assert.Equal("existing home copy", (await recoveryStore.LoadAsync()).Record?.Text);
+        Assert.Contains(orphanId, new[] { orphanId });
+
+        // 3. When History is disabled and durable recovery-text persistence is refused, spool stays on disk!
+        var secondId = await WriteOrphanSpoolAsync(spoolStore, sampleCount: 16_000, "de");
+        var disabledHistoryPersistence = new SessionPersistence(
+            recoveryStore,
+            history,
+            logger,
+            TimeProvider.System,
+            () => HistoryPreferences.Default with { IsEnabled = false },
+            new NullPersistenceEffects(),
+            audioArchive: null,
+            recoverySpoolStore: spoolStore)
+        {
+            CanPersistRecovery = false,
+        };
+        var unpersistedCoordinator = new StartupRecoveryReplayCoordinator(
+            new CrossProcessSimSpoolStore(spoolStore.DirectoryPath),
+            () => engine,
+            finalizer,
+            disabledHistoryPersistence,
+            () => new FinalizationOptions([], DeterministicTextOptions.From(DictationPreferences.Default), SnippetVocabulary.Empty, null),
+            () => HistoryPreferences.Default with { IsEnabled = false },
+            () => DictationPreferences.Default,
+            logger,
+            TimeProvider.System,
+            RecoveryReplayStatusCallbacks.FromStatusSink(_ => { }),
+            () => false,
+            RecoverySpoolConstants.MinimumSpokenSamples);
+        var unpersistedSummary = await unpersistedCoordinator.ReplayPendingSpoolsAsync().WaitAsync(TestTimeout);
+        Assert.Equal(1, unpersistedSummary.FailedCount);
+        Assert.Equal(0, unpersistedSummary.SavedCount);
+        var kept = Assert.Single(new RecoverySpoolStore(temp.Path).ListOrphanSpools());
+        Assert.Equal(secondId, kept.SessionId);
+    }
+
     private static TextCommitRequest DummyCommitRequest(TextTargetKind targetKind, bool isScreenDerived) => new(
         new ProcessedText(DictationSessionId.Create(), "dictated words"),
         new ProcessedText(DictationSessionId.Create(), "dictated words"),

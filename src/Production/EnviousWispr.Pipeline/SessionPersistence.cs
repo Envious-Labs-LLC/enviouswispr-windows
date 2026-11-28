@@ -231,12 +231,16 @@ public sealed class SessionPersistence : ISessionRecoveryState
         Volatile.Write(ref _undoOffer, null);
     }
 
-    public async Task SaveRecoveryTextAsync(ProcessedText text, CancellationToken cancellationToken)
+    public Task SaveRecoveryTextAsync(ProcessedText text, CancellationToken cancellationToken) =>
+        TrySaveRecoveryTextAsync(text, cancellationToken);
+
+    /// <summary>Attempts to save the pending recovery copy and returns whether durable disk persistence succeeded.</summary>
+    public async Task<bool> TrySaveRecoveryTextAsync(ProcessedText text, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (string.IsNullOrWhiteSpace(text.Text))
         {
-            return;
+            return false;
         }
 
         if (Volatile.Read(ref _undoOffer) is { } standing && standing.SessionId != text.SessionId)
@@ -254,7 +258,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
                 AppEventCode.RecoveryTextUnavailable,
                 AppFailureCategory.ResourcePressure,
                 ErrorCode: AppErrorCode.LowDiskSpace));
-            return;
+            return false;
         }
 
         var saved = await _recovery.SaveAsync(record, cancellationToken).ConfigureAwait(false);
@@ -263,6 +267,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
             saved ? AppEventCode.RecoveryTextSaved : AppEventCode.RecoveryTextUnavailable,
             saved ? AppFailureCategory.None : AppFailureCategory.Recovery,
             ErrorCode: saved ? null : AppErrorCode.StorageUnavailable));
+        return saved;
     }
 
     public async Task ClearRecoveryTextAsync()
@@ -451,22 +456,20 @@ public sealed class SessionPersistence : ISessionRecoveryState
             return;
         }
 
-        List<float[]>? staged;
         lock (_spoolGate)
         {
+            if (_stagedAudioPackets is { Count: > 0 } staged)
+            {
+                foreach (var packet in staged)
+                {
+                    writer.EnqueueSamples(packet);
+                }
+            }
+
+            _stagedAudioPackets = null;
+            _spoolBufferingActive = false;
             _activeSpoolWriter = writer;
             _activeSpoolSessionId = sessionId;
-            _spoolBufferingActive = false;
-            staged = _stagedAudioPackets;
-            _stagedAudioPackets = null;
-        }
-
-        if (staged is not null)
-        {
-            foreach (var packet in staged)
-            {
-                writer.EnqueueSamples(packet);
-            }
         }
 
         var attach = _attachCaptureSpoolSink?.Invoke();
@@ -695,19 +698,20 @@ public sealed class SessionPersistence : ISessionRecoveryState
             return;
         }
 
-        IRecoverySpoolWriter? writer;
         lock (_spoolGate)
         {
-            writer = _activeSpoolWriter;
-            if (writer is null && _spoolBufferingActive)
+            if (_activeSpoolWriter is { } writer)
+            {
+                writer.EnqueueSamples(samples);
+                return;
+            }
+
+            if (_spoolBufferingActive)
             {
                 _stagedAudioPackets ??= [];
                 _stagedAudioPackets.Add(samples.Span.ToArray());
-                return;
             }
         }
-
-        writer?.EnqueueSamples(samples);
     }
 
     private void DetachAndClearStagingSink()

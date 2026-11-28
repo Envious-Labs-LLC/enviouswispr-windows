@@ -261,7 +261,7 @@ public readonly record struct DictationStatus(
             text,
             DictationOverlayState.Recovering,
             Action: new("Discard", PillActionKind.DiscardRecovery, "Discard last recording recovery"),
-            DwellSeconds: 6.0);
+            DwellSeconds: null);
 
     /// <summary>Warning pill shown when a checked paste did not register and the text stayed on the clipboard.</summary>
     public static DictationStatus RetainedPaste(string text = "Paste did not land. Text kept on clipboard. Press Ctrl+V") =>

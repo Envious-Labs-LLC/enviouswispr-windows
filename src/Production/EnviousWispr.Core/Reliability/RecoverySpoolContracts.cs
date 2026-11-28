@@ -58,7 +58,8 @@ public sealed record RecoverySpoolReadResult(
     float[] Samples,
     RecoverySpoolStatus Status,
     bool TruncatedTail,
-    string? ErrorMessage = null);
+    string? ErrorMessage = null,
+    long SampleCount = 0);
 
 /// <summary>Result reported after replaying an orphaned recovery spool batch on startup.</summary>
 public sealed record RecoverySpoolReplaySummary(

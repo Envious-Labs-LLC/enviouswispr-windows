@@ -197,7 +197,8 @@ public partial class App : Application, IAsyncDisposable
                         : $"Recovered {count} recordings to History"))),
                 ShowDiscarded: () => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.Quiet("Last recording recovery discarded"))),
                 ShowReady: () => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.Quiet("Ready")))),
-            () => Leaving);
+            () => Leaving,
+            applyLanguageSnapshot: prefs => Volatile.Write(ref _recoveryReplayLanguageOverride, prefs?.WhisperLanguage));
         _livePreview = _runtime.Preview;
         _streaming = _runtime.Streaming;
         _watchdog = _runtime.Watchdog;

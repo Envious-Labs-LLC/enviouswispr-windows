@@ -272,12 +272,14 @@ public partial class App
 
     private void StartStartupRecoveryReplay()
     {
-        if (Leaving || _recoveryReplayCoordinator is not { } coordinator || _recoverySpoolStore.ListOrphanSpools().Count == 0)
+        if (Leaving ||
+            _recoveryReplayCoordinator is not { } coordinator ||
+            !_recoverySpoolStore.HasCandidateFiles())
         {
             return;
         }
 
-        _recoveryReplay = RunStartupRecoveryReplayAsync(coordinator, _recoveryReplayCancellation.Token);
+        _recoveryReplay = Task.Run(() => RunStartupRecoveryReplayAsync(coordinator, _recoveryReplayCancellation.Token));
     }
 
     private async Task RunStartupRecoveryReplayAsync(

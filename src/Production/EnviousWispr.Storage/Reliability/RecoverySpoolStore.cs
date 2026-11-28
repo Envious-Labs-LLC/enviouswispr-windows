@@ -120,6 +120,26 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         }
     }
 
+    public bool HasCandidateFiles()
+    {
+        if (!Directory.Exists(_directoryPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            return Directory.EnumerateFiles(
+                _directoryPath,
+                $"*{RecoverySpoolConstants.FileExtension}",
+                SearchOption.TopDirectoryOnly).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            return false;
+        }
+    }
+
     public IReadOnlyList<RecoverySpoolMetadata> ListOrphanSpools()
     {
         if (!Directory.Exists(_directoryPath))
@@ -161,7 +181,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         cancellationToken.ThrowIfCancellationRequested();
         var fullPath = Path.GetFullPath(filePath);
-        return await Task.Run(() => ReadInternal(fullPath, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return await Task.Run(() => ReadInternal(fullPath, includeAudioSamples: true, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     public Task<bool> DeleteSessionAsync(DictationSessionId sessionId)
@@ -266,7 +286,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         metadata = null;
         try
         {
-            var read = ReadInternal(fullPath, CancellationToken.None);
+            var read = ReadInternal(fullPath, includeAudioSamples: false, CancellationToken.None);
             if (!read.Succeeded || read.Header is null)
             {
                 return false;
@@ -282,7 +302,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
                 read.Header.LanguageCode,
                 read.Header.AutoLanguageDetection,
                 read.Status,
-                read.Samples.LongLength,
+                read.SampleCount,
                 length);
             return true;
         }
@@ -292,7 +312,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
         }
     }
 
-    private static RecoverySpoolReadResult ReadInternal(string fullPath, CancellationToken cancellationToken)
+    private static RecoverySpoolReadResult ReadInternal(string fullPath, bool includeAudioSamples, CancellationToken cancellationToken)
     {
         if (!File.Exists(fullPath))
         {
@@ -379,7 +399,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
                 return Failed("Decrypted spool header is invalid.");
             }
 
-            var samples = new List<float>();
+            var samples = includeAudioSamples ? new List<float>() : null;
             var status = RecoverySpoolStatus.Recording;
             uint expectedChunkIndex = 0;
             long expectedSampleOffset = 0;
@@ -415,6 +435,36 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
                 {
                     truncatedTail = stream.Length > frameStart;
                     break;
+                }
+
+                if (!includeAudioSamples)
+                {
+                    var frameBodyBytes = (long)NonceLengthBytes + TagLengthBytes + payloadBytes;
+                    if (stream.Length - stream.Position < frameBodyBytes)
+                    {
+                        truncatedTail = true;
+                        break;
+                    }
+
+                    if (frameType == FrameTypeAudio)
+                    {
+                        var frameSamples = payloadBytes / sizeof(float);
+                        if (expectedSampleOffset + frameSamples > RecoverySpoolConstants.MaximumSpoolSamples)
+                        {
+                            truncatedTail = true;
+                            break;
+                        }
+
+                        expectedSampleOffset += frameSamples;
+                    }
+                    else if (frameType == FrameTypeFinalizing)
+                    {
+                        status = RecoverySpoolStatus.Finalizing;
+                    }
+
+                    stream.Seek(frameBodyBytes, SeekOrigin.Current);
+                    expectedChunkIndex++;
+                    continue;
                 }
 
                 if (!TryReadExact(stream, nonce) || !TryReadExact(stream, tag))
@@ -454,7 +504,7 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
                     }
 
                     var floatCount = frameSamples;
-                    var existing = samples.Count;
+                    var existing = samples!.Count;
                     samples.EnsureCapacity(existing + floatCount);
                     var floats = MemoryMarshal.Cast<byte, float>(plain.AsSpan());
                     for (var i = 0; i < floats.Length; i++)
@@ -476,9 +526,10 @@ public sealed class RecoverySpoolStore : IRecoverySpoolStore
             return new RecoverySpoolReadResult(
                 Succeeded: true,
                 Header: header,
-                Samples: [.. samples],
+                Samples: samples is not null ? [.. samples] : [],
                 Status: status,
-                TruncatedTail: truncatedTail);
+                TruncatedTail: truncatedTail,
+                SampleCount: expectedSampleOffset);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

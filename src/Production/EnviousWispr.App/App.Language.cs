@@ -14,7 +14,17 @@ namespace EnviousWispr.App;
 /// </remarks>
 public partial class App
 {
-    private string CurrentWhisperLanguage() => WhisperLanguageCodes.Current(
-        _settings.Preferences.Dictation.WhisperLanguage,
-        Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_LANGUAGE"));
+    private string? _recoveryReplayLanguageOverride;
+
+    private string CurrentWhisperLanguage()
+    {
+        var configured = Volatile.Read(ref _recoveryReplayLanguageOverride) is { } replayLanguage &&
+            !string.IsNullOrWhiteSpace(replayLanguage) &&
+            _sessionController?.CurrentSession is null
+            ? replayLanguage
+            : _settings.Preferences.Dictation.WhisperLanguage;
+        return WhisperLanguageCodes.Current(
+            configured,
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_LANGUAGE"));
+    }
 }
