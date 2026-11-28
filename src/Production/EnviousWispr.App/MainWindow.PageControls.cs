@@ -197,7 +197,7 @@ public sealed partial class MainWindow
     private global::Microsoft.UI.Xaml.Controls.Grid WordListHeaderGrid => _dictionaryPageView?.WordListHeaderGrid;
     private global::Microsoft.UI.Xaml.Controls.TextBlock WordCountText => _dictionaryPageView?.WordCountText;
     private global::Microsoft.UI.Xaml.Controls.StackPanel WordListActionButtonsPanel => _dictionaryPageView?.WordListActionButtonsPanel;
-    private global::Microsoft.UI.Xaml.Controls.ScrollViewer DictPanelPacks => _dictionaryPageView?.DictPanelPacks;
+    private global::Microsoft.UI.Xaml.Controls.Grid DictPanelPacks => _dictionaryPageView?.DictPanelPacks;
     private global::Microsoft.UI.Xaml.Controls.StackPanel VocabularyPacksList => _dictionaryPageView?.VocabularyPacksList;
     private global::Microsoft.UI.Xaml.Controls.ScrollViewer DictPanelLearnFrom => _dictionaryPageView?.DictPanelLearnFrom;
     private global::Microsoft.UI.Xaml.Controls.ToggleSwitch LearnFromEditsToggle => _dictionaryPageView?.LearnFromEditsToggle;

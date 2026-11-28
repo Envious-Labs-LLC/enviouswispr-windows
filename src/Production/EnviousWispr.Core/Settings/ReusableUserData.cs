@@ -483,7 +483,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         IReadOnlyList<SnippetEntry> snippets,
         string? snippetKeyword = null,
         IReadOnlyList<string>? enabledVocabularyPackIds = null,
-        bool hasSeededStarterSnippets = false)
+        bool hasSeededStarterSnippets = false,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides = null)
     {
         ArgumentNullException.ThrowIfNull(customWords);
         ArgumentNullException.ThrowIfNull(snippets);
@@ -494,6 +495,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
             : snippetKeyword;
         EnabledVocabularyPackIds = NormalizePackIds(enabledVocabularyPackIds);
         HasSeededStarterSnippets = hasSeededStarterSnippets;
+        VocabularyPackOverrides = VocabularyPacks.SnapshotOverrides(vocabularyPackOverrides);
     }
 
     public IReadOnlyList<CustomWordEntry> CustomWords { get; }
@@ -509,25 +511,33 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// <summary>Whether starter example snippets have already been evaluated for one-time seeding.</summary>
     public bool HasSeededStarterSnippets { get; }
 
-    /// <summary>The same data with other words, keeping the snippets, keyword, packs, and seeding flag.</summary>
+    /// <summary>Sparse per-pack, per-word overrides (disabled flag and/or custom aliases) keyed by pack ID and lowercased canonical word.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>> VocabularyPackOverrides { get; }
+
+    /// <summary>The same data with other words, keeping the snippets, keyword, packs, overrides, and seeding flag.</summary>
     public ReusableUserData WithCustomWords(IReadOnlyList<CustomWordEntry> customWords) =>
-        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides);
 
-    /// <summary>The same data with other snippets, keeping the words, keyword, packs, and seeding flag.</summary>
+    /// <summary>The same data with other snippets, keeping the words, keyword, packs, overrides, and seeding flag.</summary>
     public ReusableUserData WithSnippets(IReadOnlyList<SnippetEntry> snippets) =>
-        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides);
 
-    /// <summary>The same data with another keyword, keeping the words, snippets, packs, and seeding flag.</summary>
+    /// <summary>The same data with another keyword, keeping the words, snippets, packs, overrides, and seeding flag.</summary>
     public ReusableUserData WithSnippetKeyword(string snippetKeyword) =>
-        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides);
 
-    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords untouched.</summary>
+    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords and overrides untouched.</summary>
     public ReusableUserData WithEnabledVocabularyPackIds(IReadOnlyList<string>? enabledVocabularyPackIds) =>
-        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets);
+        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds, HasSeededStarterSnippets, VocabularyPackOverrides);
+
+    /// <summary>The same data with updated sparse vocabulary pack word overrides, leaving CustomWords untouched.</summary>
+    public ReusableUserData WithVocabularyPackOverrides(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides) =>
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, HasSeededStarterSnippets, vocabularyPackOverrides);
 
     /// <summary>The same data with an updated starter-snippet seeding flag.</summary>
     public ReusableUserData WithHasSeededStarterSnippets(bool hasSeededStarterSnippets) =>
-        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets);
+        new(CustomWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds, hasSeededStarterSnippets, VocabularyPackOverrides);
 
     public static ReusableUserData Empty { get; } = new(
         Array.Empty<CustomWordEntry>(),
@@ -539,7 +549,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         Snippets.SequenceEqual(other.Snippets) &&
         string.Equals(SnippetKeyword, other.SnippetKeyword, StringComparison.Ordinal) &&
         EnabledVocabularyPackIds.SequenceEqual(other.EnabledVocabularyPackIds, StringComparer.OrdinalIgnoreCase) &&
-        HasSeededStarterSnippets == other.HasSeededStarterSnippets;
+        HasSeededStarterSnippets == other.HasSeededStarterSnippets &&
+        VocabularyPacks.OverridesEqual(VocabularyPackOverrides, other.VocabularyPackOverrides);
 
     public override bool Equals(object? obj) => Equals(obj as ReusableUserData);
 
@@ -563,6 +574,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         }
 
         hash.Add(HasSeededStarterSnippets);
+        VocabularyPacks.AddOverridesToHash(ref hash, VocabularyPackOverrides);
         return hash.ToHashCode();
     }
 
@@ -595,5 +607,5 @@ public sealed record PortableProfile(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, LearnMemoryEntry>? LearnMemory = null)
 {
-    public const int CurrentSchemaVersion = 22;
+    public const int CurrentSchemaVersion = 23;
 }

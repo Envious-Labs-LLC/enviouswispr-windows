@@ -27,7 +27,8 @@ public static class LivePreviewTextFormatter
         string? engineId = null,
         BritishSpellingConverter? britishConverter = null,
         IReadOnlyList<string>? enabledVocabularyPackIds = null,
-        bool excludeLearnedAliases = false)
+        bool excludeLearnedAliases = false,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, VocabularyPackWordOverride>>? vocabularyPackOverrides = null)
     {
         var cleaned = WhisperNonSpeechFilter.Clean(rawText);
         if (cleaned.Length == 0)
@@ -45,7 +46,7 @@ public static class LivePreviewTextFormatter
             ? customWords
             : [];
         var activePackWords = wordCorrectionEnabled
-            ? VocabularyPacks.ResolveEntries(enabledVocabularyPackIds)
+            ? VocabularyPacks.ResolveEntries(enabledVocabularyPackIds, vocabularyPackOverrides)
             : [];
         if (activeCustomWords.Count > 0 || activePackWords.Count > 0)
         {

@@ -351,7 +351,8 @@ public sealed class MultiAliasAndPackParityTests
         var root = FindRepositoryRoot();
         var xaml = AppXamlSources.ReadMainWindowAndPagesText(root);
         var editorCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.WordsAndSnippets.cs"));
-        var mainCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Dictionary.cs"));
+        var dictPageCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "Pages", "DictionaryPageView.xaml.cs"));
+        var packRowXaml = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "Controls", "PackWordRowView.xaml"));
 
         Assert.Contains("Switching from another dictation app?", xaml, StringComparison.Ordinal);
         Assert.Contains("WordFilterAllChip", xaml, StringComparison.Ordinal);
@@ -363,9 +364,14 @@ public sealed class MultiAliasAndPackParityTests
         Assert.Contains("WordFilterAutoLearnedChip", xaml, StringComparison.Ordinal);
         Assert.Contains("MassEditWordsToggle", xaml, StringComparison.Ordinal);
         Assert.Contains("VocabularyPacksList", xaml, StringComparison.Ordinal);
-        Assert.Contains("ShowPackDetailDialogAsync", editorCs, StringComparison.Ordinal);
+        Assert.Contains("PackDetailPanel", xaml, StringComparison.Ordinal);
+        Assert.Contains("PackWordsList", xaml, StringComparison.Ordinal);
+        Assert.Contains("PackDetailRestoreAllButton", xaml, StringComparison.Ordinal);
+        Assert.Contains("PackWordRowView", xaml, StringComparison.Ordinal);
+        Assert.Contains("Add a mishearing (e.g. clawed)", packRowXaml, StringComparison.Ordinal);
         Assert.Contains("OfflineAliasSuggester", editorCs, StringComparison.Ordinal);
-        Assert.Contains("\"See all\"", mainCs, StringComparison.Ordinal);
+        Assert.Contains("\"See all\"", dictPageCs, StringComparison.Ordinal);
+        Assert.Contains("Couldn't save this pack change. Nothing was changed. Try again.", dictPageCs, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -43,7 +43,7 @@
                             </Button>
                             <Button x:Name="DictTabPacks" x:FieldModifier="internal" Click="DictionaryTab_Click" Tag="packs" Style="{StaticResource BrandTopTabButtonStyle}">
                                 <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
-                                    <FontIcon Glyph="&#xE74C;" FontSize="14" />
+                                    <FontIcon x:Name="DictTabPacksIcon" Glyph="&#xE74C;" FontSize="14" />
                                     <TextBlock Text="Vocabulary Packs" />
                                 </StackPanel>
                             </Button>
@@ -200,17 +200,131 @@
                             </Grid>
                         </Border>
                     </Grid>
-                    <ScrollViewer x:Name="DictPanelPacks" x:FieldModifier="internal" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-                        <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}" VerticalAlignment="Top">
-                            <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Vocabulary Packs" />
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Ready-made word lists for specialized terms. Toggle any pack on to fix its terms without adding clutter to Your Words." TextWrapping="Wrap" />
+                    <Grid x:Name="DictPanelPacks" x:FieldModifier="internal" Visibility="Collapsed">
+                        <ScrollViewer x:Name="PackListScrollViewer" x:FieldModifier="internal" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto">
+                            <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}" VerticalAlignment="Top">
+                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <FontIcon Glyph="{x:Bind DictTabPacksIcon.Glyph, Mode=OneTime}" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" />
+                                            <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="VOCABULARY PACKS" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Ready-made word lists for a field. Turn one on and EnviousWispr starts fixing the words it already knows that field gets wrong." TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Border x:Name="PackListErrorBanner" Padding="12,10,12,10" Background="{ThemeResource BrandErrorSoftBrush}" BorderBrush="{ThemeResource BrandErrorBrush}" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
+                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" VerticalAlignment="Center">
+                                                <FontIcon FontSize="15" Foreground="{ThemeResource BrandErrorBrush}" Glyph="&#xE783;" AutomationProperties.AccessibilityView="Raw" />
+                                            </Border>
+                                            <TextBlock x:Name="PackListErrorText" Grid.Column="1" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandErrorHelperStyle}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                            <Button Grid.Column="2" Click="DismissPackListErrorButton_Click" AutomationProperties.Name="Dismiss pack save error" Style="{StaticResource BrandHelpButtonStyle}" VerticalAlignment="Center">
+                                                <FontIcon FontSize="12" Glyph="&#xE711;" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                    <StackPanel x:Name="VocabularyPacksList" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" />
                                 </StackPanel>
-                                <StackPanel x:Name="VocabularyPacksList" x:FieldModifier="internal" Spacing="{StaticResource BrandSpacingS}" />
-                            </StackPanel>
+                            </Border>
+                        </ScrollViewer>
+                        <Border x:Name="PackDetailPanel" x:FieldModifier="internal" Padding="20" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
+                            <Grid RowSpacing="{StaticResource BrandSpacingM}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingM}">
+                                    <Grid x:Name="PackDetailHeaderGrid" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="PackDetailHeaderGrid_SizeChanged">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button x:Name="PackDetailBackButton" x:FieldModifier="internal" Grid.Row="0" Grid.Column="0" Click="PackDetailBackButton_Click" Style="{StaticResource BrandQuietButtonStyle}" Padding="10,5,12,5" VerticalAlignment="Center" AutomationProperties.Name="Back to Vocabulary Packs">
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                <FontIcon FontSize="12" Glyph="&#xE76B;" VerticalAlignment="Center" />
+                                                <TextBlock Text="Packs" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock x:Name="PackDetailTitleText" x:FieldModifier="internal" Style="{StaticResource BrandRowTitleStyle}" Text="Vocabulary Pack" />
+                                            <TextBlock x:Name="PackDetailSubtitleText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Text="0 words" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="PackDetailActionsPanel" Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingM}" VerticalAlignment="Center">
+                                            <Button x:Name="PackDetailRestoreAllButton" x:FieldModifier="internal" Click="PackDetailRestoreAllButton_Click" Content="Restore all" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.HelpText="Restore all edited words in this pack to their shipped defaults" />
+                                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingS}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped" VerticalAlignment="Center">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="PackDetailToggleLabel" x:FieldModifier="internal" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Pack on" VerticalAlignment="Center" />
+                                                <ToggleSwitch x:Name="PackDetailToggle" x:FieldModifier="internal" Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind PackDetailToggleLabel, Mode=OneTime}" Toggled="PackDetailToggle_Toggled" Style="{StaticResource BrandToggleSwitchStyle}" OnContent="" OffContent="" MinWidth="0" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Grid>
+                                    <Border x:Name="PackDetailErrorBanner" Padding="12,10,12,10" Background="{ThemeResource BrandErrorSoftBrush}" BorderBrush="{ThemeResource BrandErrorBrush}" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
+                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" VerticalAlignment="Center">
+                                                <FontIcon FontSize="15" Foreground="{ThemeResource BrandErrorBrush}" Glyph="&#xE783;" AutomationProperties.AccessibilityView="Raw" />
+                                            </Border>
+                                            <TextBlock x:Name="PackDetailErrorText" Grid.Column="1" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandErrorHelperStyle}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                            <Button Grid.Column="2" Click="DismissPackDetailErrorButton_Click" AutomationProperties.Name="Dismiss pack save error" Style="{StaticResource BrandHelpButtonStyle}" VerticalAlignment="Center">
+                                                <FontIcon FontSize="12" Glyph="&#xE711;" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                    <Grid>
+                                        <TextBox x:Name="PackSearchBox" x:FieldModifier="internal" AutomationProperties.Name="Search words in pack" Padding="36,6,36,6" PlaceholderText="Search words or mishearings" TextChanged="PackSearchBox_TextChanged" />
+                                        <Button x:Name="PackSearchClearButton" x:FieldModifier="internal" Click="PackSearchClearButton_Click" AutomationProperties.Name="Clear pack search" ToolTipService.ToolTip="Clear search" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0" Padding="6,4" Style="{StaticResource BrandHelpButtonStyle}" Visibility="Collapsed">
+                                            <FontIcon FontSize="12" Glyph="&#xE711;" />
+                                        </Button>
+                                        <FontIcon FontSize="14" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" />
+                                    </Grid>
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="PackFilterChipsPanel" Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed">
+                                            <Button x:Name="PackFilterAllChip" Content="All" Click="PackFilterChip_Click" Tag="all" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="10,4,10,4" />
+                                            <Button x:Name="PackFilterEditedChip" Content="Edited" Click="PackFilterChip_Click" Tag="edited" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="PackWordsCountText" x:FieldModifier="internal" Grid.Column="1" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </StackPanel>
+                                <Grid Grid.Row="1">
+                                    <ListView x:Name="PackWordsList" x:FieldModifier="internal" AutomationProperties.Name="Vocabulary pack words" ItemContainerStyle="{StaticResource BrandHistoryListItemStyle}" SelectionMode="None">
+                                        <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel CacheLength="2.0" /></ItemsPanelTemplate></ListView.ItemsPanel>
+                                        <ListView.ItemContainerTransitions><TransitionCollection /></ListView.ItemContainerTransitions>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <controls:PackWordRowView Margin="0,0,0,8" Row="{Binding}" />
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <Border x:Name="PackWordsEmptyState" x:FieldModifier="internal" VerticalAlignment="Top" Padding="24" Style="{StaticResource BrandSettingsCardStyle}" Visibility="Collapsed">
+                                        <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
+                                            <TextBlock x:Name="PackWordsEmptyText" Style="{StaticResource BrandBodyStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                                            <Button HorizontalAlignment="Center" Click="PackSearchClearButton_Click" Content="Clear search" Style="{StaticResource BrandQuietButtonStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </Grid>
                         </Border>
-                    </ScrollViewer>
+                    </Grid>
                     <ScrollViewer x:Name="DictPanelLearnFrom" x:FieldModifier="internal" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
                             <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
