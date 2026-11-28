@@ -75,7 +75,8 @@ public sealed record SavedDictationPasteEnvironment(
     ITextDelivery Delivery,
     Func<TextDeliveryOptions> DeliveryOptions,
     Func<TargetWindowId, CancellationToken, Task<TargetWindowId?>> Reacquire,
-    SessionPersistence Recovery);
+    SessionPersistence Recovery,
+    Func<IReadOnlyList<string>?>? ProtectedWords = null);
 
 /// <summary>Home's Undo and History's Paste: a saved dictation pasted back through the dictation's own delivery.</summary>
 /// <remarks>
@@ -289,10 +290,12 @@ public sealed class SavedDictationPaste
             new TextDeliveryRequest(
                 new ProcessedText(DictationSessionId.Create(), entry.Text),
                 aimed,
-                LanguageCode: null,
+                LanguageCode: entry.LanguageCode,
                 options,
                 // A History entry does not record whether a snippet fired, so its words take the ordinary route.
-                SnippetExpanded: false),
+                SnippetExpanded: false,
+                ProtectedWords: _environment.ProtectedWords?.Invoke(),
+                EngineDetectsLanguage: !string.IsNullOrWhiteSpace(entry.LanguageCode) ? true : null),
             cancellationToken).ConfigureAwait(false);
         var outcome = delivery switch
         {

@@ -112,7 +112,8 @@ public sealed record GeneralSettingsInput(
     int PolishUnloadPolicyIndex = 0,
     bool ReturnToStartWindow = true,
     bool LearnFromEdits = true,
-    bool FixLearnedWords = true);
+    bool FixLearnedWords = true,
+    bool SmartInsertionEnabled = true);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -386,7 +387,8 @@ public sealed class SettingsPresenter : IDisposable
             LivePreviewEngineFromIndex(Chosen(input.LivePreviewEngineIndex)),
             input.ReturnToStartWindow
                 ? PasteTargetMode.WhereDictationStarted
-                : PasteTargetMode.WhereCursorIsAtRelease);
+                : PasteTargetMode.WhereCursorIsAtRelease,
+            SmartInsertionEnabled: input.SmartInsertionEnabled);
 
         // THE VALUES WERE READ ON THE UI THREAD AND ARE APPLIED INSIDE THE GATE: the record above is
         // built now, from what was read; the transform below touches the three fields it replaces and

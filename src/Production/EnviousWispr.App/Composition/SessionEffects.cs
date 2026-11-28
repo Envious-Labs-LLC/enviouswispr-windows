@@ -90,7 +90,10 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
     }
 
     public RecordingBackgroundSettings RecordingSettings() =>
-        new(RecordingLimits.WatchdogDuration(), parts.Shell.Dictation);
+        new(
+            RecordingLimits.WatchdogDuration(),
+            parts.Shell.Dictation,
+            WatchdogWarningLead: RecordingLimits.WarningLead());
 
     public void ShowInterruptionPreserving(SystemLifecycleTransition transition) =>
         _view.ShowStatus(DictationStatus.Quiet(
@@ -109,6 +112,9 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
 
     public void ShowProcessing() =>
         _view.ShowStatus(DictationStatus.Processing("Transcribing locally..."));
+
+    public void ShowMaxDurationTranscribing() =>
+        _view.ShowStatus(DictationStatus.Processing(OverlayPillCatalog.MaxDurationTranscribingText));
 
     public void CancelRecordingCue() =>
         _view.CancelRecordingCue();
@@ -295,7 +301,11 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
 /// <summary>How long a recording may run before the watchdog ends it.</summary>
 public static class RecordingLimits
 {
-    public static readonly TimeSpan MaximumRecordingDuration = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaximumRecordingDuration = TimeSpan.FromMinutes(60);
+
+    public static readonly TimeSpan ApproachingCapWarningLead = TimeSpan.FromMinutes(1);
+
+    public static readonly TimeSpan HardCaptureBackstopDuration = TimeSpan.FromMinutes(61);
 
     /// <summary>The production limit, or a short one a journey asked for through the environment.</summary>
     public static TimeSpan WatchdogDuration()
@@ -303,8 +313,19 @@ public static class RecordingLimits
         var requested = Environment.GetEnvironmentVariable(
             "ENVIOUSWISPR_UAT_RECORDING_TIMEOUT_MILLISECONDS");
         return int.TryParse(requested, out var milliseconds) &&
-            milliseconds is >= 500 and <= 30_000
+            milliseconds is >= 500 and <= 3_600_000
                 ? TimeSpan.FromMilliseconds(milliseconds)
                 : MaximumRecordingDuration;
+    }
+
+    /// <summary>Warning lead before the recording limit, or a short UAT override.</summary>
+    public static TimeSpan WarningLead()
+    {
+        var requested = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_WARNING_LEAD_MILLISECONDS");
+        return int.TryParse(requested, out var milliseconds) &&
+            milliseconds is >= 0 and <= 3_599_000
+                ? TimeSpan.FromMilliseconds(milliseconds)
+                : ApproachingCapWarningLead;
     }
 }

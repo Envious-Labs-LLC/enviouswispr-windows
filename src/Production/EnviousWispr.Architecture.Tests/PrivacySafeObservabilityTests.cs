@@ -337,13 +337,14 @@ public sealed class PrivacySafeObservabilityTests
             SnippetImport: new DiagnosticSnippetImport(
                 DiagnosticSnippetImportSource.WisprFlow, DiagnosticSnippetImportOutcome.Completed, null, 5, 3, 1, 1, 0, 9),
             WordImport: new DiagnosticWordImport(
-                DiagnosticWordImportSource.Handy, DiagnosticWordImportOutcome.Completed, null, 6, 3, 1, 1, 1, 2));
+                DiagnosticWordImportSource.Handy, DiagnosticWordImportOutcome.Completed, null, 6, 3, 1, 1, 1, 2),
+            CaseRepairDecision: CaseRepairDecision.LowercasedFirst);
 
         var populated = typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
             .ToArray();
-        Assert.Equal(17, populated.Length);
+        Assert.Equal(18, populated.Length);
 
         var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
         foreach (var property in populated)

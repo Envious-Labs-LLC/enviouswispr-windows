@@ -178,13 +178,42 @@ public enum CursorRepairDisposition
     ContextApplied,
 }
 
+/// <summary>Low-cardinality disposition of leading continuation-casing repair at a text seam.</summary>
+public enum CaseRepairDecision
+{
+    None,
+    LowercasedFirst,
+    AlreadyLower,
+    KeptNothingLeft,
+    KeptLineStart,
+    KeptAfterTerminator,
+    KeptAfterOpener,
+    KeptNonContinuation,
+    SkippedSmartInsertionDisabled,
+    SkippedLanguageNotSupported,
+    SkippedProtectedWord,
+    SkippedMixedCaseOrAcronym,
+    SkippedContainsDigit,
+    SkippedPronounI,
+    SkippedAlwaysCapitalized,
+    SkippedPoliteForm,
+    SkippedRecognizedName,
+    SkippedLearnedWord,
+    SkippedNotOrdinaryWord,
+    SkippedOracleWarming,
+    SkippedOracleUnavailable,
+    SkippedOracleTimedOut,
+    SkippedOracleKeep,
+}
+
 public sealed record TextDeliveryOptions(
     bool RestoreClipboardAfterPaste,
     int ContextWindowCharacters,
     int MaximumDirectValueCharacters,
     bool CopyInsteadOfPaste = false,
     bool IsExplicitHistoryPaste = false,
-    PasteTargetMode TargetMode = PasteTargetMode.WhereDictationStarted)
+    PasteTargetMode TargetMode = PasteTargetMode.WhereDictationStarted,
+    bool SmartInsertionEnabled = true)
 {
     public static TextDeliveryOptions Default { get; } = new(
         RestoreClipboardAfterPaste: true,
@@ -192,7 +221,8 @@ public sealed record TextDeliveryOptions(
         MaximumDirectValueCharacters: 16_384,
         CopyInsteadOfPaste: false,
         IsExplicitHistoryPaste: false,
-        TargetMode: PasteTargetMode.WhereDictationStarted);
+        TargetMode: PasteTargetMode.WhereDictationStarted,
+        SmartInsertionEnabled: true);
 }
 
 /// <param name="SnippetExpanded">
@@ -208,7 +238,10 @@ public sealed record TextDeliveryRequest(
     TargetWindowId Target,
     string? LanguageCode,
     TextDeliveryOptions Options,
-    bool SnippetExpanded);
+    bool SnippetExpanded,
+    IReadOnlyList<string>? ProtectedWords = null,
+    string? LockedLanguageCode = null,
+    bool? EngineDetectsLanguage = null);
 
 public sealed record CaretContext(
     TargetWindowId Target,
@@ -219,9 +252,9 @@ public sealed record CaretContext(
     string Right,
     bool LeftReachedDocumentStart,
     bool RightReachedDocumentEnd,
-    bool HasTextContext,
-    bool SupportsDirectValueWrite,
-    bool DirectValueWriteAtEnd,
+    bool HasTextContext = true,
+    bool SupportsDirectValueWrite = false,
+    bool DirectValueWriteAtEnd = false,
     bool IsScreenDerived = false,
     bool IsUrlBarField = false,
     string? BaselineValue = null);
@@ -240,7 +273,8 @@ public sealed record TextCommitRequest(
     CaretContext? ExpectedContext,
     TextTargetKind TargetKind,
     TextDeliveryOptions Options,
-    TextDeliveryRefusalReason ForcedRefusalReason = TextDeliveryRefusalReason.None);
+    TextDeliveryRefusalReason ForcedRefusalReason = TextDeliveryRefusalReason.None,
+    bool CandidateDeletesDictatedText = false);
 
 /// <param name="ClipboardRestored">The person's clipboard was put back after the paste borrowed it.</param>
 /// <param name="ClipboardUncertain">
@@ -273,7 +307,10 @@ public sealed record DeliveryResult(
     bool ClipboardUncertain = false,
     PasteArrivalStatus ArrivalStatus = PasteArrivalStatus.NotAttempted,
     int? ArrivalElapsedMilliseconds = null,
-    string? DeliveredText = null);
+    string? DeliveredText = null,
+    bool LowercasedFirst = false,
+    CaseRepairDecision CaseDecision = CaseRepairDecision.None,
+    bool CandidateDeletesDictatedText = false);
 
 public interface ITextTargetAdapter
 {

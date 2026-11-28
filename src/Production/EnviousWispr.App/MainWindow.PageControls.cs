@@ -567,6 +567,7 @@ public sealed partial class MainWindow
     private global::Microsoft.UI.Xaml.Controls.Border ClipboardSection => _settingsPageView?.ClipboardSection;
     private global::Microsoft.UI.Xaml.Controls.ToggleSwitch CopyInsteadOfPasteToggle => _settingsPageView?.CopyInsteadOfPasteToggle;
     private global::Microsoft.UI.Xaml.Controls.ToggleSwitch ReturnToStartWindowToggle => _settingsPageView?.ReturnToStartWindowToggle;
+    private global::Microsoft.UI.Xaml.Controls.ToggleSwitch SmartInsertionToggle => _settingsPageView?.SmartInsertionToggle;
     private global::Microsoft.UI.Xaml.Controls.Border DiagnosticsSection => _settingsPageView?.DiagnosticsSection;
     private global::Microsoft.UI.Xaml.Controls.Button RunSpeedCheckButton => _settingsPageView?.RunSpeedCheckButton;
     private global::Microsoft.UI.Xaml.Controls.TextBlock SpeedCheckUnavailableText => _settingsPageView?.SpeedCheckUnavailableText;

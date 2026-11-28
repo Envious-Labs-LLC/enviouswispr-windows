@@ -33,10 +33,42 @@ public static class WaveFile
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
 
-        var dataBytes = samples.Length * sizeof(short);
+        var dataBytes = checked(samples.Length * sizeof(short));
         var file = new byte[HeaderBytes + dataBytes];
         var span = file.AsSpan();
+        WriteHeader(span[..HeaderBytes], sampleRate, dataBytes);
+        EncodePcm16(samples, span[HeaderBytes..]);
+        return file;
+    }
 
+    /// <summary>
+    /// Streams mono float samples directly as a 16-bit PCM WAVE file without allocating a whole-file array.
+    /// </summary>
+    public static void WriteMono(Stream destination, ReadOnlySpan<float> samples, int sampleRate)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
+
+        var dataBytes = checked(samples.Length * sizeof(short));
+        Span<byte> header = stackalloc byte[HeaderBytes];
+        WriteHeader(header, sampleRate, dataBytes);
+        destination.Write(header);
+
+        const int chunkSamples = 32_768;
+        var buffer = new byte[chunkSamples * sizeof(short)];
+        var offset = 0;
+        while (offset < samples.Length)
+        {
+            var count = Math.Min(chunkSamples, samples.Length - offset);
+            var byteCount = count * sizeof(short);
+            EncodePcm16(samples.Slice(offset, count), buffer.AsSpan(0, byteCount));
+            destination.Write(buffer, 0, byteCount);
+            offset += count;
+        }
+    }
+
+    private static void WriteHeader(Span<byte> span, int sampleRate, int dataBytes)
+    {
         "RIFF"u8.CopyTo(span);
         BinaryPrimitives.WriteInt32LittleEndian(span[4..], HeaderBytes - 8 + dataBytes);
         "WAVE"u8.CopyTo(span[8..]);
@@ -50,7 +82,10 @@ public static class WaveFile
         BinaryPrimitives.WriteInt16LittleEndian(span[34..], BitsPerSample);
         "data"u8.CopyTo(span[36..]);
         BinaryPrimitives.WriteInt32LittleEndian(span[40..], dataBytes);
+    }
 
+    private static void EncodePcm16(ReadOnlySpan<float> samples, Span<byte> destination)
+    {
         for (var i = 0; i < samples.Length; i++)
         {
             // Clamped BEFORE scaling. A sample slightly over 1 scales past short.MaxValue and wraps
@@ -58,11 +93,9 @@ public static class WaveFile
             // the file sounds like a crackle exactly where the user was speaking up.
             var clamped = Math.Clamp(samples[i], -1f, 1f);
             BinaryPrimitives.WriteInt16LittleEndian(
-                span[(HeaderBytes + (i * sizeof(short)))..],
+                destination[(i * sizeof(short))..],
                 (short)(clamped * short.MaxValue));
         }
-
-        return file;
     }
 
     /// <summary>Computes duration in whole milliseconds for a captured sample count and sample rate.</summary>

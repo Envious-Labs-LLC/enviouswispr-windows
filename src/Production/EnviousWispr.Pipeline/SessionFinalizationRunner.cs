@@ -67,6 +67,8 @@ public interface ISessionFinalizationEffects
 
     void ShowTranscribing();
 
+    void ShowTranscribing(bool maxDurationReached) => ShowTranscribing();
+
     void RecordTranscriptionStarted();
 
     void RecordTranscriptionFinished(Transcript transcript, long elapsedMilliseconds);
@@ -169,6 +171,15 @@ public interface ISessionFinalization
         CapturedAudio audio,
         bool recoveryOnly,
         CancellationToken cancellationToken);
+
+    /// <summary>Turns captured audio into delivered (or held, or recovered) text, under a deadline.</summary>
+    Task<FinalizationReport> RunAsync(
+        DictationSessionId sessionId,
+        CapturedAudio audio,
+        bool recoveryOnly,
+        bool maxDurationReached,
+        CancellationToken cancellationToken) =>
+        RunAsync(sessionId, audio, recoveryOnly, cancellationToken);
 }
 
 public sealed class SessionFinalizationRunner : ISessionFinalization
@@ -319,10 +330,18 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
         _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
     }
 
+    public Task<FinalizationReport> RunAsync(
+        DictationSessionId sessionId,
+        CapturedAudio audio,
+        bool recoveryOnly,
+        CancellationToken cancellationToken) =>
+        RunAsync(sessionId, audio, recoveryOnly, maxDurationReached: false, cancellationToken);
+
     public async Task<FinalizationReport> RunAsync(
         DictationSessionId sessionId,
         CapturedAudio audio,
         bool recoveryOnly,
+        bool maxDurationReached,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(audio);
@@ -336,7 +355,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             return new FinalizationReport(FinalizationOutcome.EngineUnavailable);
         }
 
-        _effects.ShowTranscribing();
+        _effects.ShowTranscribing(maxDurationReached);
         _effects.RecordTranscriptionStarted();
         var waitTimer = Stopwatch.StartNew();
         _effects.ArchiveAudio(audio);
@@ -396,13 +415,22 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     _phaseJournal?.Record(UatRuntimePhase.DeliveryEntered, sessionId.Value);
                     var deliveryTimer = Stopwatch.StartNew();
                     var language = DeliveryLanguagePolicy.For(transcript);
+                    var lockedLanguage = DeliveryLanguagePolicy.LockedLanguageFor(transcript);
+                    var engineDetectsLanguage = DeliveryLanguagePolicy.EngineDetectsLanguage(transcript);
+                    var protectedWords = DictationLanguageResolver.BuildProtectedWords(
+                        options.CustomWords,
+                        options.EnabledVocabularyPackIds,
+                        options.VocabularyPackOverrides);
                     var result = await delivery.DeliverAsync(
                         new TextDeliveryRequest(
                             processed.Output,
                             pendingSession.Target,
                             language,
                             pendingSession.DeliveryOptions,
-                            SnippetExpanded: finalized.SnippetsExpanded > 0),
+                            SnippetExpanded: finalized.SnippetsExpanded > 0,
+                            ProtectedWords: protectedWords,
+                            LockedLanguageCode: lockedLanguage,
+                            EngineDetectsLanguage: engineDetectsLanguage),
                         cancellationToken).ConfigureAwait(false);
                     deliveryTimer.Stop();
                     _phaseJournal?.Record(UatRuntimePhase.DeliveryReturned, sessionId.Value);

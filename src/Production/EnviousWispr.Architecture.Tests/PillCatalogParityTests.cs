@@ -103,6 +103,17 @@ public sealed class PillCatalogParityTests
 
         Assert.Equal("Copied. Press Ctrl+V to paste", PillPreviewCatalog.Find(PillPreviewKind.ClipboardFallback).PreviewStatus().Text);
         Assert.Equal("Ready, press to dictate", DictationStatus.EngineReady().Text);
+        Assert.Equal(TimeSpan.FromMinutes(59), OverlayPillCatalog.ApproachingCapElapsedThreshold);
+        Assert.Equal(
+            "Recording auto-stops in under a minute (60-minute cap)",
+            OverlayPillCatalog.FormatRecordingNoticeText(RecordingNoticeKind.ApproachingCap));
+        Assert.Equal(
+            "60-minute limit reached. Transcribing...",
+            OverlayPillCatalog.MaxDurationTranscribingText);
+        Assert.Equal(
+            OverlayPillCatalog.MaxDurationTranscribingText,
+            PillPreviewCatalog.Find(PillPreviewKind.ProcessingMaxDuration).PreviewStatus().Text);
+        Assert.Equal(512L * 1024 * 1024, EnviousWispr.Core.History.DictationRecordingRetention.DefaultMaximumTotalBytes);
     }
 
     [Fact]

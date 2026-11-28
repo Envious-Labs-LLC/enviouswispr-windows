@@ -46,7 +46,8 @@ public sealed record LocalDiagnosticLine(
     Guid? DictationId = null,
     DiagnosticRecognitionLanguage? RecognitionLanguage = null,
     DiagnosticSnippetImport? SnippetImport = null,
-    DiagnosticWordImport? WordImport = null)
+    DiagnosticWordImport? WordImport = null,
+    CaseRepairDecision? CaseRepairDecision = null)
 {
     /// <summary>Takes a line that is safe to send and adds what only this machine may know.</summary>
     public static LocalDiagnosticLine From(PrivacySafeDiagnosticRecord record, Guid? dictationId)
@@ -70,6 +71,7 @@ public sealed record LocalDiagnosticLine(
             dictationId,
             record.RecognitionLanguage,
             record.SnippetImport,
-            record.WordImport);
+            record.WordImport,
+            record.CaseRepairDecision);
     }
 }

@@ -160,6 +160,7 @@ public sealed class JsonLineFileLogger : IAppLogger
                 (record.DeliveryStage is null || Enum.IsDefined(record.DeliveryStage.Value)) &&
                 (record.Fault is null || Enum.IsDefined(record.Fault.Value)) &&
                 (record.RecognitionLanguage is null || Enum.IsDefined(record.RecognitionLanguage.Value)) &&
+                (record.CaseRepairDecision is null || Enum.IsDefined(record.CaseRepairDecision.Value)) &&
                 (record.SnippetImport is null || record.SnippetImport.IsWithinBounds()) &&
                 (record.WordImport is null || record.WordImport.IsWithinBounds()) &&
                 record.ElapsedMilliseconds is null or

@@ -17,6 +17,7 @@ using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
+using EnviousWispr.PostProcessing;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Diagnostics;
@@ -434,6 +435,7 @@ public partial class App : Application, IAsyncDisposable
     {
         try
         {
+            SeamCasingOracleRuntime.Shared.Prewarm();
             foreach (var stage in _deterministicTextPipeline.WarmStages())
             {
                 _logger.Write(new AppLogEntry(
@@ -729,6 +731,9 @@ public partial class App : Application, IAsyncDisposable
         public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
 
         public void ShowSessionBusy(SessionHolder holder) => app.ShowSessionBusy(holder);
+
+        public void ShowApproachingCapNotice() =>
+            app.PostToLiveWindow(window => window.ShowApproachingCapNotice());
     }
 
     /// <summary>The window as the session sees it: each sink one dispatch to the window, and nothing decided here.</summary>
@@ -764,6 +769,10 @@ public partial class App : Application, IAsyncDisposable
         if (_audioCapture is { } capture)
         {
             capture.LevelChanged -= OnAudioLevelChanged;
+            if (capture is WasapiAudioCapture wasapiCapture)
+            {
+                wasapiCapture.MaxDurationBackstopReached -= OnCaptureMaxDurationBackstopReached;
+            }
         }
     }
 
@@ -778,9 +787,12 @@ public partial class App : Application, IAsyncDisposable
     private void DisposeDeliveryRoute()
     {
         var adapter = _textTargetAdapter;
+        var languageDetector = _elsLanguageDetector;
         _textTargetAdapter = null;
         _textDelivery = null;
+        _elsLanguageDetector = null;
         adapter?.Dispose();
+        languageDetector?.Dispose();
     }
 
     private static AppFailureCategory FailureFor(AppError? error) => AppFailureCategories.For(error);

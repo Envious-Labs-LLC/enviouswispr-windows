@@ -477,6 +477,14 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetLivePreview(string? text) =>
         _overlayWindow.SetPreview(text);
 
+    public void ShowApproachingCapNotice()
+    {
+        if (!_overlayWindow.IsPreviewVisible)
+        {
+            _overlayWindow.ShowApproachingCapNotice();
+        }
+    }
+
     public void SetAudioLevel(AudioLevel level)
     {
         _overlayWindow.SetAudioLevel(level.RootMeanSquare);

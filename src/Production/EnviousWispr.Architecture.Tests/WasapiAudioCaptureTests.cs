@@ -257,6 +257,72 @@ public sealed class WasapiAudioCaptureTests
         Assert.Equal(0.3f, Assert.Single(result.Samples.ToArray()), precision: 5);
     }
 
+    [Fact]
+    public async Task GetSnapshotFromReadsOnlySamplesAfterStartOffsetAndMatchesFinalStop()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = CreateCapture(recorder);
+        var sessionId = DictationSessionId.Create();
+
+        await capture.StartAsync(new AudioCaptureRequest(sessionId));
+        recorder.Emit(0.1f, 0.2f, 0.3f);
+        var first = capture.GetSnapshotFrom(0);
+        Assert.NotNull(first);
+        Assert.Equal(0, first.StartSample);
+        Assert.Equal(3, first.TotalCapturedSamples);
+        Assert.Equal([0.1f, 0.2f, 0.3f], first.Samples.ToArray());
+
+        recorder.Emit(0.4f, 0.5f);
+        var tail = capture.GetSnapshotFrom(3);
+        Assert.NotNull(tail);
+        Assert.Equal(3, tail.StartSample);
+        Assert.Equal(5, tail.TotalCapturedSamples);
+        Assert.Equal([0.4f, 0.5f], tail.Samples.ToArray());
+
+        var empty = capture.GetSnapshotFrom(5);
+        Assert.NotNull(empty);
+        Assert.True(empty.Samples.IsEmpty);
+
+        var final = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Completed, final.Outcome);
+        Assert.Equal([0.1f, 0.2f, 0.3f, 0.4f, 0.5f], final.Samples.ToArray());
+    }
+
+    [Fact]
+    public async Task HardCaptureBackstopCapsAudioSignalsOnceAndReturnsCompletedOutcome()
+    {
+        var recorder = new FakeRecorderSession();
+        // 10 ms at 16 kHz = 160 samples max.
+        await using var capture = new WasapiAudioCapture(
+            new FakeRecorderFactory(recorder),
+            TestTimeout,
+            hardCaptureBackstop: TimeSpan.FromMilliseconds(10));
+        var sessionId = DictationSessionId.Create();
+        var fired = new List<DictationSessionId>();
+        var signalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.MaxDurationBackstopReached += (_, id) =>
+        {
+            lock (fired)
+            {
+                fired.Add(id);
+            }
+
+            signalled.TrySetResult();
+        };
+
+        await capture.StartAsync(new AudioCaptureRequest(sessionId));
+        recorder.Emit(Enumerable.Repeat(0.25f, 100).ToArray());
+        recorder.Emit(Enumerable.Repeat(0.5f, 150).ToArray());
+        recorder.Emit(Enumerable.Repeat(0.75f, 50).ToArray());
+        await signalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var result = await capture.StopAsync();
+        Assert.Equal(AudioCaptureOutcome.Completed, result.Outcome);
+        Assert.Null(result.Error);
+        Assert.Equal(160, result.Samples.Length);
+        Assert.Equal([sessionId], fired);
+    }
+
     private static WasapiAudioCapture CreateCapture(FakeRecorderSession recorder) =>
         new(new FakeRecorderFactory(recorder), TestTimeout);
 

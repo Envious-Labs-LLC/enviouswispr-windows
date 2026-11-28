@@ -1,6 +1,7 @@
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Pipeline;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -248,6 +249,38 @@ public sealed class LastDictationReuseTests
 
         Assert.Equal(outcomes.Length, events.Distinct().Count());
         Assert.All(events, code => Assert.True(Enum.IsDefined(code)));
+    }
+
+    [Fact]
+    public async Task PasteForwardsSavedLanguageSmartInsertionAndProtectedWords()
+    {
+        var delivery = new RecordingDelivery(Delivered());
+        var entry = new DictationHistoryEntry(
+            Guid.NewGuid(),
+            Now.AddMinutes(-2),
+            "Ask EnviousWispr now",
+            WhisperModelIds.Final,
+            WasPolished: false,
+            WasDelivered: true,
+            LanguageCode: "en");
+        var reuse = new LastDictationReuse(new LastDictationEnvironment(
+            _ => Task.FromResult<IReadOnlyList<DictationHistoryEntry>>([entry]),
+            () => Now,
+            () => false,
+            target => target == OwnWindow,
+            delivery,
+            () => TextDeliveryOptions.Default with { SmartInsertionEnabled = false },
+            Reacquired,
+            () => ["EnviousWispr"]));
+
+        var result = await reuse.PasteAsync(Editor, LastDictationSource.Shortcut);
+
+        Assert.Equal(LastDictationOutcome.Pasted, result.Outcome);
+        var sent = Assert.Single(delivery.Requests);
+        Assert.Equal("en", sent.LanguageCode);
+        Assert.True(sent.EngineDetectsLanguage);
+        Assert.False(sent.Options.SmartInsertionEnabled);
+        Assert.Equal(["EnviousWispr"], sent.ProtectedWords);
     }
 
     private static DeliveryResult Delivered() =>

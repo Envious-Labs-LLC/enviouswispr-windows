@@ -422,7 +422,20 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
                 _handsFree = true;
             }
 
-            _recordingNotice = status.RecordingNotice;
+            if (status.RecordingNotice == RecordingNoticeKind.ApproachingCap)
+            {
+                _autoCapNoticeShown = true;
+                _recordingNotice = RecordingNoticeKind.ApproachingCap;
+            }
+            else if (previousState == DictationOverlayState.Recording && !isPreview && _autoCapNoticeShown)
+            {
+                // ApproachingCap stays pinned until recording ends so transient advisories never displace it.
+                _recordingNotice = RecordingNoticeKind.ApproachingCap;
+            }
+            else
+            {
+                _recordingNotice = status.RecordingNotice;
+            }
             _activeDesign = _previewDesignOverride ?? RecordingPillCatalog.Resolve(
                 _livePreviewEnabled,
                 _withoutWordsDesign,
@@ -452,6 +465,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             _elapsedTimer.Stop();
             _levelTimer.Stop();
             _handsFree = false;
+            _autoCapNoticeShown = false;
             _recordingNotice = RecordingNoticeKind.None;
             ConfigureFloatingCard(status);
         }
@@ -461,6 +475,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             _elapsedTimer.Stop();
             _levelTimer.Stop();
             _handsFree = false;
+            _autoCapNoticeShown = false;
             _recordingNotice = RecordingNoticeKind.None;
             StateTitle.Text = definition.Title;
             ApplyAction(status.Action, status.SecondaryAction);
@@ -534,6 +549,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         DeactivateSurfaces();
         _chrome.ApplyHairline(visible: false, breathes: false, distress: false);
         _handsFree = false;
+        _autoCapNoticeShown = false;
         _recordingNotice = RecordingNoticeKind.None;
         _previewText = null;
         _action = null;
@@ -583,6 +599,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
 
         _action = null;
         _handsFree = false;
+        _autoCapNoticeShown = false;
         _recordingNotice = RecordingNoticeKind.None;
         _state = DictationOverlayState.Error;
         _preWarmed = true;
@@ -654,6 +671,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         _chrome.ApplyHairline(visible: false, breathes: false, distress: false);
         _pointerIsOver = false;
         _handsFree = false;
+        _autoCapNoticeShown = false;
         _recordingNotice = RecordingNoticeKind.None;
         _previewText = null;
         _action = null;
@@ -1400,18 +1418,34 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         }
     }
 
+    public void ShowApproachingCapNotice()
+    {
+        if (_cleanedUp || _isPreviewSession || _state != DictationOverlayState.Recording || _autoCapNoticeShown)
+        {
+            return;
+        }
+
+        ApplyApproachingCapNotice();
+    }
+
+    private void ApplyApproachingCapNotice()
+    {
+        _autoCapNoticeShown = true;
+        _recordingNotice = RecordingNoticeKind.ApproachingCap;
+        ConfigureRecordingDesign();
+        _win32Host.PositionOnForegroundMonitor(_position);
+        var noticeText = OverlayPillCatalog.FormatRecordingNoticeText(RecordingNoticeKind.ApproachingCap);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(InPanelNoticeText, noticeText);
+        AnnounceStateChange(InPanelNoticeText, DictationOverlayState.Warning);
+    }
+
     private void OnElapsedTimerTick(object? sender, object e)
     {
         var elapsed = DateTimeOffset.UtcNow - _recordingStartedAt;
         var formatted = RecordingPillGeometry.FormatElapsed(elapsed);
-        var showCapNotice = elapsed >= OverlayPillCatalog.ApproachingCapElapsedThreshold && !_autoCapNoticeShown;
-        if (showCapNotice)
+        if (elapsed >= OverlayPillCatalog.ApproachingCapElapsedThreshold && !_autoCapNoticeShown)
         {
-            _autoCapNoticeShown = true;
-            _recordingNotice = RecordingNoticeKind.ApproachingCap;
-            ConfigureRecordingDesign();
-            _win32Host.PositionOnForegroundMonitor(_position);
-            return;
+            ApplyApproachingCapNotice();
         }
 
         if (string.Equals(ElapsedText.Text, formatted, StringComparison.Ordinal))

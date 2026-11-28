@@ -254,6 +254,28 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task ADeliveredPasteWithCaseDecisionEmitsTextDeliveryCaseEvaluated()
+    {
+        var world = ComposedSessionWorld.Create("Can you ask");
+        world.Delivery.Answer = new DeliveryResult(
+            default,
+            Delivered: true,
+            ClipboardFallback: false,
+            TextDeliveryRoute.ClipboardPaste,
+            ClipboardRestored: true,
+            LowercasedFirst: true,
+            CaseDecision: CaseRepairDecision.LowercasedFirst);
+        await world.PressAsync();
+
+        var released = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        var caseEvent = Assert.Single(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryCaseEvaluated);
+        Assert.True(caseEvent.Changed);
+        Assert.Equal(CaseRepairDecision.LowercasedFirst, caseEvent.CaseRepairDecision);
+    }
+
+    [Fact]
     public async Task AdmissionUsesInjectedResourceProbe()
     {
         // THE MACHINE THE SESSION ASKS IS THE ONE IT WAS COMPOSED WITH (plan-2 step 15). The shell

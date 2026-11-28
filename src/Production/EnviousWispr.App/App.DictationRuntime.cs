@@ -27,6 +27,7 @@ public partial class App
     private volatile bool _onboardingKeyRehearsalActive;
     private IAudioCapture? _audioCapture;
     private WindowsTextTargetAdapter? _textTargetAdapter;
+    private WindowsElsLanguageDetector? _elsLanguageDetector;
     private ContextAwareTextDelivery? _textDelivery;
     private LastDictationReuse? _lastDictation;
     private SavedDictationPaste? _savedDictationPaste;
@@ -367,8 +368,17 @@ public partial class App
                 : new WasapiAudioCapture();
         var audioCapture = _audioCapture;
         audioCapture.LevelChanged += OnAudioLevelChanged;
+        if (audioCapture is WasapiAudioCapture wasapiCapture)
+        {
+            wasapiCapture.MaxDurationBackstopReached += OnCaptureMaxDurationBackstopReached;
+        }
+
+        _elsLanguageDetector?.Dispose();
+        _elsLanguageDetector = new WindowsElsLanguageDetector();
         _textTargetAdapter = new WindowsTextTargetAdapter();
-        _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
+        _textDelivery = new ContextAwareTextDelivery(
+            _textTargetAdapter,
+            osLanguageDetector: _elsLanguageDetector);
         _lastDictation = new LastDictationReuse(new LastDictationEnvironment(
             async cancellation => (await _historyStore.LoadAsync(
                 _settings.Preferences.History.RetentionDays,
@@ -379,12 +389,21 @@ public partial class App
             target => target.ProcessId == (uint)Environment.ProcessId,
             // ITS OWN DELIVERY over the shared adapter: the dictation's keeps one recovery slot, and an
             // old dictation pasted through it would replace a take's recovery text.
-            new ContextAwareTextDelivery(_textTargetAdapter),
-            () => TextDeliveryOptions.Default,
+            new ContextAwareTextDelivery(
+                _textTargetAdapter,
+                osLanguageDetector: _elsLanguageDetector),
+            () => TextDeliveryOptions.Default with
+            {
+                SmartInsertionEnabled = _settings.Preferences.SmartInsertionEnabled,
+            },
             (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
                 window,
                 TimeSpan.FromMilliseconds(1000),
-                cancellation)));
+                cancellation),
+            ProtectedWords: () => DictationLanguageResolver.BuildProtectedWords(
+                _customWords,
+                _enabledVocabularyPackIds,
+                _vocabularyPackOverrides)));
         // HOME'S UNDO AND HISTORY'S PASTE: the same borrowing as the reuse above - its own delivery over the
         // shared adapter, and the same way back to a window remembered without its field. The own-window rule
         // is the dictation's, which has none; the reuse's own-window refusal is not carried over.
@@ -395,13 +414,22 @@ public partial class App
                 cancellation).ConfigureAwait(false)).Entries,
             () => DateTimeOffset.UtcNow,
             () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
-            new ContextAwareTextDelivery(_textTargetAdapter),
-            () => TextDeliveryOptions.Default,
+            new ContextAwareTextDelivery(
+                _textTargetAdapter,
+                osLanguageDetector: _elsLanguageDetector),
+            () => TextDeliveryOptions.Default with
+            {
+                SmartInsertionEnabled = _settings.Preferences.SmartInsertionEnabled,
+            },
             (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
                 window,
                 TimeSpan.FromMilliseconds(1000),
                 cancellation),
-            _sessionPersistence));
+            _sessionPersistence,
+            ProtectedWords: () => DictationLanguageResolver.BuildProtectedWords(
+                _customWords,
+                _enabledVocabularyPackIds,
+                _vocabularyPackOverrides)));
         RefreshLastDictationPreview();
         _sessionController = new PushToTalkSessionController(
             audioCapture,
@@ -410,6 +438,7 @@ public partial class App
             {
                 CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
                 TargetMode = _settings.Preferences.PasteTargetMode,
+                SmartInsertionEnabled = _settings.Preferences.SmartInsertionEnabled,
             },
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
@@ -546,6 +575,11 @@ public partial class App
         // to the UI thread did that scheduling work for a value the meter's own timer would ask for
         // when it was ready. Every UI touch stays inside that tick.
         _window?.SetAudioLevel(level);
+    }
+
+    private void OnCaptureMaxDurationBackstopReached(object? sender, DictationSessionId sessionId)
+    {
+        _runtime?.Queue.TimeOut(sessionId);
     }
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)

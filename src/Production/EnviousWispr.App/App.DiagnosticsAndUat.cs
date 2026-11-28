@@ -134,7 +134,10 @@ public partial class App
                 DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
             "recording-hands-free" =>
                 DictationStatus.Recording("Hands-free recording. Tap twice to stop, Escape to cancel", isHandsFree: true),
+            "recording-approaching-cap" =>
+                DictationStatus.Recording("Recording", isHandsFree: false, RecordingNoticeKind.ApproachingCap),
             "processing" => DictationStatus.Processing("Transcribing locally..."),
+            "processing-max-duration" => DictationStatus.Processing(OverlayPillCatalog.MaxDurationTranscribingText),
             "cold-start" => DictationStatus.ColdStart("Getting dictation ready...", "Parakeet is warming up after a restart"),
             "engine-ready" => DictationStatus.EngineReady("Ready, press to dictate"),
             "import-status" => DictationStatus.ImportStatus("Importing your words now. Check progress on the Dictionary page."),

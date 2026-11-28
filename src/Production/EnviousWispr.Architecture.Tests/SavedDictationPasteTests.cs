@@ -3,6 +3,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 
@@ -507,6 +508,47 @@ public sealed class SavedDictationPasteTests
             Assert.True(world.Persistence.HasPendingRecovery);
             return world;
         }
+    }
+
+    [Fact]
+    public async Task HistoryPasteForwardsSavedLanguageSmartInsertionAndProtectedWords()
+    {
+        var delivery = new RecordingDelivery();
+        var historyStore = new FakeHistoryStore();
+        var savedEntry = DictationHistoryEntry.Create(
+            Now.AddMinutes(-5),
+            "Ask EnviousWispr now",
+            WhisperModelIds.Final,
+            wasPolished: false,
+            wasDelivered: true,
+            languageCode: "en");
+        historyStore.Entries.Add(savedEntry);
+
+        var persistence = new SessionPersistence(
+            new FakeRecoveryStore(),
+            historyStore,
+            new NullLogger(),
+            new ClockOf(() => Now),
+            () => HistoryPreferences.Default,
+            new FakeEffects());
+        var paste = new SavedDictationPaste(new SavedDictationPasteEnvironment(
+            _ => Task.FromResult<IReadOnlyList<DictationHistoryEntry>>([savedEntry]),
+            () => Now,
+            () => false,
+            delivery,
+            () => TextDeliveryOptions.Default with { SmartInsertionEnabled = false },
+            (window, _) => Task.FromResult<TargetWindowId?>(window with { FocusedElementId = "reacquired" }),
+            persistence,
+            () => ["EnviousWispr"]));
+
+        var result = await paste.PasteAsync(savedEntry.Id, Previous);
+
+        Assert.Equal(SavedDictationPasteOutcome.Pasted, result.Outcome);
+        var sent = Assert.Single(delivery.Requests);
+        Assert.Equal("en", sent.LanguageCode);
+        Assert.True(sent.EngineDetectsLanguage);
+        Assert.False(sent.Options.SmartInsertionEnabled);
+        Assert.Equal(["EnviousWispr"], sent.ProtectedWords);
     }
 
     private sealed class RecordingDelivery : ITextDelivery
