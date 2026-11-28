@@ -356,6 +356,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
         var engine = _effects.Engine;
         if (engine is null)
         {
+            await _persistence.DiscardAudioSpoolAsync(sessionId).ConfigureAwait(false);
             _effects.RecordTranscriptionUnavailable();
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
             _effects.ShowTranscriptionUnavailable();
@@ -371,6 +372,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 out var isWholeZero);
             if (isWholeZero)
             {
+                await _persistence.DiscardAudioSpoolAsync(sessionId).ConfigureAwait(false);
                 _effects.ArchiveAudio(audio);
                 await _effects.RetireWarmCaptureAsync().ConfigureAwait(false);
                 await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
@@ -473,16 +475,6 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                         _persistence.ShowPendingRecovery();
                     }
 
-                    await _persistence.SaveHistoryAsync(
-                            transcript,
-                            processed.Output.Text,
-                            HistoryWriteIntent.Delivered(finalized.WasPolished, result.Delivered),
-                            originalText: finalized.Processed.DeterministicText,
-                            languageCode: language,
-                            polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
-                            polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
-                            audio: audio)
-                        .ConfigureAwait(false);
                     await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
                     _effects.ReportDelivery(result, language);
                     if (result.Delivered &&
@@ -496,6 +488,19 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                             language,
                             _clock.GetUtcNow()));
                     }
+
+                    _persistence.QueueHistorySaveAndSpoolCleanup(
+                        sessionId,
+                        () => _persistence.SaveHistoryAsync(
+                            transcript,
+                            processed.Output.Text,
+                            HistoryWriteIntent.Delivered(finalized.WasPolished, result.Delivered),
+                            originalText: finalized.Processed.DeterministicText,
+                            languageCode: language,
+                            polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
+                            polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
+                            audio: audio),
+                        deleteSpoolWhenHistoryDisabled: true);
 
                     return new FinalizationReport(
                         result.Delivered || result.ClipboardFallback
@@ -523,6 +528,15 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null,
                     audio: recoveryOnly ? null : audio)
                 .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(processed.Output.Text))
+            {
+                await _persistence.DiscardAudioSpoolAsync(sessionId).ConfigureAwait(false);
+            }
+            else if (!_persistence.IsExitPreservationActive || entryId is not null)
+            {
+                await _persistence.DeleteAudioSpoolAfterPersistenceAsync(sessionId, entryId).ConfigureAwait(false);
+            }
+
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
 
             // UNDO IS OFFERED ONLY FOR WORDS DURABLY SAVED, beside their own copy on Home. A History write
@@ -546,8 +560,23 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             _effects.ShowHeldStatus(report);
             return report;
         }
+        catch (OperationCanceledException) when (_persistence.IsExitPreservationActive)
+        {
+            // Keep encrypted audio spool intact on disk when shutdown cancels finalization inside the quit budget.
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            await _persistence.DiscardAudioSpoolAsync(sessionId).ConfigureAwait(false);
+            throw;
+        }
         catch (TranscriptionEngineException exception)
         {
+            if (!_persistence.IsExitPreservationActive)
+            {
+                await _persistence.DiscardAudioSpoolAsync(sessionId).ConfigureAwait(false);
+            }
+
             timer.Stop();
             _effects.RecordTranscriptionFailed(exception.Error, timer.ElapsedMilliseconds);
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);

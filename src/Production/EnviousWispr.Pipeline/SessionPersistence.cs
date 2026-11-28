@@ -88,6 +88,22 @@ public interface ISessionRecoveryState
 
     /// <summary>Clears whatever recovery text is pending, if any.</summary>
     Task ClearRecoveryTextAsync() => Task.CompletedTask;
+
+    void BeginAudioSpoolCapture()
+    {
+    }
+
+    Task CommitOrOpenAudioSpoolAsync(
+        DictationSessionId sessionId,
+        DictationPreferences? dictationPreferences,
+        bool canPersistRecovery,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    Task FlushAndFinalizeAudioSpoolAsync(
+        DictationSessionId sessionId,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    Task DiscardAudioSpoolAsync(DictationSessionId? sessionId = null) => Task.CompletedTask;
 }
 
 public sealed class SessionPersistence : ISessionRecoveryState
@@ -99,6 +115,18 @@ public sealed class SessionPersistence : ISessionRecoveryState
     private readonly Func<HistoryPreferences> _historyPreferences;
     private readonly ISessionPersistenceEffects _effects;
     private readonly IDictationAudioArchive? _audioArchive;
+    private readonly IRecoverySpoolStore? _recoverySpoolStore;
+    private readonly IApplicationRunStateStore? _runStateStore;
+    private readonly Func<Guid?>? _runIdAccessor;
+    private readonly Func<Action<Action<ReadOnlyMemory<float>>?>?>? _attachCaptureSpoolSink;
+    private readonly Func<DictationPreferences>? _dictationPreferences;
+    private readonly object _spoolGate = new();
+    private readonly List<Task> _pendingHistorySaves = [];
+    private List<float[]>? _stagedAudioPackets;
+    private IRecoverySpoolWriter? _activeSpoolWriter;
+    private DictationSessionId? _activeSpoolSessionId;
+    private bool _spoolBufferingActive;
+    private volatile bool _exitPreservationMode;
 
     /// <param name="historyPreferences">Read at each write, so a switch flipped mid-session takes effect on the next entry.</param>
     public SessionPersistence(
@@ -108,7 +136,12 @@ public sealed class SessionPersistence : ISessionRecoveryState
         TimeProvider clock,
         Func<HistoryPreferences> historyPreferences,
         ISessionPersistenceEffects effects,
-        IDictationAudioArchive? audioArchive = null)
+        IDictationAudioArchive? audioArchive = null,
+        IRecoverySpoolStore? recoverySpoolStore = null,
+        IApplicationRunStateStore? runStateStore = null,
+        Func<Guid?>? runIdAccessor = null,
+        Func<Action<Action<ReadOnlyMemory<float>>?>?>? attachCaptureSpoolSink = null,
+        Func<DictationPreferences>? dictationPreferences = null)
     {
         ArgumentNullException.ThrowIfNull(recovery);
         ArgumentNullException.ThrowIfNull(history);
@@ -123,6 +156,11 @@ public sealed class SessionPersistence : ISessionRecoveryState
         _historyPreferences = historyPreferences;
         _effects = effects;
         _audioArchive = audioArchive;
+        _recoverySpoolStore = recoverySpoolStore;
+        _runStateStore = runStateStore;
+        _runIdAccessor = runIdAccessor;
+        _attachCaptureSpoolSink = attachCaptureSpoolSink;
+        _dictationPreferences = dictationPreferences;
     }
 
     /// <summary>Recovered text is waiting on Home; the next press clears it before recording.</summary>
@@ -305,9 +343,15 @@ public sealed class SessionPersistence : ISessionRecoveryState
         // store prunes against are separate samples; collapsing them moves a retention decision that
         // lands exactly on an expiry boundary, and equivalence here means the same decisions.
         var entryId = Guid.NewGuid();
-        var archivedAudio = audio is not null && intent.ArchiveAudio
-            ? _audioArchive?.SaveForEntry(entryId, audio)
-            : null;
+        ArchivedDictationAudio? archivedAudio = null;
+        if (audio is not null && intent.ArchiveAudio && _audioArchive is not null)
+        {
+            archivedAudio = await Task.Run(
+                    () => _audioArchive.SaveForEntry(entryId, audio),
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+
         var entry = new DictationHistoryEntry(
             entryId,
             _clock.GetUtcNow(),
@@ -339,5 +383,365 @@ public sealed class SessionPersistence : ISessionRecoveryState
 
         _effects.NotifyHistoryChanged();
         return entry.Id;
+    }
+
+    public bool IsExitPreservationActive => _exitPreservationMode;
+
+    public void SetExitPreservationMode(bool preserving) =>
+        _exitPreservationMode = preserving;
+
+    /// <summary>
+    /// Attaches a temporary staging sink to the active audio capture before <c>PressAsync</c>
+    /// opens or drains warm pre-roll, ensuring zero initial packets are dropped before the encrypted spool opens.
+    /// </summary>
+    public void BeginAudioSpoolCapture()
+    {
+        if (_recoverySpoolStore is null)
+        {
+            return;
+        }
+
+        var attach = _attachCaptureSpoolSink?.Invoke();
+        if (attach is null)
+        {
+            return;
+        }
+
+        lock (_spoolGate)
+        {
+            _stagedAudioPackets = [];
+            _spoolBufferingActive = true;
+        }
+
+        attach(OnCapturedSpoolPacket);
+    }
+
+    /// <summary>
+    /// Opens the per-session encrypted spool once capture starts and flushes any staged pre-roll/early packets into it.
+    /// </summary>
+    public async Task CommitOrOpenAudioSpoolAsync(
+        DictationSessionId sessionId,
+        DictationPreferences? dictationPreferences,
+        bool canPersistRecovery,
+        CancellationToken cancellationToken = default)
+    {
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        if (_recoverySpoolStore is null || !canPersistRecovery)
+        {
+            DetachAndClearStagingSink();
+            return;
+        }
+
+        var prefs = dictationPreferences ?? _dictationPreferences?.Invoke() ?? DictationPreferences.Default;
+        var header = new RecoverySpoolHeader(
+            sessionId,
+            RecoverySpoolConstants.DefaultSampleRate,
+            RecoverySpoolConstants.DefaultChannels,
+            prefs.WhisperLanguage,
+            string.Equals(prefs.WhisperLanguage, LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase),
+            _clock.GetUtcNow());
+
+        var writer = await _recoverySpoolStore.OpenSessionAsync(
+            header,
+            canPersistRecovery,
+            cancellationToken).ConfigureAwait(false);
+        if (writer is null)
+        {
+            DetachAndClearStagingSink();
+            return;
+        }
+
+        List<float[]>? staged;
+        lock (_spoolGate)
+        {
+            _activeSpoolWriter = writer;
+            _activeSpoolSessionId = sessionId;
+            _spoolBufferingActive = false;
+            staged = _stagedAudioPackets;
+            _stagedAudioPackets = null;
+        }
+
+        if (staged is not null)
+        {
+            foreach (var packet in staged)
+            {
+                writer.EnqueueSamples(packet);
+            }
+        }
+
+        var attach = _attachCaptureSpoolSink?.Invoke();
+        attach?.Invoke(OnCapturedSpoolPacket);
+
+        await UpdateRunStateSpoolAsync(sessionId.Value, RecoverySpoolStatus.Recording, CancellationToken.None)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Detaches the live capture sink, flushes buffered PCM packets, writes the authenticated
+    /// Finalizing frame, and closes the writer stream before ASR runs.
+    /// </summary>
+    public async Task FlushAndFinalizeAudioSpoolAsync(
+        DictationSessionId sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        _attachCaptureSpoolSink?.Invoke()?.Invoke(null);
+        IRecoverySpoolWriter? writer;
+        List<float[]>? staged;
+        lock (_spoolGate)
+        {
+            _spoolBufferingActive = false;
+            staged = _stagedAudioPackets;
+            _stagedAudioPackets = null;
+            writer = _activeSpoolWriter is not null && _activeSpoolSessionId == sessionId
+                ? _activeSpoolWriter
+                : null;
+            if (writer is not null)
+            {
+                _activeSpoolWriter = null;
+                _activeSpoolSessionId = null;
+            }
+        }
+
+        if (writer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (staged is not null)
+            {
+                foreach (var packet in staged)
+                {
+                    writer.EnqueueSamples(packet);
+                }
+            }
+
+            await writer.MarkFinalizingAsync(cancellationToken).ConfigureAwait(false);
+            await UpdateRunStateSpoolAsync(sessionId.Value, RecoverySpoolStatus.Finalizing, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            await writer.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Deletes any active or finalized spool immediately when a take is cancelled or discarded.</summary>
+    public async Task DiscardAudioSpoolAsync(DictationSessionId? sessionId = null)
+    {
+        _attachCaptureSpoolSink?.Invoke()?.Invoke(null);
+        IRecoverySpoolWriter? writer;
+        DictationSessionId? ownedSession;
+        lock (_spoolGate)
+        {
+            _spoolBufferingActive = false;
+            _stagedAudioPackets = null;
+            writer = _activeSpoolWriter;
+            ownedSession = _activeSpoolSessionId ?? sessionId;
+            _activeSpoolWriter = null;
+            _activeSpoolSessionId = null;
+        }
+
+        if (writer is not null)
+        {
+            try
+            {
+                await writer.DiscardAndDeleteAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await writer.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        if (_recoverySpoolStore is not null && ownedSession is { } id && id.Value != Guid.Empty)
+        {
+            await _recoverySpoolStore.DeleteSessionAsync(id).ConfigureAwait(false);
+        }
+
+        await UpdateRunStateSpoolAsync(null, null, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>Deletes the session spool once History persistence settles (or History is disabled).</summary>
+    public async Task DeleteAudioSpoolAfterPersistenceAsync(DictationSessionId sessionId, Guid? savedHistoryEntryId)
+    {
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        if (savedHistoryEntryId is null && _historyPreferences().IsEnabled)
+        {
+            // Keep encrypted spool if History is enabled but save failed.
+            return;
+        }
+
+        await DeleteCompletedSpoolFileAsync(sessionId).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Starts post-delivery History persistence off the critical path while keeping the operation tracked
+    /// for <see cref="WaitForPendingHistoryAsync"/> (PasteLast consistency), shutdown drain, and post-save spool deletion.
+    /// </summary>
+    public void QueueHistorySaveAndSpoolCleanup(
+        DictationSessionId sessionId,
+        Func<Task<Guid?>> saveHistoryOperation,
+        bool deleteSpoolWhenHistoryDisabled = true)
+    {
+        ArgumentNullException.ThrowIfNull(saveHistoryOperation);
+        var tracked = RunQueuedHistorySaveAsync(sessionId, saveHistoryOperation, deleteSpoolWhenHistoryDisabled);
+        if (!tracked.IsCompleted)
+        {
+            lock (_pendingHistorySaves)
+            {
+                _pendingHistorySaves.Add(tracked);
+            }
+
+            _ = tracked.ContinueWith(
+                static (completed, state) =>
+                {
+                    var list = (List<Task>)state!;
+                    lock (list)
+                    {
+                        list.Remove(completed);
+                    }
+                },
+                _pendingHistorySaves,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>Waits until every in-flight queued History save has settled (e.g., before Paste Last).</summary>
+    public async Task WaitForPendingHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        Task[] snapshot;
+        lock (_pendingHistorySaves)
+        {
+            if (_pendingHistorySaves.Count == 0)
+            {
+                return;
+            }
+
+            snapshot = [.. _pendingHistorySaves];
+        }
+
+        await Task.WhenAll(snapshot).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Drains all queued History saves within the bounded exit budget.</summary>
+    public async Task<bool> DrainPendingHistoryAsync(TimeSpan timeout)
+    {
+        Task[] snapshot;
+        lock (_pendingHistorySaves)
+        {
+            if (_pendingHistorySaves.Count == 0)
+            {
+                return true;
+            }
+
+            snapshot = [.. _pendingHistorySaves];
+        }
+
+        try
+        {
+            await Task.WhenAll(snapshot).WaitAsync(timeout, _clock).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private async Task RunQueuedHistorySaveAsync(
+        DictationSessionId sessionId,
+        Func<Task<Guid?>> saveHistoryOperation,
+        bool deleteSpoolWhenHistoryDisabled)
+    {
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        try
+        {
+            var entryId = await saveHistoryOperation().ConfigureAwait(false);
+            if (entryId is not null || (deleteSpoolWhenHistoryDisabled && !_historyPreferences().IsEnabled))
+            {
+                await DeleteCompletedSpoolFileAsync(sessionId).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.RecoveryTextUnavailable,
+                AppFailureCategory.Recovery,
+                ErrorCode: AppErrorCode.StorageUnavailable));
+        }
+    }
+
+    private async Task DeleteCompletedSpoolFileAsync(DictationSessionId sessionId)
+    {
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        if (_recoverySpoolStore is not null && sessionId.Value != Guid.Empty)
+        {
+            await _recoverySpoolStore.DeleteSessionAsync(sessionId).ConfigureAwait(false);
+        }
+
+        await UpdateRunStateSpoolAsync(null, null, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private void OnCapturedSpoolPacket(ReadOnlyMemory<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return;
+        }
+
+        IRecoverySpoolWriter? writer;
+        lock (_spoolGate)
+        {
+            writer = _activeSpoolWriter;
+            if (writer is null && _spoolBufferingActive)
+            {
+                _stagedAudioPackets ??= [];
+                _stagedAudioPackets.Add(samples.Span.ToArray());
+                return;
+            }
+        }
+
+        writer?.EnqueueSamples(samples);
+    }
+
+    private void DetachAndClearStagingSink()
+    {
+        _attachCaptureSpoolSink?.Invoke()?.Invoke(null);
+        lock (_spoolGate)
+        {
+            _spoolBufferingActive = false;
+            _stagedAudioPackets = null;
+        }
+    }
+
+    private async Task UpdateRunStateSpoolAsync(
+        Guid? spoolSessionId,
+        RecoverySpoolStatus? status,
+        CancellationToken cancellationToken)
+    {
+        if (_runStateStore is null || _runIdAccessor is null || _runIdAccessor() is not { } runId || runId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            await _runStateStore.SetActiveRecoverySpoolAsync(
+                    runId,
+                    spoolSessionId,
+                    status,
+                    _clock.GetUtcNow(),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+        }
     }
 }

@@ -23,7 +23,7 @@ public static class TrayIconStates
     public static TrayIconState For(DictationOverlayState state) => state switch
     {
         DictationOverlayState.Recording => TrayIconState.Recording,
-        DictationOverlayState.Processing => TrayIconState.Processing,
+        DictationOverlayState.Processing or DictationOverlayState.Recovering => TrayIconState.Processing,
         DictationOverlayState.Error or DictationOverlayState.Distress => TrayIconState.Error,
         DictationOverlayState.Hidden
             or DictationOverlayState.ColdStart
@@ -33,6 +33,7 @@ public static class TrayIconStates
             or DictationOverlayState.Advisory
             or DictationOverlayState.Suggestion
             or DictationOverlayState.Warning
+            or DictationOverlayState.RetainedPaste
             or DictationOverlayState.Busy
             or DictationOverlayState.EscapeRecovery
             or DictationOverlayState.CorrectionLearned

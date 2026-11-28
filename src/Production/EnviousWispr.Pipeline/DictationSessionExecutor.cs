@@ -1022,6 +1022,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     _effects.ShowDiskLow();
                 }
 
+                _persistence.BeginAudioSpoolCapture();
+
                 if (!Volatile.Read(ref _closed) && _controller.CurrentSession is null)
                 {
                     optimisticRecording = true;
@@ -1097,6 +1099,12 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     _activeTakeAllowsShortHold = command.IsHandsFree ||
                         recordingSettings.Dictation().RecordingMode == DictationRecordingMode.Toggle;
                     _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
+                    await _persistence.CommitOrOpenAudioSpoolAsync(
+                            result.Session.Id,
+                            recordingSettings.Dictation(),
+                            _persistence.CanPersistRecovery,
+                            none)
+                        .ConfigureAwait(false);
                     // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
                     // that started under one auto-stop preference finishes under it.
                     await _background.StartAsync(
@@ -1126,6 +1134,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed or SessionTransitionKind.Discarded)
                 {
                     _activeTakeAllowsShortHold = false;
+                    await _persistence.DiscardAudioSpoolAsync(result.Session?.Id).ConfigureAwait(false);
                     if (optimisticRecording || (result.Kind == SessionTransitionKind.Discarded && optimisticProcessing))
                     {
                         _effects.CancelRecordingCue();
@@ -1134,9 +1143,17 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     await _background.StopAsync(none).ConfigureAwait(false);
                     await _controller.ResetAsync(none).ConfigureAwait(false);
                 }
-                else if (optimisticRecording)
+                else
                 {
-                    _effects.CancelRecordingCue();
+                    if (signal == PushToTalkSignal.Pressed && result.Kind != SessionTransitionKind.Started)
+                    {
+                        await _persistence.DiscardAudioSpoolAsync(result.Session?.Id).ConfigureAwait(false);
+                    }
+
+                    if (optimisticRecording)
+                    {
+                        _effects.CancelRecordingCue();
+                    }
                 }
 
                 if (!(optimisticRecording && result.Kind == SessionTransitionKind.Started))
@@ -1293,6 +1310,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
         }
 
+        await _persistence.DiscardAudioSpoolAsync(interrupted is { } escapedId ? new DictationSessionId(escapedId) : null)
+            .ConfigureAwait(false);
+
         var cancelledResult = await _controller.CancelAsync(none).ConfigureAwait(false);
         RecordTransition(cancelledResult);
         await _controller.ResetAsync(none).ConfigureAwait(false);
@@ -1323,6 +1343,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     {
         using var dictation = DictationScope.Begin(sessionId.Value);
         _ownedAudio = audio;
+        await _persistence.FlushAndFinalizeAudioSpoolAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
         if (recoveryOnly || preserving is not null)
         {
             _escapeRecoveryForSession = false;

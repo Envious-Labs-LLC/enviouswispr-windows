@@ -268,6 +268,38 @@ public partial class App
 
     private void OnRecoveryUndoRequested() => _ = PasteSavedDictationAsync(SavedDictationPasteAction.Undo, entryId: null);
 
+    private void OnRecoveryDiscardRequested() => _ = _recoveryReplayCoordinator?.DiscardActiveOrNextAsync();
+
+    private void StartStartupRecoveryReplay()
+    {
+        if (Leaving || _recoveryReplayCoordinator is not { } coordinator || _recoverySpoolStore.ListOrphanSpools().Count == 0)
+        {
+            return;
+        }
+
+        _recoveryReplay = RunStartupRecoveryReplayAsync(coordinator, _recoveryReplayCancellation.Token);
+    }
+
+    private async Task RunStartupRecoveryReplayAsync(
+        StartupRecoveryReplayCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await coordinator.ReplayPendingSpoolsAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || Leaving)
+        {
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Recovery));
+        }
+    }
+
     private void OnHistoryPasteRequested(Guid entryId) => _ = PasteSavedDictationAsync(SavedDictationPasteAction.HistoryPaste, entryId);
 
     private void OnSessionStatusChanged(DictationStatus status)
@@ -393,15 +425,23 @@ public partial class App
 
         _elsLanguageDetector?.Dispose();
         _elsLanguageDetector = new WindowsElsLanguageDetector();
-        _textTargetAdapter = new WindowsTextTargetAdapter();
+        _textTargetAdapter = new WindowsTextTargetAdapter(
+            _logger,
+            () => PostToLiveWindow(window => window.SetSessionStatus(DictationStatus.RetainedPaste())),
+            TimeProvider.System,
+            ClipboardBoardOwnership.Shared);
         _textDelivery = new ContextAwareTextDelivery(
             _textTargetAdapter,
             osLanguageDetector: _elsLanguageDetector);
         _lastDictation = new LastDictationReuse(new LastDictationEnvironment(
-            async cancellation => (await _historyStore.LoadAsync(
-                _settings.Preferences.History.RetentionDays,
-                DateTimeOffset.UtcNow,
-                cancellation).ConfigureAwait(false)).Entries,
+            async cancellation =>
+            {
+                await _sessionPersistence.WaitForPendingHistoryAsync(cancellation).ConfigureAwait(false);
+                return (await _historyStore.LoadAsync(
+                    _settings.Preferences.History.RetentionDays,
+                    DateTimeOffset.UtcNow,
+                    cancellation).ConfigureAwait(false)).Entries;
+            },
             () => DateTimeOffset.UtcNow,
             () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
             target => target.ProcessId == (uint)Environment.ProcessId,
@@ -426,10 +466,14 @@ public partial class App
         // shared adapter, and the same way back to a window remembered without its field. The own-window rule
         // is the dictation's, which has none; the reuse's own-window refusal is not carried over.
         _savedDictationPaste = new SavedDictationPaste(new SavedDictationPasteEnvironment(
-            async cancellation => (await _historyStore.LoadAsync(
-                _settings.Preferences.History.RetentionDays,
-                DateTimeOffset.UtcNow,
-                cancellation).ConfigureAwait(false)).Entries,
+            async cancellation =>
+            {
+                await _sessionPersistence.WaitForPendingHistoryAsync(cancellation).ConfigureAwait(false);
+                return (await _historyStore.LoadAsync(
+                    _settings.Preferences.History.RetentionDays,
+                    DateTimeOffset.UtcNow,
+                    cancellation).ConfigureAwait(false)).Entries;
+            },
             () => DateTimeOffset.UtcNow,
             () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
             new ContextAwareTextDelivery(
@@ -637,6 +681,11 @@ public partial class App
             return;
         }
 
+        if (args.Signal == PushToTalkSignal.Pressed)
+        {
+            _recoveryReplayCoordinator?.RequestYieldBetweenItems();
+        }
+
         _ = _runtime.SubmitAsync(args.Signal, args.IsHandsFree);
     }
 
@@ -647,6 +696,11 @@ public partial class App
             var isRecording = _sessionController?.CurrentSession?.State ==
                 EnviousWispr.Core.Sessions.DictationSessionState.Recording;
             var signal = isRecording ? PushToTalkSignal.Released : PushToTalkSignal.Pressed;
+            if (signal == PushToTalkSignal.Pressed)
+            {
+                _recoveryReplayCoordinator?.RequestYieldBetweenItems();
+            }
+
             if (_runtime is not null)
             {
                 await _runtime.SubmitAsync(signal, isHandsFree: !isRecording).ConfigureAwait(false);

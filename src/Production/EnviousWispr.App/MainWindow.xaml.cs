@@ -557,6 +557,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 InvokeLearnedCorrectionUndo();
                 break;
 
+            case PillActionKind.DiscardRecovery:
+                InvokeRecoveryDiscard();
+                break;
+
             // An enum can hold a value nobody declared. Appearance is the harmless page: it changes
             // nothing and shows the person something they can read.
             default:
@@ -587,6 +591,8 @@ public sealed partial class MainWindow : Window, IDisposable
     private void InvokeEscapeRecoveryUndo() => RecoveryUndoRequested?.Invoke();
 
     private void InvokeLearnedCorrectionUndo() => LearnedPillUndoActiveRequested?.Invoke();
+
+    private void InvokeRecoveryDiscard() => RecoveryDiscardRequested?.Invoke();
 
     public bool TryShowBluetoothAwarenessCard()
     {
@@ -634,6 +640,8 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action<Guid>? LearnedPillUndoRequested;
 
     public event Action? LearnedPillUndoActiveRequested;
+
+    public event Action? RecoveryDiscardRequested;
 
     public event Action<Guid>? LearnedPillEnded;
 

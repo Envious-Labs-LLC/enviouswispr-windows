@@ -270,7 +270,7 @@ public static class DeliveryClipboardDiagnostics
             at,
             EnviousWispr.Core.Diagnostics.AppEventCode.TextDeliveryClipboardNotRestored,
             EnviousWispr.Core.Diagnostics.AppFailureCategory.TextDelivery),
-        { Delivered: true, Route: TextDeliveryRoute.ClipboardPaste, ClipboardRestored: false } => new(
+        { Delivered: true, Route: TextDeliveryRoute.ClipboardPaste, ClipboardRestored: false, ClipboardCleanupPending: false } => new(
             at,
             EnviousWispr.Core.Diagnostics.AppEventCode.TextDeliveryClipboardRestoreDeclined),
         _ => null,

@@ -41,7 +41,7 @@ public sealed class SessionFinalizationRunnerTests
             [
                 "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
                 "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "ShowDelivering", "RecordDeliveryStarted",
-                "Deliver:hello world", "RecordDelivery:delivered=True", "ClearRecovery", "HistoryChanged", "ReportDelivery", "RecordDictationCompleted",
+                "Deliver:hello world", "RecordDelivery:delivered=True", "ClearRecovery", "ReportDelivery", "HistoryChanged", "RecordDictationCompleted",
             ],
             world.Trace);
         Assert.False(world.Persistence.HasPendingRecovery);

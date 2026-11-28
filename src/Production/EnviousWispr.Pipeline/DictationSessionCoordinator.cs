@@ -447,6 +447,62 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     }
 
     /// <summary>
+    /// Closes admission against new presses while preserving any active take (enqueuing an exit-preservation
+    /// release if currently recording) so the in-flight take can finish cleanly inside a bounded exit window.
+    /// </summary>
+    public void CloseForExitPreservation()
+    {
+        lock (_admission)
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _closed = true;
+            var recordingInFlight = _recording is not null || _activeQueued?.Command.IsPress == true;
+            if (recordingInFlight &&
+                _pendingTerminals.Count == 0 &&
+                _activeQueued?.Command.IsTerminal != true)
+            {
+                var exitRelease = new QueuedCommand(
+                    new SessionCommand(SessionCommandKind.PushToTalk, PushToTalkSignal.Released),
+                    gateReserved: false)
+                {
+                    AllowAfterClose = true,
+                };
+                _pendingTerminals.Add(null);
+                _pendingOrRunning++;
+                if (!_queue.Writer.TryWrite(exitRelease))
+                {
+                    _pendingOrRunning--;
+                    _pendingTerminals.Remove(null);
+                }
+            }
+
+            _queue.Writer.TryComplete();
+        }
+    }
+
+    /// <summary>
+    /// Waits up to <paramref name="budget"/> for an active or exit-flushed dictation command to settle.
+    /// Returns immediately when no session command is running or queued.
+    /// </summary>
+    public Task<bool> WaitForInFlightOnExitAsync(TimeSpan budget)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(budget, TimeSpan.Zero);
+        if (!IsProcessing &&
+            Volatile.Read(ref _pendingOrRunning) == 0 &&
+            Volatile.Read(ref _running) == 0 &&
+            Volatile.Read(ref _inRunAsync) == 0)
+        {
+            return Task.FromResult(true);
+        }
+
+        return OutstandingWorkFinishedAsync(budget);
+    }
+
+    /// <summary>
     /// Shutdown: admission closes at once (the finalisation in flight is not cancelled here - that is
     /// the shell's exit policy, made through <see cref="CancelProcessing"/> before this is asked for);
     /// the command running now, every expiry notification and every hold are then given
@@ -911,7 +967,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         try
         {
             var waited = false;
-            if (!holdingGate && _stopping.IsCancellationRequested && queued.Command.Kind == SessionCommandKind.Interruption)
+            if (!holdingGate && _stopping.IsCancellationRequested &&
+                (queued.Command.Kind == SessionCommandKind.Interruption || queued.AllowAfterClose))
             {
                 // AN INTERRUPTION ADMITTED BEFORE THE CLOSURE takes the gate if it is free now - the
                 // finalisation it cancelled has just let go of it - and does not park on it: the
@@ -946,7 +1003,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             bool committed;
             lock (_admission)
             {
-                committed = holdingGate && (!_closed || queued.Command.Kind == SessionCommandKind.Interruption) && !queued.Expired;
+                committed = holdingGate &&
+                    (!_closed || queued.Command.Kind == SessionCommandKind.Interruption || queued.AllowAfterClose) &&
+                    !queued.Expired;
                 queued.Started = committed;
             }
 
@@ -1182,6 +1241,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
         /// <summary>A terminal admitted behind another command: it waited in the queue, not only on the gate.</summary>
         public bool WaitedInQueue { get; init; }
+
+        /// <summary>An exit-preservation release enqueued atomically while closing admission.</summary>
+        public bool AllowAfterClose { get; init; }
 
         /// <summary>Set under the admission lock when the consumer takes the command up.</summary>
         public bool Started { get; set; }

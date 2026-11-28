@@ -240,7 +240,8 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
             DeliveredText: commit.Delivered ? repair.Insertion.Text : null,
             LowercasedFirst: repair.LowercasedFirst,
             CaseDecision: repair.CaseDecision,
-            CandidateDeletesDictatedText: repair.CandidateDeletesDictatedText);
+            CandidateDeletesDictatedText: repair.CandidateDeletesDictatedText,
+            ClipboardCleanupPending: commit.ClipboardCleanupPending);
     }
 
     private static TextDeliveryRefusalReason RefusalFor(TargetContextResult capture) =>

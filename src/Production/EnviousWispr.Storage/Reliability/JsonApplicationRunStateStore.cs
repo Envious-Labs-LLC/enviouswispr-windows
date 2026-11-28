@@ -177,6 +177,22 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         return UpdateAsync(runId, timestamp, cleanShutdown: true, dictationActive: false, cancellationToken, fence: fence);
     }
 
+    public Task<bool> SetActiveRecoverySpoolAsync(
+        Guid runId,
+        Guid? spoolSessionId,
+        RecoverySpoolStatus? spoolStatus,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken = default) =>
+        UpdateAsync(
+            runId,
+            timestamp,
+            cleanShutdown: false,
+            dictationActive: null,
+            cancellationToken,
+            updateRecoverySpool: true,
+            activeRecoverySpoolSessionId: spoolSessionId,
+            activeRecoverySpoolStatus: spoolStatus);
+
     public void Dispose()
     {
         if (_disposed)
@@ -195,7 +211,10 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         bool? dictationActive,
         CancellationToken cancellationToken,
         bool? endedBySystem = null,
-        PublicationFence? fence = null)
+        PublicationFence? fence = null,
+        bool updateRecoverySpool = false,
+        Guid? activeRecoverySpoolSessionId = null,
+        RecoverySpoolStatus? activeRecoverySpoolStatus = null)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -229,6 +248,16 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                 // heartbeat landing after it must not erase the one fact that explains this run's
                 // ending.
                 EndedBySystem = endedBySystem ?? _current.EndedBySystem,
+                ActiveRecoverySpoolSessionId = cleanShutdown
+                    ? null
+                    : updateRecoverySpool
+                        ? activeRecoverySpoolSessionId
+                        : _current.ActiveRecoverySpoolSessionId,
+                ActiveRecoverySpoolStatus = cleanShutdown
+                    ? null
+                    : updateRecoverySpool
+                        ? activeRecoverySpoolStatus
+                        : _current.ActiveRecoverySpoolStatus,
             };
             if (!await JsonSettingsStore.WriteAtomicallyAsync(next, _path, fence, cancellationToken)
                     .ConfigureAwait(false))
@@ -330,5 +359,8 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         // DEFAULTED FOR THE SAME REASON AS THE FLAG ABOVE. A file written before this existed reads
         // as false, which is the honest answer: that build never observed a Windows ending, so it
         // cannot claim one happened. Ref: #93.
-        bool EndedBySystem = false);
+        bool EndedBySystem = false,
+        // DEFAULTED FOR FORWARD/BACKWARD COMPATIBILITY WITH OLDER RUN-STATE FILES.
+        Guid? ActiveRecoverySpoolSessionId = null,
+        RecoverySpoolStatus? ActiveRecoverySpoolStatus = null);
 }

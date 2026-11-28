@@ -73,7 +73,7 @@ public static class OverlayPillCatalog
                 ("PillMutedIconStyle", "PillAdvisoryEdgeStyle", "PillAdvisoryWashStyle"),
             DictationOverlayState.Suggestion =>
                 ("PillAdvisoryIconStyle", "PillAdvisoryEdgeStyle", "PillAdvisoryWashStyle"),
-            DictationOverlayState.Warning or DictationOverlayState.Busy =>
+            DictationOverlayState.Warning or DictationOverlayState.Busy or DictationOverlayState.RetainedPaste =>
                 ("PillWarningIconStyle", "PillWarningEdgeStyle", "PillWarningWashStyle"),
             DictationOverlayState.Distress =>
                 ("PillDistressIconStyle", "PillDistressEdgeStyle", "PillDistressWashStyle"),
@@ -82,6 +82,7 @@ public static class OverlayPillCatalog
             DictationOverlayState.Hidden
                 or DictationOverlayState.Recording
                 or DictationOverlayState.Processing
+                or DictationOverlayState.Recovering
                 or DictationOverlayState.ColdStart
                 or DictationOverlayState.EngineReady
                 or DictationOverlayState.ImportStatus
@@ -124,6 +125,8 @@ public static class OverlayPillCatalog
             DictationOverlayState.Advisory => (fallback, "\uF781"),
             DictationOverlayState.Suggestion => (fallback, "\uE774"),
             DictationOverlayState.Warning => (fallback, string.Empty),
+            DictationOverlayState.RetainedPaste => (string.IsNullOrWhiteSpace(detail) ? "Paste did not land. Text kept on clipboard. Press Ctrl+V" : detail, string.Empty),
+            DictationOverlayState.Recovering => (string.IsNullOrWhiteSpace(detail) ? "Recovering last recording..." : detail, string.Empty),
             DictationOverlayState.Busy => (fallback, string.Empty),
             DictationOverlayState.Distress => (string.IsNullOrWhiteSpace(detail) ? "Recording interrupted." : detail, string.Empty),
             DictationOverlayState.Error => (string.IsNullOrWhiteSpace(detail) ? "Something went wrong. Try again." : detail, "\uEA39"),
@@ -141,6 +144,8 @@ public static class OverlayPillCatalog
         or DictationOverlayState.Advisory
         or DictationOverlayState.Suggestion
         or DictationOverlayState.Warning
+        or DictationOverlayState.RetainedPaste
+        or DictationOverlayState.Recovering
         or DictationOverlayState.Distress
         or DictationOverlayState.Error
         or DictationOverlayState.Busy;
@@ -150,6 +155,7 @@ public static class OverlayPillCatalog
         DictationOverlayState.EngineReady => 1.5d,
         DictationOverlayState.Distress => 2.0d,
         DictationOverlayState.Success or DictationOverlayState.Warning => 2.5d,
+        DictationOverlayState.RetainedPaste => 4.5d,
         DictationOverlayState.ImportStatus => 3.0d,
         DictationOverlayState.Error => status.ErrorVariant switch
         {
@@ -157,7 +163,7 @@ public static class OverlayPillCatalog
             RichErrorVariant.PermissionDenied => 6.0d,
             _ => 3.0d,
         },
-        DictationOverlayState.Suggestion or DictationOverlayState.Busy => 6.0d,
+        DictationOverlayState.Suggestion or DictationOverlayState.Busy or DictationOverlayState.Recovering => 6.0d,
         DictationOverlayState.Advisory => 8.0d,
         DictationOverlayState.EscapeRecovery => EscapeRecoveryDwellSeconds,
         _ => 3.0d,

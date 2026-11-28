@@ -1,5 +1,7 @@
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Presentation;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -15,16 +17,49 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     private const int ArrivalPollIntervalMs = 35;
     private readonly SemaphoreSlim _automationGate = new(1, 1);
     private readonly PasteRevealPatience _revealPatience = new();
+    private readonly IAppLogger? _logger;
+    private readonly Action? _notifyRetainedPaste;
+    private readonly ClipboardBoardOwnership _boardOwnership;
+    private readonly ClipboardCleanupTracker _cleanupTracker;
     private int _arrivalProbeInFlight;
 
-    public void Dispose() => _automationGate.Dispose();
+    public WindowsTextTargetAdapter()
+        : this(logger: null, notifyRetainedPaste: null, clock: null, boardOwnership: null)
+    {
+    }
+
+    public WindowsTextTargetAdapter(
+        IAppLogger? logger,
+        Action? notifyRetainedPaste = null,
+        TimeProvider? clock = null,
+        ClipboardBoardOwnership? boardOwnership = null)
+    {
+        _logger = logger;
+        _notifyRetainedPaste = notifyRetainedPaste;
+        _boardOwnership = boardOwnership ?? ClipboardBoardOwnership.Shared;
+        _cleanupTracker = new ClipboardCleanupTracker(_boardOwnership, clock ?? TimeProvider.System);
+    }
+
+    public bool HasPendingCleanup => _cleanupTracker.HasPendingCleanup;
+
+    public Task PreemptPendingCleanupAsync(CancellationToken cancellationToken = default) =>
+        _cleanupTracker.PreemptAsync(cancellationToken);
+
+    public Task<bool> DrainPendingCleanupAsync(TimeSpan timeout) =>
+        _cleanupTracker.DrainAsync(timeout);
+
+    public void Dispose()
+    {
+        _ = _cleanupTracker.PreemptAsync(CancellationToken.None);
+        _automationGate.Dispose();
+    }
 
     public Task<TextCommitResult> CopyOnlyAsync(
         ProcessedText text,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(text);
-        return WindowsClipboardPaste.CopyRequestedAsync(text.Text, cancellationToken);
+        return WindowsClipboardPaste.CopyRequestedAsync(text.Text, cancellationToken, _boardOwnership);
     }
 
     public async Task<TargetContextResult> CaptureContextAsync(
@@ -83,7 +118,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     /// distinctions it cannot act on.
     /// </remarks>
     public static Task<string?> TryReadSelectionWithCopyAsync(CancellationToken cancellationToken) =>
-        WindowsClipboardPaste.TryReadSelectionAsync(cancellationToken);
+        WindowsClipboardPaste.TryReadSelectionAsync(cancellationToken, ClipboardBoardOwnership.Shared);
 
     public async Task<TextCommitResult> CommitAsync(
         TextCommitRequest request,
@@ -99,7 +134,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.FallbackText.Text,
                 request.ForcedRefusalReason,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                _boardOwnership).ConfigureAwait(false);
         }
 
         if (request.ExpectedContext is null)
@@ -107,7 +143,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.FallbackText.Text,
                 TextDeliveryRefusalReason.AccessibilityUnavailable,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                _boardOwnership).ConfigureAwait(false);
         }
 
         var verifyCaretText = WindowsTextDeliveryPolicy.ShouldCheckCaretTextUnchanged(
@@ -127,7 +164,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.FallbackText.Text,
                 RevalidationRefusal(current),
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                _boardOwnership).ConfigureAwait(false);
         }
 
         var commitRule = ResolveTargetPolicy(
@@ -158,7 +196,8 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.FallbackText.Text,
                 policyRefusal,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                _boardOwnership).ConfigureAwait(false);
         }
 
         var keystroke = ResolveCommitKeystroke(current.Context, commitRule);
@@ -170,7 +209,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         var dispatchToken = _revealPatience.RecordDispatch(processName);
         Stopwatch? dispatchedWatch = null;
 
-        var pasted = await WindowsClipboardPaste.PasteAsync(
+        var dispatch = await WindowsClipboardPaste.PasteDeferredRestoreAsync(
             request.Text.Text,
             request.FallbackText.Text,
             request.Options.RestoreClipboardAfterPaste,
@@ -181,41 +220,127 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 request.Options,
                 verifyCaretText)),
             cancellationToken,
-            settleDelay,
-            onPasteDispatched: () => dispatchedWatch = Stopwatch.StartNew()).ConfigureAwait(false);
+            onPasteDispatched: () => dispatchedWatch = Stopwatch.StartNew(),
+            boardOwnership: _boardOwnership).ConfigureAwait(false);
 
-        if (!pasted.Delivered || pasted.Route != TextDeliveryRoute.ClipboardPaste)
+        if (!dispatch.Result.Delivered || dispatch.Result.Route != TextDeliveryRoute.ClipboardPaste)
         {
-            return pasted;
+            return dispatch.Result;
         }
 
-        // Post-paste arrival verification runs strictly best-effort after the paste keystroke and
-        // clipboard restoration already completed: cancellation or observer failure must never turn
-        // an already-completed paste into Cancelled/DeliveryFaulted and trigger duplicate retries.
-        PasteArrivalStatus arrivalStatus;
-        int arrivalElapsedMs;
+        // Schedule settle delay + UIA arrival observation (ahead of conditional GiveBack) asynchronously
+        // so CommitAsync returns promptly after SendInput while tracking cleanup for preemption & shutdown.
+        var eligibleForRetention = request.ExpectedContext is { IsScreenDerived: false } &&
+            request.TargetKind != TextTargetKind.Terminal;
+        _cleanupTracker.SchedulePostPaste(new PendingPostPasteCleanup
+        {
+            Request = request,
+            EligibleForCheckedMissRetention = eligibleForRetention,
+            SnapshotPresent = dispatch.Snapshot is not null,
+            OwnedSequence = dispatch.OwnedSequence,
+            FallbackText = dispatch.FallbackText,
+            SettleDelay = settleDelay,
+            SettleFloor = settleFloor,
+            DispatchedWatch = dispatchedWatch,
+            DispatchToken = dispatchToken,
+            ObserveArrivalAsync = token => ObserveArrivalSafelyAsync(
+                request,
+                dispatchedWatch,
+                dispatchToken,
+                settleFloor,
+                token),
+            IsSequenceStillOurs = () =>
+                dispatch.OwnedSequence is { } seq && WindowsClipboardPaste.IsSequenceMatch(seq),
+            RestoreClipboardAsync = () =>
+                dispatch.Snapshot is not null && dispatch.OwnedSequence is { } seq
+                    ? WindowsClipboardPaste.RestoreSnapshotOnStaAsync(dispatch.Snapshot, seq, CancellationToken.None)
+                    : Task.FromResult((false, false)),
+            RewriteUnmarkedFallbackAsync = () =>
+                dispatch.OwnedSequence is { } seq
+                    ? WindowsClipboardPaste.RewriteUnmarkedWhileOursOnStaAsync(dispatch.FallbackText, seq, CancellationToken.None)
+                    : Task.FromResult((false, false)),
+            OnCompleted = outcome => RecordDeferredCleanupOutcome(request, outcome),
+        });
+
+        return dispatch.Result;
+    }
+
+    private async Task<(PasteArrivalStatus Status, int ElapsedMilliseconds)> ObserveArrivalSafelyAsync(
+        TextCommitRequest request,
+        Stopwatch? dispatchedWatch,
+        PasteRevealPatience.DispatchToken? dispatchToken,
+        TimeSpan settleFloor,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            (arrivalStatus, arrivalElapsedMs) = await ObserveArrivalAsync(
+            return await ObserveArrivalAsync(
                 request,
                 dispatchedWatch,
                 dispatchToken,
                 settleFloor,
                 cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            arrivalStatus = PasteArrivalStatus.Unreadable;
-            arrivalElapsedMs = dispatchedWatch is { } w
+            var elapsedMs = dispatchedWatch is { } w
                 ? (int)Math.Min(int.MaxValue, w.ElapsedMilliseconds)
                 : 0;
+            return (PasteArrivalStatus.Unreadable, elapsedMs);
+        }
+    }
+
+    private void RecordDeferredCleanupOutcome(TextCommitRequest request, ClipboardCleanupOutcome outcome)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var arrivalEvent = outcome.ArrivalStatus switch
+        {
+            PasteArrivalStatus.Confirmed => (AppEventCode?)AppEventCode.TextDeliveryArrivalConfirmed,
+            PasteArrivalStatus.NotObserved => AppEventCode.TextDeliveryArrivalNotObserved,
+            PasteArrivalStatus.Unreadable => AppEventCode.TextDeliveryArrivalUnreadable,
+            _ => null,
+        };
+        if (arrivalEvent is { } arrivalCode)
+        {
+            _logger?.Write(new AppLogEntry(
+                now,
+                arrivalCode,
+                AppFailureCategory.None,
+                outcome.ArrivalElapsedMilliseconds));
         }
 
-        return pasted with
+        if (outcome.RetainedOnClipboard)
         {
-            ArrivalStatus = arrivalStatus,
-            ArrivalElapsedMilliseconds = arrivalElapsedMs,
-        };
+            _logger?.Write(new AppLogEntry(
+                now,
+                AppEventCode.TextDeliveryClipboardFallback,
+                AppFailureCategory.TextDelivery));
+            _notifyRetainedPaste?.Invoke();
+            return;
+        }
+
+        if (!request.Options.RestoreClipboardAfterPaste || outcome.Preempted)
+        {
+            return;
+        }
+
+        if (outcome.ClipboardUncertain)
+        {
+            _logger?.Write(new AppLogEntry(
+                now,
+                AppEventCode.TextDeliveryClipboardNotRestored,
+                AppFailureCategory.TextDelivery));
+        }
+        else if (!outcome.ClipboardRestored)
+        {
+            _logger?.Write(new AppLogEntry(
+                now,
+                AppEventCode.TextDeliveryClipboardRestoreDeclined));
+        }
     }
 
     private async Task<(PasteArrivalStatus Status, int ElapsedMilliseconds)> ObserveArrivalAsync(

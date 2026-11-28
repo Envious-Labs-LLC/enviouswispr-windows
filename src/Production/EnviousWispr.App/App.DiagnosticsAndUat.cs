@@ -376,6 +376,12 @@ public partial class App
         }
         finally
         {
+            if (_textTargetAdapter is { } adapter)
+            {
+                await adapter.DrainPendingCleanupAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+
+            await _sessionPersistence.DrainPendingHistoryAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             SignalJourneyUatEvent(completeVariable);
             if (TryOpenJourneyUatEvent("ENVIOUSWISPR_UAT_JOURNEY_EXIT_EVENT", out var leaveEvent) &&
                 leaveEvent is not null)

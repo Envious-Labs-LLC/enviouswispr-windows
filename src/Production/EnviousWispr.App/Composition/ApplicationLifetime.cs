@@ -52,6 +52,7 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// </param>
 /// <param name="CloseRunState">Closes the run-state store: only once nothing that writes to it is outstanding. Best effort, reported if it throws.</param>
 /// <param name="DisposeLogger">The log, flushed and closed as the last act whatever the outcome; best effort.</param>
+/// <param name="PreserveInFlightDictation">Optional bounded completion window (before <paramref name="CancelProcessing"/>) allowing an active recording/finalization to flush, save, or finish cleanly on exit.</param>
 public sealed record LifetimeParts(
     Action CloseAdmission,
     Func<Task> DrainPresentation,
@@ -65,7 +66,8 @@ public sealed record LifetimeParts(
     IReadOnlyList<LifetimeStep> DisposeShell,
     Func<PublicationFence, CancellationToken, Task<bool>> CompleteRun,
     Action CloseRunState,
-    Func<Task> DisposeLogger);
+    Func<Task> DisposeLogger,
+    Func<TimeSpan, Task>? PreserveInFlightDictation = null);
 
 /// <summary>How the exit ended.</summary>
 public enum ExitOutcome
@@ -151,6 +153,9 @@ public sealed class ApplicationLifetime
 {
     /// <summary>What the shell can promise to be gone in.</summary>
     public static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(20);
+
+    /// <summary>Maximum bounded grace window inside the exit budget to finish an in-flight recording/finalization cleanly before cancelling.</summary>
+    public static readonly TimeSpan MaxDictationPreservationWindow = TimeSpan.FromSeconds(9);
 
     /// <summary>How far behind the budget the watchdog stands: an exit that concludes on its last tick is never pre-empted.</summary>
     public static readonly TimeSpan WatchGrace = TimeSpan.FromSeconds(2);
@@ -292,6 +297,28 @@ public sealed class ApplicationLifetime
             outstanding = [.. _preparationOutstanding];
             failed = [.. _preparationFailed];
             presentationDrained = _presentationDrained;
+        }
+
+        if (_parts.PreserveInFlightDictation is { } preserveDictation && budget.Left > TimeSpan.Zero)
+        {
+            var halfRemaining = TimeSpan.FromTicks(budget.Left.Ticks / 2);
+            var window = halfRemaining < MaxDictationPreservationWindow
+                ? halfRemaining
+                : MaxDictationPreservationWindow;
+            if (window > TimeSpan.Zero)
+            {
+                Volatile.Write(ref _current, "dictation preservation");
+                try
+                {
+                    var preserveTask = preserveDictation(window);
+                    await BoundedJoin.JoinAsync(preserveTask, window, _clock).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+                {
+                    failed.Add("dictation preservation");
+                    RecordFailure();
+                }
+            }
         }
 
         Try("exit policy", _parts.CancelProcessing, failed);
