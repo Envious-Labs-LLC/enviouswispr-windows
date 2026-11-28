@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
@@ -101,6 +102,12 @@ public interface ISessionFinalizationEffects
 
     /// <summary>The final status line for a dictation that was not delivered.</summary>
     void ShowHeldStatus(FinalizationReport report);
+
+    /// <summary>Surfaces an advisory when the completed capture delivered only exact digital silence.</summary>
+    void ShowZeroSignalAdvisory() => ShowHeldStatus(new FinalizationReport(FinalizationOutcome.Held));
+
+    /// <summary>Tears down any warm-idle capture after a whole-zero recording so the next take opens cleanly.</summary>
+    Task RetireWarmCaptureAsync() => Task.CompletedTask;
 
     /// <summary>The whole wait, whichever way the finalisation left.</summary>
     void RecordDictationCompleted(long waitMilliseconds);
@@ -355,6 +362,28 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             return new FinalizationReport(FinalizationOutcome.EngineUnavailable);
         }
 
+        var audioForTranscription = audio;
+        if (audio.Samples.Length > 0)
+        {
+            var trimmed = SilentMicNoticePolicy.TrimTrailingExactZeros(
+                audio.Samples,
+                audio.DrainedPreRollSampleCount,
+                out var isWholeZero);
+            if (isWholeZero)
+            {
+                _effects.ArchiveAudio(audio);
+                await _effects.RetireWarmCaptureAsync().ConfigureAwait(false);
+                await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
+                _effects.ShowZeroSignalAdvisory();
+                return new FinalizationReport(FinalizationOutcome.Held);
+            }
+
+            if (trimmed.Length < audio.Samples.Length)
+            {
+                audioForTranscription = audio with { Samples = trimmed };
+            }
+        }
+
         _effects.ShowTranscribing(maxDurationReached);
         _effects.RecordTranscriptionStarted();
         var waitTimer = Stopwatch.StartNew();
@@ -365,7 +394,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             // THE HEAD START IS THE STREAMING OWNER'S TO USE. The loop was stopped by the finalisation
             // before this ran, so what it committed is settled; the owner decides whether it is usable.
             var transcript = await _streaming
-                .TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken)
+                .TranscribeUsingAnyHeadStartAsync(engine, audioForTranscription, cancellationToken)
                 .ConfigureAwait(false);
             timer.Stop();
             if (!TryCloseEscapeWindow(out var promotedToRecovery))

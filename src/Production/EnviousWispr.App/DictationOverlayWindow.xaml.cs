@@ -1,4 +1,5 @@
 using EnviousWispr.App.Overlay;
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Learning;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
@@ -103,6 +104,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             PreviewText,
             PreviewFade,
             DistressRedProbe,
+            MutedIconProbe,
             LipsSpectrumPalette);
 
         _noticeColumnSpacing = HeaderRow.ColumnSpacing;
@@ -141,8 +143,13 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
     public void ApplyTheme(ElementTheme theme)
     {
         OverlayRoot.RequestedTheme = theme;
-        _recordingSurface.ApplySpectrumSweep();
-        _recordingSurface.ApplyLipsColoring(distress: _state == DictationOverlayState.Distress);
+        var silentMic = _state == DictationOverlayState.Recording && IsSilentMicNotice(_recordingNotice);
+        _recordingSurface.ApplySpectrumSweep(silentMic: silentMic);
+        _recordingSurface.ApplyLipsColoring(distress: _state == DictationOverlayState.Distress, silentMic: silentMic);
+        if (_state == DictationOverlayState.Recording && _recordingNotice != RecordingNoticeKind.None)
+        {
+            ApplyInPanelNotice(_recordingNotice, _activeDesign == RecordingPillDesign.ReadingWell);
+        }
     }
 
     public void PreWarm()
@@ -189,7 +196,8 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             SetPreview(entry.PreviewTranscript);
         }
         else if (previewStatus.State == DictationOverlayState.Recording
-            && _activeDesign == RecordingPillDesign.LevelRail)
+            && _activeDesign == RecordingPillDesign.LevelRail
+            && !IsSilentMicNotice(previewStatus.RecordingNotice))
         {
             _recordingSurface.DrawSampleLevelRailForPreview();
         }
@@ -446,7 +454,14 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
                 ResetLevelHistory();
             }
 
-            _recordingSurface.ApplyLipsColoring(distress: false);
+            var silentMic = IsSilentMicNotice(_recordingNotice);
+            _recordingSurface.ApplyLipsColoring(distress: false, silentMic: silentMic);
+            _recordingSurface.ApplySpectrumSweep(silentMic: silentMic);
+            if (silentMic)
+            {
+                _recordingSurface.FlattenMetersForSilence();
+            }
+
             ApplyAction(action: null);
             ConfigureRecordingDesign();
             if (!isPreview)
@@ -697,6 +712,7 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         var classic = _activeDesign == RecordingPillDesign.Classic;
         var rail = _activeDesign == RecordingPillDesign.LevelRail;
         var readingWell = _activeDesign == RecordingPillDesign.ReadingWell;
+        var silentMic = IsSilentMicNotice(_recordingNotice);
 
         var lipsSize = classic && _handsFree ? HandsFreeLipsSize : HoldLipsSize;
         LipsMark.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
@@ -705,9 +721,11 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
         LipsMark.Height = lipsSize;
         LipsMarkScale.ScaleX = 1;
         LipsMarkScale.ScaleY = 1;
+        _recordingSurface.ApplyLipsColoring(distress: false, silentMic: silentMic);
+        _recordingSurface.ApplySpectrumSweep(silentMic: silentMic);
         if (classic)
         {
-            _recordingSurface.DrawLips(_recordingSurface.LastDrawnLevel, force: true);
+            _recordingSurface.DrawLips(silentMic ? 0f : _recordingSurface.LastDrawnLevel, force: true);
         }
 
         ElapsedText.Visibility = classic && _handsFree ? Visibility.Collapsed : Visibility.Visible;
@@ -785,7 +803,14 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
                 throw new ArgumentOutOfRangeException();
         }
 
-        _recordingSurface.DrawLevelHistory(_activeDesign, _levelHistory);
+        if (IsSilentMicNotice(_recordingNotice))
+        {
+            _recordingSurface.FlattenMetersForSilence();
+        }
+        else
+        {
+            _recordingSurface.DrawLevelHistory(_activeDesign, _levelHistory);
+        }
     }
 
     private void ConfigureFloatingCard(DictationStatus status)
@@ -1088,9 +1113,30 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
             return;
         }
 
+        if (notice == RecordingNoticeKind.MicSilentCalm)
+        {
+            InPanelNoticeIcon.Glyph = "\uF781";
+            InPanelNoticeIcon.Style = OverlayChromeAnimator.GetPillStyle("PillMutedIconStyle");
+            InPanelNoticeText.Style = OverlayChromeAnimator.GetPillStyle(
+                readingWell ? "PillWellModeTextStyle" : "PillNoticeTextStyle");
+        }
+        else if (notice == RecordingNoticeKind.MicSilentStrong)
+        {
+            InPanelNoticeIcon.Glyph = "\uE7BA";
+            InPanelNoticeIcon.Style = OverlayChromeAnimator.GetPillStyle("PillWarningGlyphIconStyle");
+            var lightReadingWell = readingWell && OverlayRoot.ActualTheme == ElementTheme.Light;
+            InPanelNoticeText.Style = OverlayChromeAnimator.GetPillStyle(
+                lightReadingWell ? "PillWellTextStyle" : "PillWarningTextStyle");
+        }
+        else
+        {
+            InPanelNoticeIcon.Glyph = "\uE7BA";
+            InPanelNoticeIcon.Style = OverlayChromeAnimator.GetPillStyle("PillWarningIconStyle");
+            InPanelNoticeText.Style = OverlayChromeAnimator.GetPillStyle(
+                readingWell ? "PillWellModeTextStyle" : "PillNoticeTextStyle");
+        }
+
         InPanelNoticeText.Text = OverlayPillCatalog.FormatRecordingNoticeText(notice);
-        InPanelNoticeText.Style = OverlayChromeAnimator.GetPillStyle(
-            readingWell ? "PillWellModeTextStyle" : "PillNoticeTextStyle");
         InPanelNoticeRow.Visibility = Visibility.Visible;
     }
 
@@ -1382,8 +1428,13 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
 
     private void OnOverlayRootActualThemeChanged(FrameworkElement sender, object args)
     {
-        _recordingSurface.ApplySpectrumSweep();
-        _recordingSurface.ApplyLipsColoring(distress: _state == DictationOverlayState.Distress);
+        var silentMic = _state == DictationOverlayState.Recording && IsSilentMicNotice(_recordingNotice);
+        _recordingSurface.ApplySpectrumSweep(silentMic: silentMic);
+        _recordingSurface.ApplyLipsColoring(distress: _state == DictationOverlayState.Distress, silentMic: silentMic);
+        if (_state == DictationOverlayState.Recording && _recordingNotice != RecordingNoticeKind.None)
+        {
+            ApplyInPanelNotice(_recordingNotice, _activeDesign == RecordingPillDesign.ReadingWell);
+        }
     }
 
     private void OnOverlayRootLoaded(object sender, RoutedEventArgs e)
@@ -1427,6 +1478,54 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
 
         ApplyApproachingCapNotice();
     }
+
+    public void SetSilentMicNotice(MicSilenceLevel level)
+    {
+        if (_cleanedUp || _isPreviewSession || _state != DictationOverlayState.Recording)
+        {
+            return;
+        }
+
+        if (_autoCapNoticeShown || _recordingNotice == RecordingNoticeKind.ApproachingCap)
+        {
+            return;
+        }
+
+        var next = level switch
+        {
+            MicSilenceLevel.Calm => RecordingNoticeKind.MicSilentCalm,
+            MicSilenceLevel.Strong => RecordingNoticeKind.MicSilentStrong,
+            _ => RecordingNoticeKind.None,
+        };
+        if (next == RecordingNoticeKind.None)
+        {
+            if (!IsSilentMicNotice(_recordingNotice))
+            {
+                return;
+            }
+        }
+        else if (_recordingNotice == next)
+        {
+            return;
+        }
+
+        _recordingNotice = next;
+        ConfigureRecordingDesign();
+        _win32Host.PositionOnForegroundMonitor(_position);
+        if (next != RecordingNoticeKind.None)
+        {
+            var noticeText = OverlayPillCatalog.FormatRecordingNoticeText(next);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(InPanelNoticeText, noticeText);
+            AnnounceStateChange(
+                InPanelNoticeText,
+                next == RecordingNoticeKind.MicSilentStrong
+                    ? DictationOverlayState.Warning
+                    : DictationOverlayState.Advisory);
+        }
+    }
+
+    private static bool IsSilentMicNotice(RecordingNoticeKind notice) =>
+        notice is RecordingNoticeKind.MicSilentCalm or RecordingNoticeKind.MicSilentStrong;
 
     private void ApplyApproachingCapNotice()
     {
@@ -1485,10 +1584,17 @@ public sealed partial class DictationOverlayWindow : Window, IDisposable
 
         if (LipsMark.Visibility == Visibility.Visible)
         {
-            _recordingSurface.DrawLips(framePeak);
+            _recordingSurface.DrawLips(IsSilentMicNotice(_recordingNotice) ? 0f : framePeak);
         }
 
-        _recordingSurface.DrawLevelHistory(_activeDesign, _levelHistory);
+        if (IsSilentMicNotice(_recordingNotice))
+        {
+            _recordingSurface.FlattenMetersForSilence();
+        }
+        else
+        {
+            _recordingSurface.DrawLevelHistory(_activeDesign, _levelHistory);
+        }
     }
 
     private void OnExpiryRailProgressChanged(OverlayExpiryMode mode, double fraction)

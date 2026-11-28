@@ -104,7 +104,80 @@
                     <StackPanel x:Name="MicrophoneEyebrow" x:FieldModifier="internal" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="MicrophoneEyebrowGlyph" x:FieldModifier="internal" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsMicrophoneNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Microphone" /></StackPanel>
                     <Border Style="{StaticResource BrandSettingsCardStyle}">
                         <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE720;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock x:Name="MicrophoneLabel" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Text="Microphone" TextWrapping="Wrap" VerticalAlignment="Center" /><Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About Microphone" ToolTipService.ToolTip="What is this?"><FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" /><Button.Flyout><Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}"><TextBlock MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" Text="Chooses which microphone EnviousWispr listens to. Leave it on Auto to follow your active physical Windows default, or fall back automatically to a physical microphone (built-in, USB, then Bluetooth) and skip virtual loopback cables." TextWrapping="Wrap" /></Flyout></Button.Flyout></Button></Grid><ComboBox x:Name="MicrophoneComboBox" x:FieldModifier="internal" AutomationProperties.LabeledBy="{x:Bind MicrophoneLabel, Mode=OneTime}" ItemTemplate="{StaticResource BrandTrimmedDisplayNameTemplate}" HorizontalAlignment="Stretch" /></StackPanel></Grid><!--
+                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE720;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock x:Name="MicrophoneLabel" x:FieldModifier="internal" Style="{StaticResource BrandRowLabelStyle}" Text="Microphone" TextWrapping="Wrap" VerticalAlignment="Center" /><Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About Microphone" ToolTipService.ToolTip="What is this?"><FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" /><Button.Flyout><Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}"><TextBlock MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" Text="Chooses which microphone EnviousWispr listens to. Leave it on Auto to follow your active physical Windows default, or fall back automatically to a physical microphone (built-in, USB, then Bluetooth) and skip virtual loopback cables." TextWrapping="Wrap" /></Flyout></Button.Flyout></Button></Grid><ComboBox x:Name="MicrophoneComboBox" x:FieldModifier="internal" AutomationProperties.LabeledBy="{x:Bind MicrophoneLabel, Mode=OneTime}" ItemTemplate="{StaticResource BrandTrimmedDisplayNameTemplate}" HorizontalAlignment="Stretch" /></StackPanel></Grid>
+                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE916;" />
+                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                    <Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Microphone readiness" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        <Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About Microphone readiness" ToolTipService.ToolTip="What is this?">
+                                            <FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" />
+                                            <Button.Flyout>
+                                                <Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}">
+                                                    <TextBlock MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" Text="Keep the microphone engine active for a short time after dictation so the next recording starts instantly and captures your first words." TextWrapping="Wrap" />
+                                                </Flyout>
+                                            </Button.Flyout>
+                                        </Button>
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="How long the mic stays ready after recording." TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Border Grid.Column="2" CornerRadius="9" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                        <Button x:Name="MicReadinessOffSegmentButton" x:FieldModifier="internal" Content="Off" Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                        <Button x:Name="MicReadiness10sSegmentButton" x:FieldModifier="internal" Content="10s" Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                        <Button x:Name="MicReadiness30sSegmentButton" x:FieldModifier="internal" Content="30s" Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                        <Button x:Name="MicReadiness60sSegmentButton" x:FieldModifier="internal" Content="60s" Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                        <Button x:Name="MicReadinessAlwaysSegmentButton" x:FieldModifier="internal" Content="Always" Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Border x:Name="MicReadinessAlwaysNotice" x:FieldModifier="internal" Background="{ThemeResource BrandWarningSoftBrush}" BorderBrush="{ThemeResource BrandWarningBrush}" BorderThickness="1" CornerRadius="6" Padding="12,8" Visibility="Collapsed">
+                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandWarningBrush}" Glyph="&#xE7BA;" />
+                                    <TextBlock Grid.Column="1" x:Name="MicReadinessAlwaysNoticeText" x:FieldModifier="internal" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Always keeps the microphone engine active. The Windows microphone indicator may stay visible and power use may increase." TextWrapping="Wrap" />
+                                </Grid>
+                            </Border>
+                            <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" IsDoubleTapEnabled="False" Tapped="SettingRow_Tapped">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xF781;" />
+                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                    <Grid HorizontalAlignment="Left" ColumnSpacing="{StaticResource BrandSpacingXs}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="SilentMicWarningsToggleLabel" x:FieldModifier="internal" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Warn when the microphone is silent" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                        <Button Grid.Column="1" Style="{StaticResource BrandHelpButtonStyle}" AutomationProperties.Name="About Warn when the microphone is silent" ToolTipService.ToolTip="What is this?">
+                                            <FontIcon FontSize="{StaticResource BrandHelpGlyphSize}" Glyph="&#xE9CE;" />
+                                            <Button.Flyout>
+                                                <Flyout FlyoutPresenterStyle="{StaticResource BrandHelpFlyoutPresenterStyle}">
+                                                    <TextBlock MaxWidth="{StaticResource BrandHelpFlyoutMaxWidth}" Style="{StaticResource BrandBodyStyle}" Text="If your microphone sends only silence while you dictate, the pill shows a notice after a few seconds, and a stronger one after 15 seconds. Dictation keeps recording either way; to stop recording when you pause, use Auto-stop on silence." TextWrapping="Wrap" />
+                                                </Flyout>
+                                            </Button.Flyout>
+                                        </Button>
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Shows a notice on the pill when no sound arrives." TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="2" AutomationProperties.LabeledBy="{x:Bind SilentMicWarningsToggleLabel, Mode=OneTime}" HorizontalAlignment="Right" VerticalAlignment="Center" x:Name="SilentMicWarningsToggle" x:FieldModifier="internal" OnContent="" OffContent="" MinWidth="0" Style="{StaticResource BrandToggleSwitchStyle}" />
+                            </Grid>
+                            <!--
                                 THE ONE PLACE SOMEBODY CHECKS THEIR MICROPHONE WORKS, AND IT
                                 COULD NOT TELL THEM. This page named a device and stopped
                                 there, so an app that was hearing pure silence looked exactly

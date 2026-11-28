@@ -617,4 +617,39 @@ public sealed class SettingsPresenterTests
         Assert.True(store.LastSaved!.Preferences.SmartInsertionEnabled);
         Assert.True(presenter.Current.ToPortableProfile().Preferences.SmartInsertionEnabled);
     }
+
+    [Fact]
+    public async Task SaveGeneralRoundTripsWarmMicrophonePolicyAndSilentMicWarnings()
+    {
+        Assert.Equal(MicrophoneWarmPolicy.Seconds30, DictationPreferences.Default.WarmMicrophonePolicy);
+        Assert.True(DictationPreferences.Default.SilentMicWarningsEnabled);
+
+        var store = new BlockingStore();
+        store.LetSavesFinish();
+        using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+        foreach (var policy in Enum.GetValues<MicrophoneWarmPolicy>())
+        {
+            var outcome = await presenter.SaveGeneralAsync(General() with
+            {
+                WarmMicrophonePolicyIndex = SettingsPresenter.WarmMicrophonePolicyIndex(policy),
+                SilentMicWarningsEnabled = false,
+            });
+
+            Assert.Equal(GeneralSaveStatus.Saved, outcome.Status);
+            Assert.Equal(policy, presenter.Current.Preferences.Dictation.WarmMicrophonePolicy);
+            Assert.Equal(policy, store.LastSaved!.Preferences.Dictation.WarmMicrophonePolicy);
+            Assert.False(presenter.Current.Preferences.Dictation.SilentMicWarningsEnabled);
+        }
+
+        var fallback = await presenter.SaveGeneralAsync(General() with
+        {
+            WarmMicrophonePolicyIndex = -1,
+            SilentMicWarningsEnabled = true,
+        });
+
+        Assert.Equal(GeneralSaveStatus.Saved, fallback.Status);
+        Assert.Equal(MicrophoneWarmPolicy.Seconds30, presenter.Current.Preferences.Dictation.WarmMicrophonePolicy);
+        Assert.True(presenter.Current.Preferences.Dictation.SilentMicWarningsEnabled);
+    }
 }

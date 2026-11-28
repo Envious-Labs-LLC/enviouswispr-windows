@@ -776,6 +776,12 @@
     <Style x:Key="PillWarningIconStyle" TargetType="FontIcon">
         <Setter Property="Foreground" Value="{ThemeResource PillWarningInkBrush}" />
     </Style>
+    <Style x:Key="PillWarningGlyphIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillWarningGlyphBrush}" />
+    </Style>
+    <Style x:Key="PillWarningTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillWarningGlyphBrush}" />
+    </Style>
     <Style x:Key="PillWarningEdgeStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource PillWarningInkBrush}" />
     </Style>

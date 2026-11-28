@@ -12,6 +12,7 @@ public sealed partial class MainWindow
 {
     private int _selectedThemeIndex;
     private int _selectedOverlayPositionIndex;
+    private int _warmMicrophonePolicyIndex = SettingsPresenter.WarmMicrophonePolicyIndex(DictationPreferences.Default.WarmMicrophonePolicy);
     private RecordingPillDesign _lastWithoutWordsPillDesign = RecordingPillDesign.Classic;
 
     /// <summary>Auto-saves settings changes quietly whenever a control is updated.</summary>
@@ -88,7 +89,9 @@ public sealed partial class MainWindow
                 ?? (prefs.PasteTargetMode == PasteTargetMode.WhereDictationStarted),
             LearnFromEdits: LearnFromEditsToggle?.IsOn ?? dictation.LearnFromEditsEnabled,
             FixLearnedWords: FixLearnedWordsToggle?.IsOn ?? dictation.FixLearnedWordsEnabled,
-            SmartInsertionEnabled: SmartInsertionToggle?.IsOn ?? prefs.SmartInsertionEnabled);
+            SmartInsertionEnabled: SmartInsertionToggle?.IsOn ?? prefs.SmartInsertionEnabled,
+            WarmMicrophonePolicyIndex: _warmMicrophonePolicyIndex,
+            SilentMicWarningsEnabled: SilentMicWarningsToggle?.IsOn ?? dictation.SilentMicWarningsEnabled);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -183,6 +186,12 @@ public sealed partial class MainWindow
             _ = TriggerAutoSaveAsync();
         };
         MicrophoneComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        MicReadinessOffSegmentButton.Click += (_, _) => SetWarmMicrophonePolicySelection(0, triggerSave: true);
+        MicReadiness10sSegmentButton.Click += (_, _) => SetWarmMicrophonePolicySelection(1, triggerSave: true);
+        MicReadiness30sSegmentButton.Click += (_, _) => SetWarmMicrophonePolicySelection(2, triggerSave: true);
+        MicReadiness60sSegmentButton.Click += (_, _) => SetWarmMicrophonePolicySelection(3, triggerSave: true);
+        MicReadinessAlwaysSegmentButton.Click += (_, _) => SetWarmMicrophonePolicySelection(4, triggerSave: true);
+        SilentMicWarningsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
 
         AutoStopSecondsBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
         RetentionDaysComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
@@ -238,6 +247,37 @@ public sealed partial class MainWindow
         ApplySegmentButtonState(SystemThemeSegmentButton, _selectedThemeIndex == 0);
         ApplySegmentButtonState(LightThemeSegmentButton, _selectedThemeIndex == 1);
         ApplySegmentButtonState(DarkThemeSegmentButton, _selectedThemeIndex == 2);
+    }
+
+    private void SetWarmMicrophonePolicySelection(int index, bool triggerSave)
+    {
+        _warmMicrophonePolicyIndex = Math.Clamp(index, 0, 4);
+        UpdateMicReadinessSegmentButtons();
+
+        if (triggerSave && !_isApplyingSettings && _settings is not null)
+        {
+            _ = TriggerAutoSaveAsync();
+        }
+    }
+
+    private void UpdateMicReadinessSegmentButtons()
+    {
+        if (MicReadinessOffSegmentButton is null)
+        {
+            return;
+        }
+
+        ApplySegmentButtonState(MicReadinessOffSegmentButton, _warmMicrophonePolicyIndex == 0);
+        ApplySegmentButtonState(MicReadiness10sSegmentButton, _warmMicrophonePolicyIndex == 1);
+        ApplySegmentButtonState(MicReadiness30sSegmentButton, _warmMicrophonePolicyIndex == 2);
+        ApplySegmentButtonState(MicReadiness60sSegmentButton, _warmMicrophonePolicyIndex == 3);
+        ApplySegmentButtonState(MicReadinessAlwaysSegmentButton, _warmMicrophonePolicyIndex == 4);
+        if (MicReadinessAlwaysNotice is not null)
+        {
+            MicReadinessAlwaysNotice.Visibility = _warmMicrophonePolicyIndex == 4
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
     }
 
     internal void TopPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
@@ -663,6 +703,13 @@ public sealed partial class MainWindow
         AutoStopToggle.IsOn = preferences.Dictation.AutoStopEnabled;
         AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
         UpdateAutoStopAvailability();
+        SetWarmMicrophonePolicySelection(
+            SettingsPresenter.WarmMicrophonePolicyIndex(preferences.Dictation.WarmMicrophonePolicy),
+            triggerSave: false);
+        if (SilentMicWarningsToggle is not null)
+        {
+            SilentMicWarningsToggle.IsOn = preferences.Dictation.SilentMicWarningsEnabled;
+        }
 
         if (EgOneUnloadPolicyComboBox is not null)
         {

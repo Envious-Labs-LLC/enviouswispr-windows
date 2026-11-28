@@ -119,6 +119,7 @@
 
                 <!-- Hidden theme-aware color probes resolved against OverlayRoot.RequestedTheme -->
                 <Border x:Name="DistressRedProbe" Width="0" Height="0" Background="{ThemeResource PillDistressRedBrush}" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw" />
+                <Border x:Name="MutedIconProbe" Width="0" Height="0" Background="{ThemeResource PillMutedIconBrush}" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw" />
                 <StackPanel x:Name="LipsSpectrumPalette" Width="0" Height="0" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw">
                     <Border Background="{ThemeResource BrandSpectrumRedBrush}" />
                     <Border Background="{ThemeResource BrandSpectrumOrangeBrush}" />

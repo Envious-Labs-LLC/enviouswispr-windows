@@ -156,6 +156,16 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     public void NotifyPasteCompleted(PasteCompletedEvent paste) =>
         parts.Shell.OnPasteCompleted?.Invoke(paste);
 
+    public void ShowZeroSignalAdvisory() =>
+        _view.ShowStatus(DictationStatus.Advisory(
+            "Audio isn't capturing. Your mic may be muted or disconnected. Please check your microphone settings.",
+            StatusActions.OpenMicrophone));
+
+    public Task RetireWarmCaptureAsync() =>
+        parts.Capture is EnviousWispr.Core.Audio.IWarmAudioCapture warm
+            ? warm.TearDownWarmAsync()
+            : Task.CompletedTask;
+
     /// <summary>True once <see cref="ShowEscapeRecoveryFinished"/> observed a saved Undo offer for this finalization.</summary>
     private int _escapeRecoveryUndoOffered;
 
@@ -246,6 +256,10 @@ public static class StatusActions
     /// <summary>The button an advisory about the speech engine carries.</summary>
     public static readonly PillAction OpenTranscription =
         new("Open settings", PillActionKind.OpenTranscriptionSettings, "Open transcription settings");
+
+    /// <summary>The button an advisory about the microphone carries.</summary>
+    public static readonly PillAction OpenMicrophone =
+        new("Open settings", PillActionKind.OpenMicrophoneSettings, "Open microphone settings");
 
     /// <summary>The one-shot Undo button shown on the floating Escape Recovery pill.</summary>
     public static readonly PillAction UndoEscapeRecovery =

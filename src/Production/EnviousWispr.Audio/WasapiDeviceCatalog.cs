@@ -29,6 +29,9 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
     private readonly MMDeviceEnumerator _enumerator;
     private readonly MMDeviceNotificationClient _notifications;
     private readonly AudioDeviceChangeTracker _changeTracker = new();
+    private readonly object _cacheGate = new();
+    private IReadOnlyList<AudioDeviceInfo>? _cachedDevices;
+    private long _cacheGeneration;
     private bool _disposed;
 
     public WasapiDeviceCatalog()
@@ -39,6 +42,7 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         _notifications.DeviceRemoved += OnDeviceRemoved;
         _notifications.DeviceStateChanged += OnDeviceStateChanged;
         _notifications.DefaultDeviceChanged += OnDefaultDeviceChanged;
+        _notifications.PropertyValueChanged += OnPropertyValueChanged;
     }
 
     public event EventHandler<AudioDeviceChange>? DevicesChanged;
@@ -48,6 +52,17 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+
+        long generation;
+        lock (_cacheGate)
+        {
+            if (_cachedDevices is { } cached)
+            {
+                return Task.FromResult(cached);
+            }
+
+            generation = _cacheGeneration;
+        }
 
         string? defaultDeviceId = null;
         try
@@ -77,9 +92,18 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
             }
         }
 
-        _changeTracker.ReplaceKnownCaptureDevices(result.Select(device => device.Id));
+        var snapshot = result.AsReadOnly();
+        _changeTracker.ReplaceKnownCaptureDevices(snapshot.Select(device => device.Id));
 
-        return Task.FromResult<IReadOnlyList<AudioDeviceInfo>>(result);
+        lock (_cacheGate)
+        {
+            if (!_disposed && _cacheGeneration == generation)
+            {
+                _cachedDevices = snapshot;
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<AudioDeviceInfo>>(snapshot);
     }
 
     /// <summary>
@@ -317,27 +341,32 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         }
 
         _disposed = true;
+        InvalidateCache();
         _notifications.DeviceAdded -= OnDeviceAdded;
         _notifications.DeviceRemoved -= OnDeviceRemoved;
         _notifications.DeviceStateChanged -= OnDeviceStateChanged;
         _notifications.DefaultDeviceChanged -= OnDefaultDeviceChanged;
+        _notifications.PropertyValueChanged -= OnPropertyValueChanged;
         _notifications.Dispose();
         _enumerator.Dispose();
     }
 
     private void OnDeviceAdded(object? sender, DeviceNotificationEventArgs args)
     {
+        InvalidateCache();
         var affectsCapture = TryIsCaptureDevice(args.DeviceId);
         Raise(_changeTracker.Added(args.DeviceId, affectsCapture));
     }
 
     private void OnDeviceRemoved(object? sender, DeviceNotificationEventArgs args)
     {
+        InvalidateCache();
         Raise(_changeTracker.Removed(args.DeviceId));
     }
 
     private void OnDeviceStateChanged(object? sender, DeviceStateChangedEventArgs args)
     {
+        InvalidateCache();
         var affectsCapture = TryIsCaptureDevice(args.DeviceId);
         Raise(_changeTracker.StateChanged(
             args.DeviceId,
@@ -347,8 +376,23 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
 
     private void OnDefaultDeviceChanged(object? sender, DefaultDeviceChangedEventArgs args)
     {
+        InvalidateCache();
         var affectsCapture = args.Flow is DataFlow.Capture or DataFlow.All;
         Raise(AudioDeviceChangeTracker.DefaultChanged(args.DeviceId, affectsCapture));
+    }
+
+    private void OnPropertyValueChanged(object? sender, DevicePropertyChangedEventArgs args)
+    {
+        InvalidateCache();
+    }
+
+    private void InvalidateCache()
+    {
+        lock (_cacheGate)
+        {
+            _cachedDevices = null;
+            _cacheGeneration++;
+        }
     }
 
     private bool TryIsCaptureDevice(string deviceId)

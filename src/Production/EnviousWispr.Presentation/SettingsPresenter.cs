@@ -113,7 +113,9 @@ public sealed record GeneralSettingsInput(
     bool ReturnToStartWindow = true,
     bool LearnFromEdits = true,
     bool FixLearnedWords = true,
-    bool SmartInsertionEnabled = true);
+    bool SmartInsertionEnabled = true,
+    int WarmMicrophonePolicyIndex = (int)MicrophoneWarmPolicy.Seconds30,
+    bool SilentMicWarningsEnabled = true);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -340,7 +342,9 @@ public sealed class SettingsPresenter : IDisposable
             copyLast.Gesture?.ToString() ?? string.Empty,
             input.CasualMode,
             input.LearnFromEdits,
-            input.FixLearnedWords);
+            input.FixLearnedWords,
+            WarmMicrophonePolicyFromIndex(input.WarmMicrophonePolicyIndex),
+            input.SilentMicWarningsEnabled);
         var polishProvider = PolishProviderFromIndex(Chosen(input.PolishProviderIndex));
         var normalizedEgOneModelId = EnginePolishPresentation.NormalizeOptionalEgOneModelId(input.EgOneModelId);
         if (normalizedEgOneModelId is null &&
@@ -497,6 +501,26 @@ public sealed class SettingsPresenter : IDisposable
         PolishUnloadPolicy.FifteenMinutes => 5,
         PolishUnloadPolicy.SixtyMinutes => 6,
         _ => 0,
+    };
+
+    public static MicrophoneWarmPolicy WarmMicrophonePolicyFromIndex(int index) => index switch
+    {
+        0 => MicrophoneWarmPolicy.Off,
+        1 => MicrophoneWarmPolicy.Seconds10,
+        2 => MicrophoneWarmPolicy.Seconds30,
+        3 => MicrophoneWarmPolicy.Seconds60,
+        4 => MicrophoneWarmPolicy.Always,
+        _ => MicrophoneWarmPolicy.Seconds30,
+    };
+
+    public static int WarmMicrophonePolicyIndex(MicrophoneWarmPolicy policy) => policy switch
+    {
+        MicrophoneWarmPolicy.Off => 0,
+        MicrophoneWarmPolicy.Seconds10 => 1,
+        MicrophoneWarmPolicy.Seconds30 => 2,
+        MicrophoneWarmPolicy.Seconds60 => 3,
+        MicrophoneWarmPolicy.Always => 4,
+        _ => 2,
     };
 
     private static string? NullIfBlank(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();

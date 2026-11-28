@@ -220,6 +220,8 @@ public static class OverlayPillCatalog
     {
         RecordingNoticeKind.ApproachingCap => "Recording auto-stops in under a minute (60-minute cap)",
         RecordingNoticeKind.AutoStopUnavailable => "Auto-stop unavailable right now",
+        RecordingNoticeKind.MicSilentCalm => "We\u2019re not hearing anything from your microphone.",
+        RecordingNoticeKind.MicSilentStrong => "Your microphone isn\u2019t sending sound. Stop and check it in Settings.",
         _ => string.Empty,
     };
 }
