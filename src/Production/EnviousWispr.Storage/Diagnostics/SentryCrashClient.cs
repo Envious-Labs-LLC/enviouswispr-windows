@@ -167,7 +167,8 @@ public sealed class SentryCrashClient : IDisposable
     /// <summary>Stage 1: scrubs tag value at write time.</summary>
     public void SetTag(string key, string? value)
     {
-        if (string.IsNullOrWhiteSpace(key))
+        if (string.IsNullOrWhiteSpace(key) ||
+            string.Equals(key, "app.build_type", StringComparison.Ordinal))
         {
             return;
         }
@@ -359,6 +360,7 @@ public sealed class SentryCrashClient : IDisposable
 
         // Stamp unmistakable Windows differentiation tags and OS context.
         mergedTags["app.platform"] = WindowsObservabilityIdentity.PlatformIdentifier;
+        mergedTags["app.build_type"] = WindowsObservabilityIdentity.CompiledBuildType;
         mergedTags["app.channel"] = _identity.ReleaseChannel;
         mergedTags["app.packaging"] = _identity.Packaging;
         if (!mergedTags.ContainsKey("process.role"))
@@ -636,6 +638,7 @@ public sealed class SentryCrashClient : IDisposable
         lock (_scopeLock)
         {
             _tags["app.platform"] = WindowsObservabilityIdentity.PlatformIdentifier;
+            _tags["app.build_type"] = WindowsObservabilityIdentity.CompiledBuildType;
             _tags["app.channel"] = ObservabilitySanitizer.RedactString(_identity.ReleaseChannel);
             _tags["app.packaging"] = ObservabilitySanitizer.RedactString(_identity.Packaging);
             _tags["process.role"] = ObservabilitySanitizer.RedactString(_identity.ProcessRole);
